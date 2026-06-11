@@ -74,7 +74,7 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
         return "device_intent_reconciler_leadership_lost"  # historical name: no "_loop" segment
 
     def _interval(self) -> float:
-        return float(int(self._services.settings.get("general.intent_reconcile_interval_sec")))
+        return float(self._services.settings.get_int("general.intent_reconcile_interval_sec"))
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await run_device_intent_reconciler_once(
@@ -100,7 +100,7 @@ async def run_device_intent_reconciler_once(
     pool: AgentHttpPool | None = None,
 ) -> None:
     await assert_current_leader(db, settings=settings)
-    full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
+    full_scan_every = settings.get_int("general.intent_reconcile_full_scan_every_cycles")
     await deliver_pending_agent_reconfigures(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )

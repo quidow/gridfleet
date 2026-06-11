@@ -362,7 +362,7 @@ async def _merge_appium_default_pack_caps(db: AsyncSession, device: Device, payl
 
 
 def _agent_start_timeout(device: Device, *, settings: SettingsReader) -> float | int:
-    base = int(settings.get("appium.startup_timeout_sec")) + 5
+    base = settings.get_int("appium.startup_timeout_sec") + 5
     if device_is_virtual(device):
         return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, base)
     return base

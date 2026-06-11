@@ -727,13 +727,13 @@ class ConnectivityService:
         await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)
 
     async def check_connectivity(self, db: AsyncSession) -> None:
-        ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
-        ip_ping_timeout = float(self._settings.get("device_checks.ip_ping.timeout_sec"))
-        ip_ping_count = int(self._settings.get("device_checks.ip_ping.count_per_cycle"))
+        ip_ping_threshold = self._settings.get_int("device_checks.ip_ping.consecutive_fail_threshold")
+        ip_ping_timeout = self._settings.get_float("device_checks.ip_ping.timeout_sec")
+        ip_ping_count = self._settings.get_int("device_checks.ip_ping.count_per_cycle")
         probe_unanswered_threshold = int(
             self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
         )
-        probe_failed_threshold = int(self._settings.get("device_checks.probe_failed.consecutive_fail_threshold"))
+        probe_failed_threshold = self._settings.get_int("device_checks.probe_failed.consecutive_fail_threshold")
 
         stmt = select(Host).where(Host.status == HostStatus.online)
         result = await db.execute(stmt)
@@ -979,7 +979,7 @@ class DeviceConnectivityLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.device_check_interval_sec"))
+        return self._services.settings.get_float("general.device_check_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.connectivity.check_expired_cooldowns(db)

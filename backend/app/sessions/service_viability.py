@@ -216,7 +216,7 @@ class SessionViabilityService:
             # existing lock is older than any probe could legitimately run, reclaim
             # it; otherwise a probe really is in flight.
             existing = await control_plane_state_store.get_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-            timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
+            timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
             if _viability_lock_is_stale(existing, now=now_utc(), timeout_sec=timeout_sec):
                 logger.warning("session_viability_reclaiming_stale_lock", device_id=device_key, existing_lock=existing)
                 await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
@@ -251,7 +251,7 @@ class SessionViabilityService:
         attempted_at = _now_iso()
         try:
             config_changed = _clear_session_viability_from_config(device)
-            timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
+            timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
             node = device.appium_node
             if not node or not node.observed_running:
                 state = await _write_session_viability(
@@ -348,7 +348,7 @@ class SessionViabilityService:
             if config_changed:
                 await db.commit()
             if not ok and checked_by != SessionViabilityCheckedBy.recovery and self._health_failure_handler is not None:
-                threshold = max(1, int(self._settings.get("general.session_viability_failure_threshold")))
+                threshold = max(1, self._settings.get_int("general.session_viability_failure_threshold"))
                 if int(state.get("consecutive_failures") or 0) >= threshold:
                     await self._health_failure_handler(
                         db,

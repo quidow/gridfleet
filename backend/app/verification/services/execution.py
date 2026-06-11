@@ -202,7 +202,7 @@ class VerificationExecutionService:
             except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
                 logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
-            timeout = int(self._settings.get("appium.startup_timeout_sec"))
+            timeout = self._settings.get_int("appium.startup_timeout_sec")
             started_node = await self._node_manager.wait_for_node_running(db, node.id, timeout_sec=timeout)
             if started_node is None:
                 detail = "Verification node did not reach running state within timeout"
@@ -219,7 +219,7 @@ class VerificationExecutionService:
             )
 
             await set_stage(job, "session_probe", "running")
-            timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
+            timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
             capabilities = await self._capability.get_device_capabilities(
                 db,
                 device,
@@ -370,7 +370,7 @@ def _health_failure_detail(result: dict[str, Any]) -> str:
 
 def _device_health_timeout(device: Device, *, settings: SettingsReader) -> float | int:
     if device_is_virtual(device):
-        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, int(settings.get("appium.startup_timeout_sec")) + 5)
+        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, settings.get_int("appium.startup_timeout_sec") + 5)
     return 10
 
 
@@ -427,8 +427,8 @@ async def _register_verification_node_intent(
     Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
     does not commit; the caller owns transaction boundaries.
     """
-    startup_timeout = int(settings.get("appium.startup_timeout_sec"))
-    viability_timeout = int(settings.get("general.session_viability_timeout_sec"))
+    startup_timeout = settings.get_int("appium.startup_timeout_sec")
+    viability_timeout = settings.get_int("general.session_viability_timeout_sec")
     deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
     await IntentService(db).register_intents_and_reconcile(
         device_id=device.id,

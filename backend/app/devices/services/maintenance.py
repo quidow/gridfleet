@@ -133,8 +133,8 @@ class MaintenanceService:
         # immediately rather than waiting for the next device_connectivity_loop tick.
         # expires_at mirrors _register_verification_node_intent in verification_execution.py:
         # startup_timeout_sec + session_viability_timeout_sec + 60 s safety margin.
-        startup_timeout = int(self._settings.get("appium.startup_timeout_sec"))
-        viability_timeout = int(self._settings.get("general.session_viability_timeout_sec"))
+        startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
+        viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
         verify_intent_deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,

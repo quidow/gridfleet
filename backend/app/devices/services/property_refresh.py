@@ -103,7 +103,7 @@ class PropertyRefreshLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.property_refresh_interval_sec"))
+        return self._services.settings.get_float("general.property_refresh_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.property_refresh.refresh_all_properties(db)

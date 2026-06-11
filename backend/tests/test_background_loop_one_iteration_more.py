@@ -93,7 +93,7 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
     heartbeat_mock = Mock(run_cycle=AsyncMock())
     services = AppiumNodeServices(
-        settings=FakeSettingsReader({"general.heartbeat_interval_sec": "1"}),
+        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 1}),
         reconciler=Mock(run_cycle=AsyncMock()),
         reconciler_agent=Mock(),
         node_health=Mock(check_nodes=AsyncMock()),
@@ -309,7 +309,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(RuntimeError, match="exit 70"):
         await HeartbeatLoop(
             services=AppiumNodeServices(
-                settings=FakeSettingsReader({"general.heartbeat_interval_sec": "1"}),
+                settings=FakeSettingsReader({"general.heartbeat_interval_sec": 1}),
                 reconciler=Mock(run_cycle=AsyncMock()),
                 reconciler_agent=Mock(),
                 node_health=Mock(check_nodes=AsyncMock()),

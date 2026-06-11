@@ -220,7 +220,7 @@ class NodeHealthService:
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()
         if node is None:
             return
-        window_sec = int(self._settings.get("appium_reconciler.restart_window_sec"))
+        window_sec = self._settings.get_int("appium_reconciler.restart_window_sec")
         deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
         precondition: NodeRunningPrecondition = {
             "kind": "node_running",
@@ -423,7 +423,7 @@ class NodeHealthLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.node_check_interval_sec"))
+        return self._services.settings.get_float("general.node_check_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.node_health.check_nodes(db)

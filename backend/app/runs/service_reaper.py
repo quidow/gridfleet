@@ -40,7 +40,7 @@ class RunReaperLoop(BackgroundLoop):
 
     async def _on_start(self) -> None:
         # Interval is frozen at startup (pre-scaffold behavior preserved).
-        self._interval_sec = float(self._services.settings.get("reservations.reaper_interval_sec"))
+        self._interval_sec = self._services.settings.get_float("reservations.reaper_interval_sec")
 
     def _interval(self) -> float:
         return self._interval_sec

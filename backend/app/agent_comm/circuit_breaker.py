@@ -65,10 +65,10 @@ class AgentCircuitBreaker:
         self._session_factory = session_factory
 
     def _failure_threshold(self) -> int:
-        return int(self._settings.get("agent.circuit_breaker_failure_threshold"))
+        return self._settings.get_int("agent.circuit_breaker_failure_threshold")
 
     def _cooldown_seconds(self) -> float:
-        return float(self._settings.get("agent.circuit_breaker_cooldown_seconds"))
+        return self._settings.get_float("agent.circuit_breaker_cooldown_seconds")
 
     def failure_threshold(self) -> int:
         """Public read accessor for the current failure threshold (reads from settings)."""

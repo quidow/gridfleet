@@ -253,9 +253,9 @@ class SessionSyncService:
            contract up to grid.session_idle_timeout_ceiling_sec and guarantees
            an abandoned client cannot pin its device busy forever.
         """
-        idle_timeout = int(self._settings.get("grid.session_idle_timeout_sec"))
-        idle_ceiling = int(self._settings.get("grid.session_idle_timeout_ceiling_sec"))
-        grace = int(self._settings.get("grid.session_first_command_grace_sec"))
+        idle_timeout = self._settings.get_int("grid.session_idle_timeout_sec")
+        idle_ceiling = self._settings.get_int("grid.session_idle_timeout_ceiling_sec")
+        grace = self._settings.get_int("grid.session_first_command_grace_sec")
         now = now_utc()
         grace_cutoff = now - timedelta(seconds=grace)
         fresh_cutoff = now - timedelta(seconds=ACTIVITY_FRESH_WINDOW_SEC)
@@ -635,7 +635,7 @@ class SessionSyncLoop(BackgroundLoop):
         register_session_sync_wake_hook(self._services.sync.wake)
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("grid.session_poll_interval_sec"))
+        return self._services.settings.get_float("grid.session_poll_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.sync.sync(db)

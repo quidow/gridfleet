@@ -25,7 +25,7 @@ class LeaderWatcherLoop:
     async def run(self) -> None:
         """Always-on loop. Polls staleness and preempts when allowed."""
         while True:
-            interval = float(self._settings.get("general.leader_keepalive_interval_sec"))
+            interval = self._settings.get_float("general.leader_keepalive_interval_sec")
             try:
                 async with observe_background_loop(LEADER_WATCHER_LOOP_NAME, interval).cycle():
                     await run_watcher_once(self._leader, engine=self._engine, settings=self._settings)
@@ -55,7 +55,7 @@ async def run_watcher_once(
     if not settings.get("general.leader_keepalive_enabled"):
         return
 
-    threshold = int(settings.get("general.leader_stale_threshold_sec"))
+    threshold = settings.get_int("general.leader_stale_threshold_sec")
     try:
         acquired = await leader.try_acquire(engine, stale_threshold_sec=threshold)
     except Exception:

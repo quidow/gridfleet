@@ -101,7 +101,7 @@ def operator_start_intent(device: Device, desired_port: int) -> IntentRegistrati
 
 
 def operator_restart_intent(device: Device, desired_port: int, *, settings: SettingsReader) -> IntentRegistration:
-    window_sec = int(settings.get("appium_reconciler.restart_window_sec"))
+    window_sec = settings.get_int("appium_reconciler.restart_window_sec")
     deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
     return IntentRegistration(
         source=operator_start_source(device.id),

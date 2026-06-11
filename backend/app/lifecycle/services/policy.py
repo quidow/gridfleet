@@ -295,8 +295,8 @@ class LifecyclePolicyService:
                 # a deadline instead (the sweep cannot reap a TTL'd intent; it
                 # self-expires), mirroring ``exit_maintenance``.
                 if stale_offline_observation:
-                    startup_timeout = int(self._settings.get("appium.startup_timeout_sec"))
-                    viability_timeout = int(self._settings.get("general.session_viability_timeout_sec"))
+                    startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
+                    viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
                     recovery_intent_precondition = None
                     recovery_intent_expiry = now() + timedelta(seconds=startup_timeout + viability_timeout + 60)
                 else:
@@ -478,7 +478,7 @@ class LifecyclePolicyService:
             # out of automated recovery scope and only a sanctioned operator
             # action (exit maintenance, restore from run, re-verify, restart
             # node) clears the flag.
-            review_threshold = int(self._settings.get("general.lifecycle_recovery_review_threshold"))
+            review_threshold = self._settings.get_int("general.lifecycle_recovery_review_threshold")
             attempts = int(fresh_state.get("recovery_backoff_attempts") or 0)
             if attempts >= review_threshold:
                 await self._review.mark_review_required(
@@ -807,7 +807,7 @@ class LifecyclePolicyService:
         device = await _reload_device(db, device)
         if not device.recovery_allowed:
             return False
-        check_interval = float(self._settings.get("general.device_check_interval_sec"))
+        check_interval = self._settings.get_float("general.device_check_interval_sec")
         # Residue must survive at least two connectivity ticks before we treat it
         # as stale, so an in-flight failure sequence (suppression → auto-stop) is
         # never wiped by a transient healthy probe landing between the two.
@@ -969,8 +969,8 @@ class DeferredStopOutcome(StrEnum):
 
 
 def _set_backoff(state: dict[str, Any], *, settings: SettingsReader) -> str:
-    base_seconds = int(settings.get("general.lifecycle_recovery_backoff_base_sec"))
-    max_seconds = max(base_seconds, int(settings.get("general.lifecycle_recovery_backoff_max_sec")))
+    base_seconds = settings.get_int("general.lifecycle_recovery_backoff_base_sec")
+    max_seconds = max(base_seconds, settings.get_int("general.lifecycle_recovery_backoff_max_sec"))
     return _set_backoff_with_settings(state, base_seconds=base_seconds, max_seconds=max_seconds)
 
 

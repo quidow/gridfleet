@@ -144,7 +144,7 @@ def hardware_telemetry_state_for_device(
     if support_status != HardwareTelemetrySupportStatus.supported or reported_at is None:
         return HardwareTelemetryState.unknown
 
-    timeout_seconds = stale_timeout_sec or int(settings.get("general.hardware_telemetry_stale_timeout_sec"))
+    timeout_seconds = stale_timeout_sec or settings.get_int("general.hardware_telemetry_stale_timeout_sec")
     if (now or _now()) - reported_at > timedelta(seconds=timeout_seconds):
         return HardwareTelemetryState.stale
     return HardwareTelemetryState.fresh
@@ -156,8 +156,8 @@ def derive_candidate_hardware_health_status(device: Device, *, settings: Setting
         return HardwareHealthStatus.unknown
 
     temperature = device.battery_temperature_c
-    critical_threshold = float(settings.get("general.hardware_temperature_critical_c"))
-    warning_threshold = float(settings.get("general.hardware_temperature_warning_c"))
+    critical_threshold = settings.get_float("general.hardware_temperature_critical_c")
+    warning_threshold = settings.get_float("general.hardware_temperature_warning_c")
     if temperature is not None and temperature >= critical_threshold:
         return HardwareHealthStatus.critical
     if temperature is not None and temperature >= warning_threshold:
@@ -187,7 +187,7 @@ async def _resolve_effective_hardware_health_status(
         await control_plane_state_store.delete_value(db, HARDWARE_TELEMETRY_STATE_NAMESPACE, str(device.id))
         return candidate_status
 
-    required_samples = max(1, int(settings.get("general.hardware_telemetry_consecutive_samples")))
+    required_samples = max(1, settings.get_int("general.hardware_telemetry_consecutive_samples"))
     state = await control_plane_state_store.get_value(db, HARDWARE_TELEMETRY_STATE_NAMESPACE, str(device.id))
     current_count = 0
     current_candidate = None
@@ -351,7 +351,7 @@ class HardwareTelemetryLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.hardware_telemetry_interval_sec"))
+        return self._services.settings.get_float("general.hardware_telemetry_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.hardware_telemetry.poll_once(db)
