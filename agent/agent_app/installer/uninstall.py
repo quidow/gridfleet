@@ -63,7 +63,7 @@ def uninstall(
     remove_config_dir: bool = True,
 ) -> UninstallResult:
     resolved_os = os_name or platform.system()
-    service_file = _service_file_path(config, resolved_os, operator)
+    service_file = _service_file_path(resolved_os)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
 

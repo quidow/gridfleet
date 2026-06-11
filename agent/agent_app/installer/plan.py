@@ -4,7 +4,7 @@ import getpass
 import os
 import platform
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
@@ -139,19 +139,13 @@ def _node_version_key(node_path: Path) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def _operator_home(env: Mapping[str, str]) -> Path:
-    """Return the home directory of the user running this process."""
-    del env  # SUDO_USER no longer consulted; install runs as operator.
-    return Path.home()
-
-
 def discover_tools(
     *,
     env: Mapping[str, str] | None = None,
     home: Path | None = None,
 ) -> ToolDiscovery:
     resolved_env = os.environ if env is None else env
-    resolved_home = home or _operator_home(resolved_env)
+    resolved_home = home or Path.home()
     warnings: list[str] = []
 
     node_bin_dir = _find_node_bin_dir(resolved_env, resolved_home)
@@ -200,20 +194,25 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
     return "\n".join(lines) + "\n"
 
 
-def _parse_config_env_values(path: Path) -> dict[str, str]:
+def _parse_config_env_with_error(path: Path) -> tuple[dict[str, str], str | None]:
     if not path.exists():
-        return {}
+        return {}, None
     values: dict[str, str] = {}
     try:
         raw_lines = path.read_text().splitlines()
-    except OSError:
-        return {}
+    except OSError as exc:
+        return {}, str(exc)
     for raw_line in raw_lines:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         values[key] = value
+    return values, None
+
+
+def _parse_config_env_values(path: Path) -> dict[str, str]:
+    values, _error = _parse_config_env_with_error(path)
     return values
 
 
@@ -365,16 +364,8 @@ Generated service definition:
 
 
 def _redacted_config(config: InstallConfig) -> InstallConfig:
-    return InstallConfig(
-        agent_dir=config.agent_dir,
-        config_dir=config.config_dir,
-        bin_path=config.bin_path,
-        user=config.user,
-        port=config.port,
-        manager_url=config.manager_url,
-        manager_auth_username=config.manager_auth_username,
+    return replace(
+        config,
         manager_auth_password="<redacted>" if config.manager_auth_password else None,
-        api_auth_username=config.api_auth_username,
         api_auth_password="<redacted>" if config.api_auth_password else None,
-        advertise_ip=config.advertise_ip,
     )

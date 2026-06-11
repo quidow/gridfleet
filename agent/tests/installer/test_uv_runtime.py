@@ -76,7 +76,6 @@ def test_build_upgrade_command_uses_dedicated_venv_python(tmp_path: Path) -> Non
     config = InstallConfig(agent_dir=str(tmp_path / "agent"), config_dir=str(tmp_path / "config"))
     cmd = build_upgrade_command(
         runtime,
-        operator=OPERATOR,
         package_spec="gridfleet-agent==0.4.0",
         config=config,
     )
@@ -97,7 +96,6 @@ def test_build_upgrade_command_raises_if_missing(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="uv not found"):
         build_upgrade_command(
             runtime,
-            operator=OPERATOR,
             package_spec="gridfleet-agent",
             config=config,
         )

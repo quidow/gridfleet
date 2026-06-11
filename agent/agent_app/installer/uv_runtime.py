@@ -53,11 +53,9 @@ def discover_uv(*, operator: OperatorIdentity, override: Path | None) -> UvRunti
 def build_upgrade_command(
     runtime: UvRuntime,
     *,
-    operator: OperatorIdentity,
     package_spec: str,
     config: InstallConfig,
 ) -> list[str]:
-    del operator
     if runtime.bin_path is None:
         raise RuntimeError(f"uv not found; searched: {runtime.searched}")
     venv_python = Path(config.agent_dir) / "venv/bin/python"

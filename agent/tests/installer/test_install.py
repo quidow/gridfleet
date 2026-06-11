@@ -80,29 +80,21 @@ def test_resolve_bin_path_uses_shutil_which_for_bare_command(monkeypatch: pytest
 
 def test_default_linux_service_path_is_user_systemd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
-    from agent_app.installer.plan import default_install_config
 
-    config = default_install_config("Linux")
-
-    assert _service_file_path(config, "Linux") == (tmp_path / "cfg/systemd/user/gridfleet-agent.service")
+    assert _service_file_path("Linux") == (tmp_path / "cfg/systemd/user/gridfleet-agent.service")
 
 
 def test_user_systemd_path_falls_back_to_dot_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
-    from agent_app.installer.plan import default_install_config
 
-    config = default_install_config("Linux")
-
-    assert _service_file_path(config, "Linux") == (tmp_path / ".config/systemd/user/gridfleet-agent.service")
+    assert _service_file_path("Linux") == (tmp_path / ".config/systemd/user/gridfleet-agent.service")
 
 
 def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home/agent")
 
-    assert _service_file_path(InstallConfig(), "Darwin") == (
-        tmp_path / "home/agent/Library/LaunchAgents/com.gridfleet.agent.plist"
-    )
+    assert _service_file_path("Darwin") == (tmp_path / "home/agent/Library/LaunchAgents/com.gridfleet.agent.plist")
 
 
 def test_install_no_start_writes_config_runtime_dir_and_service(
@@ -170,9 +162,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
 def test_macos_service_path_uses_current_user_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
 
-    assert _service_file_path(InstallConfig(), "Darwin") == (
-        tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
-    )
+    assert _service_file_path("Darwin") == (tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist")
 
 
 def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -189,7 +179,6 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
         operator=operator,
         os_name="Darwin",
         executable=executable,
-        download=lambda _url, dest: dest.write_text("selenium"),
     )
 
     assert result.service_file == tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
@@ -227,7 +216,6 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
         operator=operator,
         os_name="Linux",
         executable=executable,
-        download=lambda _url, dest: dest.write_text("selenium"),
         run_command=fake_run,
         health_check=fake_health,
         registration_check=lambda _config: RegistrationCheckResult(ok=True, message="registered"),
@@ -258,7 +246,6 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
         operator=operator,
         os_name=os_name,
         executable=executable,
-        download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
         registration_check=lambda checked_config: (
@@ -287,7 +274,6 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
         operator=operator,
         os_name=os_name,
         executable=executable,
-        download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=False, message="health failed"),
         registration_check=fail_registration,
@@ -312,7 +298,6 @@ def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytes
         operator=operator,
         os_name="Darwin",
         executable=executable,
-        download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda command: commands.append(command),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=False, message="health check timed out"),
     )
@@ -404,7 +389,6 @@ def test_install_with_start_raises_when_service_command_fails(tmp_path: Path, os
             operator=operator,
             os_name=os_name,
             executable=executable,
-            download=lambda _url, dest: dest.write_text("selenium"),
             run_command=fail_command,
             health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
         )
@@ -474,7 +458,6 @@ def test_install_no_start_uses_operator_identity_for_systemd_user(
         discovery,
         operator=operator,
         os_name="Linux",
-        download=lambda url, dest: dest.write_text("jar"),
     )
     rendered = result.service_file.read_text()
     # User-scope units must not contain a User= directive.
@@ -540,7 +523,6 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path, os
         ToolDiscovery(),
         operator=op,
         os_name=os_name,
-        download=lambda _url, _dest: None,
         run_command=lambda _cmd: None,
         health_check=_hc,
         registration_check=lambda _c: RegistrationCheckResult(ok=True, message="ok"),
@@ -571,7 +553,6 @@ def test_install_with_start_omits_auth_when_unset(tmp_path: Path, os_name: str) 
         ToolDiscovery(),
         operator=op,
         os_name=os_name,
-        download=lambda _url, _dest: None,
         run_command=lambda _cmd: None,
         health_check=_hc,
         registration_check=lambda _c: RegistrationCheckResult(ok=True, message="ok"),

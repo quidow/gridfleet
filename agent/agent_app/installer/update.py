@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import platform
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -11,6 +10,7 @@ import httpx
 from agent_app.installer.install import (
     HealthCheckCallable,
     HealthCheckResult,
+    _poll_http,
     _run_command,
     poll_agent_health,
 )
@@ -124,7 +124,6 @@ def format_update_dry_run(
     try:
         upgrade_cmd = build_upgrade_command(
             uv_runtime,
-            operator=operator,
             package_spec=package_spec,
             config=config,
         )
@@ -156,8 +155,8 @@ def _drain_blockers(payload: object) -> tuple[int, int] | None:
 
     Running nodes are persistent per-connected-device processes, so node
     existence alone must not block an upgrade — only in-flight sessions do.
-    Nodes that do not report ``has_active_session`` (older serving agents,
-    relay still starting) are counted as unknown and treated as blockers
+    Nodes that do not report ``has_active_session`` (older serving agents)
+    are counted as unknown and treated as blockers
     rather than risk killing an in-flight session.
     """
     if not isinstance(payload, dict):
@@ -186,36 +185,36 @@ def wait_for_update_drain(
     get: Callable[..., object] = httpx.get,
     auth: tuple[str, str] | None = None,
 ) -> DrainResult:
-    deadline = time.monotonic() + timeout_sec
-    last_error = "no response"
-    while time.monotonic() <= deadline:
-        try:
-            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
-            status_code = getattr(response, "status_code", None)
-            if status_code == 200:
-                json_body = getattr(response, "json", None)
-                payload = json_body() if callable(json_body) else None
-                blockers = _drain_blockers(payload)
-                if blockers is None:
-                    last_error = "health payload did not include appium_processes.running_nodes"
-                else:
-                    active, unknown = blockers
-                    if active == 0 and unknown == 0:
-                        return DrainResult(ok=True, message="no active local sessions")
-                    parts = []
-                    if active:
-                        suffix = "session" if active == 1 else "sessions"
-                        parts.append(f"{active} active local {suffix}")
-                    if unknown:
-                        suffix = "node" if unknown == 1 else "nodes"
-                        parts.append(f"{unknown} local {suffix} with unknown session state")
-                    last_error = ", ".join(parts)
-            else:
-                last_error = f"unexpected status {status_code}"
-        except Exception as exc:
-            last_error = str(exc)
-        time.sleep(interval_sec)
-    return DrainResult(ok=False, message=f"update drain timed out: {last_error}")
+    def interpret(status_code: object, payload: object) -> DrainResult | str:
+        if status_code != 200:
+            return f"unexpected status {status_code}"
+        blockers = _drain_blockers(payload)
+        if blockers is None:
+            return "health payload did not include appium_processes.running_nodes"
+        active, unknown = blockers
+        if active == 0 and unknown == 0:
+            return DrainResult(ok=True, message="no active local sessions")
+        parts = []
+        if active:
+            suffix = "session" if active == 1 else "sessions"
+            parts.append(f"{active} active local {suffix}")
+        if unknown:
+            suffix = "node" if unknown == 1 else "nodes"
+            parts.append(f"{unknown} local {suffix} with unknown session state")
+        return ", ".join(parts)
+
+    outcome = _poll_http(
+        url,
+        timeout_sec=timeout_sec,
+        interval_sec=interval_sec,
+        get=get,
+        auth=auth,
+        initial_error="no response",
+        interpret=interpret,
+    )
+    if isinstance(outcome, str):
+        return DrainResult(ok=False, message=f"update drain timed out: {outcome}")
+    return outcome
 
 
 def update_agent(
@@ -246,7 +245,6 @@ def update_agent(
     try:
         upgrade_cmd = build_upgrade_command(
             uv_runtime,
-            operator=operator,
             package_spec=package_spec,
             config=config,
         )
