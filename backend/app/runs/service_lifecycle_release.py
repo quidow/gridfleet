@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -10,8 +9,11 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core.concurrency import per_key_semaphores
+
 if TYPE_CHECKING:
     import uuid
+    from collections import defaultdict
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -273,8 +275,8 @@ class RunReleaseService:
                 # running so it is not falsely marked ended (the idle reaper backstops).
                 targets[session.id] = _resolve_session_target(session, devices_by_id)
 
-        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(TERMINATE_CONCURRENCY_PER_HOST)
+        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore] = per_key_semaphores(
+            TERMINATE_CONCURRENCY_PER_HOST
         )
 
         async def _terminate(session: Session, target: str) -> bool:
