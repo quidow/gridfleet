@@ -41,10 +41,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
-# Bound concurrent Appium probes per host so a single hung node cannot stall the
-# whole sweep, while a host's parallel devices are probed together. Mirrors
-# node_health's PROBE_CONCURRENCY_PER_HOST.
-PROBE_CONCURRENCY_PER_HOST = 2
 # Freshness gate for the liveness probe (wave-5 #19): the router flushes
 # last_activity_at every ~10s while traffic flows (router tasks.rs,
 # spawn_activity_flush), so activity within 3x that cadence proves the session
@@ -56,6 +52,10 @@ SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "Why session_sync_loop ran a cycle: doorbell (bus event) or tick (timeout).",
     labelnames=("source",),
 )
+# Pre-register both wake sources: an absent series on a dashboard is
+# indistinguishable from broken doorbell wiring; an explicit 0 is not.
+for _wake_source in ("doorbell", "tick"):
+    SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source=_wake_source)
 
 GRID_ORPHAN_SESSIONS_KILLED_TOTAL = Counter(
     "gridfleet_grid_orphan_sessions_killed",
@@ -275,7 +275,9 @@ class SessionSyncService:
         )
         running_sessions = (await db.execute(running_stmt)).scalars().all()
 
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(PROBE_CONCURRENCY_PER_HOST)
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(
+            self._settings.get_int("general.probe_concurrency_per_host")
+        )
         sessions_with_device = [s for s in running_sessions if s.device is not None]
 
         def _reap_reason(session: Session) -> str | None:
@@ -507,7 +509,9 @@ class SessionSyncService:
         # Probe phase: enumerate every candidate node's live sessions concurrently,
         # bounded per host, so a hung node cannot stall the sweep wall time (#10). No
         # DB access inside the gather.
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(PROBE_CONCURRENCY_PER_HOST)
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(
+            self._settings.get_int("general.probe_concurrency_per_host")
+        )
 
         async def _enumerate(target: str, host_id: uuid.UUID) -> list[str] | None:
             async with host_semaphores[host_id]:

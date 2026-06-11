@@ -93,3 +93,37 @@ async def test_health_probes_run_concurrently_within_host(db_session: AsyncSessi
         ).check_connectivity(db_session)
 
     assert peak >= 2, f"health probes serialized (peak concurrency={peak}); expected overlap >= 2"
+
+
+async def test_probe_concurrency_respects_settings_knob(db_session: AsyncSession) -> None:
+    """general.probe_concurrency_per_host = 1 must serialize the probe phase."""
+    _host, targets = await _seed_host_with_devices(db_session, count=3)
+
+    active = 0
+    peak = 0
+
+    async def probing_health(device: Device, **kwargs: object) -> dict[str, object]:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {"healthy": True}
+
+    with (
+        patch(
+            "app.devices.services.connectivity._get_agent_devices",
+            new_callable=AsyncMock,
+            return_value=set(targets),
+        ),
+        patch("app.devices.services.connectivity._get_device_health", probing_health),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({"general.probe_concurrency_per_host": 1}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    assert peak == 1, f"expected serialized probes with knob=1, got peak={peak}"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -66,9 +67,6 @@ IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 PROBE_FAILED_NAMESPACE = "device_checks.probe_failed"
 IP_PING_CHECK_ID = "ip_ping"
-# Concurrent agent health probes per host during the probe phase. Matches the
-# ceiling node_health / session_sync use so a single host agent is not overwhelmed.
-PROBE_CONCURRENCY_PER_HOST = 2
 LOOP_NAME = "device_connectivity"
 
 
@@ -670,7 +668,10 @@ class ConnectivityService:
         semaphore slot; the win is cross-device concurrency (DEBT-4: the lifecycle
         poll used to add one serial agent RTT per device to the apply loop).
         """
-        semaphore = asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+        # Per-host probe ceiling comes from the settings registry
+        # (general.probe_concurrency_per_host) — shared with node_health and
+        # session_sync so one host agent sees a consistent concurrent load.
+        semaphore = asyncio.Semaphore(self._settings.get_int("general.probe_concurrency_per_host"))
 
         async def _probe(device: Device) -> tuple[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
             async with semaphore:
@@ -739,7 +740,10 @@ class ConnectivityService:
         result = await db.execute(stmt)
         hosts = result.scalars().all()
 
+        prepass_sec = probe_sec = apply_sec = 0.0
+
         for host in hosts:
+            phase_started = perf_counter()
             # Get registered devices for this host. Device.host is eager-loaded so the
             # concurrent probe phase below reads it without a lazy load on the shared
             # session (an AsyncSession is not safe for concurrent use).
@@ -789,6 +793,9 @@ class ConnectivityService:
             )
             live_flag_by_id = {d.id: (d.id in live_ids or is_probe_inflight(str(d.id))) for d in devices}
             await db.commit()
+            prepass_sec += perf_counter() - phase_started
+
+            phase_started = perf_counter()
             health_by_device_id = await self._probe_host_health(
                 devices,
                 ip_ping_timeout=ip_ping_timeout,
@@ -797,6 +804,9 @@ class ConnectivityService:
                 claimed_ports_by_id=claimed_ports_by_id,
                 live_flag_by_id=live_flag_by_id,
             )
+            probe_sec += perf_counter() - phase_started
+
+            phase_started = perf_counter()
             # Re-fence after the slow probe phase: leadership may have changed while we
             # awaited the agents (session_sync pattern). The per-device asserts below
             # remain as the in-loop guard for the sequential write window.
@@ -924,6 +934,10 @@ class ConnectivityService:
                     )
                     await self._record_disconnect_if_stable(db, device, held=False)
 
+            apply_sec += perf_counter() - phase_started
+
+        for phase, seconds in (("db_prepass", prepass_sec), ("probe", probe_sec), ("apply", apply_sec)):
+            metrics.record_background_loop_phase(LOOP_NAME, phase, seconds)
         await db.commit()
 
     async def check_expired_cooldowns(self, db: AsyncSession) -> None:
@@ -982,5 +996,7 @@ class DeviceConnectivityLoop(BackgroundLoop):
         return self._services.settings.get_float("general.device_check_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
+        cooldowns_started = perf_counter()
         await self._services.connectivity.check_expired_cooldowns(db)
+        metrics.record_background_loop_phase(LOOP_NAME, "cooldowns", perf_counter() - cooldowns_started)
         await self._services.connectivity.check_connectivity(db)

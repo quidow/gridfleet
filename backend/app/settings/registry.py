@@ -131,6 +131,18 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=20,
     ),
     SettingDefinition(
+        key="general.probe_concurrency_per_host",
+        category="general",
+        setting_type="int",
+        default=4,
+        description=(
+            "Concurrent agent health probes per host in the observation loops (connectivity, node health, session sync)"
+        ),
+        env_var="GRIDFLEET_PROBE_CONCURRENCY_PER_HOST",
+        min_value=1,
+        max_value=16,
+    ),
+    SettingDefinition(
         key="general.device_check_interval_sec",
         category="general",
         setting_type="int",
