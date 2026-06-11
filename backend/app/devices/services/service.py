@@ -31,7 +31,7 @@ from app.devices.schemas.device import (
 from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy_summary, link_repair
+from app.devices.services import link_repair
 from app.devices.services import readiness as device_readiness
 from app.devices.services import write as device_write
 from app.devices.services.connectivity import (
@@ -53,7 +53,6 @@ from app.devices.services.reservation_query import active_reservation_exists
 from app.events.protocols import EventPublisher
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
-from app.runs import service as run_service
 
 logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]
@@ -143,23 +142,13 @@ class DeviceCrudService:
         if filters.needs_attention is not None:
             wanted = filters.needs_attention
             kept: list[Device] = []
-            reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
             readiness_map = await device_readiness.assess_devices_async(db, devices)
             for device in devices:
-                reservation_context = run_service.get_reservation_context_for_device(
-                    reservation_map.get(device.id), device.id
-                )
                 readiness = readiness_map[device.id]
-                policy = await lifecycle_policy_summary.build_lifecycle_policy(
-                    db, device, reservation_context=reservation_context
-                )
-                summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
-                health_summary = device_health.build_public_summary(device)
                 if (
                     device_attention.compute_needs_attention(
-                        summary["state"],
+                        device.operational_state,
                         readiness.readiness_state,
-                        health_overall=(health_summary or {}).get("overall"),
                         hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
                         review_required=bool(device.review_required),
                     )

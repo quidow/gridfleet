@@ -346,7 +346,7 @@ class LifecyclePolicyActionsService:
         already being recovered by the flow that won the lock (the exit-maintenance
         verification lease, or the next ``device_connectivity`` tick). Clearing
         ``recovery_suppressed_reason`` keeps the device out of the
-        ``suppressed`` / ``needs_attention`` derivation (the ex-N11 "Fix B" false
+        ``suppressed`` badge derivation (the ex-N11 "Fix B" false
         "Recovery Paused" badge). No ``lifecycle_recovery_suppressed`` incident is
         emitted — the skip is logged by the caller and self-resolves.
 

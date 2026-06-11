@@ -109,6 +109,7 @@ describe('AttentionCard', () => {
         makeDevice({
           id: 'device-1',
           name: 'Apple TV',
+          needs_attention: true,
           lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: 'Backing off', backoff_until: null },
         }),
       ],

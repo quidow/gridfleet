@@ -187,6 +187,7 @@ describe('deriveAttentionRows', () => {
     const device = makeDevice({
       id: 'device-1',
       name: 'Apple TV',
+      needs_attention: true,
       lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: 'Policy detail', backoff_until: null },
     });
     const incident = makeIncident({
@@ -249,8 +250,28 @@ describe('deriveAttentionRows', () => {
     expect(result.rows).toEqual([]);
   });
 
-  it('creates a row for an unresolved incident even when the device has no flags', () => {
-    const device = makeDevice({ id: 'device-1', name: 'Fire TV' });
+  it('does not create a row from an incident or active lifecycle summary alone — membership is the needs_attention flag', () => {
+    const incidentOnly = makeDevice({ id: 'device-1', name: 'Fire TV' });
+    const lifecycleOnly = makeDevice({
+      id: 'device-2',
+      lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: null, backoff_until: null },
+    });
+    const incident = makeIncident({
+      device_id: 'device-1',
+      device_name: 'Fire TV',
+      event_type: 'node_crash',
+      label: 'Node Crash',
+      created_at: '2026-06-10T12:00:00Z',
+    });
+
+    const result = deriveAttentionRows([incidentOnly, lifecycleOnly], [incident]);
+
+    expect(result.total).toBe(0);
+    expect(result.rows).toEqual([]);
+  });
+
+  it('enriches a flagged device row with its unresolved incident tone and label', () => {
+    const device = makeDevice({ id: 'device-1', name: 'Fire TV', needs_attention: true });
     const incident = makeIncident({
       device_id: 'device-1',
       device_name: 'Fire TV',
@@ -268,9 +289,9 @@ describe('deriveAttentionRows', () => {
 
   it('sorts critical rows before warning rows, then newest first', () => {
     const devices = [
-      makeDevice({ id: 'warn-old' }),
-      makeDevice({ id: 'crit' }),
-      makeDevice({ id: 'warn-new' }),
+      makeDevice({ id: 'warn-old', needs_attention: true }),
+      makeDevice({ id: 'crit', needs_attention: true }),
+      makeDevice({ id: 'warn-new', needs_attention: true }),
     ];
     const incidents = [
       makeIncident({ device_id: 'warn-old', event_type: 'health_check_fail', created_at: '2026-06-10T10:00:00Z' }),
