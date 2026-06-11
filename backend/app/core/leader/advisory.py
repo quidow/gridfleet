@@ -48,25 +48,39 @@ class ControlPlaneLeader:
             return True
 
         connection = await engine.connect()
-        result = await connection.execute(
-            text("SELECT pg_try_advisory_lock(:lock_id)"),
-            {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
-        )
-        if bool(result.scalar()):
-            await self._adopt_acquired_connection(connection)
-            logger.info("control_plane_leader_acquired", holder_id=str(self._holder_id))
-            return True
-
-        if stale_threshold_sec is not None:
-            preempted = await self._try_preempt(connection, stale_threshold_sec)
-            if preempted:
+        adopted = False
+        try:
+            result = await connection.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
+            )
+            if bool(result.scalar()):
+                # Hand the connection's lifecycle to _adopt_acquired_connection: on
+                # success it is kept as self._connection; on failure it releases (closes)
+                # the connection itself. Either way this method must not also close it.
+                adopted = True
                 await self._adopt_acquired_connection(connection)
-                logger.warning("control_plane_leader_preempted_stale", holder_id=str(self._holder_id))
+                logger.info("control_plane_leader_acquired", holder_id=str(self._holder_id))
                 return True
 
-        await connection.close()
-        logger.info("control_plane_leader_not_acquired")
-        return False
+            if stale_threshold_sec is not None:
+                preempted = await self._try_preempt(connection, stale_threshold_sec)
+                if preempted:
+                    adopted = True
+                    await self._adopt_acquired_connection(connection)
+                    logger.warning("control_plane_leader_preempted_stale", holder_id=str(self._holder_id))
+                    return True
+
+            logger.info("control_plane_leader_not_acquired")
+            return False
+        finally:
+            # Close on every non-adopt path — including an exception or
+            # CancelledError out of _try_preempt — so a connection is never
+            # leaked idle-in-transaction holding AccessShareLock on the
+            # heartbeat row (which would deadlock DROP SCHEMA in tests and
+            # leak a backend in production on shutdown cancellation).
+            if not adopted:
+                await connection.close()
 
     async def _adopt_acquired_connection(self, connection: AsyncConnection) -> None:
         self._connection = connection
