@@ -194,20 +194,25 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
     return "\n".join(lines) + "\n"
 
 
-def _parse_config_env_values(path: Path) -> dict[str, str]:
+def _parse_config_env_with_error(path: Path) -> tuple[dict[str, str], str | None]:
     if not path.exists():
-        return {}
+        return {}, None
     values: dict[str, str] = {}
     try:
         raw_lines = path.read_text().splitlines()
-    except OSError:
-        return {}
+    except OSError as exc:
+        return {}, str(exc)
     for raw_line in raw_lines:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         values[key] = value
+    return values, None
+
+
+def _parse_config_env_values(path: Path) -> dict[str, str]:
+    values, _error = _parse_config_env_with_error(path)
     return values
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_app.installer.install import HealthCheckCallable, HealthCheckResult, _service_file_path, poll_agent_health
+from agent_app.installer.plan import _parse_config_env_with_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -32,23 +33,6 @@ class AgentStatus:
     operator: OperatorIdentity
     uv: UvRuntime
     env: dict[str, str] = field(default_factory=dict)
-
-
-def _parse_config_env_with_error(path: Path) -> tuple[dict[str, str], str | None]:
-    if not path.exists():
-        return {}, None
-    values: dict[str, str] = {}
-    try:
-        raw_lines = path.read_text().splitlines()
-    except OSError as exc:
-        return {}, str(exc)
-    for raw_line in raw_lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value
-    return values, None
 
 
 def _run_status_command(command: list[str]) -> str:
