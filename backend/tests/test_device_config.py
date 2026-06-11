@@ -1,9 +1,11 @@
 from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.settings.service_config import SettingsConfigService
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -102,3 +104,27 @@ async def test_config_history(client: AsyncClient, db_session: AsyncSession, def
     assert resp.status_code == 200
     history = resp.json()
     assert len(history) == 2
+
+
+async def test_merge_device_config_coerces_bool_fields(db_session: AsyncSession, default_host_id: str) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="CFG-BOOL-001",
+        connection_target="CFG-BOOL-001",
+        name="Config Bool Device",
+        pack_id=DEVICE_PAYLOAD["pack_id"],
+        platform_id=DEVICE_PAYLOAD["platform_id"],
+        identity_scheme=DEVICE_PAYLOAD["identity_scheme"],
+        identity_scope=DEVICE_PAYLOAD["identity_scope"],
+        os_version="14",
+    )
+    resolved = Mock()
+    resolved.device_fields_schema = [{"id": "prefer_devicectl", "type": "bool"}]
+    service = SettingsConfigService(publisher=Mock())
+    with (
+        patch("app.settings.service_config.resolve_pack_for_device", return_value=("p", "plat")),
+        patch("app.settings.service_config.resolve_pack_platform", AsyncMock(return_value=resolved)),
+    ):
+        result = await service.merge_device_config(db_session, device, {"prefer_devicectl": "true"})
+    assert result["prefer_devicectl"] is True

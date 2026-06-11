@@ -91,6 +91,35 @@ async def render_stereotype(
     return template.interpolate(device_context)
 
 
+def coerce_device_config_fields(
+    device_fields_schema: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Coerce config values to their schema-declared types (bool fields only for now).
+
+    API clients may store ``"true"``/``1`` for a ``type: bool`` field; the strict
+    equality gates downstream (appium_env ``applies_when.device_config``) would then
+    resolve to the inverse of operator intent with no validation error.
+    """
+    bool_fields = {f["id"] for f in device_fields_schema if f.get("type") == "bool"}
+    if not bool_fields:
+        return config
+    out = dict(config)
+    for key in bool_fields:
+        value = out.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("true", "1", "yes", "on"):
+                out[key] = True
+            elif lowered in ("false", "0", "no", "off"):
+                out[key] = False
+        elif isinstance(value, int):
+            out[key] = bool(value)
+    return out
+
+
 def _device_field_defaults(manifest_json: dict[str, Any], *, platform_id: str, device_type: str) -> dict[str, Any]:
     """Collect ``{field id: declared default}`` for one platform lane (device-type override wins).
 
