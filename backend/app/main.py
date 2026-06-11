@@ -18,6 +18,7 @@ from app.appium_nodes import exception_handlers as appium_node_exception_handler
 from app.appium_nodes import routers as appium_node_routers
 from app.appium_nodes.services.heartbeat import HeartbeatLoop, shutdown_background_tasks
 from app.appium_nodes.services.node_health import NodeHealthLoop
+from app.appium_nodes.services.node_viability import device_node_is_viable
 from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
@@ -45,6 +46,7 @@ from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
 from app.devices import services as device_services
 from app.devices.dependencies import DeviceServicesDep
+from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import state_write_guard
 from app.diagnostics import router as diagnostics_router
 from app.events import router as events
@@ -351,12 +353,21 @@ async def check_availability(
     platform_id: str = Query(...),
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    available_devices = await device_services.crud.list_devices(db, platform_id=platform_id, status="available")
+    # Mirror the run allocator's eligibility gates (``_find_matching_devices``):
+    # reserved devices and non-viable nodes never match an allocation, and both
+    # are orthogonal to ``operational_state`` — counting them here would report
+    # capacity the allocator cannot use.
+    available_devices = await device_services.crud.list_devices_by_filters(
+        db, DeviceQueryFilters(platform_id=platform_id, status="available", reserved=False)
+    )
     readiness_map = await assess_devices_async(db, available_devices)
     matched = sum(
         1
         for device in available_devices
-        if readiness_map[device.id].readiness_state == "verified" and device_health.device_allows_allocation(device)
+        if not device.review_required
+        and device_node_is_viable(device)
+        and readiness_map[device.id].readiness_state == "verified"
+        and device_health.device_allows_allocation(device)
     )
     return {
         "available": matched >= count,

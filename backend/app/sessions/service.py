@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, and_, asc, desc, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 
@@ -698,6 +700,17 @@ class SessionCrudService:
         if session.ended_at is not None:
             return session
 
+        if session.device_id is not None:
+            # Lock order (deadlock avoidance): take the device row lock before
+            # the claim UPDATE below stamps the session row. The run release
+            # path holds device rows while closing their sessions; stamping the
+            # session row first inverts that order (session → device) and the
+            # two paths deadlock under concurrent teardown.
+            # A vanished device row means nothing to lock; the lifecycle pass
+            # below tolerates the missing row.
+            with contextlib.suppress(NoResultFound):
+                await device_locking.lock_device(db, session.device_id)
+
         # Claim the close with a conditional UPDATE (wave-5 re-review B3): the
         # read above takes no row lock, so a concurrent closer (the session_sync
         # sweep on another worker) committing between our SELECT and our write
@@ -765,6 +778,14 @@ class SessionCrudService:
         should_publish_ended = (
             session.status == SessionStatus.running and session.ended_at is None and status != SessionStatus.running
         )
+        if status != SessionStatus.running and session.device_id is not None:
+            # Lock order (deadlock avoidance): take the device row lock before
+            # the session row is dirtied. Otherwise the query-invoked autoflush
+            # inside the next lock_device call UPDATEs the session row first —
+            # session → device, the inverse of the run release path, which
+            # holds device rows while closing their sessions; the two paths
+            # deadlock under concurrent teardown.
+            await device_locking.lock_device(db, session.device_id)
         session.status = status
         if status != SessionStatus.running and session.ended_at is None:
             session.ended_at = now_utc()

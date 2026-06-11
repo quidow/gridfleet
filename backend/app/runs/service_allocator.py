@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -14,7 +15,7 @@ from app.agent_comm.reconfigure_delivery import (
     deliver_agent_reconfigures,
 )
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services.node_viability import node_viable_predicate
+from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.intent import IntentService
@@ -136,6 +137,83 @@ async def _find_matching_devices(
     return [locked_ready_by_id[device.id] for device in ready_candidates if device.id in locked_ready_by_id]
 
 
+async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceRequirement) -> str:
+    """Per-gate breakdown of why the requirement's candidates were excluded.
+
+    Two allocator gates — active reservations and Appium-node viability — are
+    orthogonal to ``operational_state``, so a shortfall they cause is invisible
+    on the device list ("the dashboard says the devices are available"). Name
+    the failing gate, and for reservations the blocking run, so the 409 is
+    actionable without DB spelunking. Classification mirrors the gate order of
+    ``_find_matching_devices``. Runs on the rolled-back session after matching
+    already failed — plain SELECTs, no locks.
+    """
+    stmt = (
+        select(Device)
+        .options(selectinload(Device.appium_node), selectinload(Device.host))
+        .where(Device.pack_id == requirement.pack_id)
+        .where(Device.platform_id == requirement.platform_id)
+    )
+    if requirement.os_version:
+        stmt = stmt.where(Device.os_version == requirement.os_version)
+    devices = list((await db.execute(stmt)).scalars().all())
+    if not devices:
+        return "no devices are configured for this pack/platform"
+
+    reserved_run_by_device: dict[uuid.UUID, uuid.UUID] = dict(
+        (
+            await db.execute(
+                select(DeviceReservation.device_id, DeviceReservation.run_id).where(
+                    DeviceReservation.device_id.in_([device.id for device in devices]),
+                    DeviceReservation.released_at.is_(None),
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+    state_counts: Counter[str] = Counter()
+    gate_counts: Counter[str] = Counter()
+    blocking_runs: set[uuid.UUID] = set()
+    for device in devices:
+        if device.operational_state != DeviceOperationalState.available:
+            state_counts[device.operational_state.value] += 1
+        elif device.review_required:
+            gate_counts["review"] += 1
+        elif not device_node_is_viable(device):
+            gate_counts["node"] += 1
+        elif device.id in reserved_run_by_device:
+            gate_counts["reserved"] += 1
+            blocking_runs.add(reserved_run_by_device[device.id])
+        elif not _device_matches_requirement_tags(device, requirement.tags):
+            gate_counts["tags"] += 1
+        elif not await _readiness_for_match(db, device):
+            gate_counts["readiness"] += 1
+        else:
+            gate_counts["eligible"] += 1
+
+    parts: list[str] = []
+    if gate_counts["reserved"]:
+        named_runs = ", ".join(sorted(str(run_id) for run_id in blocking_runs)[:3])
+        plural = "s" if len(blocking_runs) > 1 else ""
+        parts.append(f"{gate_counts['reserved']} held by active reservation (run{plural} {named_runs})")
+    for state, count in sorted(state_counts.items()):
+        parts.append(f"{count} in state {state}")
+    if gate_counts["node"]:
+        parts.append(f"{gate_counts['node']} with Appium node not viable (stopped or mid-transition)")
+    if gate_counts["review"]:
+        parts.append(f"{gate_counts['review']} flagged review_required")
+    if gate_counts["tags"]:
+        parts.append(f"{gate_counts['tags']} not matching requested tags")
+    if gate_counts["readiness"]:
+        parts.append(f"{gate_counts['readiness']} not ready or health-blocked")
+    if gate_counts["eligible"]:
+        parts.append(f"{gate_counts['eligible']} eligible at re-check (transient contention; retry)")
+    plural = "s" if len(devices) != 1 else ""
+    return f"{len(devices)} candidate device{plural}: " + ", ".join(parts)
+
+
 def _build_device_info(device: Device, *, platform_label: str | None) -> ReservedDeviceInfo:
     host_ip = device.host.ip if device.host else None
     return ReservedDeviceInfo(
@@ -249,13 +327,14 @@ class RunAllocatorService:
                 await db.rollback()
                 attempt += 1
                 if attempt >= _MATCH_RETRY_ATTEMPTS:
+                    shortfall = await _describe_requirement_shortfall(db, exc.requirement)
                     raise ValueError(
                         "Not enough devices for requirement: "
                         f"pack_id={exc.requirement.pack_id}, "
                         f"platform_id={exc.requirement.platform_id}, "
                         f"os_version={exc.requirement.os_version}, "
                         f"{_format_requirement_count(exc.requirement)} "
-                        f"(matched {exc.matched_count} eligible devices right now). "
+                        f"(matched {exc.matched_count} eligible devices right now; {shortfall}). "
                         "Check /api/availability for current platform capacity or retry later."
                     ) from exc
                 await asyncio.sleep(_MATCH_RETRY_BACKOFF_SEC)
