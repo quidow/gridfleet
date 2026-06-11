@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceRead, LifecycleIncidentRead } from '../../types';
 import {
+  deriveAttentionRows,
   deriveDashboardFleetSummary,
   getGridHealth,
   groupLifecycleIncidents,
@@ -178,5 +179,107 @@ describe('dashboardSummary', () => {
     const summary = deriveDashboardFleetSummary([]) as Record<string, unknown>;
     expect(summary).not.toHaveProperty('actionDeviceCount');
     expect(summary).not.toHaveProperty('actionTone');
+  });
+});
+
+describe('deriveAttentionRows', () => {
+  it('dedupes a device that is both in recovery and has an incident into one row, reason from incident', () => {
+    const device = makeDevice({
+      id: 'device-1',
+      name: 'Apple TV',
+      lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: 'Policy detail', backoff_until: null },
+    });
+    const incident = makeIncident({
+      device_id: 'device-1',
+      device_name: 'Apple TV',
+      event_type: 'lifecycle_recovery_backoff',
+      detail: 'Automatic recovery is backing off',
+      created_at: '2026-06-10T12:00:00Z',
+    });
+
+    const result = deriveAttentionRows([device], [incident]);
+
+    expect(result.total).toBe(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({
+      deviceId: 'device-1',
+      deviceName: 'Apple TV',
+      reason: 'Automatic recovery is backing off',
+      tone: 'warning',
+      latestAt: '2026-06-10T12:00:00Z',
+    });
+    expect(result.rows[0]!.lifecycleSummary).not.toBeNull();
+  });
+
+  it('includes needs_attention devices without incidents, falling back to lifecycle detail then maintenance_reason', () => {
+    const withDetail = makeDevice({
+      id: 'device-detail',
+      needs_attention: true,
+      lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: 'Operator note', backoff_until: null },
+    });
+    const withMaintenance = makeDevice({
+      id: 'device-maint',
+      needs_attention: true,
+      lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, maintenance_reason: 'Battery swollen', backoff_until: null },
+    });
+
+    const result = deriveAttentionRows([withDetail, withMaintenance], []);
+
+    expect(result.total).toBe(2);
+    const reasons = new Map(result.rows.map((row) => [row.deviceId, row.reason]));
+    expect(reasons.get('device-detail')).toBe('Operator note');
+    expect(reasons.get('device-maint')).toBe('Battery swollen');
+    // idle summary → no lifecycle badge; generic fallback label
+    expect(result.rows[0]!.lifecycleSummary).toBeNull();
+    expect(result.rows[0]!.badgeLabel).toBe('Needs attention');
+  });
+
+  it('ignores success-tone incidents — they never produce rows', () => {
+    const incident = makeIncident({
+      device_id: 'device-1',
+      device_name: 'Apple TV',
+      event_type: 'lifecycle_recovered',
+      label: 'Recovered',
+      created_at: '2026-06-10T12:00:00Z',
+    });
+
+    const result = deriveAttentionRows([makeDevice({ id: 'device-1', name: 'Apple TV' })], [incident]);
+
+    expect(result.total).toBe(0);
+    expect(result.rows).toEqual([]);
+  });
+
+  it('creates a row for an unresolved incident even when the device has no flags', () => {
+    const device = makeDevice({ id: 'device-1', name: 'Fire TV' });
+    const incident = makeIncident({
+      device_id: 'device-1',
+      device_name: 'Fire TV',
+      event_type: 'node_crash',
+      label: 'Node Crash',
+      created_at: '2026-06-10T12:00:00Z',
+    });
+
+    const result = deriveAttentionRows([device], [incident]);
+
+    expect(result.total).toBe(1);
+    expect(result.rows[0]!.tone).toBe('critical');
+    expect(result.rows[0]!.badgeLabel).toBe('Node Crash');
+  });
+
+  it('sorts critical rows before warning rows, then newest first', () => {
+    const devices = [
+      makeDevice({ id: 'warn-old' }),
+      makeDevice({ id: 'crit' }),
+      makeDevice({ id: 'warn-new' }),
+    ];
+    const incidents = [
+      makeIncident({ device_id: 'warn-old', event_type: 'health_check_fail', created_at: '2026-06-10T10:00:00Z' }),
+      makeIncident({ device_id: 'crit', event_type: 'node_crash', created_at: '2026-06-10T09:00:00Z' }),
+      makeIncident({ device_id: 'warn-new', event_type: 'health_check_fail', created_at: '2026-06-10T11:00:00Z' }),
+    ];
+
+    const result = deriveAttentionRows(devices, incidents);
+
+    expect(result.rows.map((row) => row.deviceId)).toEqual(['crit', 'warn-new', 'warn-old']);
   });
 });
