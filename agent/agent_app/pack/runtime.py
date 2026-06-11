@@ -128,7 +128,7 @@ class RealNpmRunner:
     ) -> None:
         env = {**dict(os.environ), "APPIUM_HOME": appium_home}
         appium_bin = str(Path(appium_home) / "node_modules" / ".bin" / "appium")
-        cmd = _plugin_install_command(appium_bin, name, version, source, package)
+        cmd = plugin_install_command(appium_bin, name, version, source, package)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             env=env,
@@ -145,7 +145,7 @@ def _is_driver_already_installed_error(exc: Exception) -> bool:
     return "driver named" in message and "already installed" in message
 
 
-def _versioned(value: str, version: str) -> str:
+def versioned(value: str, version: str) -> str:
     return value if "@" in value.rsplit("/", 1)[-1] else f"{value}@{version}"
 
 
@@ -204,10 +204,10 @@ def _driver_install_commands(
     return [[appium_bin, "driver", "install", f"--source={source}", f"{package}@{version}"]]
 
 
-def _plugin_install_command(appium: str, name: str, version: str, source: str, package: str | None) -> list[str]:
+def plugin_install_command(appium: str, name: str, version: str, source: str, package: str | None) -> list[str]:
     if source.startswith("npm:"):
         package_name = source.removeprefix("npm:")
-        return [appium, "plugin", "install", _versioned(package_name, version), "--source=npm"]
+        return [appium, "plugin", "install", versioned(package_name, version), "--source=npm"]
     if source.startswith("github:"):
         install_spec = source.removeprefix("github:")
         cmd = [appium, "plugin", "install", install_spec, "--source=github"]
@@ -218,7 +218,7 @@ def _plugin_install_command(appium: str, name: str, version: str, source: str, p
         install_spec = source.removeprefix("local:")
         cmd = [appium, "plugin", "install", install_spec, "--source=local"]
     else:
-        return [appium, "plugin", "install", _versioned(name, version)]
+        return [appium, "plugin", "install", versioned(name, version)]
     if package:
         cmd.append(f"--package={package}")
     return cmd

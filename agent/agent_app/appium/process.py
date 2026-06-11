@@ -182,7 +182,7 @@ def _find_java() -> str:
     return "java"
 
 
-def _build_env(
+def build_env(
     *,
     appium_bin: str | None = None,
     appium_home: str | None = None,
@@ -599,7 +599,7 @@ class AppiumProcessManager:
             adapter_env = adapter.subprocess_env()
             if inspect.isawaitable(adapter_env):
                 adapter_env = await adapter_env
-        env = _build_env(
+        env = build_env(
             appium_bin=invocation.binary,
             appium_home=invocation.env_extra.get("APPIUM_HOME"),
             appium_env=spec.appium_env,

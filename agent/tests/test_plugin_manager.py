@@ -22,7 +22,7 @@ async def test_get_installed_plugins_parses_nested_payload() -> None:
 
     with (
         patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=proc),
     ):
         plugins = await get_installed_plugins()
@@ -36,7 +36,7 @@ async def test_install_plugin_uses_npm_source() -> None:
     with (
         patch("agent_app.plugins.manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
         patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
     ):
         result = await install_plugin("execute-driver", "1.0.0", "npm:@appium/execute-driver-plugin")

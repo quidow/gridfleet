@@ -12,8 +12,8 @@ from agent_app.pack.runtime import (
     _driver_install_commands,
     _github_npm_install_spec,
     _github_ref,
-    _plugin_install_command,
-    _versioned,
+    plugin_install_command,
+    versioned,
 )
 
 
@@ -365,15 +365,15 @@ async def test_real_npm_runner_install_plugin_success(tmp_path: Path) -> None:
 
 
 def test_versioned_already_has_at() -> None:
-    assert _versioned("pkg@1.2.3", "2.0.0") == "pkg@1.2.3"
+    assert versioned("pkg@1.2.3", "2.0.0") == "pkg@1.2.3"
 
 
 def test_versioned_adds_at() -> None:
-    assert _versioned("pkg", "2.0.0") == "pkg@2.0.0"
+    assert versioned("pkg", "2.0.0") == "pkg@2.0.0"
 
 
 def test_versioned_scoped_package() -> None:
-    assert _versioned("@scope/pkg", "2.0.0") == "@scope/pkg@2.0.0"
+    assert versioned("@scope/pkg", "2.0.0") == "@scope/pkg@2.0.0"
 
 
 def test_github_ref_semver() -> None:
@@ -430,7 +430,7 @@ def test_driver_install_commands_npm() -> None:
 
 
 def test_plugin_install_command_npm_source() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "npm:@appium/images-plugin", None) == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "npm:@appium/images-plugin", None) == [
         "/bin/appium",
         "plugin",
         "install",
@@ -440,7 +440,7 @@ def test_plugin_install_command_npm_source() -> None:
 
 
 def test_plugin_install_command_github_source() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", None) == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", None) == [
         "/bin/appium",
         "plugin",
         "install",
@@ -450,7 +450,7 @@ def test_plugin_install_command_github_source() -> None:
 
 
 def test_plugin_install_command_github_source_with_package() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", "pkg-name") == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", "pkg-name") == [
         "/bin/appium",
         "plugin",
         "install",
@@ -461,7 +461,7 @@ def test_plugin_install_command_github_source_with_package() -> None:
 
 
 def test_plugin_install_command_git_source() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "git:https://github.com/user/repo.git", None) == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "git:https://github.com/user/repo.git", None) == [
         "/bin/appium",
         "plugin",
         "install",
@@ -471,7 +471,7 @@ def test_plugin_install_command_git_source() -> None:
 
 
 def test_plugin_install_command_local_source() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "local:/path/to/plugin", None) == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "local:/path/to/plugin", None) == [
         "/bin/appium",
         "plugin",
         "install",
@@ -481,7 +481,7 @@ def test_plugin_install_command_local_source() -> None:
 
 
 def test_plugin_install_command_default_source() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "npm", None) == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "npm", None) == [
         "/bin/appium",
         "plugin",
         "install",
@@ -490,7 +490,7 @@ def test_plugin_install_command_default_source() -> None:
 
 
 def test_plugin_install_command_default_source_no_version_in_name() -> None:
-    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "some_source", None) == [
+    assert plugin_install_command("/bin/appium", "images", "1.0.0", "some_source", None) == [
         "/bin/appium",
         "plugin",
         "install",
