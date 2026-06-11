@@ -38,6 +38,8 @@ from agent_app.installer.uv_runtime import discover_uv
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from agent_app.installer.identity import OperatorIdentity
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gridfleet-agent")
@@ -90,6 +92,155 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_operator() -> OperatorIdentity | None:
+    try:
+        return resolve_operator_identity()
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return None
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    uvicorn.run(
+        "agent_app.main:app",
+        host=args.host,
+        port=args.port,
+        timeout_keep_alive=agent_settings.core.http_keepalive_timeout_sec,
+    )
+    return 0
+
+
+def _cmd_install(args: argparse.Namespace) -> int:
+    selected_modes = [args.dry_run, args.no_start, args.start]
+    if sum(bool(mode) for mode in selected_modes) > 1:
+        print("ERROR: choose only one of --dry-run, --no-start, or --start.", file=sys.stderr)
+        return 2
+    if not any(bool(mode) for mode in selected_modes):
+        print(
+            "ERROR: pass --dry-run to preview, --no-start to write files, or --start to start the service.",
+            file=sys.stderr,
+        )
+        return 2
+    operator = _resolve_operator()
+    if operator is None:
+        return 2
+    defaults = default_install_config(platform.system())
+    try:
+        config = InstallConfig(
+            agent_dir=defaults.agent_dir,
+            config_dir=defaults.config_dir,
+            user=operator.login,
+            port=args.port,
+            manager_url=args.manager_url,
+            manager_auth_username=args.manager_auth_username,
+            manager_auth_password=args.manager_auth_password,
+            api_auth_username=args.api_auth_username,
+            api_auth_password=args.api_auth_password,
+            advertise_ip=args.advertise_ip,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    discovery = discover_tools()
+    if args.dry_run:
+        print(format_dry_run(config, discovery))
+        return 0
+    try:
+        result = (
+            install_with_start(config, discovery, operator=operator)
+            if args.start
+            else install_no_start(config, discovery, operator=operator)
+        )
+    except (RuntimeError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if result.started:
+        print("GridFleet agent service started.")
+        if result.linger_warning:
+            print(result.linger_warning, file=sys.stderr)
+        if result.health is not None and not result.health.ok:
+            print(f"ERROR: {result.health.message}", file=sys.stderr)
+            return 1
+        if result.registration is not None:
+            stream = sys.stdout if result.registration.ok else sys.stderr
+            prefix = "Registration" if result.registration.ok else "WARNING"
+            print(f"{prefix}: {result.registration.message}", file=stream)
+    else:
+        print("GridFleet agent files installed. Service was not started.")
+    return 0
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    operator = _resolve_operator()
+    if operator is None:
+        return 2
+    config = default_install_config(platform.system())
+    uv_runtime = discover_uv(operator=operator, override=None)
+    print(format_status(collect_status(config, operator=operator, uv_runtime=uv_runtime)))
+    return 0
+
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print("ERROR: uninstall requires --yes.", file=sys.stderr)
+        return 2
+    operator = _resolve_operator()
+    if operator is None:
+        return 2
+    try:
+        uninstall(
+            default_install_config(platform.system()),
+            operator=operator,
+            remove_agent_dir=not args.keep_agent_dir,
+            remove_config_dir=not args.keep_config,
+        )
+    except (RuntimeError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print("GridFleet agent uninstalled.")
+    return 0
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    operator = _resolve_operator()
+    if operator is None:
+        return 2
+
+    try:
+        config = load_installed_config(default_install_config(platform.system()))
+    except (ValueError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    override = Path(args.uv_bin) if args.uv_bin else None
+    try:
+        uv_runtime = discover_uv(operator=operator, override=override)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print(format_update_dry_run(config, operator=operator, uv_runtime=uv_runtime, to_version=args.to))
+        return 0
+
+    try:
+        update_result = update_agent(
+            config,
+            operator=operator,
+            uv_runtime=uv_runtime,
+            to_version=args.to,
+        )
+    except (UpdateDrainError, UvNotFoundError, UpdateHealthError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    except (UpdateUpgradeError, UpdateRestartError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print(f"Drain: {update_result.drain.message}")
+    print("GridFleet agent updated.")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     try:
@@ -106,152 +257,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"gridfleet-agent {__version__}")
         return 0
 
-    if args.command == "serve":
-        uvicorn.run(
-            "agent_app.main:app",
-            host=args.host,
-            port=args.port,
-            timeout_keep_alive=agent_settings.core.http_keepalive_timeout_sec,
-        )
-        return 0
-
-    if args.command == "install":
-        selected_modes = [args.dry_run, args.no_start, args.start]
-        if sum(bool(mode) for mode in selected_modes) > 1:
-            print("ERROR: choose only one of --dry-run, --no-start, or --start.", file=sys.stderr)
-            return 2
-        if not any(bool(mode) for mode in selected_modes):
-            print(
-                "ERROR: pass --dry-run to preview, --no-start to write files, or --start to start the service.",
-                file=sys.stderr,
-            )
-            return 2
-        try:
-            operator = resolve_operator_identity()
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        defaults = default_install_config(platform.system())
-        try:
-            config = InstallConfig(
-                agent_dir=defaults.agent_dir,
-                config_dir=defaults.config_dir,
-                user=operator.login,
-                port=args.port,
-                manager_url=args.manager_url,
-                manager_auth_username=args.manager_auth_username,
-                manager_auth_password=args.manager_auth_password,
-                api_auth_username=args.api_auth_username,
-                api_auth_password=args.api_auth_password,
-                advertise_ip=args.advertise_ip,
-            )
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        discovery = discover_tools()
-        if args.dry_run:
-            print(format_dry_run(config, discovery))
-            return 0
-        try:
-            result = (
-                install_with_start(config, discovery, operator=operator)
-                if args.start
-                else install_no_start(config, discovery, operator=operator)
-            )
-        except (RuntimeError, OSError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        if result.started:
-            print("GridFleet agent service started.")
-            if result.linger_warning:
-                print(result.linger_warning, file=sys.stderr)
-            if result.health is not None and not result.health.ok:
-                print(f"ERROR: {result.health.message}", file=sys.stderr)
-                return 1
-            if result.registration is not None:
-                stream = sys.stdout if result.registration.ok else sys.stderr
-                prefix = "Registration" if result.registration.ok else "WARNING"
-                print(f"{prefix}: {result.registration.message}", file=stream)
-        else:
-            print("GridFleet agent files installed. Service was not started.")
-        return 0
-
-    if args.command == "status":
-        try:
-            operator = resolve_operator_identity()
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        config = default_install_config(platform.system())
-        uv_runtime = discover_uv(operator=operator, override=None)
-        print(format_status(collect_status(config, operator=operator, uv_runtime=uv_runtime)))
-        return 0
-
-    if args.command == "uninstall":
-        if not args.yes:
-            print("ERROR: uninstall requires --yes.", file=sys.stderr)
-            return 2
-        try:
-            operator = resolve_operator_identity()
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        try:
-            uninstall(
-                default_install_config(platform.system()),
-                operator=operator,
-                remove_agent_dir=not args.keep_agent_dir,
-                remove_config_dir=not args.keep_config,
-            )
-        except (RuntimeError, OSError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        print("GridFleet agent uninstalled.")
-        return 0
-
-    if args.command == "update":
-        try:
-            operator = resolve_operator_identity()
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-
-        try:
-            config = load_installed_config(default_install_config(platform.system()))
-        except (ValueError, OSError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-
-        override = Path(args.uv_bin) if args.uv_bin else None
-        try:
-            uv_runtime = discover_uv(operator=operator, override=override)
-        except RuntimeError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 1
-
-        if args.dry_run:
-            print(format_update_dry_run(config, operator=operator, uv_runtime=uv_runtime, to_version=args.to))
-            return 0
-
-        try:
-            update_result = update_agent(
-                config,
-                operator=operator,
-                uv_runtime=uv_runtime,
-                to_version=args.to,
-            )
-        except (UpdateDrainError, UvNotFoundError, UpdateHealthError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 1
-        except (UpdateUpgradeError, UpdateRestartError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-        print(f"Drain: {update_result.drain.message}")
-        print("GridFleet agent updated.")
-        return 0
-
-    parser.print_help()
-    return 2
+    handlers = {
+        "serve": _cmd_serve,
+        "install": _cmd_install,
+        "status": _cmd_status,
+        "uninstall": _cmd_uninstall,
+        "update": _cmd_update,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        parser.print_help()
+        return 2
+    return handler(args)
 
 
 if __name__ == "__main__":  # pragma: no cover
