@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from agent_app.pack.adapter_types import HealthCheckResult
+from agent_app.pack.contexts import HealthCtx
 from agent_app.pack.dispatch import _adapter_health_payload, adapter_health_check
 
 
@@ -45,10 +46,12 @@ async def test_health_ctx_carries_claimed_ports_and_live_flag() -> None:
         adapter_registry=_Reg(),  # type: ignore[arg-type]
         pack_id="appium-uiautomator2",
         pack_release="1",
-        identity_value="t",
-        allow_boot=False,
-        claimed_ports={"appium:systemPort": 8200},
-        has_live_session=False,
+        ctx=HealthCtx(
+            device_identity_value="t",
+            allow_boot=False,
+            claimed_ports={"appium:systemPort": 8200},
+            has_live_session=False,
+        ),
     )
     assert seen["claimed_ports"] == {"appium:systemPort": 8200}
     assert seen["has_live_session"] is False

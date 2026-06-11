@@ -11,7 +11,7 @@ from fastapi import APIRouter, Body, Query, status
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import dispatch_doctor, dispatch_feature_action
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
-from agent_app.pack.contexts import DoctorCtx, LifecycleCtx
+from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
     DesiredPlatformDep,
     HostIdDep,
@@ -146,17 +146,19 @@ async def pack_device_health_route(
             adapter_registry=adapter_registry,
             pack_id=pack_id,
             pack_release=release,
-            identity_value=connection_target,
-            allow_boot=allow_boot,
-            platform_id=platform_id,
-            device_type=device_type,
-            connection_type=connection_type,
-            ip_address=ip_address,
-            ip_ping_timeout_sec=ip_ping_timeout_sec,
-            ip_ping_count=ip_ping_count,
-            expected_identity_value=identity_value,
-            claimed_ports=_parse_claimed_ports(claimed_ports),
-            has_live_session=has_live_session,
+            ctx=HealthCtx(
+                device_identity_value=connection_target,
+                allow_boot=allow_boot,
+                platform_id=platform_id,
+                device_type=device_type,
+                connection_type=connection_type,
+                ip_address=ip_address,
+                ip_ping_timeout_sec=ip_ping_timeout_sec,
+                ip_ping_count=ip_ping_count,
+                expected_identity_value=identity_value,
+                claimed_ports=_parse_claimed_ports(claimed_ports),
+                has_live_session=has_live_session,
+            ),
         )
         if payload is not None:
             return payload

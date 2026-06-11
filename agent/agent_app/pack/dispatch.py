@@ -32,6 +32,7 @@ from agent_app.pack.contexts import LifecycleCtx, NormalizeCtx, TelemetryCtx
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
+    from agent_app.pack.adapter_types import HealthContext
 
 __all__ = [
     "adapter_health_check",
@@ -41,34 +42,6 @@ __all__ = [
     "adapter_pre_session",
     "adapter_telemetry",
 ]
-
-
-class _HealthCtx:
-    def __init__(
-        self,
-        identity_value: str,
-        allow_boot: bool,
-        platform_id: str | None,
-        device_type: str | None,
-        connection_type: str | None,
-        ip_address: str | None = None,
-        ip_ping_timeout_sec: float | None = None,
-        ip_ping_count: int | None = None,
-        expected_identity_value: str | None = None,
-        claimed_ports: dict[str, int] | None = None,
-        has_live_session: bool | None = None,
-    ) -> None:
-        self.device_identity_value = identity_value
-        self.expected_identity_value = expected_identity_value
-        self.allow_boot = allow_boot
-        self.platform_id = platform_id
-        self.device_type = device_type
-        self.connection_type = connection_type
-        self.ip_address = ip_address
-        self.ip_ping_timeout_sec = ip_ping_timeout_sec
-        self.ip_ping_count = ip_ping_count
-        self.claimed_ports = claimed_ports
-        self.has_live_session = has_live_session
 
 
 def _adapter_health_payload(results: list[HealthCheckResult]) -> dict[str, Any]:
@@ -95,36 +68,13 @@ async def adapter_health_check(
     adapter_registry: AdapterRegistry,
     pack_id: str,
     pack_release: str,
-    identity_value: str,
-    allow_boot: bool,
-    platform_id: str | None = None,
-    device_type: str | None = None,
-    connection_type: str | None = None,
-    ip_address: str | None = None,
-    ip_ping_timeout_sec: float | None = None,
-    ip_ping_count: int | None = None,
-    expected_identity_value: str | None = None,
-    claimed_ports: dict[str, int] | None = None,
-    has_live_session: bool | None = None,
+    ctx: HealthContext,
 ) -> dict[str, Any] | None:
     """Dispatch through the loaded adapter; return ``None`` if not available."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
     if adapter is None:
         return None
-    ctx = _HealthCtx(
-        identity_value=identity_value,
-        allow_boot=allow_boot,
-        platform_id=platform_id,
-        device_type=device_type,
-        connection_type=connection_type,
-        ip_address=ip_address,
-        ip_ping_timeout_sec=ip_ping_timeout_sec,
-        ip_ping_count=ip_ping_count,
-        expected_identity_value=expected_identity_value,
-        claimed_ports=claimed_ports,
-        has_live_session=has_live_session,
-    )
     results = await _dispatch_health(adapter, ctx)
     return _adapter_health_payload(results)
 

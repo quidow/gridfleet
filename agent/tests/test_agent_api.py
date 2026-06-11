@@ -189,9 +189,10 @@ async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -
         )
 
     assert resp.status_code == 200
-    assert captured["ip_address"] == "10.0.0.7"
-    assert captured["ip_ping_timeout_sec"] == 1.5
-    assert captured["ip_ping_count"] == 2
+    ctx = captured["ctx"]
+    assert ctx.ip_address == "10.0.0.7"
+    assert ctx.ip_ping_timeout_sec == 1.5
+    assert ctx.ip_ping_count == 2
 
 
 async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -> None:
