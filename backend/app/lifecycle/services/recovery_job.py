@@ -45,11 +45,11 @@ class RecoveryJobService:
     async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None:
         """Run ``attempt_auto_recovery`` for the device named in ``payload``."""
         parsed_job_id = uuid.UUID(job_id)
-        device_id = uuid.UUID(str(payload["device_id"]))
         source = payload.get("source", "exit_maintenance")
         reason = payload.get("reason", "Operator exited maintenance")
 
         try:
+            device_id = uuid.UUID(str(payload["device_id"]))
             async with self._session_factory() as db:
                 row = await db.get(Job, parsed_job_id)
                 try:
@@ -96,7 +96,7 @@ class RecoveryJobService:
                     row.completed_at = utcnow()
                     await db.commit()
         except Exception:
-            logger.exception("device_recovery: job %s for device %s crashed", job_id, device_id)
+            logger.exception("device_recovery: job %s for device %s crashed", job_id, payload.get("device_id"))
             async with self._session_factory() as db:
                 row = await db.get(Job, parsed_job_id)
                 if row is None:
