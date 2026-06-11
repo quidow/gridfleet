@@ -25,6 +25,7 @@ from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.auth.middleware import StaticPathsAuthMiddleware
 from app.composition import compose_app
+from app.core import gc_tuning
 from app.core.config import DOCS_ENABLED_ENVIRONMENTS
 from app.core.config import settings as process_settings
 from app.core.database import async_session as session_factory
@@ -247,6 +248,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app_services.leader_watcher.run(),
         name="control_plane_leader_watcher",
     )
+    gc_tuning.tune_after_startup()
     try:
         yield
     finally:
