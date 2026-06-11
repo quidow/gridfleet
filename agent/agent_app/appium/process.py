@@ -847,32 +847,29 @@ class AppiumProcessManager:
         else:
             self._stop_pending_ports.discard(port)
 
+    def _forget_port(self, port: int) -> asyncio.subprocess.Process | None:
+        """Cancel per-port tasks and drop all bookkeeping; returns the popped process."""
+        self._cancel_task(self._appium_restart_tasks, port)
+        self._cancel_task(self._appium_watch_tasks, port)
+        proc = self._appium_procs.pop(port, None)
+        self._info.pop(port, None)
+        self._launch_specs.pop(port, None)
+        self._appium_restart_attempts.pop(port, None)
+        self._appium_restart_backoff_steps.pop(port, None)
+        return proc
+
     async def _drop_failed_managed_port(self, port: int) -> None:
         """Forget stale ownership for a crashed Appium process.
 
         Release the Appium process and port metadata so the host can recover
         the port.
         """
-        self._cancel_task(self._appium_restart_tasks, port)
-        self._cancel_task(self._appium_watch_tasks, port)
-        self._appium_procs.pop(port, None)
-        self._info.pop(port, None)
-        self._launch_specs.pop(port, None)
-        self._appium_restart_attempts.pop(port, None)
-        self._appium_restart_backoff_steps.pop(port, None)
+        self._forget_port(port)
 
     async def stop(self, port: int) -> None:
         async with self._start_lock:
             self._intentional_stop_ports.add(port)
-            self._cancel_task(self._appium_restart_tasks, port)
-            self._cancel_task(self._appium_watch_tasks, port)
-
-            # Stop Appium
-            appium_proc = self._appium_procs.pop(port, None)
-            self._info.pop(port, None)
-            self._launch_specs.pop(port, None)
-            self._appium_restart_attempts.pop(port, None)
-            self._appium_restart_backoff_steps.pop(port, None)
+            appium_proc = self._forget_port(port)
 
             if appium_proc and appium_proc.returncode is None:
                 appium_proc.send_signal(signal.SIGTERM)
