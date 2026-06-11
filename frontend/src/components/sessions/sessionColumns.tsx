@@ -7,18 +7,7 @@ import { Badge } from '../ui/Badge';
 import type { DataTableColumn } from '../ui/DataTable';
 import type { SessionDetail, SessionSortKey } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
-import { formatDateTime, formatRelativeTime } from '../../utils/dateFormatting';
-
-function duration(start: string, end: string | null): string {
-  const endMs = end ? new Date(end).getTime() : Date.now();
-  const diff = endMs - new Date(start).getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ${secs % 60}s`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
-}
+import { formatDateTime, formatDuration, formatRelativeTime } from '../../utils/dateFormatting';
 
 function formatSessionIdentifier(sessionId: string): string {
   if (sessionId.length <= 18) return sessionId;
@@ -204,7 +193,7 @@ export function buildSessionColumns(
       key: 'duration',
       header: 'Duration',
       sortKey: 'duration',
-      render: (s) => <span className="text-sm text-text-3">{duration(s.started_at, s.ended_at)}</span>,
+      render: (s) => <span className="text-sm text-text-3">{formatDuration(s.started_at, s.ended_at)}</span>,
     },
     {
       key: 'status',

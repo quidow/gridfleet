@@ -7,6 +7,7 @@ import {
   fetchFleetCapacityTimeline,
 } from '../api/analytics';
 import type { AnalyticsParams, FleetCapacityTimelineParams, SessionSummaryParams } from '../api/analytics';
+import { qk } from '../lib/queryKeys';
 
 interface AnalyticsQueryOptions {
   enabled?: boolean;
@@ -17,7 +18,7 @@ const ANALYTICS_POLL_MS = 5 * 60_000;
 
 export function useSessionSummary(params?: SessionSummaryParams, options?: AnalyticsQueryOptions) {
   return useQuery({
-    queryKey: ['analytics', 'sessions-summary', params],
+    queryKey: qk.analytics.sessionsSummary(params),
     queryFn: () => fetchSessionSummary(params),
     refetchInterval: ANALYTICS_POLL_MS,
     staleTime: ANALYTICS_POLL_MS / 2,
@@ -27,7 +28,7 @@ export function useSessionSummary(params?: SessionSummaryParams, options?: Analy
 
 export function useDeviceUtilization(params?: AnalyticsParams, options?: AnalyticsQueryOptions) {
   return useQuery({
-    queryKey: ['analytics', 'device-utilization', params],
+    queryKey: qk.analytics.deviceUtilization(params),
     queryFn: () => fetchDeviceUtilization(params),
     refetchInterval: ANALYTICS_POLL_MS,
     staleTime: ANALYTICS_POLL_MS / 2,
@@ -37,7 +38,7 @@ export function useDeviceUtilization(params?: AnalyticsParams, options?: Analyti
 
 export function useDeviceReliability(params?: AnalyticsParams, options?: AnalyticsQueryOptions) {
   return useQuery({
-    queryKey: ['analytics', 'device-reliability', params],
+    queryKey: qk.analytics.deviceReliability(params),
     queryFn: () => fetchDeviceReliability(params),
     refetchInterval: ANALYTICS_POLL_MS,
     staleTime: ANALYTICS_POLL_MS / 2,
@@ -47,7 +48,7 @@ export function useDeviceReliability(params?: AnalyticsParams, options?: Analyti
 
 export function useFleetOverview(params?: AnalyticsParams, options?: AnalyticsQueryOptions) {
   return useQuery({
-    queryKey: ['analytics', 'fleet-overview', params],
+    queryKey: qk.analytics.fleetOverview(params),
     queryFn: () => fetchFleetOverview(params),
     refetchInterval: ANALYTICS_POLL_MS,
     staleTime: ANALYTICS_POLL_MS / 2,
@@ -60,7 +61,7 @@ export function useFleetCapacityTimeline(
   options?: AnalyticsQueryOptions,
 ) {
   return useQuery({
-    queryKey: ['analytics', 'fleet-capacity-timeline', params],
+    queryKey: qk.analytics.fleetCapacityTimeline(params),
     queryFn: () => fetchFleetCapacityTimeline(params),
     refetchInterval: ANALYTICS_POLL_MS,
     staleTime: ANALYTICS_POLL_MS / 2,

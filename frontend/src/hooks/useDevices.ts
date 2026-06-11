@@ -41,6 +41,8 @@ import type {
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
 import { sseAdaptivePolling } from './polling';
+import { POLL_FAST_MS, POLL_DEFAULT_MS, POLL_RELAXED_MS, POLL_SLOW_MS } from './polling';
+import { qk } from '../lib/queryKeys';
 import { getErrorMessage } from '../lib/errors';
 import {
   invalidatePatchedDeviceQueries,
@@ -69,9 +71,9 @@ export function useDevices(params?: {
 }) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['devices', params],
+    queryKey: qk.devices.list(params),
     queryFn: () => fetchDevices(params),
-    ...sseAdaptivePolling(connected, 10_000),
+    ...sseAdaptivePolling(connected, POLL_DEFAULT_MS),
   });
 }
 
@@ -97,9 +99,9 @@ export function useDevicesPaginated(params: {
 }) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['devices', params],
+    queryKey: qk.devices.list(params),
     queryFn: () => fetchDevicesPaginated(params),
-    ...sseAdaptivePolling(connected, 10_000),
+    ...sseAdaptivePolling(connected, POLL_DEFAULT_MS),
     placeholderData: keepPreviousData,
   });
 }
@@ -107,9 +109,9 @@ export function useDevicesPaginated(params: {
 export function useDevice(id: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device', id],
+    queryKey: qk.device.detail(id),
     queryFn: () => fetchDevice(id),
-    ...sseAdaptivePolling(connected, 5_000),
+    ...sseAdaptivePolling(connected, POLL_FAST_MS),
     placeholderData: keepPreviousData,
   });
 }
@@ -117,9 +119,9 @@ export function useDevice(id: string) {
 export function useDeviceSessionOutcomeHeatmap(id: string, days = 90) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-session-outcome-heatmap', id, days],
+    queryKey: qk.deviceSessionOutcomeHeatmap.byDevice(id, days),
     queryFn: () => fetchDeviceSessionOutcomeHeatmap(id, days),
-    ...sseAdaptivePolling(connected, 15_000),
+    ...sseAdaptivePolling(connected, POLL_RELAXED_MS),
     enabled: !!id,
   });
 }
@@ -142,8 +144,8 @@ export function useUpdateDevice() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: DevicePatch }) => updateDevice(id, body),
     onSuccess: (_data, { id }) => {
-      qc.invalidateQueries({ queryKey: ['devices'] });
-      qc.invalidateQueries({ queryKey: ['device', id] });
+      qc.invalidateQueries({ queryKey: qk.devices.root });
+      qc.invalidateQueries({ queryKey: qk.device.detail(id) });
     },
   });
 }
@@ -152,7 +154,7 @@ export function useDeleteDevice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteDevice(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.devices.root }),
   });
 }
 
@@ -211,8 +213,8 @@ export function useClearAppiumNodeTransition() {
     mutationFn: ({ nodeId, reason }: { nodeId: string; reason?: string }) =>
       clearAppiumNodeTransition(nodeId, reason),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['devices'] });
-      qc.invalidateQueries({ queryKey: ['device'] });
+      qc.invalidateQueries({ queryKey: qk.devices.root });
+      qc.invalidateQueries({ queryKey: qk.device.root });
     },
     onError: (error, { nodeId }) => {
       toast.error(getErrorMessage(error, `Failed to clear Appium transition for node ${nodeId}`));
@@ -225,8 +227,8 @@ export function useReconnectDevice() {
   return useMutation({
     mutationFn: (id: string) => reconnectDevice(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['devices'] });
-      qc.invalidateQueries({ queryKey: ['device'] });
+      qc.invalidateQueries({ queryKey: qk.devices.root });
+      qc.invalidateQueries({ queryKey: qk.device.root });
     },
   });
 }
@@ -289,8 +291,8 @@ export function useRunDeviceSessionTest() {
   return useMutation({
     mutationFn: (id: string) => runDeviceSessionTest(id),
     onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ['device-health', id] });
-      qc.invalidateQueries({ queryKey: ['device', id] });
+      qc.invalidateQueries({ queryKey: qk.deviceHealth.byDevice(id) });
+      qc.invalidateQueries({ queryKey: qk.device.detail(id) });
     },
   });
 }
@@ -298,24 +300,24 @@ export function useRunDeviceSessionTest() {
 export function useDeviceHealth(id: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-health', id],
+    queryKey: qk.deviceHealth.byDevice(id),
     queryFn: () => fetchDeviceHealth(id),
-    ...sseAdaptivePolling(connected, 15_000),
+    ...sseAdaptivePolling(connected, POLL_RELAXED_MS),
   });
 }
 
 export function useDeviceConfig(id: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-config', id],
+    queryKey: qk.deviceConfig.byDevice(id),
     queryFn: () => fetchDeviceConfig(id),
-    ...sseAdaptivePolling(connected, 30_000),
+    ...sseAdaptivePolling(connected, POLL_SLOW_MS),
   });
 }
 
 export function useConfigHistory(id: string) {
   return useQuery({
-    queryKey: ['config-history', id],
+    queryKey: qk.configHistory.byDevice(id),
     queryFn: () => fetchConfigHistory(id),
     refetchInterval: false,
     staleTime: Infinity,
@@ -325,16 +327,16 @@ export function useConfigHistory(id: string) {
 export function useDeviceTestData(id: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-test-data', id],
+    queryKey: qk.deviceTestData.byDevice(id),
     queryFn: () => getDeviceTestData(id),
     enabled: Boolean(id),
-    ...sseAdaptivePolling(connected, 30_000),
+    ...sseAdaptivePolling(connected, POLL_SLOW_MS),
   });
 }
 
 export function useTestDataHistory(id: string) {
   return useQuery({
-    queryKey: ['test-data-history', id],
+    queryKey: qk.testDataHistory.byDevice(id),
     queryFn: () => getTestDataHistory(id),
     enabled: Boolean(id),
     refetchInterval: false,
@@ -347,17 +349,17 @@ export function useReplaceDeviceTestData(id: string) {
   return useMutation({
     mutationFn: (body: DeviceTestData) => replaceDeviceTestData(id, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['device-test-data', id] });
-      queryClient.invalidateQueries({ queryKey: ['test-data-history', id] });
+      queryClient.invalidateQueries({ queryKey: qk.deviceTestData.byDevice(id) });
+      queryClient.invalidateQueries({ queryKey: qk.testDataHistory.byDevice(id) });
     },
   });
 }
 
 export function useDeviceLogs(id: string, lines = 200) {
   return useQuery({
-    queryKey: ['device-logs', id, lines],
+    queryKey: qk.deviceLogs.byDevice(id, lines),
     queryFn: () => fetchDeviceLogs(id, lines),
-    refetchInterval: 5_000,
+    refetchInterval: POLL_FAST_MS,
     staleTime: 2_500,
   });
 }
@@ -365,9 +367,9 @@ export function useDeviceLogs(id: string, lines = 200) {
 export function useDeviceCapabilities(deviceId: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-capabilities', deviceId],
+    queryKey: qk.deviceCapabilities.byDevice(deviceId),
     queryFn: () => fetchDeviceCapabilities(deviceId),
     enabled: !!deviceId,
-    ...sseAdaptivePolling(connected, 30_000),
+    ...sseAdaptivePolling(connected, POLL_SLOW_MS),
   });
 }

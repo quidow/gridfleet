@@ -7,7 +7,8 @@ import {
 } from '../api/driverPacks';
 import type { DriverPack } from '../types/driverPacks';
 import { useEventStreamStatus } from '../context/EventStreamContext';
-import { sseAdaptivePolling } from './polling';
+import { sseAdaptivePolling, POLL_SLOW_MS } from './polling';
+import { qk } from '../lib/queryKeys';
 
 function platformKey(packId: string, platformId: string): string {
   return `${packId}:${platformId}`;
@@ -49,9 +50,9 @@ export function useDriverPackCatalog() {
   const { connected } = useEventStreamStatus();
   const contextClient = useContext(QueryClientContext);
   return useQuery({
-    queryKey: ['driver-pack-catalog'],
+    queryKey: qk.driverPackCatalog.root,
     queryFn: fetchDriverPackCatalog,
-    ...sseAdaptivePolling(connected, 30_000),
+    ...sseAdaptivePolling(connected, POLL_SLOW_MS),
   }, contextClient ?? fallbackQueryClient);
 }
 
@@ -67,8 +68,8 @@ export function useSetDriverPackState() {
     mutationFn: ({ packId, state }: { packId: string; state: 'enabled' | 'disabled' }) =>
       setDriverPackState(packId, state),
     onSuccess: (_data, variables) => {
-      void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
-      void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });
+      void qc.invalidateQueries({ queryKey: qk.driverPackCatalog.root });
+      void qc.invalidateQueries({ queryKey: qk.driverPack.detail(variables.packId) });
     },
   });
 }
@@ -76,9 +77,9 @@ export function useSetDriverPackState() {
 export function useHostDriverPacks(hostId: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['host-driver-packs', hostId],
+    queryKey: qk.hostDriverPacks.byHost(hostId),
     queryFn: () => fetchHostDriverPacks(hostId),
     enabled: !!hostId,
-    ...sseAdaptivePolling(connected, 30_000),
+    ...sseAdaptivePolling(connected, POLL_SLOW_MS),
   });
 }

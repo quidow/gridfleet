@@ -5,6 +5,7 @@ import type {
   DeviceRead,
 } from '../types';
 import type { PaginatedResponse } from '../types/shared';
+import { qk } from './queryKeys';
 
 type DeviceListData = DeviceRead[] | PaginatedResponse<DeviceRead>;
 type DeviceQuerySnapshot = Array<[readonly unknown[], DeviceListData | undefined]>;
@@ -29,7 +30,7 @@ export function rollbackOptimisticDeviceQueries(
     qc.setQueryData<DeviceListData>(queryKey, snapshot);
   }
 
-  qc.setQueryData(['device', context.deviceId], context.deviceSnapshot);
+  qc.setQueryData(qk.device.detail(context.deviceId), context.deviceSnapshot);
 }
 
 export async function patchDeviceQueries(
@@ -38,11 +39,11 @@ export async function patchDeviceQueries(
   updater: DeviceCacheUpdater,
 ): Promise<OptimisticDeviceContext> {
   await Promise.all([
-    qc.cancelQueries({ queryKey: ['devices'] }),
-    qc.cancelQueries({ queryKey: ['device', deviceId] }),
+    qc.cancelQueries({ queryKey: qk.devices.root }),
+    qc.cancelQueries({ queryKey: qk.device.detail(deviceId) }),
   ]);
 
-  const devicesSnapshots = qc.getQueriesData<DeviceListData>({ queryKey: ['devices'] });
+  const devicesSnapshots = qc.getQueriesData<DeviceListData>({ queryKey: qk.devices.root });
   for (const [queryKey, snapshot] of devicesSnapshots) {
     if (!snapshot) {
       continue;
@@ -60,7 +61,7 @@ export async function patchDeviceQueries(
     }
   }
 
-  const deviceKey = ['device', deviceId] as const;
+  const deviceKey = qk.device.detail(deviceId);
   const deviceSnapshot = qc.getQueryData<DeviceDetail>(deviceKey);
   if (deviceSnapshot) {
     qc.setQueryData<DeviceDetail>(deviceKey, updater(deviceSnapshot));
@@ -77,8 +78,8 @@ export function invalidatePatchedDeviceQueries(
   qc: QueryClient,
   deviceId: string,
 ) {
-  qc.invalidateQueries({ queryKey: ['devices'] });
-  qc.invalidateQueries({ queryKey: ['device', deviceId] });
+  qc.invalidateQueries({ queryKey: qk.devices.root });
+  qc.invalidateQueries({ queryKey: qk.device.detail(deviceId) });
 }
 
 export function updateOperationalState(

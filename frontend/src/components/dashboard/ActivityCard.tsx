@@ -6,10 +6,10 @@ import { StatusBadge } from '../StatusBadge';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
-import { deviceChipStatus } from '../../lib/deviceState';
+import { availabilityTone, deviceChipStatus } from '../../lib/deviceState';
 import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import { formatRelativeTime } from '../../utils/dateFormatting';
-import type { DeviceChipStatus, DeviceRead, RunRead } from '../../types';
+import type { DeviceRead, RunRead } from '../../types';
 import { deriveDashboardFleetSummary, isActiveRun } from './dashboardSummary';
 
 const MAX_RUNS = 5;
@@ -22,16 +22,6 @@ function runItems(payload: unknown): RunRead[] {
     return Array.isArray(items) ? (items as RunRead[]) : [];
   }
   return [];
-}
-
-function availabilityTone(status: DeviceChipStatus) {
-  switch (status) {
-    case 'available': return 'success' as const;
-    case 'busy': return 'warning' as const;
-    case 'verifying': return 'warning' as const;
-    case 'offline': return 'critical' as const;
-    case 'maintenance': return 'neutral' as const;
-  }
 }
 
 function SectionHead({ label, empty }: { label: string; empty: boolean }) {

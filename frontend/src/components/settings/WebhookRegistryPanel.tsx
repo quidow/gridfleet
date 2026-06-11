@@ -11,6 +11,7 @@ import { useRetryWebhookDelivery, useWebhookDeliveries, useWebhooks } from '../.
 import { useWebhookAdmin } from './useWebhookAdmin';
 import type { WebhookRead } from '../../types';
 import { SettingsPanelLayout } from './SettingsPanelLayout';
+import { Button } from '../ui/Button';
 
 export function WebhookRegistryPanel() {
   const { data: webhooks, isLoading: webhooksLoading } = useWebhooks();
@@ -28,12 +29,7 @@ export function WebhookRegistryPanel() {
       title="Webhooks"
       description="Receive HTTP callbacks when device or session events occur."
       actions={
-        <button
-          onClick={admin.openCreateWebhook}
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-on hover:bg-accent-hover"
-        >
-          Add Webhook
-        </button>
+        <Button onClick={admin.openCreateWebhook}>Add Webhook</Button>
       }
     >
 
@@ -106,12 +102,10 @@ export function WebhookRegistryPanel() {
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={() => admin.setShowWebhookModal(false)} className="px-4 py-2 text-sm text-text-2 hover:text-text-1">
+            <Button variant="ghost" onClick={() => admin.setShowWebhookModal(false)}>
               Cancel
-            </button>
-            <button type="submit" className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-on hover:bg-accent-hover">
-              {admin.editingWebhookId ? 'Save' : 'Create'}
-            </button>
+            </Button>
+            <Button type="submit">{admin.editingWebhookId ? 'Save' : 'Create'}</Button>
           </div>
         </form>
       </Modal>

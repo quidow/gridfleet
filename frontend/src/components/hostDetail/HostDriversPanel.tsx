@@ -8,6 +8,7 @@ import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
 import type { HostPackDoctorStatus, HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
 import { HostFeatureActionButton } from './HostFeatureActionButton';
+import { qk } from '../../lib/queryKeys';
 
 function PackStatusBadge({ status, blockedReason }: { status: string; blockedReason: string | null }) {
   const healthy = status === 'installed';
@@ -88,7 +89,7 @@ export function HostDriversPanel({ hostId }: Props) {
   const doctorMutation = useMutation({
     mutationFn: (packId: string) => triggerDriverDoctor(hostId, packId),
     onSuccess: (results, packId) => {
-      queryClient.invalidateQueries({ queryKey: ['host-driver-packs', hostId] });
+      queryClient.invalidateQueries({ queryKey: qk.hostDriverPacks.byHost(hostId) });
       setUnsupportedPacks((prev) => {
         const next = new Set(prev);
         if (results.length === 0) next.add(packId);

@@ -34,6 +34,8 @@ import { ListPageSubheader } from '../components/ui/ListPageSubheader';
 import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
 import { Pagination } from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
+import { qk } from '../lib/queryKeys';
+import { DashedEmptyPanel } from '../components/ui/DashedEmptyPanel';
 
 function DevicesEmptyPanel({
   hasFilters,
@@ -59,21 +61,7 @@ function DevicesEmptyPanel({
     </Button>
   );
 
-  return (
-    <section className="rounded-lg border border-dashed border-border-strong bg-surface-2 px-5 py-8">
-      <div className="mx-auto flex max-w-xl flex-col items-center text-center sm:flex-row sm:text-left">
-        {/* eslint-disable-next-line no-restricted-syntax -- icon box, not a card */}
-        <div className="mb-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-1 text-text-2 sm:mb-0 sm:mr-4">
-          <Icon size={20} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="heading-subsection">{title}</h3>
-          <p className="mt-1 text-sm text-text-2">{description}</p>
-        </div>
-        <div className="mt-4 sm:ml-5 sm:mt-0">{action}</div>
-      </div>
-    </section>
-  );
+  return <DashedEmptyPanel icon={Icon} title={title} description={description} action={action} />;
 }
 
 export function Devices() {
@@ -290,7 +278,7 @@ export function Devices() {
           onClose={() => controller.setShowAdd(false)}
           hostOptions={controller.hostOptions}
           onCompleted={() => {
-            controller.queryClient.invalidateQueries({ queryKey: ['devices'] });
+            controller.queryClient.invalidateQueries({ queryKey: qk.devices.root });
           }}
         />
       ) : null}

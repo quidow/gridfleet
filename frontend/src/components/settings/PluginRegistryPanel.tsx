@@ -7,6 +7,7 @@ import { TextField } from '../ui/TextField';
 import { usePlugins } from '../../hooks/usePlugins';
 import { usePluginRegistryAdmin } from './usePluginRegistryAdmin';
 import { SettingsPanelLayout } from './SettingsPanelLayout';
+import { Button } from '../ui/Button';
 
 export function PluginRegistryPanel() {
   const { data: plugins, isLoading } = usePlugins();
@@ -22,20 +23,15 @@ export function PluginRegistryPanel() {
       description="Appium plugins registered for use across all hosts."
       actions={
         <>
-          <button
+          <Button
+            variant="secondary"
             onClick={() => admin.handleSyncAll()}
-            disabled={admin.syncAllPluginsMut.isPending}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border-strong bg-surface-1 px-4 py-2 text-sm font-medium text-text-2 hover:bg-surface-2 disabled:opacity-50"
+            loading={admin.syncAllPluginsMut.isPending}
+            leadingIcon={admin.syncAllPluginsMut.isPending ? undefined : <RefreshCw size={14} />}
           >
-            <RefreshCw size={14} className={admin.syncAllPluginsMut.isPending ? 'animate-spin' : ''} />
             {admin.syncAllPluginsMut.isPending ? 'Syncing...' : 'Sync All Hosts'}
-          </button>
-          <button
-            onClick={admin.openCreatePlugin}
-            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-on hover:bg-accent-hover"
-          >
-            Add Plugin
-          </button>
+          </Button>
+          <Button onClick={admin.openCreatePlugin}>Add Plugin</Button>
         </>
       }
     >
@@ -139,12 +135,10 @@ export function PluginRegistryPanel() {
             />
           </div>
           <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={() => admin.setShowPluginModal(false)} className="px-4 py-2 text-sm text-text-2 hover:text-text-1">
+            <Button variant="ghost" onClick={() => admin.setShowPluginModal(false)}>
               Cancel
-            </button>
-            <button type="submit" className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-on hover:bg-accent-hover">
-              {admin.editingPluginId ? 'Save' : 'Create'}
-            </button>
+            </Button>
+            <Button type="submit">{admin.editingPluginId ? 'Save' : 'Create'}</Button>
           </div>
         </form>
       </Modal>

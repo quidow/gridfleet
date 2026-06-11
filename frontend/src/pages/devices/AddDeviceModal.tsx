@@ -12,12 +12,10 @@ import type {
   DeviceVerificationJob,
 } from '../../types';
 import { useStartDeviceVerification } from '../../hooks/useDevices';
-import { useIntakeCandidates } from '../../hooks/useHosts';
 import {
   CONNECTION_TYPE_LABELS,
   DEVICE_TYPE_LABELS,
   type HostOption,
-  filterIntakeCandidates,
   getAllowedConnectionTypes,
   getAllowedDeviceTypes,
   laneNeedsCandidate,
@@ -31,9 +29,10 @@ import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 import { resolvePlatformLabel } from '../../lib/labels';
 import {
   findPlatformDescriptorByKey,
-  makePlatformKey,
   platformDescriptorForDeviceType,
 } from '../../hooks/usePlatformDescriptor';
+import { buildPlatformOptions } from './platformOptions';
+import { useCandidateDiscovery } from './useCandidateDiscovery';
 
 type Props = {
   isOpen: boolean;
@@ -47,48 +46,7 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
   const [hostId, setHostId] = useState<string>('');
   const { data: catalog = [] } = useDriverPackCatalog();
 
-  const platformOptions = useMemo(() => {
-    const drafts: Array<{
-      value: string;
-      baseLabel: string;
-      packLabel: string;
-      packId: string;
-      platformId: string;
-      deviceTypes: string[];
-      connectionTypes: string[];
-    }> = [];
-    const baseLabelCounts = new Map<string, number>();
-    for (const pack of catalog) {
-      if (pack.state !== 'enabled') continue;
-      for (const platform of pack.platforms ?? []) {
-        const baseLabel = resolvePlatformLabel(platform.id, platform.display_name);
-        baseLabelCounts.set(baseLabel, (baseLabelCounts.get(baseLabel) ?? 0) + 1);
-        drafts.push({
-          value: makePlatformKey(pack.id, platform.id),
-          baseLabel,
-          packLabel: pack.display_name,
-          packId: pack.id,
-          platformId: platform.id,
-          deviceTypes: platform.device_types,
-          connectionTypes: platform.connection_types,
-        });
-      }
-    }
-    const labels = drafts.map((draft) => platformOptionLabel(draft, (baseLabelCounts.get(draft.baseLabel) ?? 0) > 1));
-    const labelCounts = new Map<string, number>();
-    for (const label of labels) {
-      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
-    }
-    return drafts.map((draft, index) => {
-      const label = labels[index];
-      return {
-        value: draft.value,
-        label: (labelCounts.get(label) ?? 0) > 1 ? `${label} - ${draft.packLabel}` : label,
-        packId: draft.packId,
-        platformId: draft.platformId,
-      };
-    });
-  }, [catalog]);
+  const platformOptions = useMemo(() => buildPlatformOptions(catalog), [catalog]);
 
   const defaultPlatformKey = platformOptions[0]?.value ?? '';
 
@@ -99,16 +57,11 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
 
   const [deviceType, setDeviceType] = useState<DeviceType>('real_device');
   const [connectionType, setConnectionType] = useState<ConnectionType>('usb');
-  const [selectedCandidateKey, setSelectedCandidateKey] = useState<string>('');
   const [displayName, setDisplayName] = useState('');
   const [manualConnectionTarget, setManualConnectionTarget] = useState('');
   const [manualIpAddress, setManualIpAddress] = useState('');
   const [deviceConfig, setDeviceConfig] = useState<DeviceConfigDraft>({});
   const [job, setJob] = useState<DeviceVerificationJob | null>(null);
-  const { data: candidates = [], isFetching: isFetchingCandidates = false } = useIntakeCandidates(hostId || null);
-  const [candidateUpdate, setCandidateUpdate] = useState<{ context: string; signature: string } | null>(null);
-  const previousCandidateSignatureRef = useRef<string | null>(null);
-  const previousCandidateContextRef = useRef<string | null>(null);
   const { activeJob, isVerificationRunning, resetCompletionGuard } = useDeviceVerificationJobController({
     isOpen,
     isStarting: startVerification.isPending,
@@ -129,24 +82,22 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
     : activeAllowedConnectionTypes[0] ?? connectionType;
   const effectiveDescriptor = platformDescriptorForDeviceType(activeDescriptor, activeDeviceType);
 
-  const filteredCandidates = useMemo(
-    () => filterIntakeCandidates(candidates, activeDescriptor, activeDeviceType, activeConnectionType),
-    [candidates, activeDescriptor, activeDeviceType, activeConnectionType],
-  );
-  const candidateSignature = useMemo(
-    () => filteredCandidates
-      .map((candidate) => `${candidate.identity_value}:${candidate.connection_target ?? ''}:${candidate.already_registered}`)
-      .toSorted()
-      .join('|'),
-    [filteredCandidates],
-  );
-  const candidateContext = `${hostId}:${activePlatformKey}:${activeDeviceType}:${activeConnectionType}`;
-  const selectedCandidate = filteredCandidates.find(
-    (candidate) => `${candidate.identity_value}:${candidate.connection_target ?? ''}` === selectedCandidateKey,
-  );
-  const observedDeviceCountLabel = `${filteredCandidates.length} ${filteredCandidates.length === 1 ? 'device' : 'devices'} observed`;
-  const showCandidateUpdate =
-    candidateUpdate?.context === candidateContext && candidateUpdate.signature === candidateSignature;
+  const {
+    filteredCandidates,
+    isFetchingCandidates,
+    selectedCandidate,
+    selectedCandidateKey,
+    setSelectedCandidateKey,
+    clearSelection,
+    showCandidateUpdate,
+    observedDeviceCountLabel,
+  } = useCandidateDiscovery({
+    hostId,
+    activePlatformKey,
+    activeDescriptor,
+    activeDeviceType,
+    activeConnectionType,
+  });
 
   const manualRequirements = manualRegistrationRequirements(activeDescriptor, activeDeviceType, activeConnectionType);
   const requiresIpAddress = manualRequirements.ipAddress;
@@ -175,7 +126,7 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
 
   function selectHost(nextHostId: string) {
     setHostId(nextHostId);
-    setSelectedCandidateKey('');
+    clearSelection();
   }
 
   function selectPlatform(nextKey: string) {
@@ -191,7 +142,7 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
     setPlatformKey(nextKey);
     setDeviceType(nextDeviceType);
     setConnectionType(nextConnectionType);
-    setSelectedCandidateKey('');
+    clearSelection();
     setManualIpAddress('');
     setManualConnectionTarget('');
     const nextEffectiveDescriptor = platformDescriptorForDeviceType(nextDescriptor, nextDeviceType);
@@ -205,46 +156,15 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
       : allowedConnectionTypes[0];
     setDeviceType(nextDeviceType);
     setConnectionType(nextConnectionType);
-    setSelectedCandidateKey('');
+    clearSelection();
     const nextEffectiveDescriptor = platformDescriptorForDeviceType(activeDescriptor, nextDeviceType);
     setDeviceConfig(nextEffectiveDescriptor ? defaultsForDeviceFields(nextEffectiveDescriptor.deviceFieldsSchema) : {});
   }
 
   function selectConnectionType(nextConnectionType: ConnectionType) {
     setConnectionType(nextConnectionType);
-    setSelectedCandidateKey('');
+    clearSelection();
   }
-
-  useEffect(() => {
-    if (!hostId) {
-      previousCandidateContextRef.current = null;
-      previousCandidateSignatureRef.current = null;
-      return;
-    }
-
-    if (previousCandidateContextRef.current !== candidateContext) {
-      previousCandidateContextRef.current = candidateContext;
-      previousCandidateSignatureRef.current = candidateSignature;
-      return;
-    }
-
-    if (
-      previousCandidateSignatureRef.current !== null &&
-      previousCandidateSignatureRef.current !== candidateSignature
-    ) {
-      previousCandidateSignatureRef.current = candidateSignature;
-      const showTimeout = window.setTimeout(() => {
-        setCandidateUpdate({ context: candidateContext, signature: candidateSignature });
-      }, 0);
-      const hideTimeout = window.setTimeout(() => setCandidateUpdate(null), 3500);
-      return () => {
-        window.clearTimeout(showTimeout);
-        window.clearTimeout(hideTimeout);
-      };
-    }
-
-    previousCandidateSignatureRef.current = candidateSignature;
-  }, [candidateContext, candidateSignature, hostId]);
 
   const displayNameValue = displayName || selectedCandidate?.name || '';
   const derivedConnectionTarget =
@@ -501,37 +421,3 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
   );
 }
 
-type PlatformOptionDraft = {
-  baseLabel: string;
-  platformId: string;
-  deviceTypes: string[];
-  connectionTypes: string[];
-};
-
-const PLATFORM_DEVICE_TYPE_QUALIFIER_LABELS: Record<DeviceType, string> = {
-  real_device: 'Real Device',
-  emulator: 'Emulator',
-  simulator: 'Simulator',
-};
-
-function platformOptionLabel(draft: PlatformOptionDraft, needsQualifier: boolean): string {
-  if (!needsQualifier) return draft.baseLabel;
-  const qualifier = platformOptionQualifier(draft);
-  return qualifier ? `${draft.baseLabel} - ${qualifier}` : draft.baseLabel;
-}
-
-function platformOptionQualifier({ platformId, deviceTypes, connectionTypes }: PlatformOptionDraft): string | null {
-  const deviceTypeLabels = deviceTypes
-    .map((deviceType) => PLATFORM_DEVICE_TYPE_QUALIFIER_LABELS[deviceType as DeviceType] ?? null)
-    .filter((label): label is string => label !== null);
-  if (deviceTypeLabels.length > 0) return deviceTypeLabels.join(' / ');
-
-  const connectionTypeLabels = connectionTypes
-    .map((connectionType) => CONNECTION_TYPE_LABELS[connectionType as ConnectionType] ?? null)
-    .filter((label): label is string => label !== null);
-  if (connectionTypeLabels.length > 0) return connectionTypeLabels.join(' / ');
-
-  const suffixMatch = platformId.match(/(?:^|[_-])(real(?:[_-]device)?|emulator|simulator|network|usb|virtual)$/i);
-  if (!suffixMatch) return null;
-  return resolvePlatformLabel(suffixMatch[1].replace(/[_-]/g, ' '), null);
-}
