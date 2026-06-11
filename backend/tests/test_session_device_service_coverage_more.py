@@ -458,7 +458,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         operational_state=DeviceOperationalState.verifying,
     )
     await db_session.commit()
-    reserved_devices = await crud.list_devices_by_filters(db_session, DeviceQueryFilters(status="reserved"))
+    reserved_devices = await crud.list_devices_by_filters(db_session, DeviceQueryFilters(reserved=True))
     verifying_devices = await crud.list_devices_by_filters(
         db_session,
         DeviceQueryFilters(status="verifying"),

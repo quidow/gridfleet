@@ -124,7 +124,7 @@ describe('dashboardSummary', () => {
     expect(grouped[1]).toMatchObject({ count: 1, summaryState: 'manual' });
   });
 
-  it('counts needsAttention, maintenance, and reserved devices in fleet summary', () => {
+  it('counts needsAttention, maintenance, and availability in fleet summary', () => {
     const summary = deriveDashboardFleetSummary([
       makeDevice({ id: 'backoff1', needs_attention: true, operational_state: 'available', lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: null, backoff_until: null } }),
       makeDevice({ id: 'backoff2', needs_attention: true, operational_state: 'available', lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: null, backoff_until: null } }),
@@ -136,9 +136,9 @@ describe('dashboardSummary', () => {
     ]);
     expect(summary.needsAttention).toBe(3);
     expect(summary.maintenance).toBe(1);
-    expect(summary.reserved).toBe(1);
     expect(summary.busy).toBe(1);
-    expect(summary.available).toBe(4);
+    // Reservation is orthogonal: the reserved-but-idle device counts as available.
+    expect(summary.available).toBe(5);
   });
 
   it('maps grid status into dashboard health states', () => {

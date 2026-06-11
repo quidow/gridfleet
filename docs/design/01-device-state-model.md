@@ -85,7 +85,7 @@ The status chip is simply `operational_state`, one of the five values `available
 chip = operational_state
 ```
 
-Frontend implements this in `frontend/src/lib/deviceState.ts` (`deviceChipStatus` returns `device.operational_state`). `reserved` is **not** part of the chip projection — it is a separate server-side device-list filter value (`DEVICE_FILTER_STATUSES`) derived from active reservations.
+Frontend implements this in `frontend/src/lib/deviceState.ts` (`deviceChipStatus` returns `device.operational_state`). Reservation is **not** part of the chip projection — it is an orthogonal boolean device-list filter (`reserved=true`, derived from active reservation rows), not a status value.
 
 ### Transition rules
 

@@ -112,17 +112,6 @@ export function FleetCard() {
         <>
           <ProportionalBar
             segments={BAR_SEGMENTS.map((segment) => ({ ...segment, count: counts[segment.key] }))}
-            legendExtras={
-              fleet.reserved > 0
-                ? [{
-                    key: 'reserved',
-                    label: 'Reserved',
-                    count: fleet.reserved,
-                    barClassName: 'bg-info-strong',
-                    to: '/devices?status=reserved',
-                  }]
-                : undefined
-            }
           />
 
           {platformChips.length > 0 && (

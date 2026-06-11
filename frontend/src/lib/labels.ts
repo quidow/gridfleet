@@ -44,7 +44,6 @@ export const DEVICE_STATUS_LABELS: Record<DeviceFilterStatus, string> = {
   busy: 'Busy',
   offline: 'Offline',
   maintenance: 'Maintenance',
-  reserved: 'Reserved',
   verifying: 'Verifying',
 };
 

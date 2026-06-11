@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
 from app.devices.schemas.device import HardwareTelemetryState
 
-ChipStatus = Literal["available", "busy", "offline", "maintenance", "reserved", "verifying"]
+ChipStatus = Literal["available", "busy", "offline", "maintenance", "verifying"]
 DeviceSortBy = Literal[
     "name",
     "platform",
@@ -29,6 +29,7 @@ class DeviceGroupFilters(BaseModel):
     pack_id: str | None = None
     platform_id: str | None = None
     status: ChipStatus | None = None
+    reserved: bool | None = None
     host_id: uuid.UUID | None = None
     identity_value: str | None = None
     connection_target: str | None = None

@@ -10,6 +10,7 @@ import { deviceChipStatus } from '../../lib/deviceState';
 
 const SUMMARY_PARAM_KEYS = [
   'status',
+  'reserved',
   'needs_attention',
   'hardware_health_status',
   'hardware_telemetry_state',
@@ -30,6 +31,7 @@ export interface DevicesSummaryStats {
 
 interface DevicesSummaryHrefOptions {
   status?: DeviceFilterStatus | null;
+  reserved?: boolean;
   needsAttention?: boolean;
   hardwareHealthStatus?: HardwareHealthStatus | null;
   hardwareTelemetryState?: HardwareTelemetryState | null;
@@ -38,9 +40,6 @@ interface DevicesSummaryHrefOptions {
 function countByAvailabilityStatus(devices: DeviceRead[], status: DeviceChipStatus) {
   return devices.filter((device) => {
     const chipStatus = deviceChipStatus(device);
-    // Reserved devices are excluded from the 'available' bucket to mirror the
-    // backend status=available filter (active reservations are listed separately).
-    if (status === 'available') return chipStatus === 'available' && !device.is_reserved;
     return status === 'busy' ? chipStatus === 'busy' || chipStatus === 'verifying' : chipStatus === status;
   }).length;
 }
@@ -80,6 +79,9 @@ export function buildDevicesSummaryHref(
 
   if (options.status) {
     nextParams.set('status', options.status);
+  }
+  if (options.reserved) {
+    nextParams.set('reserved', 'true');
   }
   if (options.needsAttention) {
     nextParams.set('needs_attention', 'true');

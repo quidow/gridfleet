@@ -2670,8 +2670,10 @@ export interface components {
             pack_id?: string | null;
             /** Platform Id */
             platform_id?: string | null;
+            /** Reserved */
+            reserved?: boolean | null;
             /** Status */
-            status?: ("available" | "busy" | "offline" | "maintenance" | "reserved" | "verifying") | null;
+            status?: ("available" | "busy" | "offline" | "maintenance" | "verifying") | null;
             /** Tags */
             tags?: {
                 [key: string]: string;
@@ -7074,7 +7076,8 @@ export interface operations {
                 offset?: number | null;
                 pack_id?: string | null;
                 platform_id?: string | null;
-                status?: ("available" | "busy" | "offline" | "maintenance" | "reserved" | "verifying") | null;
+                status?: ("available" | "busy" | "offline" | "maintenance" | "verifying") | null;
+                reserved?: boolean | null;
                 host_id?: string | null;
                 identity_value?: string | null;
                 connection_target?: string | null;
@@ -11559,7 +11562,8 @@ export interface operations {
                 columns?: string | null;
                 pack_id?: string | null;
                 platform_id?: string | null;
-                status?: ("available" | "busy" | "offline" | "maintenance" | "reserved" | "verifying") | null;
+                status?: ("available" | "busy" | "offline" | "maintenance" | "verifying") | null;
+                reserved?: boolean | null;
                 host_id?: string | null;
                 identity_value?: string | null;
                 connection_target?: string | null;

@@ -50,6 +50,7 @@ export function useDevicesPageController() {
   const platformFilter = searchParams.get('platform_id') ?? '';
   const packIdFilter = searchParams.get('pack_id') ?? '';
   const statusFilter = readEnumSearchParam(searchParams, 'status', CHIP_STATUSES);
+  const reservedFilter = searchParams.get('reserved') === 'true';
   const needsAttentionFilter = searchParams.get('needs_attention') === 'true';
   const deviceTypeFilter = readEnumSearchParam(searchParams, 'device_type', DEVICE_TYPES);
   const connectionTypeFilter = readEnumSearchParam(searchParams, 'connection_type', CONNECTION_TYPES);
@@ -87,6 +88,7 @@ export function useDevicesPageController() {
   const { data: paginatedResult, isLoading, dataUpdatedAt } = useDevicesPaginated({
     ...sharedFilters,
     status: statusFilter || undefined,
+    reserved: reservedFilter || undefined,
     needs_attention: needsAttentionFilter || undefined,
     limit: pageSize,
     offset,
@@ -246,7 +248,7 @@ export function useDevicesPageController() {
   }
 
   const hasFilters = Boolean(
-    packIdFilter || platformFilter || statusFilter || needsAttentionFilter || deviceTypeFilter || connectionTypeFilter ||
+    packIdFilter || platformFilter || statusFilter || reservedFilter || needsAttentionFilter || deviceTypeFilter || connectionTypeFilter ||
     hardwareHealthStatusFilter || hardwareTelemetryStateFilter || deviceHealthFilter || nodeHealthFilter ||
     viabilityFilter || osVersionFilter || search,
   );

@@ -57,6 +57,7 @@ export function useDevices(params?: {
   pack_id?: string;
   platform_id?: string;
   status?: DeviceFilterStatus;
+  reserved?: boolean;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;
@@ -81,6 +82,7 @@ export function useDevicesPaginated(params: {
   pack_id?: string;
   platform_id?: string;
   status?: DeviceFilterStatus;
+  reserved?: boolean;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;

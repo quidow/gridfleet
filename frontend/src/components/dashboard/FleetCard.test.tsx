@@ -72,7 +72,7 @@ function renderCard() {
 }
 
 describe('FleetCard', () => {
-  it('renders device count, availability legend with Reserved, and platform chips', () => {
+  it('renders device count, operational-state legend, and platform chips', () => {
     mockDevices.mockReturnValue({
       data: [
         makeDevice({ id: 'd1', platform_id: 'roku', is_reserved: true }),
@@ -82,7 +82,11 @@ describe('FleetCard', () => {
     renderCard();
     expect(screen.getByText('2 devices')).toBeInTheDocument();
     expect(screen.getByText('Available')).toBeInTheDocument();
-    expect(screen.getByText('Reserved')).toBeInTheDocument();
+    // Reservation is not a fleet state: the reserved-but-idle device renders
+    // inside the Available slice and there is no Reserved legend entry.
+    expect(screen.queryByText('Reserved')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Available: 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Offline: 1')).toBeInTheDocument();
     expect(screen.getByLabelText(/Roku — 2 devices/)).toBeInTheDocument();
     mockDevices.mockReset();
     mockDevices.mockReturnValue({ data: [] });
