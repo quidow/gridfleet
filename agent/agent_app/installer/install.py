@@ -9,7 +9,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -130,11 +130,7 @@ def install_no_start(
     executable: Path | None = None,
 ) -> InstallResult:
     if not config.bin_path:
-        resolved = resolve_bin_path(executable=executable)
-        config = InstallConfig(
-            **{f.name: getattr(config, f.name) for f in fields(config) if f.name != "bin_path"},
-            bin_path=resolved,
-        )
+        config = replace(config, bin_path=resolve_bin_path(executable=executable))
     resolved_os = os_name or platform.system()
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)

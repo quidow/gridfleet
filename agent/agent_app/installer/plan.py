@@ -4,7 +4,7 @@ import getpass
 import os
 import platform
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
@@ -359,16 +359,8 @@ Generated service definition:
 
 
 def _redacted_config(config: InstallConfig) -> InstallConfig:
-    return InstallConfig(
-        agent_dir=config.agent_dir,
-        config_dir=config.config_dir,
-        bin_path=config.bin_path,
-        user=config.user,
-        port=config.port,
-        manager_url=config.manager_url,
-        manager_auth_username=config.manager_auth_username,
+    return replace(
+        config,
         manager_auth_password="<redacted>" if config.manager_auth_password else None,
-        api_auth_username=config.api_auth_username,
         api_auth_password="<redacted>" if config.api_auth_password else None,
-        advertise_ip=config.advertise_ip,
     )
