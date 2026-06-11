@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
 import type { FleetCapacityTimelinePoint } from '../../types';
 
@@ -168,10 +169,16 @@ export function FleetHealthHistory({ livePoint }: FleetHealthHistoryProps) {
           <span className="text-xs text-text-2">
             avg <span className="text-text-1">{Math.round(chart.avgPct)}%</span>
           </span>
+          <Link
+            to="/analytics?tab=fleet-capacity"
+            className="font-sans text-xs font-medium text-accent hover:text-accent-hover"
+          >
+            View in Analytics
+          </Link>
         </div>
       </div>
 
-      <div className={`relative mt-3 flex min-h-20 flex-1 ${TONE_STROKE[tone]}`}>
+      <div className={`relative mt-3 flex min-h-32 flex-1 ${TONE_STROKE[tone]}`}>
         <svg
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           className="block h-full w-full"
