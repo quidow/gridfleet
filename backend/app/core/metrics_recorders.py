@@ -171,14 +171,17 @@ AGENT_RECONFIGURE_OUTBOX_NO_PROCESS = Counter(
 )
 
 
-def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:
+def record_http_request(
+    method: str, path: str, status_code: int, duration_seconds: float, *, include_duration: bool = True
+) -> None:
     labels = {
         "method": method.upper(),
         "path": path,
         "status": str(status_code),
     }
     HTTP_REQUESTS_TOTAL.labels(**labels).inc()
-    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration_seconds)
+    if include_duration:
+        HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration_seconds)
 
 
 def record_agent_call(

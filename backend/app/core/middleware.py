@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 __all__ = ["RequestContextMiddleware"]
 
+# Streaming endpoints stay open for the client's lifetime; recording that
+# lifetime as a request duration poisons the latency histogram. Connects
+# still count in http_requests_total.
+_DURATION_EXEMPT_PATHS = frozenset({"/api/events"})
+
 
 class RequestContextMiddleware:
     def __init__(self, app: ASGIApp) -> None:
@@ -94,6 +99,7 @@ class RequestContextMiddleware:
                     path=route_path,
                     status_code=status_code,
                     duration_seconds=perf_counter() - started,
+                    include_duration=route_path not in _DURATION_EXEMPT_PATHS,
                 )
                 clear_request_context()
             await send(message)
@@ -133,6 +139,7 @@ class RequestContextMiddleware:
                 path=route_path,
                 status_code=500,
                 duration_seconds=perf_counter() - started,
+                include_duration=route_path not in _DURATION_EXEMPT_PATHS,
             )
             clear_request_context()
             raise
