@@ -6,39 +6,40 @@ import { fetchSettings } from '../api/settings';
 import { fetchEventCatalog } from '../api/events';
 import type { SettingsGrouped } from '../types';
 import { formatEventDetails } from '../components/notifications/eventRegistry';
+import { qk } from '../lib/queryKeys';
 
-const EVENT_QUERY_MAP: Record<string, string[][]> = {
-  'device.operational_state_changed': [['devices'], ['device'], ['device-capabilities']],
-  'device.verification.updated': [['devices'], ['device']],
-  'node.state_changed': [['devices'], ['device'], ['device-capabilities']],
-  'node.crash': [['devices'], ['device']],
-  'device.health_changed': [['devices'], ['device'], ['device-health'], ['health']],
-  'device.hardware_health_changed': [['devices'], ['device'], ['device-health'], ['health'], ['device-diagnostic-snapshots']],
-  'device.crashed': [['devices'], ['device'], ['device-health']],
-  'host.status_changed': [['hosts'], ['host'], ['devices'], ['health'], ['host-driver-packs']],
-  'host.heartbeat_lost': [['hosts'], ['host'], ['devices'], ['health']],
-  'host.registered': [['hosts'], ['host'], ['health'], ['driver-pack-catalog'], ['driver-pack-hosts'], ['host-driver-packs']],
-  'host.discovery_completed': [['hosts'], ['host'], ['devices'], ['intake-candidates'], ['device-capabilities'], ['driver-pack-catalog'], ['driver-pack-hosts'], ['host-driver-packs']],
-  'host.circuit_breaker.opened': [['hosts'], ['host'], ['health']],
-  'host.circuit_breaker.closed': [['hosts'], ['host'], ['health']],
-  'session.started': [['sessions'], ['grid-queue'], ['grid-status'], ['devices'], ['device'], ['runs'], ['run']],
-  'session.ended': [['sessions'], ['grid-queue'], ['grid-status'], ['devices'], ['device'], ['runs'], ['run']],
-  'run.created': [['runs'], ['run'], ['devices']],
-  'run.active': [['runs'], ['run'], ['devices']],
-  'run.completed': [['runs'], ['run'], ['devices'], ['sessions']],
-  'run.cancelled': [['runs'], ['run'], ['devices'], ['sessions']],
-  'run.expired': [['runs'], ['run'], ['devices'], ['sessions']],
-  'run.never_activated': [['runs'], ['run'], ['devices']],
-  'config.updated': [['device-config'], ['config-history'], ['device'], ['devices'], ['device-capabilities']],
-  'test_data.updated': [['device-test-data'], ['test-data-history'], ['device'], ['devices']],
-  'bulk.operation_completed': [['devices'], ['device'], ['device-groups'], ['device-group']],
-  'device_group.updated': [['device-groups'], ['device-group'], ['devices']],
-  'device_group.members_changed': [['device-groups'], ['device-group'], ['devices']],
-  'settings.changed': [['settings']],
-  'system.cleanup_completed': [['sessions'], ['analytics']],
-  'pack_feature.degraded': [['driver-pack-catalog'], ['driver-pack'], ['driver-pack-hosts'], ['host-driver-packs']],
-  'pack_feature.recovered': [['driver-pack-catalog'], ['driver-pack'], ['driver-pack-hosts'], ['host-driver-packs']],
-  'webhook.test': [['webhooks']],
+const EVENT_QUERY_MAP: Record<string, ReadonlyArray<readonly string[]>> = {
+  'device.operational_state_changed': [qk.devices.root, qk.device.root, qk.deviceCapabilities.root],
+  'device.verification.updated': [qk.devices.root, qk.device.root],
+  'node.state_changed': [qk.devices.root, qk.device.root, qk.deviceCapabilities.root],
+  'node.crash': [qk.devices.root, qk.device.root],
+  'device.health_changed': [qk.devices.root, qk.device.root, qk.deviceHealth.root, qk.health.root],
+  'device.hardware_health_changed': [qk.devices.root, qk.device.root, qk.deviceHealth.root, qk.health.root, qk.deviceDiagnosticSnapshots.root],
+  'device.crashed': [qk.devices.root, qk.device.root, qk.deviceHealth.root],
+  'host.status_changed': [qk.hosts.root, qk.host.root, qk.devices.root, qk.health.root, qk.hostDriverPacks.root],
+  'host.heartbeat_lost': [qk.hosts.root, qk.host.root, qk.devices.root, qk.health.root],
+  'host.registered': [qk.hosts.root, qk.host.root, qk.health.root, qk.driverPackCatalog.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
+  'host.discovery_completed': [qk.hosts.root, qk.host.root, qk.devices.root, qk.intakeCandidates.root, qk.deviceCapabilities.root, qk.driverPackCatalog.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
+  'host.circuit_breaker.opened': [qk.hosts.root, qk.host.root, qk.health.root],
+  'host.circuit_breaker.closed': [qk.hosts.root, qk.host.root, qk.health.root],
+  'session.started': [qk.sessions.root, qk.gridQueue.root, qk.gridStatus.root, qk.devices.root, qk.device.root, qk.runs.root, qk.run.root],
+  'session.ended': [qk.sessions.root, qk.gridQueue.root, qk.gridStatus.root, qk.devices.root, qk.device.root, qk.runs.root, qk.run.root],
+  'run.created': [qk.runs.root, qk.run.root, qk.devices.root],
+  'run.active': [qk.runs.root, qk.run.root, qk.devices.root],
+  'run.completed': [qk.runs.root, qk.run.root, qk.devices.root, qk.sessions.root],
+  'run.cancelled': [qk.runs.root, qk.run.root, qk.devices.root, qk.sessions.root],
+  'run.expired': [qk.runs.root, qk.run.root, qk.devices.root, qk.sessions.root],
+  'run.never_activated': [qk.runs.root, qk.run.root, qk.devices.root],
+  'config.updated': [qk.deviceConfig.root, qk.configHistory.root, qk.device.root, qk.devices.root, qk.deviceCapabilities.root],
+  'test_data.updated': [qk.deviceTestData.root, qk.testDataHistory.root, qk.device.root, qk.devices.root],
+  'bulk.operation_completed': [qk.devices.root, qk.device.root, qk.deviceGroups.root, qk.deviceGroup.root],
+  'device_group.updated': [qk.deviceGroups.root, qk.deviceGroup.root, qk.devices.root],
+  'device_group.members_changed': [qk.deviceGroups.root, qk.deviceGroup.root, qk.devices.root],
+  'settings.changed': [qk.settings.root],
+  'system.cleanup_completed': [qk.sessions.root, qk.analytics.root],
+  'pack_feature.degraded': [qk.driverPackCatalog.root, qk.driverPack.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
+  'pack_feature.recovered': [qk.driverPackCatalog.root, qk.driverPack.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
+  'webhook.test': [qk.webhooks.root],
 };
 
 type ToastResult = { type: 'success' | 'error' | 'warning' | 'info'; message: string } | null;
@@ -133,16 +134,16 @@ function isNewestCursorQuery(query: Query): boolean {
   return !params || typeof params !== 'object' || !('cursor' in params) || !params.cursor;
 }
 
-function invalidateQueryTarget(queryClient: QueryClient, key: string[]) {
-  if (key[0] === 'sessions') {
+function invalidateQueryTarget(queryClient: QueryClient, key: readonly string[]) {
+  if (key[0] === qk.sessions.root[0]) {
     void queryClient.invalidateQueries({
-      predicate: (query) => query.queryKey[0] === 'sessions' && isNewestCursorQuery(query),
+      predicate: (query) => query.queryKey[0] === qk.sessions.root[0] && isNewestCursorQuery(query),
     });
     return;
   }
-  if (key[0] === 'runs') {
+  if (key[0] === qk.runs.root[0]) {
     void queryClient.invalidateQueries({
-      predicate: (query) => query.queryKey[0] === 'runs' && isNewestCursorQuery(query),
+      predicate: (query) => query.queryKey[0] === qk.runs.root[0] && isNewestCursorQuery(query),
     });
     return;
   }
@@ -154,14 +155,14 @@ export function useEventStream() {
   const auth = useAuth();
   const [connected, setConnected] = useState(false);
   const { data: eventCatalog } = useQuery({
-    queryKey: ['event-catalog'],
+    queryKey: qk.eventCatalog.root,
     queryFn: fetchEventCatalog,
     refetchInterval: false,
     staleTime: Infinity,
     throwOnError: false,
   });
   const { data: settingsGroups } = useQuery({
-    queryKey: ['settings'],
+    queryKey: qk.settings.root,
     queryFn: fetchSettings,
     throwOnError: false,
     staleTime: Infinity,
@@ -213,11 +214,11 @@ export function useEventStream() {
       }
     }
 
-    function scheduleHighVolumeInvalidation(queryKeys: string[][]) {
+    function scheduleHighVolumeInvalidation(queryKeys: ReadonlyArray<readonly string[]>) {
       for (const key of queryKeys) {
         pendingInvalidationsRef.current.add(JSON.stringify(key));
       }
-      pendingInvalidationsRef.current.add(JSON.stringify(['notifications']));
+      pendingInvalidationsRef.current.add(JSON.stringify(qk.notifications.root));
 
       if (invalidationTimerRef.current) {
         return;
@@ -276,7 +277,7 @@ export function useEventStream() {
             for (const key of queryKeys) {
               invalidateQueryTarget(queryClient, key);
             }
-            void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+            void queryClient.invalidateQueries({ queryKey: qk.notifications.root });
           }
 
           const toastFn = TOAST_EVENTS[eventType];
