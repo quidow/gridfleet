@@ -207,15 +207,6 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
 
     monkeypatch.setattr(_event_bus, "publish", fake_publish)
 
-    from app.devices.services.state import set_operational_state as _orig_set_op
-
-    async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
-        if kwargs.get("publisher") is None:
-            kwargs["publisher"] = _event_bus
-        return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("app.appium_nodes.services.heartbeat.set_operational_state", _wrapped_set_op)
-
     host = Host(
         hostname="cascade-host",
         ip="10.0.0.42",

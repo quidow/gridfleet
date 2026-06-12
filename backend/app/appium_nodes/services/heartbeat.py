@@ -26,11 +26,10 @@ from app.core.leader.advisory import LeadershipLost, assert_current_leader, cont
 from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.core.observability import get_logger
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEventType, DeviceOperationalState
+from app.devices.models import Device, DeviceEventType
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
-from app.devices.services.state import set_operational_state
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
@@ -627,13 +626,6 @@ async def _apply_host_ping_result(
                 device,
                 healthy=False,
                 summary=f"Host {host.hostname} offline",
-            )
-            await set_operational_state(
-                device,
-                DeviceOperationalState.offline,
-                reason=f"Host {host.hostname} offline",
-                severity="warning",
-                publisher=publisher,
             )
 
 
