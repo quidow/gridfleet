@@ -6,7 +6,8 @@ Two distinct concerns live here, deliberately separated:
   ``overall``). Consumed by the presenter and the devices API.
 - ``merged_liveness`` / ``device_allows_allocation`` — the allocation-gating
   predicate with the historical truth table (a present-but-not-running node
-  blocks allocation). Consumed by ``ready_operational_state``, the run
+  blocks allocation). Consumed by the state derivation
+  (``gather_device_state_facts``), the run
   allocator, grid allocation, and deferred-stop recovery. NOT part of the
   public API shape.
 """

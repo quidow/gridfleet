@@ -187,7 +187,7 @@ async def mark_node_started(
     # Device-axis restoration is owned by ``apply_node_state_transition``'s
     # ``_restore_available_for_healthy_signal``, which transitions offline →
     # available iff signals are stably healthy. A direct ``set_operational_state``
-    # with the ``ready_operational_state`` projection here would flap the
+    # with the readiness projection here would flap the
     # device offline whenever transient signals (stale ``health_running``,
     # ``device_checks_healthy``) lag the node-axis update — operators see
     # spurious "Node started" → offline → "Health checks recovered" toasts.

@@ -166,13 +166,15 @@ async def test_release_devices_serializes_with_concurrent_writer(
 
     original_is_ready = is_ready_for_use_async
 
-    async def racing_is_ready(db: AsyncSession, device_arg: Device) -> bool:
-        # Signal: _release_devices has read the device row.
+    async def racing_is_ready(db: AsyncSession, device_arg: Device, **kwargs: object) -> bool:
+        # Signal: _release_devices has read the device row. ``**kwargs`` absorbs
+        # the ``packs=`` keyword the state-derivation path now passes through
+        # gather_device_state_facts -> is_ready_for_use_async.
         stomper_can_go.set()
         # Give the stomper enough time to commit its offline change before
         # _release_devices continues to the commit.
         await asyncio.sleep(0.15)
-        return await original_is_ready(db, device_arg)
+        return await original_is_ready(db, device_arg, **kwargs)
 
     async def releaser() -> None:
         async with db_session_maker() as session:

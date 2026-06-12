@@ -12,7 +12,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_state
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
-from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
@@ -22,7 +21,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     verification_intent_source,
 )
-from app.devices.services.state import set_operational_state
 from app.grid.allocation import node_target
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
@@ -274,13 +272,13 @@ class VerificationExecutionService:
                 if existing_stop_error is not None:
                     return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
                 locked = await device_locking.lock_device(db, context.save_device_id)
-                await set_operational_state(
-                    locked,
-                    DeviceOperationalState.verifying,
-                    reason="verification",
-                    severity="info",
-                    publisher=self._publisher,
-                )
+                # Register the verification lease at entry so the derived state is
+                # ``verifying`` for the whole update window. Previously the lease only
+                # existed from run_probe onward, so a background full-scan reconcile
+                # during the device-health stage could clobber the direct write.
+                # run_probe's later registration is an idempotent upsert that
+                # refreshes expires_at.
+                await _register_verification_node_intent(db, locked, settings=self._settings, publisher=self._publisher)
                 await db.commit()
                 device = locked
                 original_fields = {

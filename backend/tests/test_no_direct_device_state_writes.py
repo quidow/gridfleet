@@ -40,3 +40,32 @@ def test_no_direct_device_state_writes_outside_helper() -> None:
         "`await set_operational_state(...)` or `await set_hold(...)`:\n"
         f"{formatted}"
     )
+
+
+_CALL_RE = re.compile(r"\bset_operational_state\s*\(")
+CALL_EXEMPT_FILES = {
+    # The definition and its sole sanctioned caller (apply_derived_state) live here.
+    BACKEND_APP / "devices" / "services" / "state.py",
+}
+
+
+def _scan_calls() -> list[tuple[Path, int, str]]:
+    findings: list[tuple[Path, int, str]] = []
+    for path in BACKEND_APP.rglob("*.py"):
+        if path in CALL_EXEMPT_FILES:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if _CALL_RE.search(line):
+                findings.append((path, lineno, line.strip()))
+    return findings
+
+
+def test_set_operational_state_called_only_from_state_module() -> None:
+    findings = _scan_calls()
+    formatted = "\n".join(f"  {path}:{lineno}: {line}" for path, lineno, line in findings)
+    assert not findings, (
+        "set_operational_state must only be called by apply_derived_state in "
+        "app/devices/services/state.py. Write the durable fact and call "
+        "IntentService.mark_dirty_and_reconcile (or register/revoke intents) instead:\n"
+        f"{formatted}"
+    )

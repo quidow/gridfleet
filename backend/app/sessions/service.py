@@ -17,11 +17,10 @@ from app.core.observability import get_logger
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceEventType, DeviceOperationalState, DeviceType
-from app.devices.services.event import record_event
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
 from app.devices.services.observation_reason import ObservationReason
-from app.devices.services.state import GATING_VIOLATION, set_operational_state
+from app.devices.services.state import GATING_VIOLATION
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
@@ -615,27 +614,12 @@ class SessionCrudService:
             session = await db.get(Session, inserted_id)
             assert session is not None
             if device is not None:
-                prev_op = device.operational_state
-                await set_operational_state(
-                    device,
-                    DeviceOperationalState.busy,
-                    publish_event=False,
-                    severity="info",
+                await IntentService(db).mark_dirty_and_reconcile(
+                    device.id,
+                    reason=f"session {session_id} registered",
                     publisher=self._publisher,
+                    observed_reason=ObservationReason.session,
                 )
-                if prev_op is not DeviceOperationalState.busy:
-                    # The reconciler records audit rows only for derived transitions;
-                    # this direct-writer path must record its own (F1).
-                    await record_event(
-                        db,
-                        device.id,
-                        DeviceEventType.session_started,
-                        {
-                            "from": prev_op.value,
-                            "to": DeviceOperationalState.busy.value,
-                            "reason": ObservationReason.session.value,
-                        },
-                    )
             queue_session_started_event(
                 db,
                 session,
