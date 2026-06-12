@@ -38,8 +38,8 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
-    "ruff>=0.15.16",
-    "datamodel-code-generator==0.62.0",
+    "ruff>=0.15.17",
+    "datamodel-code-generator==0.63.0",
 ]
 
 [tool.pytest.ini_options]
