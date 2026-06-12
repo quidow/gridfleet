@@ -88,6 +88,26 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// ureq 3 strips the response off `Error::StatusCode`, so error-path asserts
+/// that inspect the body need `http_status_as_error(false)`.
+fn get_any_status(url: &str) -> ureq::http::Response<ureq::Body> {
+    ureq::get(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .unwrap()
+}
+
+fn post_any_status(url: &str, body: &str) -> ureq::http::Response<ureq::Body> {
+    ureq::post(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .send(body)
+        .unwrap()
+}
+
 fn spawn_router(backend_addr: &str) -> Router {
     let listen_port = free_port();
     let child = Command::new(env!("CARGO_BIN_EXE_gridfleet-router"))
@@ -131,7 +151,8 @@ fn proxies_session_commands_via_rebuilt_routes() {
     let body = ureq::get(&format!("{base}/status"))
         .call()
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["value"]["ready"], true, "got: {body}");
@@ -139,9 +160,10 @@ fn proxies_session_commands_via_rebuilt_routes() {
     // Known session command -> proxied to stub appium (cache miss triggers one
     // rebuild, then the route resolves).
     let body = ureq::post(&format!("{base}/session/known-session/url"))
-        .send_string(r#"{"url":"http://example.com"}"#)
+        .send(r#"{"url":"http://example.com"}"#)
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["upstream"], "appium", "got: {body}");
@@ -150,30 +172,22 @@ fn proxies_session_commands_via_rebuilt_routes() {
     assert!(hits_after_known >= 1, "expected a routes rebuild on miss");
 
     // Unknown session -> 404 invalid session id, AND a fresh routes refresh.
-    let err = ureq::get(&format!("{base}/session/unknown/url")).call();
-    match err {
-        Err(ureq::Error::Status(404, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
-        }
-        other => panic!("expected 404, got {other:?}"),
-    }
+    let mut resp = get_any_status(&format!("{base}/session/unknown/url"));
+    assert_eq!(resp.status(), 404, "expected 404");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
     assert!(
         routes_hits.load(Ordering::SeqCst) > hits_after_known,
         "router must refresh routes once before answering 404"
     );
 
     // Unknown command -> 404 unknown command.
-    let err = ureq::get(&format!("{base}/nonsense")).call();
-    match err {
-        Err(ureq::Error::Status(404, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "unknown command", "got: {body}");
-        }
-        other => panic!("expected 404, got {other:?}"),
-    }
+    let mut resp = get_any_status(&format!("{base}/nonsense"));
+    assert_eq!(resp.status(), 404, "expected 404");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "unknown command", "got: {body}");
 }
 
 #[test]
@@ -183,9 +197,9 @@ fn serves_metrics() {
     let router = spawn_router(&backend_addr);
     let base = format!("http://127.0.0.1:{}", router.port);
 
-    let resp = ureq::get(&format!("{base}/metrics")).call().unwrap();
+    let mut resp = ureq::get(&format!("{base}/metrics")).call().unwrap();
     assert_eq!(resp.status(), 200);
-    let body = resp.into_string().unwrap();
+    let body = resp.body_mut().read_to_string().unwrap();
     assert!(
         body.contains("gridfleet_router"),
         "metrics body missing prefix: {body}"
@@ -202,9 +216,10 @@ fn streams_large_bodies() {
     let blob = "x".repeat(2_000_000);
     let payload = format!("{{\"data\":\"{blob}\"}}");
     let resp = ureq::post(&format!("{base}/session/known-session/value"))
-        .send_string(&payload)
+        .send(payload.as_str())
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let echoed = v["body"].as_str().unwrap();
@@ -335,9 +350,10 @@ fn new_session_allocates_creates_and_confirms() {
 
     // POST /session: response is appium's body byte-identical.
     let body = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
+        .send(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     assert_eq!(body, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
     assert_eq!(counts.confirms.load(Ordering::SeqCst), 1, "must confirm");
@@ -345,9 +361,10 @@ fn new_session_allocates_creates_and_confirms() {
     // Subsequent command proxies WITHOUT a /routes fetch (route inserted).
     let routes_before = counts.routes.load(Ordering::SeqCst);
     let body = ureq::post(&format!("{base}/session/app-1/url"))
-        .send_string(r#"{"url":"http://example.com"}"#)
+        .send(r#"{"url":"http://example.com"}"#)
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["upstream"], "appium", "got: {body}");
@@ -370,9 +387,10 @@ fn new_session_queue_then_allocated() {
     let base = format!("http://127.0.0.1:{}", router.port);
 
     let body = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
+        .send(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     assert_eq!(body, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
     assert_eq!(counts.confirms.load(Ordering::SeqCst), 1, "must confirm");
@@ -387,16 +405,14 @@ fn new_session_no_match_returns_w3c_error() {
     let router = spawn_router(&backend_addr);
     let base = format!("http://127.0.0.1:{}", router.port);
 
-    let err = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
-    match err {
-        Err(ureq::Error::Status(500, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
-        }
-        other => panic!("expected 500, got {other:?}"),
-    }
+    let mut resp = post_any_status(
+        &format!("{base}/session"),
+        r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#,
+    );
+    assert_eq!(resp.status(), 500, "expected 500");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "session not created", "got: {body}");
 }
 
 #[test]
@@ -412,19 +428,16 @@ fn new_session_appium_failure_reports_fail() {
     let router = spawn_router(&backend_addr);
     let base = format!("http://127.0.0.1:{}", router.port);
 
-    let err = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
-    match err {
-        Err(ureq::Error::Status(500, resp)) => {
-            let body = resp.into_string().unwrap();
-            // Appium's error body passes through unchanged.
-            assert_eq!(
-                body,
-                r#"{"value":{"error":"session not created","message":"boom","stacktrace":""}}"#
-            );
-        }
-        other => panic!("expected 500, got {other:?}"),
-    }
+    let mut resp = post_any_status(
+        &format!("{base}/session"),
+        r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#,
+    );
+    assert_eq!(resp.status(), 500, "expected 500");
+    // Appium's error body passes through unchanged.
+    assert_eq!(
+        resp.body_mut().read_to_string().unwrap(),
+        r#"{"value":{"error":"session not created","message":"boom","stacktrace":""}}"#
+    );
     assert_eq!(counts.fails.load(Ordering::SeqCst), 1, "must report fail");
 }
 
@@ -514,16 +527,14 @@ fn new_session_confirm_failure_rolls_back() {
     let base = format!("http://127.0.0.1:{}", router.port);
 
     // Confirm 409 -> client gets 500 "session not created"; no route inserted.
-    let err = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
-    match err {
-        Err(ureq::Error::Status(500, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
-        }
-        other => panic!("expected 500, got {other:?}"),
-    }
+    let mut resp = post_any_status(
+        &format!("{base}/session"),
+        r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#,
+    );
+    assert_eq!(resp.status(), 500, "expected 500");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "session not created", "got: {body}");
 
     // The router must have rolled the Appium session back via DELETE.
     assert_eq!(
@@ -533,15 +544,11 @@ fn new_session_confirm_failure_rolls_back() {
     );
 
     // No route was inserted: a follow-up command 404s (backend /routes empty).
-    let err = ureq::get(&format!("{base}/session/app-1/url")).call();
-    match err {
-        Err(ureq::Error::Status(404, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
-        }
-        other => panic!("expected 404, got {other:?}"),
-    }
+    let mut resp = get_any_status(&format!("{base}/session/app-1/url"));
+    assert_eq!(resp.status(), 404, "expected 404");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
 }
 
 /// Backend stub for the DELETE-against-dead-upstream flow (F4). Serves
@@ -624,15 +631,11 @@ fn delete_against_dead_upstream_still_notifies_ended() {
 
     // The route was pruned: a follow-up command 404s locally (the post-prune
     // /routes refetch returns empty).
-    let err = ureq::get(&format!("{base}/session/dead-session/url")).call();
-    match err {
-        Err(ureq::Error::Status(404, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
-        }
-        other => panic!("expected 404 after prune, got {other:?}"),
-    }
+    let mut resp = get_any_status(&format!("{base}/session/dead-session/url"));
+    assert_eq!(resp.status(), 404, "expected 404 after prune");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
 }
 
 /// Raw-TCP upstream stub speaking the HTTP/1.1 upgrade handshake: replies 101
@@ -818,7 +821,7 @@ fn delete_answered_5xx_still_notifies_ended_and_prunes() {
 
     // The 500 is relayed to the client unchanged.
     match ureq::delete(&format!("{base}/session/dead-session")).call() {
-        Err(ureq::Error::Status(500, _)) => {}
+        Err(ureq::Error::StatusCode(500)) => {}
         other => panic!("expected relayed 500, got {other:?}"),
     }
 
@@ -833,15 +836,11 @@ fn delete_answered_5xx_still_notifies_ended_and_prunes() {
     }
 
     // The route was pruned: a follow-up command 404s locally.
-    let err = ureq::get(&format!("{base}/session/dead-session/url")).call();
-    match err {
-        Err(ureq::Error::Status(404, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
-        }
-        other => panic!("expected 404 after prune, got {other:?}"),
-    }
+    let mut resp = get_any_status(&format!("{base}/session/dead-session/url"));
+    assert_eq!(resp.status(), 404, "expected 404 after prune");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
 }
 
 /// Backend stub for the unparseable-target-after-confirm flow (F8). Allocate
@@ -900,16 +899,14 @@ fn new_session_unparseable_target_rolls_back() {
 
     // Create: allocate ok, Appium create ok, confirm ok, but target unparseable
     // -> client gets 500 "session not created".
-    let err = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
-    match err {
-        Err(ureq::Error::Status(500, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
-        }
-        other => panic!("expected 500, got {other:?}"),
-    }
+    let mut resp = post_any_status(
+        &format!("{base}/session"),
+        r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#,
+    );
+    assert_eq!(resp.status(), 500, "expected 500");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "session not created", "got: {body}");
 
     // The router rolled the Appium session back via DELETE.
     assert_eq!(
@@ -986,9 +983,10 @@ fn confirm_per_request_timeout_triggers_retry() {
     // First confirm times out at 10s -> 2s sleep -> second confirm 200 -> the
     // session is created successfully and the body is relayed.
     let body = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
+        .send(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     let elapsed = started.elapsed();
     assert_eq!(body, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
@@ -1136,19 +1134,14 @@ fn new_session_client_gone_rolls_back() {
 
     // No route survives: a follow-up command on a FRESH connection 404s after a
     // routes refetch returns empty.
-    let err = ureq::get(&format!(
+    let mut resp = get_any_status(&format!(
         "http://127.0.0.1:{}/session/app-1/url",
         router.port
-    ))
-    .call();
-    match err {
-        Err(ureq::Error::Status(404, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
-        }
-        other => panic!("expected 404 after rollback prune, got {other:?}"),
-    }
+    ));
+    assert_eq!(resp.status(), 404, "expected 404 after rollback prune");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
 }
 
 /// Backend stub for the confirm-503-then-204 flow (F8 / finding #8). Allocate
@@ -1205,9 +1198,10 @@ fn new_session_confirm_503_retries_then_succeeds() {
     // First confirm 503 -> retry (2s sleep) -> second confirm 204 -> success;
     // Appium's create body is relayed byte-identical.
     let body = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
+        .send(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
         .unwrap()
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .unwrap();
     assert_eq!(body, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
     assert_eq!(
@@ -1287,16 +1281,14 @@ fn new_session_missing_session_id_sweeps_and_fails() {
     let base = format!("http://127.0.0.1:{}", router.port);
 
     // Create: 200 with no sessionId -> client gets 500 "session not created".
-    let err = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
-    match err {
-        Err(ureq::Error::Status(500, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
-        }
-        other => panic!("expected 500, got {other:?}"),
-    }
+    let mut resp = post_any_status(
+        &format!("{base}/session"),
+        r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#,
+    );
+    assert_eq!(resp.status(), 500, "expected 500");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "session not created", "got: {body}");
 
     // The backend allocation was failed (not confirmed).
     assert_eq!(counts.fails.load(Ordering::SeqCst), 1, "must report fail");
@@ -1357,24 +1349,22 @@ fn new_session_backend_auth_failure_fails_immediately() {
     // the create immediately (well under the new-session deadline), not spin
     // the 2s-sleep retry loop.
     let started = Instant::now();
-    let err = ureq::post(&format!("{base}/session"))
-        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
+    let mut resp = post_any_status(
+        &format!("{base}/session"),
+        r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#,
+    );
     let elapsed = started.elapsed();
-    match err {
-        Err(ureq::Error::Status(500, resp)) => {
-            let body = resp.into_string().unwrap();
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
-            assert!(
-                v["value"]["message"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("router misconfigured"),
-                "expected a distinct misconfig message, got: {body}"
-            );
-        }
-        other => panic!("expected 500, got {other:?}"),
-    }
+    assert_eq!(resp.status(), 500, "expected 500");
+    let body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["value"]["error"], "session not created", "got: {body}");
+    assert!(
+        v["value"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("router misconfigured"),
+        "expected a distinct misconfig message, got: {body}"
+    );
     assert!(
         elapsed < Duration::from_secs(2),
         "router must fail fast on a permanent auth error, took {elapsed:?}"
