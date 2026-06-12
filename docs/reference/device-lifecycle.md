@@ -27,19 +27,17 @@ column.
      persisted column.
    - Emits the mapped event if the value actually changed.
 
-`apply_derived_state` has a single production caller: the `device_intent_reconciler`
-loop.  Besides that derived path, `set_operational_state` has **four direct
-(non-reconciler) production callers** for specific entry/exit states:
-
-- `app.verification.services.execution` — transient `verifying` entry state.
-- `app.sessions.service` (`register_session`) — sets `busy` on session registration.
-- `app.appium_nodes.services.heartbeat` — host-offline path that marks every device
-  on a downed host `offline`.
-- `app.runs.service_lifecycle_release` (`release_devices`) — restores the ready
-  operational state when a run ends.
-
-The verification pass / update-failure terminals are reconciler-derived, not direct
-writes.
+`apply_derived_state` (invoked by `reconcile_device` / `IntentService.*_and_reconcile`)
+is the **only** runtime writer of `operational_state`. There are no direct
+(non-reconciler) callers of `set_operational_state` left: observation and lifecycle
+sites — host-offline cascade, run release, session registration, verification entry —
+write durable facts (health flags, session rows, `maintenance_reason`, verification-lease
+intents) and trigger an inline reconcile via `IntentService.mark_dirty_and_reconcile` /
+`register_intents_and_reconcile`, so the state is still written synchronously before
+commit, just via derivation. Device-creation paths still set the initial value at
+construction time (`app.devices.services.write`). The static test
+`tests/test_no_direct_device_state_writes.py` enforces both rules (the call-site scan
+and the attribute-assignment scan), alongside the runtime guard.
 
 ### Derived axes at a glance
 
