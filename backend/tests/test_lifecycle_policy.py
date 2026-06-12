@@ -482,14 +482,17 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
 
 
 @pytest.mark.db
-async def test_auto_recovery_registers_node_running_precondition_on_intents(
+async def test_auto_recovery_registers_ttl_bounded_intents(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Both auto_recovery:* sibling intents must carry the node_running precondition.
+    """Both auto_recovery:* sibling intents must be TTL-bounded, NOT node_running-precondition.
 
-    Without it, the rows persist until the next recovery cycle overwrites them.
-    With it, the precondition sweep auto-retires them once the node is observed running.
+    The node_running precondition retired the intents the instant the node was observed
+    running — but that is well before the device finishes verifying to available, so the
+    precondition sweep reaped them mid-recovery and the node was torn down, pinning a
+    reachable device offline (recovery suppressed: 2026-06-11 gate roku-04/S14, ftv-12/S24).
+    A deadline-bounded intent self-expires and the sweep cannot reap it early.
     """
     with state_write_guard.bypass():
         device = Device(
@@ -545,14 +548,13 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
         .all()
     )
     assert len(rows) == 2, f"expected both auto_recovery siblings, got {[r.source for r in rows]}"
-    expected_precondition = {
-        "kind": "node_running",
-        "device_id": str(device.id),
-        "expected": False,
-    }
     for row in rows:
-        assert row.precondition == expected_precondition, (
-            f"{row.source} missing node_running precondition: {row.precondition!r}"
+        assert row.precondition is None, (
+            f"{row.source} still carries a precondition ({row.precondition!r}); the sweep will "
+            "reap it the instant the node is observed running, before the device is available"
+        )
+        assert row.expires_at is not None, (
+            f"{row.source} is not TTL-bounded (expires_at is None); recovery intents must self-expire"
         )
 
 
@@ -726,6 +728,99 @@ async def test_auto_recovery_start_intent_survives_sweep_when_observed_running_i
     assert start_intent is not None, (
         "recovery start intent was never registered or was reaped by the precondition "
         "sweep while observed_running was stale; the node can never be told to start"
+    )
+
+
+@pytest.mark.db
+async def test_auto_recovery_start_intent_survives_sweep_after_node_comes_up(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Normal recovery: the start intent must survive the precondition sweep once the node
+    is legitimately observed running, all the way until the device reaches available.
+
+    The ``node_running expected=False`` precondition retires the intent the instant
+    ``observed_running`` flips True — but a freshly recovered node is observed running
+    well BEFORE the device finishes verifying to available. Reaping the intents then drops
+    ``desired_state`` back to ``stopped`` and the appium_reconciler tears the node down as a
+    ``db_state_not_running`` orphan, pinning the device offline — recovery suppressed on a
+    reachable device (2026-06-11 gate roku-04/S14, ftv-12/S24). Recovery intents must be
+    TTL-bounded on the normal path too (not only stale-offline), so the sweep cannot reap
+    them early.
+    """
+    from app.devices.services.intent_evaluator import reconcile_unsatisfied_preconditions
+
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="recovery-node-up",
+            connection_target="recovery-node-up",
+            name="Recovery Node Up Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    # Node DOWN at recovery time (no pid/active_connection_target => observed_running False)
+    # => the genuine NORMAL recovery path (NOT stale-offline, which needs observed_running True).
+    with state_write_guard.bypass():
+        node = AppiumNode(device_id=device.id, port=4723)
+        db_session.add(node)
+    await db_session.commit()
+
+    viability = AsyncMock()
+    viability.run_session_viability_probe = AsyncMock(return_value={"status": "passed"})
+
+    await _make_svc(publisher=event_bus, viability=viability).attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="Recovering offline device",
+    )
+
+    start_intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+            )
+        )
+    ).scalar_one_or_none()
+    assert start_intent is not None, "normal recovery never registered the node start intent"
+    assert start_intent.expires_at is not None, (
+        "recovery start intent is precondition-bound, not TTL-bounded; the precondition sweep "
+        "will reap it the instant the node is observed running, before the device reaches available"
+    )
+
+    # The agent brings the node up: observed_running flips True (legitimately, mid-recovery).
+    with state_write_guard.bypass():
+        node.pid = 4242
+        node.active_connection_target = "recovery-node-up"
+    await db_session.commit()
+
+    # A precondition sweep must NOT reap the recovery intents just because the node is now
+    # observed running — recovery is not complete until the device is available.
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    survivor = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+            )
+        )
+    ).scalar_one_or_none()
+    assert survivor is not None, (
+        "normal recovery start intent was reaped by the precondition sweep the moment the node "
+        "came up running — desired_state drops to stopped and the device is pinned offline"
     )
 
 
