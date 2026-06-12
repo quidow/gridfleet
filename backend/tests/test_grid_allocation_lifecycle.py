@@ -206,6 +206,46 @@ async def test_mark_ended_run_terminal_marks_error(
     assert allocated_pending.ended_at is not None
 
 
+@pytest.mark.db
+async def test_close_reads_committed_run_state_over_stale_attached_run(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """The session_sync sweep eager-loads ``session.run`` at sweep start. If the run is
+    cancelled AFTER that load (the TR12 race), the close must re-read the run's COMMITTED
+    state and stamp ``error`` — trusting the stale ``active`` object masks the cancelled
+    run's session as ``passed`` (#7 outcome-masking lost-update)."""
+    from sqlalchemy import update
+
+    from app.runs.models import TestRun
+    from app.sessions.service import close_running_session
+
+    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="stale-race")
+    run = await create_reserved_run(
+        db_session, name="stale-active-run", devices=[seeded_available_device], state=RunState.active
+    )
+    allocated_pending.run_id = run.id
+    await db_session.flush()
+
+    # The cancel commits out-of-band; the identity-mapped ``run`` keeps its stale ``active``
+    # view — exactly the snapshot the sweep eager-loaded before the cancel committed.
+    await db_session.execute(
+        update(TestRun)
+        .where(TestRun.id == run.id)
+        .values(state=RunState.cancelled)
+        .execution_options(synchronize_session=False)
+    )
+    assert run.state == RunState.active  # ORM view kept stale, mirroring the sweep's eager-load
+
+    await close_running_session(db_session, allocated_pending, attached_run=run, publisher=event_bus)
+
+    await db_session.refresh(allocated_pending)
+    assert allocated_pending.status == SessionStatus.error
+    assert allocated_pending.error_type == "run_released"
+
+
 async def _claimed_ticket_for(db_session: AsyncSession, allocated_pending: Session) -> GridSessionQueueTicket:
     """Return the ticket that claimed ``allocated_pending`` (try_allocate set it)."""
     stmt = select(GridSessionQueueTicket).where(GridSessionQueueTicket.session_row_id == allocated_pending.id)
