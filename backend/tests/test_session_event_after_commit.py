@@ -57,6 +57,28 @@ async def test_session_started_queues_after_commit(
     assert started[0]["device_id"] == str(device.id)
 
 
+async def test_session_started_emits_operational_state_changed(
+    db_session: AsyncSession,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Registration derives busy via the reconciler and emits the canonical
+    operational_state_changed bus event (previously suppressed via publish_event=False)."""
+    _, device = await seed_host_and_device(db_session, identity="session-start-op-1")
+    event_bus_capture.clear()
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
+    await crud.register_session(
+        db_session,
+        session_id="ssn-start-op-1",
+        test_name="contract",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    await settle_after_commit_tasks()
+
+    transitions = [p for n, p in event_bus_capture if n == "device.operational_state_changed"]
+    assert any(p.get("new_operational_state") == "busy" for p in transitions)
+
+
 async def test_session_ended_queues_after_status_update(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
