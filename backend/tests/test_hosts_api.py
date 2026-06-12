@@ -480,6 +480,40 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
 
+async def test_reregister_closes_open_circuit_breaker(client: AsyncClient) -> None:
+    """A re-registering agent is live evidence the backend can reach it again.
+
+    If its circuit breaker was open (the agent was unreachable, e.g. mid-restart), the
+    re-register must close it so the reconciler re-observes the node on the next tick instead
+    of waiting out the cooldown — otherwise the device can be reported recovered while its
+    AppiumNode row still holds the stale pre-restart pid (the S27 agent-restart no-op race).
+    """
+    body = {
+        "hostname": "reconnect-host",
+        "ip": "192.168.1.211",
+        "os_type": "linux",
+        "agent_port": 5100,
+        "agent_version": "0.3.0",
+        "capabilities": {"orchestration_contract_version": 2},
+    }
+    first = await client.post("/api/hosts/register", json=body)
+    assert first.status_code in (200, 201)
+
+    ip = body["ip"]
+    threshold = test_circuit_breaker.failure_threshold()
+    for _ in range(threshold):
+        await test_circuit_breaker.record_failure(ip, error="timeout")
+    assert test_circuit_breaker.snapshot(ip)["status"] == "open"
+
+    # Re-register (same hostname -> re-register path) must close the breaker.
+    second = await client.post("/api/hosts/register", json=body)
+    assert second.status_code == 200
+    assert test_circuit_breaker.snapshot(ip)["status"] == "closed", (
+        "re-register did not close the open breaker; the reconciler keeps skipping the host "
+        "until the cooldown elapses, leaving a stale AppiumNode observation"
+    )
+
+
 async def test_hosts_list_and_detail_include_recommended_agent_version(client: AsyncClient) -> None:
     with patch("app.hosts.router._fire_and_forget"):
         create_resp = await client.post(
