@@ -33,7 +33,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.reservation_query import device_is_reserved
-from app.devices.services.state import ready_operational_state, set_operational_state
 from app.grid import appium_direct
 from app.grid.allocation import resolve_router_target
 from app.sessions import service as session_service
@@ -136,11 +135,9 @@ class RunReleaseService:
             ):
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            await set_operational_state(
-                device,
-                await ready_operational_state(db, device),
+            await IntentService(db).mark_dirty_and_reconcile(
+                device.id,
                 reason=f"Run '{run.name}' ended ({run.state.value})",
-                severity="info",
                 publisher=self._publisher,
             )
             devices_pending_lifecycle_cleanup.append(device.id)

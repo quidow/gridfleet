@@ -114,20 +114,6 @@ def appium_node_stop_in_flight(device: Device) -> bool:
     return node.desired_state == AppiumDesiredState.stopped or bool(node.stop_pending)
 
 
-async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOperationalState:
-    """Project readiness into the operational axis."""
-    if device.operational_state is DeviceOperationalState.verifying:
-        return DeviceOperationalState.verifying
-    if appium_node_stop_in_flight(device):
-        # Intent-driven stops (graceful health-failure deferral, cooldown,
-        # maintenance) must not surface as ``available``. The relay is on
-        # its way out; the device is offline-bound until the intent clears.
-        return DeviceOperationalState.offline
-    if await is_ready_for_use_async(db, device) and device_allows_allocation(device):
-        return DeviceOperationalState.available
-    return DeviceOperationalState.offline
-
-
 # --- derived-state evaluation (formerly state_derivation.py) ---
 
 GATING_VIOLATION = Counter(

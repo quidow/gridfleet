@@ -6,10 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.state import ready_operational_state, set_operational_state
+from app.devices.services.state import set_operational_state
 from app.hosts.models import Host
 from app.jobs.models import Job
-from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from app.verification.services.service import VerificationService
 from tests.helpers import (
@@ -125,55 +124,3 @@ async def test_set_operational_state_publishes_only_on_change(db_session: AsyncS
     assert events[0]["data"]["old_operational_state"] == "available"
     assert events[0]["data"]["new_operational_state"] == "busy"
     assert events[0]["data"]["reason"] == "Probe started"
-
-
-async def test_ready_operational_state_returns_offline_for_reserved_device(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="availability-status-2",
-            connection_target="availability-status-2",
-            name="Reserved Availability Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.flush()
-
-    run = TestRun(
-        name="Availability Reserved Run",
-        state=RunState.active,
-        requirements=[{"platform_id": "android_mobile", "count": 1}],
-        ttl_minutes=60,
-        heartbeat_timeout_sec=120,
-        reserved_devices=[
-            {
-                "device_id": str(device.id),
-                "identity_value": device.identity_value,
-                "connection_target": device.connection_target,
-                "pack_id": device.pack_id,
-                "platform_id": device.platform_id,
-                "os_version": device.os_version,
-                "host_ip": None,
-                "excluded": False,
-                "exclusion_reason": None,
-                "excluded_at": None,
-            }
-        ],
-    )
-    db_session.add(run)
-    await db_session.commit()
-
-    restored = await ready_operational_state(db_session, device)
-
-    assert restored == DeviceOperationalState.offline
