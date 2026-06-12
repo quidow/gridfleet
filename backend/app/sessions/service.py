@@ -22,7 +22,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.state import GATING_VIOLATION
 from app.runs import service as run_service
-from app.runs.models import TERMINAL_STATES, RunState
+from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.runs.models import TestRun
     from app.sessions.protocols import DeviceSessionLifecycle
 
 logger = get_logger(__name__)
@@ -159,7 +158,7 @@ def queue_session_ended_event(
     )
 
 
-def _apply_session_terminal_status(session: Session, *, attached_run: TestRun | None) -> None:
+def _apply_session_terminal_status(session: Session, *, run_state: RunState | None, run_error: str | None) -> None:
     """Decide and stamp the terminal status for a session being closed.
 
     A session whose owning run reached a non-``completed`` terminal state was
@@ -167,16 +166,17 @@ def _apply_session_terminal_status(session: Session, *, attached_run: TestRun | 
     the W3C teardown carries no outcome, so we default to ``passed`` (real
     outcomes are owned by run/test reporting). Shared by every session-close
     path (session_sync liveness + grid mark_ended) so they cannot drift.
+
+    ``run_state``/``run_error`` are the run's COMMITTED values, re-read by
+    ``close_running_session`` — never a stale eager-loaded snapshot (TR12 guard).
     """
-    if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
+    if run_state is not None and run_state in TERMINAL_STATES - {RunState.completed}:
         session.status = SessionStatus.error
         session.error_type = "run_released"
         # Prefer the run's own error (e.g. an operator's force-release reason); fall back
         # to a generic run-state message when the run carries none.
         session.error_message = (
-            attached_run.error
-            if attached_run.error
-            else f"Run ended while session was still running ({attached_run.state.value})"
+            run_error if run_error else f"Run ended while session was still running ({run_state.value})"
         )
     else:
         session.status = SessionStatus.passed
@@ -208,7 +208,20 @@ async def close_running_session(
     # (``running``) row always emits ended.
     never_confirmed = session.status == SessionStatus.pending
     session.ended_at = now_utc()
-    _apply_session_terminal_status(session, attached_run=attached_run)
+    # Re-read the owning run's COMMITTED state rather than trust ``attached_run``: a
+    # concurrent cancel/abort can terminalize the run AFTER the caller eager-loaded it
+    # (the session_sync sweep loads ``session.run`` at sweep start). Closing on the stale
+    # ``active`` snapshot masks a cancelled run's session as ``passed`` (TR12 / #7
+    # outcome-masking lost-update). A column read (not the identity-mapped, possibly-stale
+    # object) under default autoflush also picks up the cancel path's own pending state.
+    run_id = session.run_id or (attached_run.id if attached_run is not None else None)
+    run_state: RunState | None = None
+    run_error: str | None = None
+    if run_id is not None:
+        committed = (await db.execute(select(TestRun.state, TestRun.error).where(TestRun.id == run_id))).one_or_none()
+        if committed is not None:
+            run_state, run_error = committed.state, committed.error
+    _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
     if not never_confirmed:
         queue_session_ended_event(db, session, device=session.device, publisher=publisher)
     # Terminalize any allocation ticket whose claim minted this session (router DELETE
