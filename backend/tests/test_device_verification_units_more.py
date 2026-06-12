@@ -748,8 +748,6 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         save_device_id=device_id,
     )
     monkeypatch.setattr("app.verification.services.execution._revoke_verification_node_intent", AsyncMock())
-    machine_spy = AsyncMock()
-    monkeypatch.setattr("app.verification.services.execution.set_operational_state", machine_spy)
     mock_crud_upd = AsyncMock()
     mock_crud_upd.update_device = AsyncMock(return_value=locked)
 
@@ -766,9 +764,8 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         viability=viability_mock,
     )
     assert outcome.status == "completed"
-    # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer,
-    # not a direct set_operational_state.
-    machine_spy.assert_not_awaited()
+    # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer.
+    # The module no longer imports set_operational_state (enforced by test_no_direct_device_state_writes).
     execution._revoke_verification_node_intent.assert_awaited()
 
     update_device = SimpleNamespace(id=device_id, identity_value="update-device", name="old")
@@ -781,6 +778,9 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     monkeypatch.setattr(
         "app.verification.services.execution.device_locking.lock_device", AsyncMock(return_value=update_device)
     )
+    # Update-mode entry now registers the verification lease (derives verifying) instead of a
+    # direct set_operational_state; stub it out so the mock db isn't driven through the real reconcile.
+    monkeypatch.setattr("app.verification.services.execution._register_verification_node_intent", AsyncMock())
     monkeypatch.setattr("app.verification.services.execution._finalize_failure", AsyncMock())
 
     svc2 = VerificationExecutionService(
