@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.27.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.1...gridfleet-agent-v0.27.2) (2026-06-12)
+
+
+### Dependencies
+
+* **deps:** bump ruff in /agent in the python-dependencies group ([#585](https://github.com/quidow/gridfleet/issues/585)) ([cd06fa8](https://github.com/quidow/gridfleet/commit/cd06fa8d0e4360387c100f107f743892ef9f3feb))
+
 ## [0.27.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.0...gridfleet-agent-v0.27.1) (2026-06-11)
 
 
