@@ -171,6 +171,15 @@ async def register_host(
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
+    if not is_new:
+        # A re-registering agent is live evidence the backend can reach it again. If its
+        # circuit breaker is open (the agent was unreachable, e.g. mid-restart), close it now
+        # so the reconciler re-observes the node on the next tick instead of waiting out the
+        # cooldown — otherwise the device can be reported recovered while its AppiumNode row
+        # still holds the stale pre-restart pid (the S27 agent-restart no-op race). It is a
+        # no-op when the breaker is already closed, so healthy periodic refreshes are unaffected.
+        await agent_comm.circuit_breaker.record_success(host.ip)
+
     if is_new:
         response.status_code = 201
         if settings_services.service.get("agent.auto_accept_hosts"):
