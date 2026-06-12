@@ -20,7 +20,7 @@ log = "0.4"
 env_logger = "0.11"
 
 [dev-dependencies]
-ureq = "2"
+ureq = "3"
 tiny_http = "0.12"
 ring = "0.17"
 # Tests need SO_LINGER=0 to force an immediate RST on close (std's set_linger is
