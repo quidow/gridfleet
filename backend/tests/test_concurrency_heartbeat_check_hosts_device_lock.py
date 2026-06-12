@@ -11,6 +11,7 @@ from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import state as device_state
 from app.hosts.models import Host
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
@@ -40,7 +41,12 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
     race_attempted_lock = asyncio.Event()
     race_committed = asyncio.Event()
 
-    original_set_operational_state = heartbeat.set_operational_state
+    # The host-offline write now derives through update_device_checks -> reconcile ->
+    # apply_derived_state, which calls set_operational_state in app.devices.services.state
+    # (heartbeat no longer calls it directly). The row lock is still acquired by
+    # _apply_host_ping_result's lock_devices before that derivation, so gate on the
+    # state-module call to prove the lock window covers the offline write.
+    original_set_operational_state = device_state.set_operational_state
 
     async def gated_set_operational_state(
         device: Device,
@@ -81,7 +87,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
     async def heartbeat_caller() -> None:
         with (
             patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=_dead_result)),
-            patch.object(heartbeat, "set_operational_state", new=gated_set_operational_state),
+            patch.object(device_state, "set_operational_state", new=gated_set_operational_state),
             patch.object(heartbeat, "assert_current_leader", new=AsyncMock()),
         ):
             async with db_session_maker() as db:

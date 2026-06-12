@@ -61,7 +61,6 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
     entered_busy_write = asyncio.Event()
     allow_busy_write = asyncio.Event()
     import app.devices.services.state as _device_state_mod
-    import app.sessions.service as _session_service_mod
 
     original_set = _device_state_mod.set_operational_state
 
@@ -75,8 +74,9 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
             await asyncio.wait_for(allow_busy_write.wait(), timeout=2.0)
         return await original_set(dev, new_status, **kwargs)
 
+    # register_session now derives busy via the reconciler -> apply_derived_state, which calls
+    # set_operational_state in app.devices.services.state (the service no longer calls it directly).
     monkeypatch.setattr(_device_state_mod, "set_operational_state", gated_set)
-    monkeypatch.setattr(_session_service_mod, "set_operational_state", gated_set)
 
     async def register_running_session() -> None:
         async with db_session_maker() as session:
