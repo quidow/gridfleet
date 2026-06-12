@@ -25,7 +25,6 @@ from app.devices.services.intent_types import (
     RECOVERY,
     RESERVATION,
     IntentRegistration,
-    NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_policy_state import (
     CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
@@ -278,30 +277,22 @@ class LifecyclePolicyService:
                     publisher=self._publisher,
                 )
 
-                def _node_not_running_precondition() -> NodeRunningPrecondition:
-                    return {
-                        "kind": "node_running",
-                        "device_id": str(device.id),
-                        "expected": False,
-                    }
-
-                # The recovery start intents normally carry the node_running
-                # precondition so they auto-retire once the node is observed
-                # running. But when the observation is stale (stale_offline_observation),
-                # that precondition keys off the same unreliable
-                # ``observed_running`` and the precondition sweep would reap the
-                # intents within one reconciler tick — dropping desired_state back
-                # to ``stopped`` before the agent can start the node. Bound them by
-                # a deadline instead (the sweep cannot reap a TTL'd intent; it
-                # self-expires), mirroring ``exit_maintenance``.
-                if stale_offline_observation:
-                    startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
-                    viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
-                    recovery_intent_precondition = None
-                    recovery_intent_expiry = now() + timedelta(seconds=startup_timeout + viability_timeout + 60)
-                else:
-                    recovery_intent_precondition = _node_not_running_precondition()
-                    recovery_intent_expiry = None
+                # Recovery start intents are bounded by a DEADLINE, never the
+                # node_running precondition. That precondition keys off
+                # ``observed_running``, and the precondition sweep reaps the intents
+                # the instant the node is first observed running — which happens well
+                # before the device finishes verifying to ``available``. Reaping then
+                # drops desired_state back to ``stopped`` and the appium_reconciler
+                # tears the just-started node down as a ``db_state_not_running`` orphan,
+                # pinning a reachable device offline (recovery suppressed on a reachable
+                # device: 2026-06-11 gate roku-04/S14, ftv-12/S24; the stale-offline
+                # window already used a deadline for the same reason). A TTL'd intent
+                # self-expires and the sweep cannot reap it early; mirrors
+                # ``exit_maintenance``.
+                startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
+                viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
+                recovery_intent_precondition = None
+                recovery_intent_expiry = now() + timedelta(seconds=startup_timeout + viability_timeout + 60)
 
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
