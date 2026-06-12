@@ -18,10 +18,8 @@ from app.runs.models import TestRun
 from app.runs.schemas import ReservedDeviceInfo, RunCreate, UnavailableInclude
 from app.runs.service_allocator import RunAllocatorService, _build_device_info
 from app.runs.service_query import RunQueryService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
-_settings = FakeSettingsReader({})
 _query_svc = RunQueryService(capability=DeviceCapabilityService())
 
 
