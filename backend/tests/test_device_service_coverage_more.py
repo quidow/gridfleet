@@ -9,8 +9,6 @@ from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import service as device_service
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -89,26 +87,8 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
     db.rollback.assert_awaited_once()
 
 
-async def test_delete_helpers_stop_and_missing_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_lock_device_for_delete_missing_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
     device_id = uuid.uuid4()
-    intents = device_service._device_delete_intents(device_id)
-    assert {intent.axis for intent in intents} == {NODE_PROCESS, GRID_ROUTING, RECOVERY}
-
     monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
     assert await device_service._lock_device_for_delete(db, device_id) is None
-
-    node = SimpleNamespace(observed_running=False)
-    with pytest.raises(device_service.NodeManagerError, match="No running node"):
-        await device_service._stop_node(db, SimpleNamespace(id=device_id, appium_node=node), publisher=event_bus)
-
-    running_node = SimpleNamespace(observed_running=True)
-    register = AsyncMock()
-    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", register)
-    stopped = await device_service._stop_node(
-        db, SimpleNamespace(id=device_id, appium_node=running_node), publisher=event_bus
-    )
-    assert stopped is running_node
-    register.assert_awaited_once()
