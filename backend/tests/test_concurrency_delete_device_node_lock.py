@@ -1,6 +1,5 @@
 import asyncio
-from contextlib import suppress
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +11,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
@@ -21,23 +21,81 @@ from tests.helpers import test_event_bus as event_bus
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
 
-async def test_delete_device_locks_row_before_reading_node_state(
+def _crud() -> DeviceCrudService:
+    return DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
+
+
+async def test_delete_device_does_not_wait_for_running_node_to_stop(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """`delete_device` must serialize its node-state read with node starts."""
+    """`delete_device` must not block on an observed-running node.
 
+    The node's observed-running flag (`pid` + `active_connection_target`) only
+    clears after the agent stops Appium and an observation loop writes the fact
+    back — work that never happens inside the request. Delete must remove the
+    rows immediately; the leftover agent process is reaped asynchronously by the
+    `appium_reconciler` `no_db_row` orphan sweep.
+
+    The `register_intents_and_reconcile` no-op stands in for "the async stop has
+    not converged yet": if delete tried to drive the stop and wait for the flag
+    to flip, it would spin forever and hit the timeout.
+    """
     device = await create_device(
         db_session,
         host_id=db_host.id,
-        name="del-toctou",
+        name="del-running",
         operational_state=DeviceOperationalState.available,
     )
     with state_write_guard.bypass():
         node = AppiumNode(
             device_id=device.id,
             port=4724,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4724,
+            pid=12345,
+            active_connection_target="host:5555",
+        )
+    db_session.add(node)
+    await db_session.commit()
+    device_id = device.id
+    assert node.observed_running is True
+
+    with patch.object(IntentService, "register_intents_and_reconcile", new=AsyncMock()):
+        async with db_session_maker() as db:
+            deleted = await asyncio.wait_for(_crud().delete_device(db, device_id), timeout=5.0)
+    assert deleted is True
+
+    async with db_session_maker() as verify:
+        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one_or_none()
+        node_row = (
+            await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
+        ).scalar_one_or_none()
+    assert device_row is None, "device row survived delete"
+    assert node_row is None, "appium_node row stranded after device delete (cascade missing)"
+
+
+async def test_delete_device_concurrent_with_node_start_is_consistent(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Delete and a concurrent node-start must serialize on the device row lock
+    without deadlock, leaving a consistent end state: a successful delete removes
+    both the device and (via cascade) its node row, whichever committed first."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="del-concurrent-start",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4726,
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
             pid=None,
@@ -47,201 +105,39 @@ async def test_delete_device_locks_row_before_reading_node_state(
     await db_session.commit()
     device_id = device.id
 
-    delete_read_done = asyncio.Event()
-    delete_locked = asyncio.Event()
-    proceed_delete = asyncio.Event()
-    starter_attempting = asyncio.Event()
-    starter_committed = asyncio.Event()
-    stop_called = asyncio.Event()
-
-    original_lock_device = device_locking.lock_device
-
-    async def gated_lock_device(db: AsyncSession, did: object, **kwargs: object) -> Device:
-        locked = await original_lock_device(db, did, **kwargs)  # type: ignore[arg-type]
-        current = asyncio.current_task()
-        if did == device_id and current is not None and current.get_name() == "delete-device-task":
-            delete_locked.set()
-            await proceed_delete.wait()
-        return locked
-
-    async def observed_stop_node(
-        db: AsyncSession, dev: Device, *, publisher: object, caller: str = "device_delete"
-    ) -> AppiumNode:
-        stop_called.set()
-        assert dev.appium_node is not None
-        with state_write_guard.bypass():
-            dev.appium_node.pid = None
-        with state_write_guard.bypass():
-            dev.appium_node.active_connection_target = None
-        await db.flush()
-        return dev.appium_node
-
     async def deleter() -> bool:
         async with db_session_maker() as db:
-            crud = DeviceCrudService(
-                settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-            )
-            with (
-                patch.object(device_locking, "lock_device", new=gated_lock_device),
-                patch(
-                    "app.devices.services.service._stop_node",
-                    new=observed_stop_node,
-                ),
-            ):
-                return await crud.delete_device(db, device_id)
+            return await _crud().delete_device(db, device_id)
 
     async def starter() -> str:
-        wait_tasks = [
-            asyncio.create_task(delete_read_done.wait()),
-            asyncio.create_task(delete_locked.wait()),
-        ]
-        _, pending = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
         async with db_session_maker() as db:
-            starter_attempting.set()
             try:
-                locked_device = await device_locking.lock_device(db, device_id)
+                locked = await device_locking.lock_device(db, device_id)
             except NoResultFound:
                 return "deleted_before_start"
-            assert locked_device.appium_node is not None
+            assert locked.appium_node is not None
             with state_write_guard.bypass():
-                locked_device.appium_node.pid = 0
+                locked.appium_node.pid = 999
             with state_write_guard.bypass():
-                locked_device.appium_node.active_connection_target = ""
+                locked.appium_node.active_connection_target = "host:5555"
             await db.commit()
-            starter_committed.set()
             return "started"
 
-    delete_task = asyncio.create_task(deleter(), name="delete-device-task")
-    starter_task = asyncio.create_task(starter(), name="start-node-task")
-    await asyncio.wait_for(starter_attempting.wait(), timeout=5.0)
-    with suppress(TimeoutError):
-        await asyncio.wait_for(starter_committed.wait(), timeout=0.2)
-    proceed_delete.set()
     deleted, starter_result = await asyncio.wait_for(
-        asyncio.gather(delete_task, starter_task),
+        asyncio.gather(deleter(), starter()),
         timeout=5.0,
     )
+
+    assert starter_result in {"started", "deleted_before_start"}
 
     async with db_session_maker() as verify:
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one_or_none()
         node_row = (
             await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
         ).scalar_one_or_none()
-
-    if starter_result == "started":
-        assert stop_called.is_set(), (
-            "delete_device allowed a compliant concurrent node-start to mark "
-            "the node running, then deleted the device without stopping the "
-            "agent-owned node first"
-        )
-    else:
-        assert starter_result == "deleted_before_start"
 
     if deleted:
         assert device_row is None, "device row survived a successful delete"
         assert node_row is None, "appium_node row stranded after device delete"
     else:
         assert device_row is not None, "delete returned False but device is gone"
-
-
-async def test_delete_device_rechecks_node_state_after_stop_commit(
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """A start after stop_node's internal commit must be observed before delete."""
-
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="del-after-stop-race",
-        operational_state=DeviceOperationalState.available,
-    )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4725,
-            pid=0,
-            active_connection_target="",
-        )
-    db_session.add(node)
-    await db_session.commit()
-    device_id = device.id
-
-    first_stop_committed = asyncio.Event()
-    allow_delete_relock = asyncio.Event()
-    starter_committed = asyncio.Event()
-    stop_calls = 0
-
-    async def observed_stop_node(
-        db: AsyncSession, dev: Device, *, publisher: object, caller: str = "device_delete"
-    ) -> AppiumNode:
-        nonlocal stop_calls
-
-        stop_calls += 1
-        assert dev.appium_node is not None
-        with state_write_guard.bypass():
-            dev.appium_node.pid = None
-        with state_write_guard.bypass():
-            dev.appium_node.active_connection_target = None
-        await db.commit()
-        if stop_calls == 1:
-            first_stop_committed.set()
-            await allow_delete_relock.wait()
-        return dev.appium_node
-
-    async def deleter() -> bool:
-        async with db_session_maker() as db:
-            crud = DeviceCrudService(
-                settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-            )
-            with patch(
-                "app.devices.services.service._stop_node",
-                new=observed_stop_node,
-            ):
-                return await crud.delete_device(db, device_id)
-
-    async def starter() -> str:
-        await first_stop_committed.wait()
-        async with db_session_maker() as db:
-            try:
-                locked_device = await device_locking.lock_device(db, device_id)
-            except NoResultFound:
-                return "deleted_before_start"
-            assert locked_device.appium_node is not None
-            with state_write_guard.bypass():
-                locked_device.appium_node.pid = 0
-            with state_write_guard.bypass():
-                locked_device.appium_node.active_connection_target = ""
-            await db.commit()
-            starter_committed.set()
-            return "started"
-
-    delete_task = asyncio.create_task(deleter())
-    starter_task = asyncio.create_task(starter())
-    await asyncio.wait_for(starter_committed.wait(), timeout=5.0)
-    allow_delete_relock.set()
-    deleted, starter_result = await asyncio.wait_for(
-        asyncio.gather(delete_task, starter_task),
-        timeout=5.0,
-    )
-
-    assert starter_result == "started"
-    assert stop_calls >= 2, (
-        "delete_device re-locked after stop_node committed but did not re-check "
-        "that a concurrent starter had made the node running again"
-    )
-    assert deleted is True
-
-    async with db_session_maker() as verify:
-        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one_or_none()
-        node_row = (
-            await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
-        ).scalar_one_or_none()
-
-    assert device_row is None
-    assert node_row is None

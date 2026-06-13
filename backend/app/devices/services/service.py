@@ -1,4 +1,3 @@
-import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -8,10 +7,7 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumNode
 from app.core.leader import state_store as control_plane_state_store
-from app.core.observability import sanitize_log_value
 from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import (
@@ -41,20 +37,11 @@ from app.devices.services.connectivity import (
     PROBE_UNANSWERED_NAMESPACE,
 )
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import (
-    GRID_ROUTING,
-    NODE_PROCESS,
-    PRIORITY_DEVICE_DELETE,
-    RECOVERY,
-    IntentRegistration,
-)
 from app.devices.services.reservation_query import active_reservation_exists
 from app.events.protocols import EventPublisher
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 
-logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]
 DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
@@ -261,11 +248,12 @@ class DeviceCrudService:
         if device is None:
             return False
 
-        # Stop the running Appium node on the agent before deleting
-        if device.appium_node and device.appium_node.observed_running:
-            device = await _stop_running_node_for_delete(db, device, device_id, publisher=self._publisher)
-            if device is None:
-                return True
+        # Deleting the device row cascade-removes its AppiumNode row. We do NOT
+        # wait for the agent's Appium process to stop here: that stop is async
+        # (agent poll + observation), so blocking on it would hang the request
+        # until an unrelated background loop converged — or forever if the agent
+        # is unreachable. The leftover process is reaped by the appium_reconciler
+        # `no_db_row` orphan sweep once it has no DB row to back it.
 
         # Clean up control_plane_state rows keyed by identity_value before deleting
         # the device row, so the cleanup stays in the same transaction.
@@ -371,61 +359,3 @@ async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Dev
         return await device_locking.lock_device(db, device_id)
     except NoResultFound:
         return None
-
-
-def _device_delete_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
-    return [
-        IntentRegistration(
-            source=f"device_delete:node:{device_id}",
-            axis=NODE_PROCESS,
-            payload={"action": "stop", "priority": PRIORITY_DEVICE_DELETE, "stop_mode": "graceful"},
-        ),
-        IntentRegistration(
-            source=f"device_delete:grid:{device_id}",
-            axis=GRID_ROUTING,
-            payload={"accepting_new_sessions": False, "priority": PRIORITY_DEVICE_DELETE},
-        ),
-        IntentRegistration(
-            source=f"device_delete:recovery:{device_id}",
-            axis=RECOVERY,
-            payload={"allowed": False, "priority": PRIORITY_DEVICE_DELETE, "reason": "Device delete requested"},
-        ),
-    ]
-
-
-async def _stop_node(
-    db: AsyncSession, device: Device, *, publisher: EventPublisher, caller: str = "device_delete"
-) -> AppiumNode:
-    """Register stop intent for a single device."""
-    node: AppiumNode | None = device.appium_node
-    if node is None or not node.observed_running:
-        raise NodeManagerError(f"No running node for device {device.id}")
-    await IntentService(db).register_intents_and_reconcile(
-        device_id=device.id,
-        intents=_device_delete_intents(device.id),
-        reason=f"{caller} requested",
-        publisher=publisher,
-    )
-    await db.commit()
-    await db.refresh(node)
-    return node
-
-
-async def _stop_running_node_for_delete(
-    db: AsyncSession, device: Device, device_id: uuid.UUID, *, publisher: EventPublisher
-) -> Device | None:
-    while device.appium_node and device.appium_node.observed_running:
-        try:
-            await _stop_node(db, device, caller="device_delete", publisher=publisher)
-        except Exception as e:  # noqa: BLE001 — best-effort node stop before device delete; delete must proceed
-            logger.warning(
-                "Failed to stop node for device %s before delete: %s",
-                sanitize_log_value(device_id),
-                sanitize_log_value(e),
-            )
-            return await _lock_device_for_delete(db, device_id)
-        relocked = await _lock_device_for_delete(db, device_id)
-        if relocked is None:
-            return None
-        device = relocked
-    return device

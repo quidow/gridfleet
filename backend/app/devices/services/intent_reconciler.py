@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import cast, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.exc import NoResultFound
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
@@ -360,7 +361,13 @@ async def reconcile_device(
     packs: dict[str, DriverPack] | None = None,
 ) -> None:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
-    device = await device_locking.lock_device(db, device_id)
+    try:
+        device = await device_locking.lock_device(db, device_id)
+    except NoResultFound:
+        # The device row was deleted concurrently (e.g. an operator delete
+        # between the dirty-scan select and this lock). Nothing to reconcile —
+        # skip without failing the whole reconcile cycle.
+        return
     node = device.appium_node
     if node is None:
         # No Appium node — skip intent evaluation but still derive device state
