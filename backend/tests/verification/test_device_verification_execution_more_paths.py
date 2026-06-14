@@ -143,6 +143,11 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
     revoke_mock = AsyncMock()
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke_mock)
+    # The update-mode failure path also strips the operator:stop branding + stray
+    # operator:start via a real IntentService; mock it for this db=MagicMock unit test.
+    strip_revoke = AsyncMock()
+    strip_intent_service = MagicMock(revoke_intents_and_reconcile=strip_revoke)
+    monkeypatch.setattr(execution, "IntentService", MagicMock(return_value=strip_intent_service))
     mark_mock = AsyncMock(return_value=True)
     review_mock = MagicMock()
     review_mock.mark_review_required = mark_mock
@@ -166,6 +171,11 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     # revoke carries the publisher for the derived emit.
     mark_mock.assert_awaited_once()
     revoke_mock.assert_awaited_once_with(db, locked, publisher=event_bus)
+    # The branding-strip revoke runs with the operator:stop sources + the stray operator:start.
+    strip_revoke.assert_awaited_once()
+    strip_sources = strip_revoke.await_args.kwargs["sources"]
+    assert f"operator:stop:node:{locked.id}" in strip_sources
+    assert f"operator:start:{locked.id}" in strip_sources
 
 
 async def test_execute_verification_context_missing_id_and_crash_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,6 +311,12 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value=None))
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", AsyncMock())
+    # The update-mode failure path strips operator:stop/operator:start via a real
+    # IntentService; mock it for this db=MagicMock unit test.
+    strip_revoke = AsyncMock()
+    monkeypatch.setattr(
+        execution, "IntentService", MagicMock(return_value=MagicMock(revoke_intents_and_reconcile=strip_revoke))
+    )
 
     mark_mock = AsyncMock(return_value=True)
     review_mock = MagicMock()
@@ -310,6 +326,7 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     call_order_manager = MagicMock()
     db.commit = AsyncMock()
     call_order_manager.attach_mock(mark_mock, "mark")
+    call_order_manager.attach_mock(strip_revoke, "strip")
     call_order_manager.attach_mock(db.commit, "commit")
 
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
@@ -332,9 +349,12 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     assert "verification" in call_args.kwargs.get("reason", "")
     assert call_args.kwargs.get("source") == "verification"
 
-    # Ordering: mark_review_required must be called before db.commit.
+    # Ordering: mark_review_required and the branding-strip revoke must run before db.commit
+    # (the strip's reconcile derives the shelved/offline state that the commit persists).
     call_names = [c[0] for c in call_order_manager.mock_calls]
     assert call_names.index("mark") < call_names.index("commit")
+    assert call_names.index("strip") < call_names.index("commit")
+    strip_revoke.assert_awaited_once()
 
 
 async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: pytest.MonkeyPatch) -> None:
