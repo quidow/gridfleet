@@ -23,6 +23,7 @@ from app.devices.services.intent_types import (
     verification_intent_source,
 )
 from app.grid.allocation import node_target
+from app.lifecycle.services.operator_node import operator_start_source, operator_stop_sources
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
 from app.sessions.service_probes import ProbeSource, record_probe_session
@@ -647,5 +648,21 @@ async def _finalize_failure(
         source="verification",
     )
     await _revoke_verification_node_intent(db, locked, publisher=publisher)
+    # The failure cleanup stopped the node via ``request_stop`` (which registers sticky
+    # operator:stop intents), and the verification node-start left a stray ``operator:start``
+    # intent. Strip BOTH: operator:stop must not survive — it would brand the device
+    # operator-stopped and block re-verify + the operator start-node route (spec bug-3 §1).
+    # operator:start must not survive either — its node_running auto-retire precondition is
+    # swept only by the leader device_intent_reconciler loop, so it persists through this
+    # synchronous flow; once operator:stop is gone it would be the sole node_process intent
+    # and the reconciler would restart the node. With no node_process start intent left, the
+    # ``review_required`` set above suppresses ``baseline:idle`` (device_in_service) so the
+    # node stays stopped (spec §8.1).
+    await IntentService(db).revoke_intents_and_reconcile(
+        device_id=locked.id,
+        sources=[*operator_stop_sources(locked.id), operator_start_source(locked.id)],
+        reason="verification failed: clear operator-stop branding",
+        publisher=publisher,
+    )
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
