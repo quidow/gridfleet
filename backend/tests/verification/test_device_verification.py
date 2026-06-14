@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
@@ -1001,6 +1001,78 @@ async def test_update_verification_probe_failure_stops_persisted_node(
     await db_session.refresh(device)
     assert device.name == "Probe Update Device"
     assert device.device_config == {"stable": True}
+
+
+async def test_failed_update_verification_does_not_strand_operator_stopped(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A failed update-mode verification must NOT brand the device operator-stopped:
+    no ``operator:stop:*`` intents survive (AC1) and a subsequent verify-job POST is
+    accepted rather than 409 (AC3). See spec bug-3 §6 R2."""
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"strand-{uuid.uuid4()}",
+        connection_target="strand-target",
+        name="Strand Device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        device_config={"stable": True},
+    )
+
+    with (
+        _patch_running_node(active_connection_target=device.connection_target),
+        patch(
+            "app.verification.services.runner.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True}),
+        ),
+    ):
+        resp = await client.post(
+            f"/api/verification/devices/{device.id}/jobs",
+            json={
+                "host_id": default_host_id,
+                "name": "Should Not Persist",
+                "device_config": {"stable": False},
+                "replace_device_config": True,
+            },
+        )
+        assert resp.status_code == 202
+        job = await _wait_for_job(
+            client,
+            resp.json()["job_id"],
+            session_factory=session_factory,
+            probe_result=(False, "Session startup failed"),
+        )
+    assert job["status"] == "failed"
+
+    # AC1: no operator:stop:* intents remain for the device.
+    stop_intents = (
+        (
+            await db_session.execute(
+                select(DeviceIntent).where(
+                    DeviceIntent.device_id == device.id,
+                    DeviceIntent.source.like(f"operator:stop:%:{device.id}"),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert stop_intents == [], f"expected no operator:stop intents, found {[i.source for i in stop_intents]}"
+    assert await operator_stop_active(db_session, device.id) is False
+
+    # AC3: a subsequent verify-job POST is accepted, not 409.
+    resp2 = await client.post(
+        f"/api/verification/devices/{device.id}/jobs",
+        json={"host_id": default_host_id},
+    )
+    assert resp2.status_code == 202
 
 
 async def test_existing_device_verification_requires_missing_setup_fields(
