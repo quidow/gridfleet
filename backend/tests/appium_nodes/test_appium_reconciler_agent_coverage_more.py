@@ -948,6 +948,84 @@ async def test_start_for_node_skips_resource_port_gated_by_device_config(monkeyp
     assert handle.allocated_caps == {"appium:wdaLocalPort": 8100}
 
 
+async def test_start_for_node_releases_stale_skip_when_excluded_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A managed port claim the current device_config now excludes via skip_when
+    (e.g. appium:mjpegServerPort once the device switches to prefer_devicectl=true)
+    must be released, not carried forward. Otherwise the stale claim survives every
+    restart and leaks back into the node capabilities, failing every session
+    ("Cannot ensure MJPEG broadcast functionality by forwarding the local port")."""
+    from app.packs.services.platform_resolver import ResolvedParallelResourcePort
+
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        host_id=uuid.uuid4(),
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        device_type=SimpleNamespace(value="real_device"),
+        device_config={"prefer_devicectl": True},
+    )
+    node = SimpleNamespace(id=uuid.uuid4())
+    reserve_session = AsyncMock()
+    reserve_session.commit = AsyncMock()
+
+    class SessionFactory:
+        def __call__(self) -> "SessionFactory":
+            return self
+
+        async def __aenter__(self) -> AsyncMock:
+            return reserve_session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    fake_platform = SimpleNamespace(
+        parallel_resources=SimpleNamespace(
+            ports=[
+                ResolvedParallelResourcePort(capability_name="appium:wdaLocalPort", start=8100),
+                ResolvedParallelResourcePort(
+                    capability_name="appium:mjpegServerPort",
+                    start=9100,
+                    skip_when={"prefer_devicectl": True},
+                ),
+            ],
+            derived_data_path=False,
+        ),
+        device_fields_schema=[{"id": "prefer_devicectl", "type": "bool", "default": True}],
+    )
+    monkeypatch.setattr(node_agent, "_short_session_factory", lambda _db: SessionFactory())
+    monkeypatch.setattr(node_agent, "resolve_pack_platform", AsyncMock(return_value=fake_platform))
+    # Pre-existing claims carry a now-excluded mjpegServerPort (stale, from when the
+    # device ran with prefer_devicectl=false) alongside the still-valid wda port.
+    monkeypatch.setattr(
+        node_agent.appium_node_resource_service,
+        "get_capabilities",
+        AsyncMock(return_value={"appium:wdaLocalPort": 8101, "appium:mjpegServerPort": 9101}),
+    )
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "reserve", AsyncMock())
+    release_capability = AsyncMock(return_value=1)
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "release_capability", release_capability)
+    monkeypatch.setattr(node_agent, "agent_url", AsyncMock(return_value="http://agent"))
+    monkeypatch.setattr(node_agent, "candidate_ports", AsyncMock(return_value=[4723]))
+    monkeypatch.setattr(node_agent, "reserve_appium_port", AsyncMock())
+    monkeypatch.setattr(
+        node_agent,
+        "start_remote_node",
+        AsyncMock(
+            return_value=RemoteStartResult(port=4723, pid=1, active_connection_target="dev", agent_base="http://agent")
+        ),
+    )
+
+    handle = await node_agent._start_for_node(
+        AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    )
+
+    release_capability.assert_awaited_once()
+    assert release_capability.await_args is not None
+    assert release_capability.await_args.kwargs["capability_key"] == "appium:mjpegServerPort"
+    assert "appium:mjpegServerPort" not in handle.allocated_caps
+    assert handle.allocated_caps["appium:wdaLocalPort"] == 8101
+
+
 async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     hostless = SimpleNamespace(
         id=uuid.uuid4(),

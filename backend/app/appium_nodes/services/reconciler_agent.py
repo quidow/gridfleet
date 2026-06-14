@@ -554,6 +554,7 @@ async def _start_for_node(
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
     resource_ports: dict[str, int] = {}
+    excluded_port_caps: set[str] = set()
     needs_derived_data_path = False
     try:
         resolved = await resolve_pack_platform(
@@ -563,6 +564,12 @@ async def _start_for_node(
             device_type=device.device_type.value if device.device_type else None,
         )
         resource_ports = {p.capability_name: p.start for p in applicable_resource_ports(resolved, device.device_config)}
+        # Parallel-resource ports the current device_config excludes via skip_when
+        # (e.g. appium:mjpegServerPort once prefer_devicectl=true). A leftover claim
+        # for one of these — from when the config differed — must be released, not
+        # carried forward; otherwise it survives every restart and leaks back into
+        # the node capabilities, failing sessions that cannot forward the port.
+        excluded_port_caps = {p.capability_name for p in resolved.parallel_resources.ports} - set(resource_ports)
         needs_derived_data_path = resolved.parallel_resources.derived_data_path
     except LookupError:
         # Pack platform missing or unresolved — fall back to no parallel
@@ -570,9 +577,15 @@ async def _start_for_node(
         # allocator simply gets no port/derived-data-path hints.
         pass
     allocated_caps: dict[str, Any] = await appium_node_resource_service.get_capabilities(db, node_id=node.id)
+    stale_caps = [cap for cap in excluded_port_caps if cap in allocated_caps]
     try:
         short_session = _short_session_factory(db)
         async with short_session() as reserve_db:
+            for capability_key in stale_caps:
+                await appium_node_resource_service.release_capability(
+                    reserve_db, node_id=node.id, capability_key=capability_key
+                )
+                allocated_caps.pop(capability_key, None)
             for capability_key, start in resource_ports.items():
                 if capability_key in allocated_caps:
                     continue
