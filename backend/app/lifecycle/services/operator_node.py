@@ -28,6 +28,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
     NodeRunningPrecondition,
+    failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
 from app.devices.services.observation_reason import ObservationReason
@@ -186,11 +187,7 @@ class OperatorNodeLifecycleService:
             # crash/connectivity stop intents too — a leftover health_failure:node
             # stop (priority 60) would otherwise outrank the operator start
             # (priority 20) and silently block it.
-            revoke_sources += [
-                f"health_failure:node:{device.id}",
-                f"health_failure:recovery:{device.id}",
-                f"connectivity:{device.id}",
-            ]
+            revoke_sources += failure_stop_sources(device.id)
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=revoke_sources,
