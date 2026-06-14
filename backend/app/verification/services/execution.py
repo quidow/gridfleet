@@ -19,6 +19,7 @@ from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
     IntentRegistration,
+    failure_stop_sources,
     verification_intent_source,
 )
 from app.grid.allocation import node_target
@@ -429,6 +430,13 @@ async def _register_verification_node_intent(
     viability_timeout = settings.get_int("general.session_viability_timeout_sec")
     deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
     intent_service = IntentService(db)
+    # Lock the Device row before the revoke below touches DeviceIntent/DeviceIntentDirty.
+    # revoke_intents -> mark_dirty upserts the dirty row; without the Device lock first
+    # this path would acquire locks in dirty->Device order while the background dirty-scan
+    # reconciler takes Device->dirty, deadlocking under concurrent reconcile of the same
+    # device (see test_concurrency_intent_reconcile_dirty_deadlock). register_intents_and_reconcile
+    # re-locks idempotently in the same transaction.
+    await device_locking.lock_device(db, device.id)
     # Verification is an explicit re-qualification of the device. Like the operator
     # start-node path (lifecycle/services/operator_node.request_start) and the
     # lifecycle recovery policy, revoke any failure-driven stop intents first: they
@@ -440,11 +448,7 @@ async def _register_verification_node_intent(
     # verified_at on a device that had a health blip).
     await intent_service.revoke_intents(
         device_id=device.id,
-        sources=[
-            f"health_failure:node:{device.id}",
-            f"health_failure:recovery:{device.id}",
-            f"connectivity:{device.id}",
-        ],
+        sources=failure_stop_sources(device.id),
         reason="verification probe in progress",
     )
     await intent_service.register_intents_and_reconcile(
