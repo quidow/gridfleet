@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError, NodeStopNotAcknowledgedError
@@ -9,10 +10,18 @@ from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models.intent import DeviceIntent
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_HEALTH_FAILURE,
+    IntentRegistration,
+    verification_intent_source,
+)
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.verification.services import execution as execution
@@ -363,6 +372,50 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     call_args = converge_mock.await_args
     assert call_args is not None
     assert call_args.args[0] == existing.id
+
+
+async def test_register_verification_node_intent_revokes_blocking_health_failure_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """An unverified device carrying a ``health_failure:node`` stop intent must
+    still be verifiable. That stop is ``PRIORITY_HEALTH_FAILURE`` (60) while the
+    verification node-start intent is only ``PRIORITY_AUTO_RECOVERY`` (20), so
+    unless verification revokes the stop the reconciler keeps the node stopped and
+    ``node_start`` times out forever (the device is stranded). Operator start-node
+    and the lifecycle policy already revoke this source; verification must too.
+    """
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verify-revoke-healthfail",
+        connection_target="verify-revoke-healthfail",
+        name="Verify Revoke HealthFail",
+        operational_state=DeviceOperationalState.offline,
+    )
+    health_failure_source = f"health_failure:node:{device.id}"
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=health_failure_source,
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE},
+            )
+        ],
+        reason="health failure",
+        publisher=event_bus,
+    )
+
+    await execution._register_verification_node_intent(
+        db_session, device, settings=FakeSettingsReader({}), publisher=event_bus
+    )
+
+    sources = set(
+        (await db_session.scalars(select(DeviceIntent.source).where(DeviceIntent.device_id == device.id))).all()
+    )
+    assert health_failure_source not in sources, "verification must revoke the deadlocking health_failure stop intent"
+    assert verification_intent_source(device.id) in sources
 
 
 async def test_run_probe_swallows_transient_converge_kick_failure(

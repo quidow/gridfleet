@@ -428,7 +428,26 @@ async def _register_verification_node_intent(
     startup_timeout = settings.get_int("appium.startup_timeout_sec")
     viability_timeout = settings.get_int("general.session_viability_timeout_sec")
     deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
-    await IntentService(db).register_intents_and_reconcile(
+    intent_service = IntentService(db)
+    # Verification is an explicit re-qualification of the device. Like the operator
+    # start-node path (lifecycle/services/operator_node.request_start) and the
+    # lifecycle recovery policy, revoke any failure-driven stop intents first: they
+    # carry PRIORITY_HEALTH_FAILURE/PRIORITY_CONNECTIVITY_LOST (60/50), which outrank
+    # the verification node-start intent (PRIORITY_AUTO_RECOVERY, 20). Left in place,
+    # the reconciler resolves desired_state=stopped, the node never spawns, and
+    # node_start times out forever — stranding any device that is both unverified and
+    # carrying a health-failure stop (e.g. after an operator config edit clears
+    # verified_at on a device that had a health blip).
+    await intent_service.revoke_intents(
+        device_id=device.id,
+        sources=[
+            f"health_failure:node:{device.id}",
+            f"health_failure:recovery:{device.id}",
+            f"connectivity:{device.id}",
+        ],
+        reason="verification probe in progress",
+    )
+    await intent_service.register_intents_and_reconcile(
         device_id=device.id,
         intents=[
             IntentRegistration(
