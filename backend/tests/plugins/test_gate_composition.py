@@ -13,7 +13,7 @@ from app.packs.services.service import PackCatalogService
 from app.packs.services.start_shim import build_pack_start_payload
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
-from tests.pack.factories import seed_test_packs
+from tests.packs.factories import seed_test_packs
 
 _feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
 _catalog_svc = PackCatalogService(lifecycle=PackLifecycleService())

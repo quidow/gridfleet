@@ -1,0 +1,778 @@
+"""Tests for the run device cooldown endpoint."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from httpx import AsyncClient  # noqa: TC002
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
+
+from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.services import state_write_guard
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.runs.models import RunState, TestRun
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader, build_review_service
+from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
+from tests.packs.factories import seed_test_packs
+
+
+@pytest.fixture(autouse=True)
+def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without this stub, deliver_agent_reconfigures attempts a real TCP connect
+    # to the test host IP (10.0.0.x) and waits the full 5s inline timeout.
+    # Tests that need to assert on the call override this with their own
+    # monkeypatch; pytest applies test-level patches on top of autouse ones.
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(return_value={"port": 4723}),
+    )
+
+
+@pytest.fixture(autouse=True)
+async def _seed_packs(db_session: AsyncSession) -> None:
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+
+async def _create_available_device(
+    db_session: AsyncSession,
+    host_id: str,
+    identity_value: str,
+) -> Device:
+    return await create_device_record(
+        db_session,
+        host_id=host_id,
+        identity_value=identity_value,
+        connection_target=identity_value,
+        name=f"Device {identity_value}",
+        operational_state="available",
+    )
+
+
+async def _create_run(client: AsyncClient, **overrides: object) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "name": "Test Run",
+        "requirements": [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
+        **overrides,
+    }
+    resp = await client.post("/api/runs", json=payload)
+    assert resp.status_code == 201
+    return dict(resp.json())
+
+
+async def test_cooldown_device_success(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-001")
+    run = await _create_run(client)
+    run_id = run["id"]
+    device_id = str(device.id)
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device_id}/cooldown",
+        json={"reason": "flaky connection", "ttl_seconds": 120},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "cooldown_set"
+    assert data["cooldown_count"] == 1
+    assert "excluded_until" in data
+
+    # Verify DB state
+    await db_session.refresh(device)
+    entry = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run_id),
+                DeviceReservation.device_id == device.id,
+            )
+        )
+    ).scalar_one()
+    assert entry.excluded is True
+    assert entry.cooldown_count == 1
+    assert entry.exclusion_reason == "flaky connection"
+    assert entry.excluded_until is not None
+
+
+async def test_cooldown_device_returns_503_when_inline_delivery_fails(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the inline ``deliver_agent_reconfigures`` cannot reach the agent,
+    the cooldown HTTP handler must return 5xx — not 200. The DB state is
+    already updated (intents committed, reservation excluded), but the
+    agent-side drain did not land. Returning 200 misleads testkit into
+    requesting another session that lands on the very device that was
+    supposed to be on cooldown (this is the original repro).
+    """
+    from app.core.errors import AgentUnreachableError
+
+    device = await _create_available_device(db_session, default_host_id, "cooldown-flaky-agent")
+    # Seed an AppiumNode so ``reconcile_device`` stages a real reconfigure
+    # outbox row — without a node the intent reconciler returns early and
+    # no agent call is attempted, so the failure path stays unexercised.
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=12345,
+                active_connection_target=device.connection_target,
+                generation=1,
+            )
+        )
+    await db_session.commit()
+    run = await _create_run(client)
+    run_id = run["id"]
+    device_id = str(device.id)
+
+    # Override the autouse stub so the inline delivery sees an unreachable
+    # agent. The exception type matches what ``agent_appium_reconfigure``
+    # raises in production when the agent socket is closed.
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "offline")),
+    )
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device_id}/cooldown",
+        json={"reason": "flaky connection", "ttl_seconds": 120},
+    )
+    assert resp.status_code == 503
+    assert resp.headers.get("retry-after") == "5"
+
+    # DB state is still committed — the cooldown intent + reservation
+    # exclusion landed; only the agent-side drain push failed. The
+    # background delivery loop will retry it.
+    entry = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run_id),
+                DeviceReservation.device_id == device.id,
+            )
+        )
+    ).scalar_one()
+    assert entry.excluded is True
+    assert entry.exclusion_reason == "flaky connection"
+
+
+async def test_cooldown_device_not_found_run(client: AsyncClient) -> None:
+    resp = await client.post(
+        f"/api/runs/{uuid.uuid4()}/devices/{uuid.uuid4()}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 404
+
+
+async def test_cooldown_device_not_reserved(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_available_device(db_session, default_host_id, "cooldown-nr")
+    run = await _create_run(client)
+    # Try to cooldown a different device
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{uuid.uuid4()}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 404
+
+
+async def test_cooldown_device_ttl_too_high(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-ttl")
+    run = await _create_run(client)
+    max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": max_ttl + 1},
+    )
+    assert resp.status_code == 422
+
+
+async def test_cooldown_device_terminal_run(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-term")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    # Complete the run
+    from app.runs import service as rs
+
+    run_obj = await rs.get_run(db_session, run_id)
+    assert run_obj is not None
+    run_obj.state = RunState.completed
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 409
+
+
+async def test_cooldown_device_escalation(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 2)
+    device = await _create_available_device(db_session, default_host_id, "cooldown-esc")
+    run = await _create_run(client)
+    run_id = run["id"]
+    device_id = str(device.id)
+
+    # First cooldown
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device_id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cooldown_set"
+
+    # Second cooldown triggers escalation
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device_id}/cooldown",
+        json={"reason": "flaky again", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "maintenance_escalated"
+    assert data["cooldown_count"] == 2
+    assert data["threshold"] == 2
+
+    await db_session.refresh(device)
+    # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") is not None
+
+
+async def test_cooldown_device_increments_count(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-inc")
+    run = await _create_run(client)
+    run_id = run["id"]
+    device_id = str(device.id)
+
+    for i in range(1, 4):
+        resp = await client.post(
+            f"/api/runs/{run_id}/devices/{device_id}/cooldown",
+            json={"reason": f"flaky {i}", "ttl_seconds": 60},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["cooldown_count"] == i
+
+    entry = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run_id),
+                DeviceReservation.device_id == device.id,
+            )
+        )
+    ).scalar_one()
+    assert entry.cooldown_count == 3
+
+
+async def test_cooldown_preserves_desired_grid_run_id(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-grid")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    # Set up an AppiumNode with the run's grid_run_id
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_grid_run_id=run_id,
+            grid_run_id=run_id,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(node)
+    # desired_grid_run_id must stay set so the device does not fall into the
+    # free Grid pool during cooldown.  The reservation excluded flag is the
+    # signal, not the node tag.
+    assert node.desired_grid_run_id == run_id
+    # Cooldown keeps the process alive for in-flight sessions but blocks routing.
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
+
+
+async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escalation to maintenance also flips ``accepting_new_sessions=False``
+    via the maintenance intents. The push must be inline for the same reason
+    as the cooldown-set branch — otherwise the Grid hub keeps routing to the
+    relay until the next reconciler tick.
+    """
+    monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
+    device = await _create_available_device(db_session, default_host_id, "cooldown-esc-inline")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=4321,
+            active_connection_target=device.connection_target,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        reconfigure,
+    )
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "maintenance_escalated"
+
+    reconfigure.assert_awaited()
+    kwargs = reconfigure.await_args.kwargs
+    assert kwargs["port"] == 4723
+    assert kwargs["accepting_new_sessions"] is False
+
+
+async def test_cooldown_delivers_agent_reconfigure_inline(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cooldown must push the ``accepting_new_sessions=False`` reconfigure to
+    the agent before the HTTP response returns. Otherwise new sessions keep
+    reaching the cooled-down device until the next
+    ``device_intent_reconciler_loop`` tick (default 5 s). During that window
+    testkit's next ``webdriver.Remote(...)`` can still land on the same node.
+    """
+    device = await _create_available_device(db_session, default_host_id, "cooldown-inline")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=4321,
+            active_connection_target=device.connection_target,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        reconfigure,
+    )
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    reconfigure.assert_awaited_once()
+    kwargs = reconfigure.await_args.kwargs
+    assert kwargs["port"] == 4723
+    assert kwargs["accepting_new_sessions"] is False
+    assert kwargs["stop_pending"] is True
+    # Inline delivery must pass a bounded timeout — testkit's cooldown call
+    # times out at 10 s, so the agent-call budget here has to leave headroom.
+    assert kwargs["timeout"] == INLINE_AGENT_CALL_TIMEOUT_SEC
+
+
+async def test_cooldown_does_not_mutate_operational_state(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-state")
+    run = await _create_run(client)
+    run_id = run["id"]
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(device)
+    # After Task 10: reconciler derives state from facts. Without a real running
+    # session, the device stays available (not busy). The cooldown intent is
+    # registered but does not change operational_state.
+    assert device.operational_state in (
+        DeviceOperationalState.available,
+        DeviceOperationalState.busy,
+        DeviceOperationalState.offline,
+    )
+
+
+async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncSession, default_host_id: str) -> None:
+    """to_reserved_device_info should report excluded=false once excluded_until passes."""
+    from app.runs.models import TestRun
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="expired-cooldown",
+        name="Expired Cooldown",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="expired-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=60),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    info = reservation.to_reserved_device_info()
+    assert info["excluded"] is False
+    assert info["cooldown_remaining_sec"] == 0
+    assert info["cooldown_count"] == 1
+
+
+async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-stop")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_grid_run_id=run_id,
+            grid_run_id=run_id,
+            desired_state=AppiumDesiredState.running,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
+
+
+async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSession, default_host_id: str) -> None:
+    from app.devices.services.connectivity import ConnectivityService
+    from app.runs.models import TestRun
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="expired-restore",
+        name="Expired Restore",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="expired-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.stopped,
+        )
+    db_session.add(node)
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=1),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
+    ).check_expired_cooldowns(db_session)
+
+    await db_session.refresh(reservation)
+    assert reservation.excluded is False
+    assert reservation.exclusion_reason is None
+    assert reservation.excluded_until is None
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.desired_port == 4723
+
+
+async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, default_host_id: str) -> None:
+    """attempt_auto_recovery must not restart a node while cooldown is active."""
+    from app.hosts.models import Host
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
+    from app.runs.service_reservation import RunReservationService
+
+    host = await db_session.get(Host, default_host_id)
+    assert host is not None
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-recovery-block",
+        name="Cooldown Recovery Block",
+        operational_state="offline",
+    )
+    run = TestRun(
+        name="recovery-block-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC),
+        excluded_until=datetime.now(UTC) + timedelta(seconds=300),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    recovered = await LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=Mock(),
+        node_manager=AsyncMock(),
+    ).attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="Healthy again",
+    )
+    assert recovered is False
+
+    policy_result = await db_session.execute(select(Device).where(Device.id == device.id))
+    refreshed_device = policy_result.scalar_one()
+    assert refreshed_device.lifecycle_policy_state is not None
+    state = refreshed_device.lifecycle_policy_state
+    assert state.get("last_action") == "recovery_suppressed"
+    assert state.get("recovery_suppressed_reason") == "Device is in active cooldown"
+
+
+async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: AsyncSession, default_host_id: str) -> None:
+    """If a device enters maintenance while cooldown is active, expiry must not restart it."""
+    from app.devices.services.connectivity import ConnectivityService
+    from app.hosts.models import Host
+
+    host = await db_session.get(Host, default_host_id)
+    assert host is not None
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-maint",
+        name="Cooldown Maintenance",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="maint-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.stopped,
+        )
+    db_session.add(node)
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=1),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+
+    # Operator puts device in maintenance after cooldown began
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {"maintenance_reason": "manual"}
+        device.operational_state = DeviceOperationalState.maintenance
+    await db_session.commit()
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
+    ).check_expired_cooldowns(db_session)
+
+    # Exclusion should be cleared
+    await db_session.refresh(reservation)
+    assert reservation.excluded is False
+    assert reservation.exclusion_reason is None
+
+    # But node must stay stopped because device is in maintenance
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+
+
+async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSession, default_host_id: str) -> None:
+    """Released reservations with stale excluded_until must be ignored."""
+    from app.devices.services.connectivity import ConnectivityService
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-released",
+        name="Cooldown Released",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="released-run",
+        state=RunState.completed,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=1),
+        cooldown_count=1,
+        released_at=datetime.now(UTC),
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
+    ).check_expired_cooldowns(db_session)
+
+    # Stale released row should be untouched
+    await db_session.refresh(reservation)
+    assert reservation.excluded is True
+    assert reservation.exclusion_reason == "flaky"

@@ -7,7 +7,7 @@ from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import write as device_write
 from app.devices.services.write import prepare_device_create_payload_async, prepare_device_update_payload_async
-from tests.pack.factories import seed_test_packs
+from tests.packs.factories import seed_test_packs
 
 
 @pytest.mark.asyncio

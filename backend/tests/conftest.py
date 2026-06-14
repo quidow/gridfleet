@@ -349,7 +349,7 @@ async def db_session(db_session_maker: async_sessionmaker[AsyncSession]) -> Asyn
 
 @pytest_asyncio.fixture
 async def seeded_driver_packs(db_session: AsyncSession) -> None:
-    from tests.pack.factories import seed_test_packs
+    from tests.packs.factories import seed_test_packs
 
     await seed_test_packs(db_session)
     await db_session.flush()

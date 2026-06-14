@@ -9,7 +9,7 @@ from app.devices.services import state_write_guard
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
-from tests.pack.factories import seed_test_packs
+from tests.packs.factories import seed_test_packs
 
 DEVICE_PAYLOAD = {
     "identity_value": "emulator-5554",

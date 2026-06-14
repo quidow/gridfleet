@@ -72,7 +72,7 @@ ignore = ["B008"]
 "app/models/*.py" = ["TCH003"]  # SQLAlchemy Mapped[] needs runtime types even with PEP 563
 "app/routers/*.py" = ["TC001"]  # FastAPI inspects Annotated deps at runtime; TC001 is a false positive
 "tests/**" = ["PLC0415"]  # tests often need lazy imports for fixture and patch ordering
-"tests/pack/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
+"tests/packs/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
 "app/agent_comm/generated.py" = ["ALL"]  # auto-generated — do not lint
 
 [tool.ruff.format]

@@ -1,0 +1,2275 @@
+import contextlib
+import uuid
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
+from app.devices.services import service as device_service
+from app.devices.services import state_write_guard
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.presenter import DevicePresenterService
+from app.devices.services.service import DeviceCrudService
+from app.hosts.models import Host
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
+from app.sessions.service_viability import SessionViabilityService
+from tests.fakes import FakeSettingsReader
+from tests.helpers import create_device_record, create_host, seed_ready_loop_snapshots
+from tests.helpers import test_event_bus as event_bus
+from tests.packs.factories import seed_test_packs
+
+DEVICE_PAYLOAD = {
+    "identity_value": "emulator-5554",
+    "connection_target": "emulator-5554",
+    "name": "Pixel 7 Emulator",
+    "pack_id": "appium-uiautomator2",
+    "platform_id": "android_mobile",
+    "identity_scheme": "android_serial",
+    "identity_scope": "host",
+    "os_version": "14",
+    "tags": {"type": "emulator"},
+}
+
+HOST_PAYLOAD = {
+    "hostname": "devices-host",
+    "ip": "10.0.0.20",
+    "os_type": "linux",
+    "agent_port": 5100,
+}
+
+
+def test_device_model_declares_scoped_identity_uniqueness() -> None:
+    table = Device.__table__
+    unique_indexes = {
+        (index.name, tuple(column.name for column in index.columns)) for index in table.indexes if index.unique
+    }
+    assert (
+        "uq_devices_identity_scheme_value_global",
+        ("identity_scheme", "identity_value"),
+    ) in unique_indexes
+    assert (
+        "uq_devices_host_identity_scheme_value",
+        ("host_id", "identity_scheme", "identity_value"),
+    ) in unique_indexes
+    assert table.c.identity_value.unique is None
+
+
+@pytest_asyncio.fixture
+async def default_host_id(client: AsyncClient, db_session: AsyncSession) -> str:
+    await seed_test_packs(db_session)
+    host = await create_host(client, **HOST_PAYLOAD)
+    return str(host["id"])
+
+
+def device_payload(host_id: str, **overrides: object) -> dict[str, object]:
+    return {**DEVICE_PAYLOAD, "host_id": host_id, **overrides}
+
+
+def assert_validation_error_for_field(detail: object, field: str) -> None:
+    assert isinstance(detail, list)
+    assert any(isinstance(entry, dict) and tuple(entry.get("loc", ())) == ("body", field) for entry in detail)
+
+
+_KNOWN_DEVICE_PAYLOAD_KEYS = frozenset(
+    {
+        "host_id",
+        "identity_value",
+        "connection_target",
+        "name",
+        "pack_id",
+        "platform_id",
+        "identity_scheme",
+        "identity_scope",
+        "os_version",
+        "tags",
+        "device_type",
+        "connection_type",
+        "ip_address",
+        "roku_password",
+        "verified",
+        "operational_state",
+    }
+)
+
+
+async def _create_device(db_session: AsyncSession, host_id: str, **overrides: object) -> Device:
+    payload: dict[str, object] = device_payload(host_id, **overrides)
+    if payload.get("device_type") == "emulator" and payload.get("platform_id") == "android_mobile":
+        payload["platform_id"] = "android_mobile"
+    extra = {key: value for key, value in payload.items() if key not in _KNOWN_DEVICE_PAYLOAD_KEYS}
+    return await create_device_record(
+        db_session,
+        host_id=host_id,
+        identity_value=str(payload["identity_value"]),
+        connection_target=str(payload["connection_target"]) if payload.get("connection_target") is not None else None,
+        name=str(payload["name"]),
+        pack_id=str(payload["pack_id"]),
+        platform_id=str(payload["platform_id"]),
+        identity_scheme=str(payload["identity_scheme"]),
+        identity_scope=str(payload["identity_scope"]),
+        os_version=str(payload["os_version"]),
+        tags=payload.get("tags"),
+        device_type=payload.get("device_type", "real_device"),
+        connection_type=payload.get("connection_type"),
+        ip_address=payload.get("ip_address"),
+        roku_password=payload.get("roku_password"),
+        verified=bool(payload.get("verified", True)),
+        operational_state=str(payload.get("operational_state", "offline")),
+        **extra,
+    )
+
+
+async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=12345,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
+        )
+    db.add(node)
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
+@pytest.mark.asyncio
+async def test_health(client: AsyncClient, db_session: AsyncSession) -> None:
+    await seed_ready_loop_snapshots(db_session)
+
+    resp = await client.get("/api/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_create_device_route_removed(client: AsyncClient, default_host_id: str) -> None:
+    resp = await client.post("/api/devices", json=device_payload(default_host_id))
+    assert resp.status_code == 405
+
+
+@pytest.mark.asyncio
+async def test_device_persists_manufacturer_and_model_columns(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="serial-column-1",
+        connection_target="serial-column-1",
+        name="Pixel column",
+        manufacturer="Google",
+        model="Pixel 8",
+    )
+    assert device.manufacturer == "Google"
+    assert device.model == "Pixel 8"
+
+    resp = await client.get(f"/api/devices/{device.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["manufacturer"] == "Google"
+    assert body["model"] == "Pixel 8"
+
+
+@pytest.mark.asyncio
+async def test_list_devices(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    await _create_device(db_session, default_host_id)
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="ios-001",
+        connection_target="ios-001",
+        name="iPhone 15",
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        os_version="17.4",
+    )
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert all("lifecycle_policy_summary" in item for item in data)
+    assert all("hardware_health_status" in item for item in data)
+    assert all("hardware_telemetry_state" in item for item in data)
+
+
+@contextlib.contextmanager
+def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    assert bind is not None
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_list_devices_pack_lookups_do_not_scale_with_device_count(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """The driver-pack catalog must be loaded a constant number of times regardless
+    of how many devices the list returns (guards against the per-device N+1)."""
+
+    async def pack_query_count() -> int:
+        with _capture_statements(db_session) as statements:
+            resp = await client.get("/api/devices")
+            assert resp.status_code == 200
+        return sum(1 for stmt in statements if "driver_packs" in stmt.lower())
+
+    await _create_device(db_session, default_host_id, identity_value="dev-1", connection_target="dev-1", name="dev-1")
+    baseline = await pack_query_count()
+
+    for i in range(2, 8):
+        await _create_device(
+            db_session, default_host_id, identity_value=f"dev-{i}", connection_target=f"dev-{i}", name=f"dev-{i}"
+        )
+    scaled = await pack_query_count()
+
+    assert scaled == baseline, f"pack-catalog queries scaled with device count: {baseline} -> {scaled}"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_batch_serialization_matches_per_device(db_session: AsyncSession, default_host_id: str) -> None:
+    """The batched precompute path must produce byte-identical payloads to the
+    per-device path across runnable / platform-removed / pack-unavailable cases."""
+    presenter = DevicePresenterService(settings=FakeSettingsReader({}))
+
+    d_ok = await _create_device(db_session, default_host_id, identity_value="ok", connection_target="ok", name="ok")
+    d_bad_platform = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="bad-platform",
+        name="bad-platform",
+        pack_id="appium-uiautomator2",
+        platform_id="no_such_platform",
+    )
+    d_no_pack = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="no-pack",
+        name="no-pack",
+        pack_id="ghost-pack",
+        platform_id="android_mobile",
+    )
+    devices = [d_ok, d_bad_platform, d_no_pack]
+
+    contexts = await presenter.build_serialization_contexts(db_session, devices)
+    payloads: dict[uuid.UUID, dict[str, object]] = {}
+    for device in devices:
+        batched = await presenter.serialize_device(db_session, device, precomputed=contexts[device.id])
+        per_device = await presenter.serialize_device(db_session, device)
+        assert batched == per_device
+        payloads[device.id] = batched
+
+    assert payloads[d_ok.id]["blocked_reason"] is None
+    assert payloads[d_bad_platform.id]["blocked_reason"] == "platform_removed"
+    assert payloads[d_no_pack.id]["blocked_reason"] == "pack_unavailable"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_devices_filters_tags_with_jsonb_containment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        name="Smoke One",
+        identity_value="jsonb-1",
+        connection_target="jsonb-1",
+        tags={"team": "qa", "lane": "smoke"},
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        name="Smoke Two",
+        identity_value="jsonb-2",
+        connection_target="jsonb-2",
+        tags={"team": "dev", "lane": "smoke"},
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/devices", params={"tags.team": "qa", "tags.lane": "smoke"})
+
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()}
+    assert names == {"Smoke One"}
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_platform(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(db_session, default_host_id)
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="ios-001",
+        connection_target="ios-001",
+        name="iPhone 15",
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        os_version="17.4",
+    )
+
+    resp = await client.get("/api/devices", params={"platform_id": "ios"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["platform_id"] == "ios"
+    assert data[0]["pack_id"] == "appium-xcuitest"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filters_by_pack_id(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(db_session, default_host_id)
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="ios-pack-001",
+        connection_target="ios-pack-001",
+        name="iPhone Pack",
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        os_version="17.4",
+    )
+
+    resp = await client.get("/api/devices", params={"pack_id": "appium-uiautomator2"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["pack_id"] == "appium-uiautomator2"
+    assert data[0]["platform_id"] == "android_mobile"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_device_type(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="real-device-001",
+        connection_target="real-device-001",
+        name="Real Device",
+        device_type="real_device",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="emulator-001",
+        connection_target="emulator-001",
+        name="Emulator Device",
+        device_type="emulator",
+    )
+
+    resp = await client.get("/api/devices", params={"device_type": "emulator"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["name"] for item in data] == ["Emulator Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_connection_type(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="usb-device-001",
+        connection_target="usb-device-001",
+        name="USB Device",
+        device_type="real_device",
+        connection_type="usb",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="network-device-001",
+        connection_target="192.168.1.20:5555",
+        name="Network Device",
+        device_type="real_device",
+        connection_type="network",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd:virtual-device-001",
+        connection_target="Virtual_Device_001",
+        name="Virtual Device",
+        device_type="emulator",
+    )
+
+    resp = await client.get("/api/devices", params={"connection_type": "network"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["name"] for item in data] == ["Network Device"]
+
+    virtual_resp = await client.get("/api/devices", params={"connection_type": "virtual"})
+    assert virtual_resp.status_code == 200
+    assert [item["name"] for item in virtual_resp.json()] == ["Virtual Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_os_version(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-14",
+        connection_target="android-14",
+        name="Android 14 Device",
+        os_version="14",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-15",
+        connection_target="android-15",
+        name="Android 15 Device",
+        os_version="15",
+    )
+
+    resp = await client.get("/api/devices", params={"os_version": "15"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["name"] for item in data] == ["Android 15 Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_search_matches_name_identity_and_target(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="alpha-serial",
+        connection_target="alpha-target",
+        name="Alpha Device",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="beta-serial",
+        connection_target="beta-target",
+        name="Beta Device",
+    )
+
+    name_resp = await client.get("/api/devices", params={"search": "alpha"})
+    assert name_resp.status_code == 200
+    assert [item["name"] for item in name_resp.json()] == ["Alpha Device"]
+
+    identity_resp = await client.get("/api/devices", params={"search": "BETA-SERIAL"})
+    assert identity_resp.status_code == 200
+    assert [item["name"] for item in identity_resp.json()] == ["Beta Device"]
+
+    target_resp = await client.get("/api/devices", params={"search": "beta-target"})
+    assert target_resp.status_code == 200
+    assert [item["name"] for item in target_resp.json()] == ["Beta Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_tags(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="tagged-qa",
+        connection_target="tagged-qa",
+        name="Tagged QA",
+        tags={"team": "qa", "lane": "smoke"},
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="tagged-dev",
+        connection_target="tagged-dev",
+        name="Tagged Dev",
+        tags={"team": "dev", "lane": "smoke"},
+    )
+
+    resp = await client.get("/api/devices", params={"tags.team": "qa", "tags.lane": "smoke"})
+    assert resp.status_code == 200
+    assert [item["name"] for item in resp.json()] == ["Tagged QA"]
+
+
+async def test_list_devices_filter_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    offline_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="offline-1",
+        connection_target="offline-1",
+        name="Offline Device",
+    )
+    online_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="online-1",
+        connection_target="online-1",
+        name="Online Device",
+    )
+    offline_id = str(offline_device.id)
+
+    from app.devices.models import DeviceOperationalState
+
+    with state_write_guard.bypass():
+        offline_device.operational_state = DeviceOperationalState.offline
+    with state_write_guard.bypass():
+        online_device.operational_state = DeviceOperationalState.available
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"status": "offline"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["id"] for item in data] == [offline_id]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_status_busy_overrides_reserved_hold(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Busy/verifying filters key off operational_state; the reserved filter keys off active
+    reservation rows, so a device that is both busy and reserved matches both filters."""
+    busy_reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="busy-reserved-1",
+        connection_target="busy-reserved-1",
+        name="Busy Reserved Device",
+    )
+    plain_reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="reserved-only-1",
+        connection_target="reserved-only-1",
+        name="Reserved Only Device",
+    )
+    verifying_reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="verifying-reserved-1",
+        connection_target="verifying-reserved-1",
+        name="Verifying Reserved Device",
+    )
+
+    from app.devices.models import DeviceOperationalState
+    from tests.helpers import create_reservation
+
+    with state_write_guard.bypass():
+        busy_reserved.operational_state = DeviceOperationalState.busy
+    with state_write_guard.bypass():
+        plain_reserved.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        verifying_reserved.operational_state = DeviceOperationalState.verifying
+    await create_reservation(db_session, device_id=busy_reserved.id)
+    await create_reservation(db_session, device_id=plain_reserved.id)
+    await create_reservation(db_session, device_id=verifying_reserved.id)
+    await db_session.commit()
+
+    busy_resp = await client.get("/api/devices", params={"status": "busy"})
+    assert busy_resp.status_code == 200
+    busy_ids = {item["id"] for item in busy_resp.json()}
+    assert str(busy_reserved.id) in busy_ids
+    assert str(verifying_reserved.id) in busy_ids
+    assert str(plain_reserved.id) not in busy_ids
+
+    verifying_resp = await client.get("/api/devices", params={"status": "verifying"})
+    assert verifying_resp.status_code == 200
+    verifying_ids = {item["id"] for item in verifying_resp.json()}
+    assert str(verifying_reserved.id) in verifying_ids
+    assert str(busy_reserved.id) not in verifying_ids
+
+    reserved_resp = await client.get("/api/devices", params={"reserved": "true"})
+    assert reserved_resp.status_code == 200
+    reserved_ids = {item["id"] for item in reserved_resp.json()}
+    # The reserved filter is reservation-row based: any device with an active reservation
+    # matches, including those also busy or verifying.
+    assert str(plain_reserved.id) in reserved_ids
+    assert str(busy_reserved.id) in reserved_ids
+    assert str(verifying_reserved.id) in reserved_ids
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_status_uses_operational_state_and_reservation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """status filters key off operational_state only; reservation is an orthogonal boolean filter."""
+    from app.devices.models import DeviceOperationalState
+    from tests.helpers import create_reservation
+
+    reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="status-reserved-1",
+        connection_target="status-reserved-1",
+        name="Status Reserved Device",
+    )
+    maintenance = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="status-maintenance-1",
+        connection_target="status-maintenance-1",
+        name="Status Maintenance Device",
+    )
+    available = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="status-available-1",
+        connection_target="status-available-1",
+        name="Status Available Device",
+    )
+
+    # hold stays NULL for all rows; state is expressed via operational_state + reservation rows.
+    with state_write_guard.bypass():
+        reserved.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        maintenance.operational_state = DeviceOperationalState.maintenance
+    with state_write_guard.bypass():
+        available.operational_state = DeviceOperationalState.available
+    await create_reservation(db_session, device_id=reserved.id)
+    await db_session.commit()
+
+    reserved_resp = await client.get("/api/devices", params={"reserved": "true"})
+    assert reserved_resp.status_code == 200
+    reserved_ids = {item["id"] for item in reserved_resp.json()}
+    assert str(reserved.id) in reserved_ids
+    assert str(maintenance.id) not in reserved_ids
+    assert str(available.id) not in reserved_ids
+
+    not_reserved_resp = await client.get("/api/devices", params={"reserved": "false"})
+    assert not_reserved_resp.status_code == 200
+    not_reserved_ids = {item["id"] for item in not_reserved_resp.json()}
+    assert str(reserved.id) not in not_reserved_ids
+    assert str(maintenance.id) in not_reserved_ids
+    assert str(available.id) in not_reserved_ids
+
+    # 'reserved' is no longer a status value; reservation is an orthogonal boolean filter.
+    rejected_resp = await client.get("/api/devices", params={"status": "reserved"})
+    assert rejected_resp.status_code == 422
+
+    maintenance_resp = await client.get("/api/devices", params={"status": "maintenance"})
+    assert maintenance_resp.status_code == 200
+    maintenance_ids = {item["id"] for item in maintenance_resp.json()}
+    assert str(maintenance.id) in maintenance_ids
+    assert str(reserved.id) not in maintenance_ids
+    assert str(available.id) not in maintenance_ids
+
+    available_resp = await client.get("/api/devices", params={"status": "available"})
+    assert available_resp.status_code == 200
+    available_ids = {item["id"] for item in available_resp.json()}
+    assert str(available.id) in available_ids
+    # Reserved device is operational_state=available; reservation no longer excludes it.
+    assert str(reserved.id) in available_ids
+    assert str(maintenance.id) not in available_ids
+
+    combined_resp = await client.get("/api/devices", params={"status": "available", "reserved": "false"})
+    assert combined_resp.status_code == 200
+    combined_ids = {item["id"] for item in combined_resp.json()}
+    assert str(available.id) in combined_ids
+    assert str(reserved.id) not in combined_ids
+    assert str(maintenance.id) not in combined_ids
+
+
+@pytest.mark.asyncio
+async def test_get_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    resp = await client.get(f"/api/devices/{device_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["identity_value"] == "emulator-5554"
+    assert data["pack_id"] == "appium-uiautomator2"
+    assert data["platform_id"] == "android_mobile"
+    assert data["platform_label"] == "Android"
+    assert "blocked_reason" in data
+    assert data["identity_scheme"] == "android_serial"
+    assert data["identity_scope"] == "host"
+    assert data["appium_node"] is None
+    assert data["lifecycle_policy_summary"]["label"] == "Idle"
+    assert data["emulator_state"] is None
+    assert data["hardware_health_status"] == "unknown"
+    assert data["hardware_telemetry_state"] == "unknown"
+    assert data["battery_level_percent"] is None
+    assert data["orchestration"]["intents"] == []
+    assert data["orchestration"]["derived"]["grid_routing"]["accepting_new_sessions"] is True
+    assert data["orchestration"]["derived"]["recovery"]["allowed"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_device_includes_hardware_telemetry_fields(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="telemetry-1",
+        connection_target="telemetry-1",
+    )
+    device.battery_level_percent = 76
+    device.battery_temperature_c = 37.4
+    device.charging_state = "charging"
+    device.hardware_health_status = "healthy"
+    device.hardware_telemetry_support_status = "supported"
+
+    device.hardware_telemetry_reported_at = datetime.now(UTC)
+    await db_session.commit()
+
+    resp = await client.get(f"/api/devices/{device.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["battery_level_percent"] == 76
+    assert data["battery_temperature_c"] == 37.4
+    assert data["charging_state"] == "charging"
+    assert data["hardware_health_status"] == "healthy"
+    assert data["hardware_telemetry_state"] == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_hardware_health_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    warning_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="warning-telemetry",
+        connection_target="warning-telemetry",
+        name="Warning Telemetry",
+    )
+    healthy_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="healthy-telemetry",
+        connection_target="healthy-telemetry",
+        name="Healthy Telemetry",
+    )
+    warning_device.hardware_health_status = "warning"
+    healthy_device.hardware_health_status = "healthy"
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"hardware_health_status": "warning"})
+    assert resp.status_code == 200
+    assert [item["name"] for item in resp.json()] == ["Warning Telemetry"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_hardware_telemetry_state(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    stale_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="stale-telemetry",
+        connection_target="stale-telemetry",
+        name="Stale Telemetry",
+    )
+    unsupported_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="unsupported-telemetry",
+        connection_target="unsupported-telemetry",
+        name="Unsupported Telemetry",
+    )
+    stale_device.hardware_telemetry_support_status = "supported"
+    stale_device.hardware_telemetry_reported_at = datetime.now(UTC) - timedelta(hours=1)
+    unsupported_device.hardware_telemetry_support_status = "unsupported"
+    unsupported_device.hardware_telemetry_reported_at = datetime.now(UTC)
+    await db_session.commit()
+
+    from tests.conftest import settings_service
+
+    settings_service._cache["general.hardware_telemetry_stale_timeout_sec"] = 60
+
+    stale_resp = await client.get("/api/devices", params={"hardware_telemetry_state": "stale"})
+    assert stale_resp.status_code == 200
+    assert [item["name"] for item in stale_resp.json()] == ["Stale Telemetry"]
+
+    unsupported_resp = await client.get("/api/devices", params={"hardware_telemetry_state": "unsupported"})
+    assert unsupported_resp.status_code == 200
+    assert [item["name"] for item in unsupported_resp.json()] == ["Unsupported Telemetry"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_needs_attention(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    verified_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="NEED-ATTN-OK",
+        connection_target="NEED-ATTN-OK",
+        name="Verified Device",
+        operational_state="available",
+        verified=True,
+    )
+    unverified_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="NEED-ATTN-BAD",
+        connection_target="NEED-ATTN-BAD",
+        name="Unverified Device",
+        operational_state="offline",
+        verified=False,
+    )
+    _ = verified_device
+    _ = unverified_device
+
+    resp_true = await client.get("/api/devices", params={"needs_attention": "true"})
+    assert resp_true.status_code == 200
+    items_true = resp_true.json()
+    assert all(d["needs_attention"] is True for d in items_true)
+    assert any(d["identity_value"] == "NEED-ATTN-BAD" for d in items_true)
+    assert not any(d["identity_value"] == "NEED-ATTN-OK" for d in items_true)
+
+    resp_false = await client.get("/api/devices", params={"needs_attention": "false"})
+    assert resp_false.status_code == 200
+    items_false = resp_false.json()
+    assert all(d["needs_attention"] is False for d in items_false)
+    assert any(d["identity_value"] == "NEED-ATTN-OK" for d in items_false)
+    assert not any(d["identity_value"] == "NEED-ATTN-BAD" for d in items_false)
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_node_health(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    error_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="node-health-error",
+        connection_target="node-health-error",
+        name="Node Error Device",
+    )
+    running_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="node-health-ok",
+        connection_target="node-health-ok",
+        name="Node OK Device",
+    )
+    with state_write_guard.bypass():
+        error_node = AppiumNode(
+            device_id=error_device.id,
+            port=4723,
+            pid=1,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="t",
+            health_state="error",
+        )
+        ok_node = AppiumNode(
+            device_id=running_device.id,
+            port=4724,
+            pid=2,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4724,
+            active_connection_target="t",
+        )
+    db_session.add_all([error_node, ok_node])
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"node_health": "failed"})
+    assert resp.status_code == 200
+    assert [d["name"] for d in resp.json()] == ["Node Error Device"]
+
+    resp_ok = await client.get("/api/devices", params={"node_health": "ok"})
+    assert resp_ok.status_code == 200
+    assert [d["name"] for d in resp_ok.json()] == ["Node OK Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_viability(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    failed_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="viability-failed",
+        connection_target="viability-failed",
+        name="Viability Failed Device",
+    )
+    passed_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="viability-passed",
+        connection_target="viability-passed",
+        name="Viability Passed Device",
+    )
+    failed_device.session_viability_status = "failed"
+    failed_device.session_viability_error = "boom"
+    passed_device.session_viability_status = "passed"
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"viability": "failed"})
+    assert resp.status_code == 200
+    assert [d["name"] for d in resp.json()] == ["Viability Failed Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_device_health_paginated_total(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    for index in range(2):
+        device = await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"device-health-ok-{index}",
+            connection_target=f"device-health-ok-{index}",
+            name=f"Device Health OK {index}",
+        )
+        device.device_checks_healthy = True
+    unhealthy = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="device-health-bad",
+        connection_target="device-health-bad",
+        name="Device Health Bad",
+    )
+    unhealthy.device_checks_healthy = False
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"device_health": "ok", "limit": 1})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 2
+    assert len(data["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_device_detail_surfaces_emulator_state(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd-pixel-6",
+        connection_target="Pixel_6",
+        name="Pixel 6 Emulator",
+        device_type="emulator",
+    )
+    device_id = str(device.id)
+
+    from app.devices.services.health import DeviceHealthService
+
+    await DeviceHealthService(publisher=Mock()).update_emulator_state(db_session, device, "running")
+    await db_session.commit()
+
+    resp = await client.get(f"/api/devices/{device_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["connection_type"] == "virtual"
+    assert data["emulator_state"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_device_create_payload_preserves_explicit_unified_platform_lane(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
+    payload = await crud.prepare_device_create_payload(
+        db_session,
+        DeviceVerificationCreate(
+            host_id=default_host_id,
+            name="Pixel 6 Emulator",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avd:Pixel_6",
+            connection_target="Pixel_6",
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        ),
+    )
+
+    assert payload["device_type"] == DeviceType.real_device
+    assert payload["connection_type"] == ConnectionType.usb
+
+
+@pytest.mark.asyncio
+async def test_get_device_not_found(client: AsyncClient) -> None:
+    resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    resp = await client.patch(
+        f"/api/devices/{device_id}",
+        json={"name": "Updated Name", "tags": {"owner": "qa"}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Updated Name"
+    assert data["tags"]["owner"] == "qa"
+    assert data["lifecycle_policy_summary"]["state"] == "idle"
+
+
+@pytest.mark.asyncio
+async def test_update_device_acquires_row_lock(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+    real_lock = device_service.device_locking.lock_device
+    spy = AsyncMock(side_effect=real_lock)
+
+    with patch("app.devices.services.service.device_locking.lock_device", spy):
+        resp = await client.patch(f"/api/devices/{device_id}", json={"name": "Locked Update"})
+
+    assert resp.status_code == 200
+    spy.assert_awaited_once()
+    args, _ = spy.await_args
+    assert str(args[1]) == device_id
+
+
+@pytest.mark.asyncio
+async def test_update_device_returns_none_when_device_missing(client: AsyncClient, db_session: AsyncSession) -> None:
+    import uuid
+
+    missing_id = uuid.uuid4()
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
+    result = await crud.update_device(
+        db_session,
+        missing_id,
+        DevicePatch(),
+        enforce_patch_contract=False,
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_immutable_fields(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    second_host_resp = await client.post(
+        "/api/hosts",
+        json={**HOST_PAYLOAD, "hostname": "devices-host-2", "ip": "10.0.0.21"},
+    )
+    assert second_host_resp.status_code == 201
+    second_host_id = second_host_resp.json()["id"]
+
+    cases = [
+        ("identity_kind", "apple_udid"),
+        ("identity_value", "new-identity"),
+        ("platform", "ios"),
+        ("device_type", "emulator"),
+        ("os_version", "15"),
+        ("status", "available"),
+        ("host_id", second_host_id),
+        ("connection_type", "network"),
+    ]
+    for field, value in cases:
+        resp = await client.patch(f"/api/devices/{device_id}", json={field: value})
+        assert resp.status_code == 422
+        assert_validation_error_for_field(resp.json()["error"]["details"], field)
+
+
+@pytest.mark.asyncio
+async def test_non_readiness_edit_preserves_verified_at(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+    original_verified_at = device.verified_at
+
+    resp = await client.patch(f"/api/devices/{device_id}", json={"name": "Renamed Device"})
+
+    assert resp.status_code == 200
+    assert original_verified_at is not None
+    assert resp.json()["verified_at"] == original_verified_at.isoformat().replace("+00:00", "Z")
+    assert resp.json()["readiness_state"] == "verified"
+
+
+@pytest.mark.asyncio
+async def test_readiness_edit_clears_verified_at(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-network-stable",
+        connection_target="192.168.1.10:5555",
+        device_type="real_device",
+        connection_type="network",
+        ip_address="192.168.1.10",
+    )
+    device_id = str(device.id)
+    assert device.verified_at is not None
+
+    resp = await client.patch(
+        f"/api/devices/{device_id}",
+        json={
+            "connection_target": "192.168.1.20:5555",
+            "ip_address": "192.168.1.20",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["verified_at"] is None
+    assert resp.json()["readiness_state"] == "verification_required"
+
+
+@pytest.mark.asyncio
+async def test_device_detail_surfaces_lifecycle_policy_summary(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "last_failure_reason": "ADB not responsive",
+            "last_action": "auto_stop_deferred",
+            "last_action_at": "2026-03-30T10:00:00+00:00",
+            "stop_pending": True,
+            "stop_pending_reason": "ADB not responsive",
+            "stop_pending_since": "2026-03-30T10:00:00+00:00",
+            "recovery_suppressed_reason": None,
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        }
+    await db_session.commit()
+
+    resp = await client.get(f"/api/devices/{device_id}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["lifecycle_policy_summary"]["state"] == "deferred_stop"
+    assert data["lifecycle_policy_summary"]["detail"] == "ADB not responsive"
+
+
+@pytest.mark.asyncio
+async def test_device_detail_surfaces_blocked_appium_effective_state(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "last_failure_reason": "Node restart failed",
+            "last_action": "recovery_failed",
+            "last_action_at": "2026-03-30T10:00:00+00:00",
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "recovery_suppressed_reason": "Auto recovery suppressed",
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        }
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
+        )
+    await db_session.commit()
+
+    resp = await client.get(f"/api/devices/{device_id}")
+
+    assert resp.status_code == 200
+    node = resp.json()["appium_node"]
+    assert node["lifecycle_policy_state"]["recovery_suppressed_reason"] == "Auto recovery suppressed"
+    assert node["effective_state"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_delete_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    resp = await client.delete(f"/api/devices/{device_id}")
+    assert resp.status_code == 204
+
+    resp = await client.get(f"/api/devices/{device_id}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_device_not_found(client: AsyncClient) -> None:
+    resp = await client.delete("/api/devices/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_android_connection_preserves_canonical_identity(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="emulator-5554",
+        name="Pixel",
+        device_type="real_device",
+        connection_type="network",
+        connection_target="192.168.1.10:5555",
+        ip_address="192.168.1.10",
+    )
+    device_id = str(device.id)
+
+    resp = await client.patch(
+        f"/api/devices/{device_id}",
+        json={
+            "connection_target": "192.168.1.20:5555",
+            "ip_address": "192.168.1.20",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["identity_value"] == "emulator-5554"
+    assert resp.json()["connection_target"] == "192.168.1.20:5555"
+    assert resp.json()["connection_type"] == "network"
+
+    config_resp = await client.get(f"/api/devices/{device_id}/config", params={"reveal": True})
+    assert config_resp.status_code == 200
+    assert "canonical_identity" not in config_resp.json()
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_endpoint_edit_for_non_network_device(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    resp = await client.patch(
+        f"/api/devices/{device_id}",
+        json={"connection_target": "192.168.1.20:5555", "ip_address": "192.168.1.20"},
+    )
+
+    assert resp.status_code == 422
+    assert "connection target edits" in resp.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_patch_allows_connection_target_edit_for_virtual_device(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd:Pixel_6",
+        connection_target="Pixel_6",
+        name="Pixel 6 Emulator",
+        device_type="emulator",
+    )
+
+    resp = await client.patch(f"/api/devices/{device.id}", json={"connection_target": "Pixel_6_Updated"})
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["connection_target"] == "Pixel_6_Updated"
+    assert payload["connection_type"] == "virtual"
+    assert payload["ip_address"] is None
+    assert payload["verified_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_ip_address_edit_for_virtual_device(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd:Pixel_6",
+        connection_target="Pixel_6",
+        name="Pixel 6 Emulator",
+        device_type="emulator",
+    )
+
+    resp = await client.patch(f"/api/devices/{device.id}", json={"ip_address": "192.168.1.20"})
+
+    assert resp.status_code == 422
+    assert "IP address edits" in resp.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_manual_session_test_endpoint(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    with patch.object(
+        SessionViabilityService,
+        "run_session_viability_probe",
+        new_callable=AsyncMock,
+        return_value={
+            "status": "passed",
+            "last_attempted_at": "2026-03-30T10:00:00+00:00",
+            "last_succeeded_at": "2026-03-30T10:00:00+00:00",
+            "error": None,
+            "checked_by": "manual",
+        },
+    ) as probe:
+        resp = await client.post(f"/api/devices/{device_id}/session-test")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "passed"
+    assert probe.await_args is not None
+    assert probe.await_args.kwargs.get("checked_by") is not None
+
+
+@pytest.mark.asyncio
+async def test_enter_device_maintenance_stops_running_node(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    start_resp = await client.post(f"/api/devices/{device_id}/node/start")
+    assert start_resp.status_code == 200
+
+    # Simulate agent having started the node so maintenance sees it as running
+    from app.appium_nodes.models import AppiumNode as _AppiumNode
+
+    node = await db_session.get(_AppiumNode, uuid.UUID(start_resp.json()["id"]))
+    assert node is not None
+    with state_write_guard.bypass():
+        node.pid = 12345
+    with state_write_guard.bypass():
+        node.active_connection_target = "emulator-5554"
+    await db_session.commit()
+
+    maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
+
+    assert maintenance_resp.status_code == 200
+    # hold is now derived by the reconciler (Task 7+8); just verify the call succeeded
+
+    device_resp = await client.get(f"/api/devices/{device_id}")
+    assert device_resp.status_code == 200
+    # hold is derived; check desired node state instead
+    assert device_resp.json()["appium_node"]["effective_state"] == "stopping"
+    assert device_resp.json()["appium_node"]["desired_state"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_exit_device_maintenance(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    enter_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
+    assert enter_resp.status_code == 200
+
+    exit_resp = await client.post(f"/api/devices/{device_id}/maintenance/exit")
+    assert exit_resp.status_code == 200
+    # After Task 10: exit_maintenance registers a verification intent → verifying or offline
+    assert exit_resp.json()["operational_state"] in ("offline", "verifying")
+
+
+@pytest.mark.asyncio
+async def test_exit_device_maintenance_requires_maintenance_status(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+
+    exit_resp = await client.post(f"/api/devices/{device_id}/maintenance/exit")
+    assert exit_resp.status_code == 409
+    assert "not in maintenance" in exit_resp.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_device_health_is_unhealthy_when_session_check_failed(client: AsyncClient) -> None:
+    fake_device = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000123",
+        host_id="00000000-0000-0000-0000-000000000010",
+        identity_value="health-001",
+        connection_target="health-001",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        device_type=SimpleNamespace(value="real_device"),
+        connection_type=SimpleNamespace(value="usb"),
+        ip_address=None,
+        host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="health-001",
+            observed_running=True,
+        ),
+    )
+
+    with (
+        patch(
+            "app.devices.routers.control.get_device_or_404",
+            new_callable=AsyncMock,
+            return_value=fake_device,
+        ),
+        patch(
+            "app.devices.routers.control.fetch_pack_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True, "adb_connected": {"connected": True}},
+        ),
+        patch(
+            "app.devices.routers.control.fetch_appium_status",
+            new_callable=AsyncMock,
+            return_value={"running": True, "port": 4723},
+        ),
+        patch.object(
+            SessionViabilityService,
+            "get_session_viability",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "failed",
+                "last_attempted_at": "2026-03-30T10:00:00+00:00",
+                "last_succeeded_at": None,
+                "error": "Session startup failed",
+                "checked_by": "scheduled",
+            },
+        ),
+        patch(
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
+            new_callable=AsyncMock,
+            return_value={
+                "last_failure_source": "session_viability",
+                "last_failure_reason": "Session startup failed",
+                "last_action": "auto_stopped",
+                "last_action_at": "2026-03-30T10:05:00+00:00",
+                "stop_pending": False,
+                "stop_pending_reason": None,
+                "stop_pending_since": None,
+                "excluded_from_run": False,
+                "excluded_run_id": None,
+                "excluded_run_name": None,
+                "excluded_at": None,
+                "will_auto_rejoin_run": False,
+                "recovery_suppressed_reason": None,
+                "backoff_until": None,
+                "recovery_state": "eligible",
+            },
+        ),
+    ):
+        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000123/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["device_checks"]["healthy"] is True
+    assert data["session_viability"]["status"] == "failed"
+    assert data["lifecycle_policy"]["last_failure_source"] == "session_viability"
+    assert data["healthy"] is False
+
+
+@pytest.mark.asyncio
+async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(client: AsyncClient) -> None:
+    fake_device = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000126",
+        host_id="00000000-0000-0000-0000-000000000010",
+        identity_value="health-node-001",
+        connection_target="health-node-001",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        device_type=SimpleNamespace(value="real_device"),
+        connection_type=SimpleNamespace(value="usb"),
+        ip_address=None,
+        host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="health-node-001",
+            observed_running=True,
+        ),
+    )
+
+    with (
+        patch(
+            "app.devices.routers.control.get_device_or_404",
+            new_callable=AsyncMock,
+            return_value=fake_device,
+        ),
+        patch(
+            "app.devices.routers.control.fetch_pack_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True, "adb_connected": {"connected": True}},
+        ),
+        patch(
+            "app.devices.routers.control.fetch_appium_status",
+            new_callable=AsyncMock,
+            return_value={"running": False, "port": 4723},
+        ),
+        patch.object(
+            SessionViabilityService,
+            "get_session_viability",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
+            new_callable=AsyncMock,
+            return_value={
+                "last_failure_source": None,
+                "last_failure_reason": None,
+                "last_action": None,
+                "last_action_at": None,
+                "stop_pending": False,
+                "stop_pending_reason": None,
+                "stop_pending_since": None,
+                "excluded_from_run": False,
+                "excluded_run_id": None,
+                "excluded_run_name": None,
+                "excluded_at": None,
+                "will_auto_rejoin_run": False,
+                "recovery_suppressed_reason": None,
+                "backoff_until": None,
+                "recovery_state": "idle",
+            },
+        ),
+    ):
+        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000126/health")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["device_checks"]["healthy"] is True
+    assert data["node"]["running"] is False
+    assert data["node"]["state"] == "error"
+    assert data["healthy"] is False
+
+
+@pytest.mark.asyncio
+async def test_device_health_passes_pack_context_for_virtual_devices(client: AsyncClient) -> None:
+    fake_device = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000127",
+        host_id="00000000-0000-0000-0000-000000000010",
+        identity_value="avd:Pixel_6",
+        connection_target="Pixel_6",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        device_type=SimpleNamespace(value="emulator"),
+        connection_type=SimpleNamespace(value="virtual"),
+        ip_address=None,
+        host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="emulator-5554",
+            observed_running=True,
+        ),
+    )
+    health_mock = AsyncMock(return_value={"healthy": True, "adb_connected": {"connected": True}})
+
+    with (
+        patch(
+            "app.devices.routers.control.get_device_or_404",
+            new_callable=AsyncMock,
+            return_value=fake_device,
+        ),
+        patch("app.devices.routers.control.fetch_pack_device_health", health_mock),
+        patch(
+            "app.devices.routers.control.fetch_appium_status",
+            new_callable=AsyncMock,
+            return_value={"running": True, "port": 4723},
+        ),
+        patch.object(
+            SessionViabilityService,
+            "get_session_viability",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
+            new_callable=AsyncMock,
+            return_value={
+                "last_failure_source": None,
+                "last_failure_reason": None,
+                "last_action": None,
+                "last_action_at": None,
+                "stop_pending": False,
+                "stop_pending_reason": None,
+                "stop_pending_since": None,
+                "excluded_from_run": False,
+                "excluded_run_id": None,
+                "excluded_run_name": None,
+                "excluded_at": None,
+                "will_auto_rejoin_run": False,
+                "recovery_suppressed_reason": None,
+                "backoff_until": None,
+                "recovery_state": "idle",
+            },
+        ),
+    ):
+        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000127/health")
+
+    assert resp.status_code == 200
+    assert resp.json()["healthy"] is True
+    health_mock.assert_awaited_once()
+    _, _, connection_target = health_mock.await_args.args[:3]
+    assert connection_target == "Pixel_6"
+    assert health_mock.await_args.kwargs["device_type"] == "emulator"
+    assert health_mock.await_args.kwargs["connection_type"] == "virtual"
+
+
+@pytest.mark.asyncio
+async def test_device_health_fails_fast_for_hostless_control_plane_state(client: AsyncClient) -> None:
+    fake_device = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000124",
+        host_id=None,
+        host=None,
+    )
+
+    with patch(
+        "app.devices.routers.control.get_device_or_404",
+        new_callable=AsyncMock,
+        return_value=fake_device,
+    ):
+        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000124/health")
+
+    assert resp.status_code == 400
+    assert "has no host assigned" in resp.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_device_logs_fail_fast_for_hostless_control_plane_state(client: AsyncClient) -> None:
+    fake_device = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000125",
+        host_id=None,
+        host=None,
+    )
+
+    with patch(
+        "app.devices.routers.control.get_device_or_404",
+        new_callable=AsyncMock,
+        return_value=fake_device,
+    ):
+        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000125/logs")
+
+    assert resp.status_code == 400
+    assert "has no host assigned" in resp.json()["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Driver-pack lifecycle endpoints
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_device_lifecycle_action_proxies_to_pack_agent(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd:Pixel_6",
+        connection_target="Pixel_6",
+        device_type="emulator",
+    )
+
+    with patch(
+        "app.devices.routers.control.pack_device_lifecycle_action",
+        new_callable=AsyncMock,
+        return_value={"success": True, "state": "running"},
+    ) as mock_lifecycle:
+        resp = await client.post(f"/api/devices/{device.id}/lifecycle/boot", json={"headless": True})
+
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "running"
+    mock_lifecycle.assert_awaited_once()
+    _, kwargs = mock_lifecycle.call_args
+    assert kwargs["pack_id"] == "appium-uiautomator2"
+    assert kwargs["platform_id"] == "android_mobile"
+    assert kwargs["action"] == "boot"
+    assert kwargs["args"] == {"headless": True}
+
+
+@pytest.mark.asyncio
+async def test_device_lifecycle_state_updates_emulator_state(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd:Pixel_6",
+        connection_target="Pixel_6",
+        device_type="emulator",
+    )
+
+    with patch(
+        "app.devices.routers.control.pack_device_lifecycle_action",
+        new_callable=AsyncMock,
+        return_value={"success": True, "state": "running"},
+    ):
+        resp = await client.post(f"/api/devices/{device.id}/lifecycle/state")
+
+    assert resp.status_code == 200
+    detail_resp = await client.get(f"/api/devices/{device.id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["emulator_state"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_device_lifecycle_action_rejects_unsupported_action(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="real-android-001",
+        connection_target="real-android-001",
+    )
+
+    resp = await client.post(f"/api/devices/{device.id}/lifecycle/boot")
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["message"] == "Lifecycle action boot is not supported for this device platform"
+
+
+@pytest.mark.asyncio
+async def test_deleted_emulator_and_simulator_lifecycle_routes_return_404(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="avd:Pixel_6",
+        connection_target="Pixel_6",
+        device_type="emulator",
+    )
+
+    assert (await client.post(f"/api/devices/{device.id}/emulator/launch")).status_code == 404
+    assert (await client.post(f"/api/devices/{device.id}/emulator/shutdown")).status_code == 404
+    assert (await client.post(f"/api/devices/{device.id}/simulator/boot")).status_code == 404
+    assert (await client.post(f"/api/devices/{device.id}/simulator/shutdown")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_devices_paginated(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    for i in range(5):
+        await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"dev-{i}",
+            connection_target=f"dev-{i}",
+            name=f"Device {i}",
+        )
+
+    resp = await client.get("/api/devices", params={"limit": 2, "offset": 0})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "items" in data
+    assert "total" in data
+    assert data["total"] == 5
+    assert len(data["items"]) == 2
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_devices_paginated_second_page(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    for i in range(5):
+        await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"dev-{i}",
+            connection_target=f"dev-{i}",
+            name=f"Device {i}",
+        )
+
+    resp = await client.get("/api/devices", params={"limit": 2, "offset": 4})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["items"]) == 1
+    assert data["total"] == 5
+
+
+@pytest.mark.asyncio
+async def test_list_devices_unpaginated_still_works(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await _create_device(db_session, default_host_id)
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+@pytest.mark.asyncio
+async def test_list_devices_supports_sort_by_name(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="s-c",
+        connection_target="s-c",
+        name="Charlie",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="s-a",
+        connection_target="s-a",
+        name="Alpha",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="s-b",
+        connection_target="s-b",
+        name="Bravo",
+    )
+
+    resp = await client.get(
+        "/api/devices",
+        params={"limit": 2, "offset": 0, "sort_by": "name", "sort_dir": "asc"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [d["name"] for d in body["items"]] == ["Alpha", "Bravo"]
+    assert body["total"] >= 3
+
+    resp2 = await client.get(
+        "/api/devices",
+        params={"limit": 2, "offset": 2, "sort_by": "name", "sort_dir": "asc"},
+    )
+    assert resp2.status_code == 200
+    assert [d["name"] for d in resp2.json()["items"]] == ["Charlie"]
+
+
+@pytest.mark.asyncio
+async def test_needs_attention_filter_includes_unhealthy_devices(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    from app.devices.services.health import DeviceHealthService
+
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="ok-1",
+        connection_target="ok-1",
+        name="OK Device",
+        operational_state="available",
+        verified=True,
+    )
+    unhealthy = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="bad-1",
+        connection_target="bad-1",
+        name="Bad Device",
+        operational_state="available",
+        verified=True,
+    )
+
+    await DeviceHealthService(publisher=Mock()).update_device_checks(
+        db_session, unhealthy, healthy=False, summary="Disconnected"
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"needs_attention": "true"})
+    assert resp.status_code == 200
+    body = resp.json()
+    names = [d["name"] for d in body]
+    assert "Bad Device" in names
+    assert "OK Device" not in names
+
+
+# ---------------------------------------------------------------------------
+# Task 9: WDA cap synthesis from manifest device fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tvos_device_wda_caps_come_from_required_device_fields(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await seed_test_packs(db_session)
+    host = await create_host(client, **HOST_PAYLOAD)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="UDID-1",
+        name="tvos-1",
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        ip_address="10.0.0.42",
+        device_config={
+            "wda_base_url": "http://10.0.0.42",
+            "use_preinstalled_wda": True,
+            "updated_wda_bundle_id": "com.test.WebDriverAgentRunner",
+        },
+    )
+    resp = await client.get(f"/api/devices/{device.id}/capabilities")
+    assert resp.status_code == 200
+    caps = resp.json()
+    assert caps["appium:platformVersion"] == "14"
+    assert caps["appium:wdaBaseUrl"] == "http://10.0.0.42"
+    assert caps["appium:usePreinstalledWDA"] is True
+    assert caps["appium:updatedWDABundleId"] == "com.test.WebDriverAgentRunner"
+
+
+@pytest.mark.asyncio
+async def test_caller_supplied_use_preinstalled_wda_overrides_manifest_default(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await seed_test_packs(db_session)
+    host = await create_host(client, **HOST_PAYLOAD)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="UDID-2",
+        name="tvos-2",
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        ip_address="10.0.0.43",
+    )
+    device.device_config = {"wda_base_url": "http://10.0.0.43", "use_preinstalled_wda": False}
+    await db_session.commit()
+    resp = await client.get(f"/api/devices/{device.id}/capabilities")
+    assert resp.status_code == 200
+    caps = resp.json()
+    assert caps["appium:usePreinstalledWDA"] is False
+
+
+async def test_roku_device_without_pack_surfaces_pack_unavailable(
+    client: AsyncClient, db_session: AsyncSession, db_host: Host
+) -> None:
+    await seed_test_packs(db_session)
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="ROKU-1",
+        name="r1",
+        pack_id="appium-roku",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        device_type="real_device",
+    )
+    await db_session.commit()
+    resp = await client.get(f"/api/devices/{device.id}")
+    assert resp.status_code == 200
+    assert resp.json()["blocked_reason"] == "pack_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_device_detail_uses_catalog_readiness_for_local_pack(
+    client: AsyncClient, db_session: AsyncSession, db_host: Host
+) -> None:
+    pack = DriverPack(
+        id="local/test-driver",
+        origin="uploaded",
+        display_name="Local Test Driver",
+        maintainer="qa",
+        license="",
+        state="enabled",
+    )
+    db_session.add(pack)
+    await db_session.flush()
+    release = DriverPackRelease(pack_id=pack.id, release="2026.04.0", manifest_json={})
+    db_session.add(release)
+    await db_session.flush()
+    db_session.add(
+        DriverPackPlatform(
+            pack_release_id=release.id,
+            manifest_platform_id="test_network",
+            display_name="Test Network",
+            automation_name="TestAutomation",
+            appium_platform_name="TestOS",
+            device_types=["real_device"],
+            connection_types=["network"],
+            grid_slots=["native"],
+            data={
+                "identity": {"scheme": "test_id", "scope": "host"},
+                "device_fields_schema": [
+                    {
+                        "id": "api_token",
+                        "label": "API token",
+                        "type": "string",
+                        "required_for_session": True,
+                        "sensitive": True,
+                    }
+                ],
+            },
+        )
+    )
+    device = Device(
+        pack_id=pack.id,
+        platform_id="test_network",
+        identity_scheme="test_id",
+        identity_scope="host",
+        identity_value="device-1",
+        connection_target="device-1",
+        name="Local Test Device",
+        os_version="1.0",
+        host_id=db_host.id,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="10.0.0.10",
+        device_config={},
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    response = await client.get(f"/api/devices/{device.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["readiness_state"] == "setup_required"
+    assert body["missing_setup_fields"] == ["api_token"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_exposes_os_version_display(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="firetv-display",
+        connection_target="firetv-display",
+        name="Fire TV Stick 4K",
+        os_version="6",
+        os_version_display="6.7.1.1",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-display",
+        connection_target="android-display",
+        name="Android Device",
+        os_version="14",
+    )
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+    by_name = {item["name"]: item for item in data}
+    assert by_name["Fire TV Stick 4K"]["os_version"] == "6"
+    assert by_name["Fire TV Stick 4K"]["os_version_display"] == "6.7.1.1"
+    assert by_name["Android Device"]["os_version"] == "14"
+    assert by_name["Android Device"]["os_version_display"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_devices_sort_by_os_version_display(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    for idx, display in enumerate(["6.7.1.1", "6.1.0", "6.5.0"], start=1):
+        await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"firetv-sort-{idx}",
+            connection_target=f"firetv-sort-{idx}",
+            name=f"Fire TV Sort {idx}",
+            os_version="6",
+            os_version_display=display,
+        )
+
+    resp = await client.get(
+        "/api/devices",
+        params={"sort_by": "os_version_display", "sort_dir": "asc"},
+    )
+    assert resp.status_code == 200
+    displays = [item["os_version_display"] for item in resp.json() if item.get("os_version_display")]
+    assert displays == sorted(displays)
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_os_version_display(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    for idx, display in enumerate(["6.7.1.1", "6.1.0"], start=1):
+        await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"firetv-filter-{idx}",
+            connection_target=f"firetv-filter-{idx}",
+            name=f"Fire TV Filter {idx}",
+            os_version="6",
+            os_version_display=display,
+        )
+
+    resp = await client.get("/api/devices", params={"os_version_display": "6.7.1.1"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["os_version_display"] == "6.7.1.1"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_os_version_display_falls_back_to_os_version(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """When os_version_display is NULL, filter coalesces to os_version for matching."""
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-coalesce-1",
+        connection_target="android-coalesce-1",
+        name="Android Coalesce 1",
+        os_version="14",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-coalesce-2",
+        connection_target="android-coalesce-2",
+        name="Android Coalesce 2",
+        os_version="15",
+    )
+
+    resp = await client.get("/api/devices", params={"os_version_display": "14"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["name"] for item in data] == ["Android Coalesce 1"]
+
+
+def test_backend_sanitize_log_value_strips_control_characters() -> None:
+    from app.core.observability import sanitize_log_value
+
+    assert sanitize_log_value("device-1\r\ninjected=true") == "device-1\\r\\ninjected=true"
+
+
+@pytest.mark.asyncio
+async def test_device_read_exposes_is_reserved(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from tests.helpers import create_reservation
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="reserved-device-1",
+        connection_target="reserved-device-1",
+        name="Reserved Device",
+    )
+    device_id = str(device.id)
+    await create_reservation(db_session, device_id=uuid.UUID(device_id))
+    await db_session.commit()
+
+    got = await client.get(f"/api/devices/{device_id}")
+    assert got.status_code == 200
+    assert got.json()["is_reserved"] is True
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_device_list_exposes_is_reserved(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from tests.helpers import create_reservation
+
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="list-reserved-1",
+        connection_target="list-reserved-1",
+        name="List Reserved Device",
+    )
+    free = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="list-free-1",
+        connection_target="list-free-1",
+        name="List Free Device",
+    )
+    await create_reservation(db_session, device_id=reserved.id)
+    await db_session.commit()
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Every item must carry the is_reserved field.
+    assert all("is_reserved" in item for item in data), "is_reserved missing from list row"
+
+    by_id = {item["id"]: item for item in data}
+    assert by_id[str(reserved.id)]["is_reserved"] is True
+    assert by_id[str(free.id)]["is_reserved"] is False

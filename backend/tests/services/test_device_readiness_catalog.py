@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.services.readiness import assess_device_async
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
-from tests.pack.factories import seed_test_packs
+from tests.packs.factories import seed_test_packs
 
 
 def _make_device(

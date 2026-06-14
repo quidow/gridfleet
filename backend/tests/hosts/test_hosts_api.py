@@ -1,0 +1,841 @@
+from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import ANY, AsyncMock, Mock, patch
+from uuid import UUID
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.leader import state_store as control_plane_state_store
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.services import state_write_guard
+from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
+from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
+from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from app.plugins.service import PluginService
+from tests.conftest import test_circuit_breaker
+from tests.fakes import FakeSettingsReader
+from tests.helpers import create_device_record
+
+HOST_PAYLOAD = {
+    "hostname": "linux-lab-01",
+    "ip": "192.168.1.100",
+    "os_type": "linux",
+    "agent_port": 5100,
+}
+
+
+async def _create_host(client: AsyncClient, **overrides: object) -> dict[str, Any]:
+    payload: dict[str, Any] = {**HOST_PAYLOAD, **overrides}
+    resp = await client.post("/api/hosts", json=payload)
+    assert resp.status_code == 201
+    return dict(resp.json())
+
+
+async def test_create_host(client: AsyncClient) -> None:
+    data = await _create_host(client)
+    assert data["hostname"] == "linux-lab-01"
+    assert data["ip"] == "192.168.1.100"
+    assert data["os_type"] == "linux"
+    assert data["status"] == "offline"
+    assert data["required_agent_version"] == "0.1.0"
+    assert data["agent_version_status"] == "unknown"
+    assert "id" in data
+
+
+async def test_create_host_duplicate(client: AsyncClient) -> None:
+    await _create_host(client)
+    resp = await client.post("/api/hosts", json=HOST_PAYLOAD)
+    assert resp.status_code == 409
+
+
+async def test_list_hosts(client: AsyncClient) -> None:
+    await _create_host(client, hostname="host-a")
+    await _create_host(client, hostname="host-b", ip="192.168.1.101")
+
+    resp = await client.get("/api/hosts")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+async def test_get_host_with_devices(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await _create_host(client)
+    host_id = host["id"]
+
+    await create_device_record(
+        db_session,
+        host_id=host_id,
+        identity_value="dev-001",
+        connection_target="dev-001",
+        name="Test Device",
+        os_version="14",
+    )
+
+    resp = await client.get(f"/api/hosts/{host_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["devices"]) == 1
+    assert data["devices"][0]["identity_value"] == "dev-001"
+    assert data["required_agent_version"] == "0.1.0"
+    assert data["agent_version_status"] == "unknown"
+
+
+async def test_get_host_not_found(client: AsyncClient) -> None:
+    resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
+
+
+async def test_get_host_filters_legacy_global_appium_capability(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = Host(
+        hostname="legacy-appium-host",
+        ip="192.168.1.130",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        capabilities={
+            "platforms": [],
+            "tools": {"appium": "3.3.0", "adb": "1.0.41"},
+            "missing_prerequisites": [],
+        },
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+
+    resp = await client.get(f"/api/hosts/{host.id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["capabilities"]["tools"] == {"adb": "1.0.41"}
+
+
+async def test_get_host_diagnostics_not_found(client: AsyncClient) -> None:
+    resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/diagnostics")
+    assert resp.status_code == 404
+
+
+async def test_get_host_resource_telemetry_returns_bucketed_samples(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = await _create_host(client)
+    host_id = UUID(host["id"])
+    base = datetime(2026, 4, 16, 9, 0, tzinfo=UTC)
+    db_session.add_all(
+        [
+            HostResourceSample(
+                host_id=host_id,
+                recorded_at=base + timedelta(minutes=minute),
+                cpu_percent=50.0 + minute,
+                memory_used_mb=12000 + minute,
+                memory_total_mb=32000,
+                disk_used_gb=200.0,
+                disk_total_gb=500.0,
+                disk_percent=40.0,
+            )
+            for minute in (0, 1, 2, 20)
+        ]
+    )
+    await db_session.commit()
+
+    resp = await client.get(
+        f"/api/hosts/{host_id}/resource-telemetry",
+        params={
+            "since": base.isoformat(),
+            "until": (base + timedelta(minutes=15)).isoformat(),
+            "bucket_minutes": 5,
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["bucket_minutes"] == 5
+    assert data["window_start"] == "2026-04-16T09:00:00Z"
+    assert len(data["samples"]) == 1
+    assert data["samples"][0]["timestamp"] == "2026-04-16T09:00:00Z"
+    assert data["samples"][0]["cpu_percent"] == pytest.approx(51.0)
+    assert data["latest_recorded_at"] == "2026-04-16T09:20:00Z"
+
+
+async def test_get_host_resource_telemetry_returns_404_for_unknown_host(client: AsyncClient) -> None:
+    resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/resource-telemetry")
+    assert resp.status_code == 404
+
+
+async def test_get_host_resource_telemetry_returns_400_for_invalid_window(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    since = "2026-04-16T10:00:00+00:00"
+    until = "2026-04-16T09:00:00+00:00"
+
+    resp = await client.get(
+        f"/api/hosts/{host['id']}/resource-telemetry",
+        params={"since": since, "until": until},
+    )
+
+    assert resp.status_code == 400
+
+
+async def test_get_host_diagnostics_returns_empty_defaults(client: AsyncClient) -> None:
+    host = await _create_host(client)
+
+    resp = await client.get(f"/api/hosts/{host['id']}/diagnostics")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["host_id"] == host["id"]
+    assert data["circuit_breaker"]["status"] == "closed"
+    assert data["circuit_breaker"]["consecutive_failures"] == 0
+    assert data["appium_processes"] == {"reported_at": None, "running_nodes": []}
+    assert data["recent_recovery_events"] == []
+
+
+async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_local_history(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = await _create_host(client)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="dev-runtime-1",
+        connection_target="dev-runtime-1",
+        name="Runtime Phone",
+        os_version="14",
+        operational_state="available",
+    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1111,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
+        )
+    db_session.add(node)
+
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            DeviceEvent(
+                device_id=device.id,
+                event_type=DeviceEventType.node_restart,
+                details={
+                    "source": "agent_local_restart",
+                    "process": "grid_relay",
+                    "kind": "restart_succeeded",
+                    "sequence": 2,
+                    "port": 4723,
+                    "pid": 2222,
+                    "attempt": 1,
+                    "delay_sec": 1,
+                    "occurred_at": "2026-04-04T10:00:01+00:00",
+                    "will_restart": False,
+                    "recovered_from": "agent_auto_restart",
+                },
+                created_at=now,
+            ),
+            DeviceEvent(
+                device_id=device.id,
+                event_type=DeviceEventType.node_crash,
+                details={
+                    "source": "agent_local_restart",
+                    "kind": "crash_detected",
+                    "sequence": 1,
+                    "port": 4723,
+                    "pid": 1111,
+                    "attempt": 1,
+                    "delay_sec": 1,
+                    "exit_code": 1,
+                    "occurred_at": "2026-04-04T10:00:00+00:00",
+                    "will_restart": True,
+                },
+                created_at=now - timedelta(seconds=1),
+            ),
+            DeviceEvent(
+                device_id=device.id,
+                event_type=DeviceEventType.node_restart,
+                details={"recovered_from": "health_check_failure", "port": 4723},
+                created_at=now - timedelta(seconds=2),
+            ),
+        ]
+    )
+    await control_plane_state_store.set_value(
+        db_session,
+        APPIUM_PROCESSES_NAMESPACE,
+        host["id"],
+        {
+            "reported_at": "2026-04-04T10:00:02+00:00",
+            "running_nodes": [
+                {
+                    "port": 4723,
+                    "pid": 2222,
+                    "connection_target": "dev-runtime-1",
+                    "platform_id": "android_mobile",
+                },
+                {
+                    "port": 4999,
+                    "pid": 9999,
+                    "connection_target": "mystery-runtime",
+                    "platform_id": "android_tv",
+                },
+            ],
+        },
+    )
+    await db_session.commit()
+
+    threshold = test_circuit_breaker.failure_threshold()
+    for _ in range(threshold):
+        await test_circuit_breaker.record_failure(host["ip"], error="timeout")
+
+    resp = await client.get(f"/api/hosts/{host['id']}/diagnostics")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["circuit_breaker"]["status"] == "open"
+    assert data["circuit_breaker"]["consecutive_failures"] == threshold
+    assert data["circuit_breaker"]["retry_after_seconds"] is not None
+    assert len(data["appium_processes"]["running_nodes"]) == 2
+
+    managed_node = data["appium_processes"]["running_nodes"][0]
+    assert managed_node["managed"] is True
+    assert managed_node["device_id"] == str(device.id)
+    assert managed_node["device_name"] == "Runtime Phone"
+    assert managed_node["node_id"] == str(node.id)
+    assert managed_node["node_state"] == "running"
+    assert managed_node["platform_id"] == "android_mobile"
+    assert "platform" not in managed_node
+
+    unknown_node = data["appium_processes"]["running_nodes"][1]
+    assert unknown_node["managed"] is False
+    assert unknown_node["device_id"] is None
+    assert unknown_node["connection_target"] == "mystery-runtime"
+    assert unknown_node["platform_id"] == "android_tv"
+    assert "platform" not in unknown_node
+
+    assert [event["kind"] for event in data["recent_recovery_events"]] == [
+        "restart_succeeded",
+        "crash_detected",
+    ]
+    assert [event["process"] for event in data["recent_recovery_events"]] == [
+        "grid_relay",
+        "appium",
+    ]
+    assert [event["event_type"] for event in data["recent_recovery_events"]] == [
+        "node_restart",
+        "node_crash",
+    ]
+
+
+async def test_get_host_diagnostics_keeps_last_snapshot_visible_for_offline_host(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = Host(
+        hostname="offline-runtime-host",
+        ip="10.0.0.99",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.offline,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    await control_plane_state_store.set_value(
+        db_session,
+        APPIUM_PROCESSES_NAMESPACE,
+        str(host.id),
+        {
+            "reported_at": "2026-04-04T10:30:00+00:00",
+            "running_nodes": [
+                {"port": 4725, "pid": 5005, "connection_target": "stale-node", "platform_id": "roku_network"}
+            ],
+        },
+    )
+    await db_session.commit()
+
+    resp = await client.get(f"/api/hosts/{host.id}/diagnostics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["appium_processes"]["reported_at"] == "2026-04-04T10:30:00Z"
+    assert data["appium_processes"]["running_nodes"][0]["managed"] is False
+    assert data["appium_processes"]["running_nodes"][0]["connection_target"] == "stale-node"
+    assert data["appium_processes"]["running_nodes"][0]["platform_id"] == "roku_network"
+    assert "platform" not in data["appium_processes"]["running_nodes"][0]
+
+
+async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = Host(
+        hostname="tools-host",
+        ip="10.0.0.40",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+
+    with patch(
+        "app.hosts.router.get_agent_tool_status",
+        new=AsyncMock(
+            return_value={
+                "host": {
+                    "node": {"name": "Node", "version": "24.14.1", "description": "JS runtime"},
+                    "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node manager"},
+                },
+                "packs": {},
+            }
+        ),
+    ) as status_mock:
+        resp = await client.get(f"/api/hosts/{host.id}/tools/status")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["host"]["node_provider"]["version"] == "fnm"
+    assert payload["host"]["node"]["version"] == "24.14.1"
+    assert payload["packs"] == {}
+    status_mock.assert_awaited_once_with("10.0.0.40", 5100, settings=ANY, circuit_breaker=ANY, pool=ANY)
+
+
+async def test_get_host_tool_status_requires_online_host(client: AsyncClient) -> None:
+    host = await _create_host(client)
+
+    resp = await client.get(f"/api/hosts/{host['id']}/tools/status")
+
+    assert resp.status_code == 400
+
+
+async def test_delete_host(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    resp = await client.delete(f"/api/hosts/{host['id']}")
+    assert resp.status_code == 204
+
+    resp = await client.get(f"/api/hosts/{host['id']}")
+    assert resp.status_code == 404
+
+
+async def test_delete_host_with_attached_devices_returns_conflict(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = await _create_host(client)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="dev-002",
+        connection_target="dev-002",
+        name="Test Device 2",
+        os_version="14",
+    )
+    device_id = str(device.id)
+
+    resp = await client.delete(f"/api/hosts/{host['id']}")
+    assert resp.status_code == 409
+    assert "devices are still assigned" in resp.json()["error"]["message"]
+
+    resp = await client.get(f"/api/devices/{device_id}")
+    assert resp.status_code == 200
+    assert resp.json()["host_id"] == host["id"]
+
+    host_resp = await client.get(f"/api/hosts/{host['id']}")
+    assert host_resp.status_code == 200
+
+
+async def test_register_host_returns_version_status_and_schedules_discovery(client: AsyncClient) -> None:
+    scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
+
+    def capture_schedule(
+        task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object
+    ) -> None:
+        scheduled.append((task_fn, args))
+
+    with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
+        resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "agent-host",
+                "ip": "192.168.1.110",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.0.9",
+                "capabilities": {"orchestration_contract_version": 2},
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["required_agent_version"] == "0.1.0"
+    assert data["agent_version_status"] == "outdated"
+    assert data["recommended_agent_version"] == "0.3.0"
+    assert data["agent_update_available"] is True
+    host_id = UUID(data["id"])
+    assert len(scheduled) == 2
+    assert scheduled[0][0] is _auto_discover
+    assert scheduled[0][1][0] == host_id  # host_id arg
+    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
+
+
+async def test_reregister_closes_open_circuit_breaker(client: AsyncClient) -> None:
+    """A re-registering agent is live evidence the backend can reach it again.
+
+    If its circuit breaker was open (the agent was unreachable, e.g. mid-restart), the
+    re-register must close it so the reconciler re-observes the node on the next tick instead
+    of waiting out the cooldown — otherwise the device can be reported recovered while its
+    AppiumNode row still holds the stale pre-restart pid (the S27 agent-restart no-op race).
+    """
+    body = {
+        "hostname": "reconnect-host",
+        "ip": "192.168.1.211",
+        "os_type": "linux",
+        "agent_port": 5100,
+        "agent_version": "0.3.0",
+        "capabilities": {"orchestration_contract_version": 2},
+    }
+    first = await client.post("/api/hosts/register", json=body)
+    assert first.status_code in (200, 201)
+
+    ip = body["ip"]
+    threshold = test_circuit_breaker.failure_threshold()
+    for _ in range(threshold):
+        await test_circuit_breaker.record_failure(ip, error="timeout")
+    assert test_circuit_breaker.snapshot(ip)["status"] == "open"
+
+    # Re-register (same hostname -> re-register path) must close the breaker.
+    second = await client.post("/api/hosts/register", json=body)
+    assert second.status_code == 200
+    assert test_circuit_breaker.snapshot(ip)["status"] == "closed", (
+        "re-register did not close the open breaker; the reconciler keeps skipping the host "
+        "until the cooldown elapses, leaving a stale AppiumNode observation"
+    )
+
+
+async def test_hosts_list_and_detail_include_recommended_agent_version(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        create_resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "recommended-version-host",
+                "ip": "192.168.1.120",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.2.0",
+                "capabilities": {"orchestration_contract_version": 2},
+            },
+        )
+
+    assert create_resp.status_code == 201
+    host_id = create_resp.json()["id"]
+
+    list_resp = await client.get("/api/hosts")
+    assert list_resp.status_code == 200
+    listed = next(host for host in list_resp.json() if host["id"] == host_id)
+    assert listed["recommended_agent_version"] == "0.3.0"
+    assert listed["agent_update_available"] is True
+
+    detail_resp = await client.get(f"/api/hosts/{host_id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["recommended_agent_version"] == "0.3.0"
+    assert detail_resp.json()["agent_update_available"] is True
+
+
+async def test_agent_update_available_false_when_current(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        create_resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "current-version-host",
+                "ip": "192.168.1.121",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.3.0",
+                "capabilities": {"orchestration_contract_version": 2},
+            },
+        )
+
+    assert create_resp.status_code == 201
+    assert create_resp.json()["agent_update_available"] is False
+
+
+async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "agent-missing-java",
+                "ip": "192.168.1.112",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.1.0",
+                "capabilities": {
+                    "platforms": ["android_mobile", "roku"],
+                    "tools": {"appium": "3.0.0"},
+                    "missing_prerequisites": ["java"],
+                    "orchestration_contract_version": 2,
+                },
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["missing_prerequisites"] == ["java"]
+    assert data["capabilities"]["missing_prerequisites"] == ["java"]
+    assert "appium" not in data["capabilities"]["tools"]
+
+    detail_resp = await client.get(f"/api/hosts/{data['id']}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["missing_prerequisites"] == ["java"]
+    assert "appium" not in detail_resp.json()["capabilities"]["tools"]
+
+
+async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncClient) -> None:
+    scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
+
+    def capture_schedule(
+        task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object
+    ) -> None:
+        scheduled.append((task_fn, args))
+
+    with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
+        create_resp = await client.put(
+            "/api/settings/agent.auto_accept_hosts",
+            json={"value": False},
+        )
+        assert create_resp.status_code in (200, 201)
+
+        register_resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "pending-agent",
+                "ip": "192.168.1.111",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.1.0",
+                "capabilities": {"orchestration_contract_version": 2},
+            },
+        )
+        host_id = register_resp.json()["id"]
+        scheduled.clear()
+
+        approve_resp = await client.post(f"/api/hosts/{host_id}/approve")
+
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["agent_version_status"] == "ok"
+    host_id = UUID(approve_resp.json()["id"])
+    assert len(scheduled) == 2
+    assert scheduled[0][0] is _auto_discover
+    assert scheduled[0][1][0] == host_id  # host_id arg
+    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
+
+    reset_resp = await client.post("/api/settings/reset/agent.auto_accept_hosts")
+    assert reset_resp.status_code == 200
+
+
+async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSession) -> None:
+    host = Host(
+        hostname="runtime-prepare-host",
+        ip="10.0.0.42",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+    sync = AsyncMock()
+    crud_mock = Mock()
+    crud_mock.get_host = AsyncMock(return_value=host)
+    with (
+        patch.object(PluginService, "list_plugins", new=AsyncMock(return_value=[])),
+        patch.object(PluginService, "auto_sync_host_plugins", sync),
+    ):
+        await _auto_prepare_host_diagnostics(
+            host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock(), crud=crud_mock
+        )
+
+    sync.assert_awaited_once_with(host, [])
+
+
+@pytest.mark.asyncio
+async def test_host_discovery_returns_pack_shaped_candidates(
+    client: AsyncClient, db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.packs.factories import seed_test_packs
+
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    async def fake_pack_devices(host_ip: str, host_port: int, **kwargs: object) -> dict[str, object]:
+        _ = host_port
+        return {
+            "candidates": [
+                {
+                    "pack_id": "appium-uiautomator2",
+                    "platform_id": "android_mobile",
+                    "identity_scheme": "android_serial",
+                    "identity_scope": "host",
+                    "identity_value": "emulator-5554",
+                    "suggested_name": "Pixel 6",
+                    "detected_properties": {"model": "Pixel 6"},
+                    "runnable": True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.agent_comm.operations.get_pack_devices", fake_pack_devices)
+
+    resp = await client.post(f"/api/hosts/{db_host.id}/discover")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["new_devices"][0]["pack_id"] == "appium-uiautomator2"
+    assert body["new_devices"][0]["platform_label"] == "Android"
+
+
+async def test_register_host_persists_hardware_info(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "hardware-host",
+                "ip": "192.168.1.130",
+                "os_type": "macos",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+                "host_info": {
+                    "os_version": "macOS 14.5",
+                    "kernel_version": "Darwin 23.5.0",
+                    "cpu_arch": "arm64",
+                    "cpu_model": "Apple M2 Pro",
+                    "cpu_cores": 12,
+                    "total_memory_mb": 32768,
+                    "total_disk_gb": 1024,
+                },
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["os_version"] == "macOS 14.5"
+    assert data["kernel_version"] == "Darwin 23.5.0"
+    assert data["cpu_arch"] == "arm64"
+    assert data["cpu_model"] == "Apple M2 Pro"
+    assert data["cpu_cores"] == 12
+    assert data["total_memory_mb"] == 32768
+    assert data["total_disk_gb"] == 1024
+
+
+async def test_register_host_without_host_info_keeps_columns_null(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "no-hwinfo-host",
+                "ip": "192.168.1.131",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["os_version"] is None
+    assert data["kernel_version"] is None
+    assert data["cpu_arch"] is None
+    assert data["cpu_model"] is None
+    assert data["cpu_cores"] is None
+    assert data["total_memory_mb"] is None
+    assert data["total_disk_gb"] is None
+
+
+async def test_get_tool_env_returns_empty_for_new_host(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    resp = await client.get(f"/api/hosts/{host['id']}/tool-env")
+    assert resp.status_code == 200
+    assert resp.json() == {"env": {}}
+
+
+async def test_put_tool_env_sets_and_returns(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    resp = await client.put(
+        f"/api/hosts/{host['id']}/tool-env",
+        json={"env": {"ANDROID_HOME": "/sdk"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"env": {"ANDROID_HOME": "/sdk"}}
+
+    get_resp = await client.get(f"/api/hosts/{host['id']}/tool-env")
+    assert get_resp.status_code == 200
+    assert get_resp.json() == {"env": {"ANDROID_HOME": "/sdk"}}
+
+
+async def test_put_tool_env_empty_dict_clears(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    await client.put(
+        f"/api/hosts/{host['id']}/tool-env",
+        json={"env": {"X": "1"}},
+    )
+    resp = await client.put(
+        f"/api/hosts/{host['id']}/tool-env",
+        json={"env": {}},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"env": {}}
+
+    get_resp = await client.get(f"/api/hosts/{host['id']}/tool-env")
+    assert get_resp.status_code == 200
+    assert get_resp.json() == {"env": {}}
+
+
+async def test_get_tool_env_404_for_missing_host(client: AsyncClient) -> None:
+    resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/tool-env")
+    assert resp.status_code == 404
+
+
+async def test_register_host_does_not_overwrite_hardware_info_with_null(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        first = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "noclobber-host",
+                "ip": "192.168.1.132",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+                "host_info": {
+                    "os_version": "Ubuntu 22.04.3 LTS",
+                    "cpu_cores": 8,
+                    "total_memory_mb": 16384,
+                },
+            },
+        )
+        assert first.status_code == 201
+
+        second = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "noclobber-host",
+                "ip": "192.168.1.132",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+                "host_info": {
+                    "cpu_arch": "x86_64",
+                },
+            },
+        )
+
+    assert second.status_code == 200
+    data = second.json()
+    assert data["os_version"] == "Ubuntu 22.04.3 LTS"
+    assert data["cpu_cores"] == 8
+    assert data["total_memory_mb"] == 16384
+    assert data["cpu_arch"] == "x86_64"
