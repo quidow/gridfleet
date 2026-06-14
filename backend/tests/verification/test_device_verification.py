@@ -1075,6 +1075,65 @@ async def test_failed_update_verification_does_not_strand_operator_stopped(
     assert resp2.status_code == 202
 
 
+async def test_failed_then_successful_reverify_recovers_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """After a failed verification the device is shelved (review_required, node stopped)
+    but NOT operator-stopped, so a subsequent re-verify with a passing probe completes
+    end-to-end — recovery without a DB edit (spec bug-3 §6 R5)."""
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"recover-{uuid.uuid4()}",
+        connection_target="recover-target",
+        name="Recover Device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        device_config={"stable": True},
+    )
+
+    with (
+        _patch_running_node(active_connection_target=device.connection_target),
+        patch(
+            "app.verification.services.runner.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True}),
+        ),
+    ):
+        # Leg 1: failing verification → device shelved, not operator-stopped.
+        resp_fail = await client.post(
+            f"/api/verification/devices/{device.id}/jobs",
+            json={"host_id": default_host_id},
+        )
+        assert resp_fail.status_code == 202
+        failed = await _wait_for_job(
+            client,
+            resp_fail.json()["job_id"],
+            session_factory=session_factory,
+            probe_result=(False, "Session startup failed"),
+        )
+        assert failed["status"] == "failed"
+
+        # Leg 2: re-verify with a passing probe → accepted (not 409) and completes.
+        resp_ok = await client.post(
+            f"/api/verification/devices/{device.id}/jobs",
+            json={"host_id": default_host_id},
+        )
+        assert resp_ok.status_code == 202, "re-verify must be accepted after a failed verify"
+        recovered = await _wait_for_job(
+            client,
+            resp_ok.json()["job_id"],
+            session_factory=session_factory,
+            probe_result=(True, None),
+        )
+    assert recovered["status"] == "completed"
+
+
 async def test_existing_device_verification_requires_missing_setup_fields(
     client: AsyncClient,
     db_session: AsyncSession,
