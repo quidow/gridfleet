@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import DBAPIError
-
+from app.core.db_retry import retry_on_serialization_failure
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
@@ -29,25 +27,6 @@ if TYPE_CHECKING:
 # the run's reservations until the reaper expires them — starving allocation
 # for the whole heartbeat-timeout window — so roll back and re-run the
 # transition a bounded number of times before surfacing.
-_DEADLOCK_RETRY_ATTEMPTS = 3
-_DEADLOCK_RETRY_BACKOFF_SEC = 0.1
-
-_PG_DEADLOCK_SQLSTATE = "40P01"
-
-
-def _is_deadlock_error(exc: DBAPIError) -> bool:
-    """True when the DBAPI error chain carries the Postgres deadlock sqlstate.
-
-    The asyncpg dialect wraps the driver exception (which carries
-    ``sqlstate``) in adapter layers chained via ``__cause__``; walk the chain
-    rather than assuming a fixed nesting depth.
-    """
-    cause: BaseException | None = exc.orig
-    while cause is not None:
-        if getattr(cause, "sqlstate", None) == _PG_DEADLOCK_SQLSTATE:
-            return True
-        cause = cause.__cause__
-    return False
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -125,24 +104,12 @@ class RunLifecycleService:
     async def _retry_on_deadlock(
         self, db: AsyncSession, attempt_txn: Callable[[], Awaitable[list[uuid.UUID]]]
     ) -> list[uuid.UUID]:
-        """Run one terminal-transition transaction, retrying deadlock losses.
+        """Run one terminal-transition transaction, retrying serialization losses.
 
         ``attempt_txn`` must own the whole transaction (re-read the run under
-        lock, mutate, commit); the rollback here leaves a clean session for
-        the re-attempt.
+        lock, mutate, commit); the shared helper rolls back between attempts.
         """
-        attempt = 0
-        while True:
-            try:
-                return await attempt_txn()
-            except DBAPIError as exc:
-                if not _is_deadlock_error(exc):
-                    raise
-                await db.rollback()
-                attempt += 1
-                if attempt >= _DEADLOCK_RETRY_ATTEMPTS:
-                    raise
-                await asyncio.sleep(_DEADLOCK_RETRY_BACKOFF_SEC)
+        return await retry_on_serialization_failure(db, attempt_txn, caller="run_lifecycle")
 
     async def complete_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
         cleanup_ids = await self._retry_on_deadlock(db, lambda: self._complete_run_txn(db, run_id))

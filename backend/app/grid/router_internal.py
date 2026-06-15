@@ -21,6 +21,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.db_retry import retry_on_serialization_failure
 from app.core.dependencies import DbDep
 from app.core.timeutil import now_utc
 from app.devices.models import Device
@@ -159,8 +160,11 @@ async def fail(allocation_id: uuid.UUID, payload: FailRequest, db: DbDep, servic
 
 @router.post("/sessions/ended", status_code=204)
 async def ended(payload: EndedRequest, db: DbDep, services: GridServicesDep) -> Response:
-    await services.allocation.mark_ended(db, appium_session_id=payload.session_id)
-    await db.commit()
+    async def _attempt() -> None:
+        await services.allocation.mark_ended(db, appium_session_id=payload.session_id)
+        await db.commit()
+
+    await retry_on_serialization_failure(db, _attempt, caller="grid_session_ended")
     return Response(status_code=204)
 
 

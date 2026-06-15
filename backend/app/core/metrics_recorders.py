@@ -299,3 +299,10 @@ def record_device_repair_attempt(*, action: str, outcome: str) -> None:
 
 def set_probe_unanswered_consecutive(*, device_identity: str, host: str, value: int) -> None:
     probe_unanswered_consecutive.labels(device_identity=device_identity, host=host).set(value)
+
+
+DB_SERIALIZATION_RETRY_TOTAL = Counter(
+    "db_serialization_retry_total",
+    "Transactions rolled back and re-run after a transient Postgres deadlock/serialization failure (40P01/40001).",
+    labelnames=("caller", "outcome"),
+)

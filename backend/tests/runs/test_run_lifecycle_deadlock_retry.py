@@ -78,7 +78,9 @@ def _fresh_run_getter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", fresh_run)
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=_run(RunState.cancelled)))
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr("app.runs.service_lifecycle._DEADLOCK_RETRY_BACKOFF_SEC", 0)
+    # The retry now lives in app.core.db_retry; its backoff is a def-time-bound
+    # default parameter, so neutralize the inter-attempt sleep at its source.
+    monkeypatch.setattr("app.core.db_retry.asyncio.sleep", AsyncMock())
 
 
 @pytest.mark.parametrize("fn_name", ["complete_run", "cancel_run", "force_release"])
@@ -101,10 +103,10 @@ async def test_terminal_transition_retries_past_transient_deadlock(
 async def test_terminal_transition_gives_up_after_bounded_deadlock_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.runs.service_lifecycle import _DEADLOCK_RETRY_ATTEMPTS
+    from app.core.db_retry import _DEFAULT_ATTEMPTS
 
     _fresh_run_getter(monkeypatch)
-    release_devices = AsyncMock(side_effect=[_deadlock_error() for _ in range(_DEADLOCK_RETRY_ATTEMPTS)])
+    release_devices = AsyncMock(side_effect=[_deadlock_error() for _ in range(_DEFAULT_ATTEMPTS)])
     release = _mock_release(release_devices)
     lifecycle = _make_lifecycle(release)
     db = AsyncMock()
@@ -112,7 +114,7 @@ async def test_terminal_transition_gives_up_after_bounded_deadlock_retries(
     with pytest.raises(DBAPIError):
         await lifecycle.cancel_run(db, uuid.uuid4())
 
-    assert release_devices.await_count == _DEADLOCK_RETRY_ATTEMPTS
+    assert release_devices.await_count == _DEFAULT_ATTEMPTS
 
 
 async def test_terminal_transition_does_not_retry_non_deadlock_errors(

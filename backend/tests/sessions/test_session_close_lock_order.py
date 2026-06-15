@@ -123,3 +123,68 @@ async def test_mark_session_finished_locks_device_before_claiming_session_row(
         "session row was claimed (ended_at stamped) before the first device row "
         "lock; close paths must lock device → session to match the run release path"
     )
+
+
+async def test_close_running_session_locks_device_before_dirtying_session_row(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.sessions.service import close_running_session
+
+    _, seeded = await _seed_running_session(
+        db_session, default_host_id, identity="lock-order-ended", session_id="lock-order-ended-sess"
+    )
+    # Reload with the device eager-loaded — close_running_session reads
+    # session.device for the ended-event payload.
+    session = (
+        await db_session.execute(select(Session).options(selectinload(Session.device)).where(Session.id == seeded.id))
+    ).scalar_one()
+
+    recorded: list[bool] = []
+    # close_running_session stamps ended_at (service.py:210), and the
+    # select(TestRun ...) read flushes that write before the first lock_device
+    # in the UNFIXED code — so the session is no longer "dirty" at the lock.
+    # Probe ended_at directly (as the mark_session_finished test does): at the
+    # first device lock the close must not have stamped the row yet.
+    _install_first_lock_probe(monkeypatch, lambda db: session.ended_at is not None, recorded)
+
+    await close_running_session(db_session, session, attached_run=None, publisher=Mock())
+
+    assert session.ended_at is not None
+    assert recorded == [False], (
+        "session row was stamped (ended_at) before the first device row lock in "
+        "close_running_session; close paths must lock device → session"
+    )
+
+
+async def test_close_running_session_is_idempotent_under_concurrent_close(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.sessions.service import close_running_session
+
+    _, seeded = await _seed_running_session(
+        db_session, default_host_id, identity="ended-idempotent", session_id="ended-idempotent-sess"
+    )
+    session = (
+        await db_session.execute(select(Session).options(selectinload(Session.device)).where(Session.id == seeded.id))
+    ).scalar_one()
+
+    publisher = Mock()
+    await close_running_session(db_session, session, attached_run=None, publisher=publisher)
+    ended_at_first = session.ended_at
+
+    # A second close (the racing path) must be a no-op: ended_at unchanged and
+    # the session.ended event emitted exactly once.
+    await close_running_session(db_session, session, attached_run=None, publisher=publisher)
+
+    assert session.ended_at == ended_at_first
+    ended_emits = sum(1 for c in publisher.queue_for_session.call_args_list if "session.ended" in c.args)
+    assert ended_emits == 1
