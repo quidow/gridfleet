@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import column, func, select, table
 
 from app.core.metrics import register_gauge_refresher
-from app.core.metrics_recorders import DEVICES_IN_COOLDOWN
+from app.core.metrics_recorders import DEVICES_IN_COOLDOWN, INTENT_REGISTRY_INTENTS
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,11 @@ DEVICE_RESERVATIONS = table(
     column("excluded_until"),
 )
 
+DEVICE_INTENTS = table(
+    "device_intents",
+    column("id"),
+)
+
 
 async def _refresh_devices_gauges(db: "AsyncSession") -> None:
     cooldown_result = await db.execute(
@@ -32,6 +37,8 @@ async def _refresh_devices_gauges(db: "AsyncSession") -> None:
         .where(DEVICE_RESERVATIONS.c.excluded_until > datetime.now(UTC))
     )
     DEVICES_IN_COOLDOWN.set(int(cooldown_result.scalar_one() or 0))
+    intent_count = await db.scalar(select(func.count()).select_from(DEVICE_INTENTS))
+    INTENT_REGISTRY_INTENTS.set(int(intent_count or 0))
 
 
 register_gauge_refresher(_refresh_devices_gauges)
