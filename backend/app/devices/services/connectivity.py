@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from sqlalchemy import select
@@ -649,7 +650,7 @@ class ConnectivityService:
         else:
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
 
-    async def _probe_host_health(
+    async def _probe_devices(
         self,
         devices: Sequence[Device],
         *,
@@ -659,22 +660,26 @@ class ConnectivityService:
         claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
         live_flag_by_id: dict[uuid.UUID, bool],
     ) -> dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
-        """Concurrently probe device health (and, where the platform declares a
-        ``state`` action, lifecycle state) for one host, bounded by a semaphore.
+        """Concurrently probe every device's health (and, where the platform
+        declares a ``state`` action, lifecycle state) across ALL hosts in one
+        gather, bounded by a per-host semaphore so each host agent sees a
+        consistent concurrent load (mirrors node_health.check_nodes).
 
-        Pure agent I/O — no DB access — so the shared session is untouched here and
-        the caller's apply loop owns every write. ``Device.host`` must be eager-loaded
-        by the caller. The two fetches for one device run sequentially inside its
-        semaphore slot; the win is cross-device concurrency (DEBT-4: the lifecycle
-        poll used to add one serial agent RTT per device to the apply loop).
+        Pure agent I/O — NO DB access — so the shared session is untouched here and
+        the caller's apply loop owns every write. ``Device.host`` must be
+        eager-loaded by the caller. The per-host concurrency ceiling comes from
+        the settings registry (general.probe_concurrency_per_host), shared with
+        node_health and session_sync. The two fetches for one device run
+        sequentially inside its slot; the win is cross-device AND cross-host
+        concurrency.
         """
-        # Per-host probe ceiling comes from the settings registry
-        # (general.probe_concurrency_per_host) — shared with node_health and
-        # session_sync so one host agent sees a consistent concurrent load.
-        semaphore = asyncio.Semaphore(self._settings.get_int("general.probe_concurrency_per_host"))
+        probe_concurrency = self._settings.get_int("general.probe_concurrency_per_host")
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(probe_concurrency)
+        )
 
         async def _probe(device: Device) -> tuple[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
-            async with semaphore:
+            async with host_semaphores[device.host_id]:
                 lifecycle_state = (
                     await _fetch_lifecycle_state(
                         device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
@@ -740,48 +745,40 @@ class ConnectivityService:
         result = await db.execute(stmt)
         hosts = result.scalars().all()
 
-        prepass_sec = probe_sec = apply_sec = 0.0
-
+        # Phase 1 — sequential DB pre-pass over ALL online hosts (on the shared
+        # session, before the concurrent probe phase). Collects the devices to
+        # probe plus the driver-agnostic facts the adapters need. Device.host and
+        # Device.appium_node are eager-loaded so the gather below never lazy-loads
+        # on the shared session (an AsyncSession is not safe for concurrent use).
+        prepass_started = perf_counter()
+        all_devices: list[Device] = []
+        lifecycle_capable: set[uuid.UUID] = set()
+        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]] = {}
+        live_flag_by_id: dict[uuid.UUID, bool] = {}
         for host in hosts:
-            phase_started = perf_counter()
-            # Get registered devices for this host. Device.host is eager-loaded so the
-            # concurrent probe phase below reads it without a lazy load on the shared
-            # session (an AsyncSession is not safe for concurrent use).
             device_stmt = (
                 select(Device)
                 .where(Device.host_id == host.id)
                 .options(selectinload(Device.appium_node), selectinload(Device.host))
             )
-            device_result = await db.execute(device_stmt)
-            devices = device_result.scalars().all()
-
-            # Probe phase: fetch each device's health concurrently, bounded per host so
-            # one slow/hung device cannot serialize the whole host (the cycle was O(devices)
-            # in agent round-trip latency). No DB access happens inside the gather — the
-            # apply loop below performs all writes sequentially. Mirrors session_sync.
-            # Commit before the slow concurrent probe phase: any row locks from
-            # the previous host's write window must not be held across this
-            # host's agent HTTP round-trips (measured holds reached seconds and
-            # starved the allocator's SKIP LOCKED matching).
-            # Sequential DB pre-pass: which devices' manifests declare a "state"
-            # lifecycle action. Must complete before the concurrent phase — the
-            # gather must not touch the shared session.
-            lifecycle_capable = {device.id for device in devices if await _lifecycle_state_capable(db, device)}
-            # Sequential DB pre-pass (same contract as lifecycle_capable): facts the
-            # adapters need for claimed-port checks. Driver-agnostic — core supplies
-            # facts, only adapters interpret them. has_live_session is False only on
-            # positive knowledge: no live/pending Session row AND no in-flight
-            # viability probe (in-memory registry is valid here — this loop is
-            # leader-owned, same process as the probe runner).
+            devices = (await db.execute(device_stmt)).scalars().all()
+            if not devices:
+                continue
+            # Which devices' manifests declare a "state" lifecycle action (DB-only).
+            for device in devices:
+                if await _lifecycle_state_capable(db, device):
+                    lifecycle_capable.add(device.id)
+            # Facts the adapters need for claimed-port checks. Driver-agnostic.
             node_device_pairs = [(d.appium_node.id, d.id) for d in devices if d.appium_node is not None]
             claims_by_node = await appium_node_resource_service.get_port_claims_for_nodes(
                 db, node_ids=[node_id for node_id, _ in node_device_pairs]
             )
-            claimed_ports_by_id = {
-                device_id: claims_by_node[node_id]
-                for node_id, device_id in node_device_pairs
-                if node_id in claims_by_node
-            }
+            for node_id, device_id in node_device_pairs:
+                if node_id in claims_by_node:
+                    claimed_ports_by_id[device_id] = claims_by_node[node_id]
+            # has_live_session is False only on positive knowledge: no live/pending
+            # Session row AND no in-flight viability probe (the in-memory registry is
+            # valid here — this loop is leader-owned, same process as the probe runner).
             live_ids = set(
                 (
                     await db.scalars(
@@ -791,150 +788,156 @@ class ConnectivityService:
                     )
                 ).all()
             )
-            live_flag_by_id = {d.id: (d.id in live_ids or is_probe_inflight(str(d.id))) for d in devices}
+            for d in devices:
+                live_flag_by_id[d.id] = d.id in live_ids or is_probe_inflight(str(d.id))
+            all_devices.extend(devices)
+        # Release any pre-pass read transaction before the slow probe phase: no row
+        # lock may be held across an agent HTTP round-trip (measured holds reached
+        # seconds and starved the allocator's SKIP LOCKED matching).
+        await db.commit()
+        prepass_sec = perf_counter() - prepass_started
+
+        # Phase 2 — probe every device's health concurrently across ALL hosts in
+        # one gather, bounded per host (mirrors node_health.check_nodes). No DB
+        # access inside the gather — the apply loop below performs all writes.
+        probe_started = perf_counter()
+        health_by_device_id = await self._probe_devices(
+            all_devices,
+            ip_ping_timeout=ip_ping_timeout,
+            ip_ping_count=ip_ping_count,
+            lifecycle_capable=lifecycle_capable,
+            claimed_ports_by_id=claimed_ports_by_id,
+            live_flag_by_id=live_flag_by_id,
+        )
+        probe_sec = perf_counter() - probe_started
+
+        # Phase 3 — single serial apply loop over all devices on the shared session.
+        apply_started = perf_counter()
+        # Re-fence once after the slow probe phase: leadership may have changed while
+        # we awaited the agents (node_health pattern). The device row lock taken
+        # inside each write is the real concurrency guard, so the hot path carries
+        # no per-device leader assert; the cold (enumeration/stop) paths below keep
+        # their fences because they each follow a fresh slow operation.
+        await assert_current_leader(db, settings=self._settings)
+
+        # WI-6 lazy presence: the agent enumeration (a discovery sweep — SSDP for
+        # network packs) runs at most once per host per cycle, only when a device's
+        # direct health probe does not confirm presence. Cached per host so the
+        # single cross-host apply loop never re-enumerates a host; a fleet of
+        # healthy devices never pays for a sweep.
+        connected_targets_by_host: dict[uuid.UUID, set[str] | None] = {}
+
+        for device in all_devices:
+            # Device.host is Mapped[Any | None]; eager-loaded above and host_id is
+            # non-nullable, so it is always present. cast keeps host typed as Host.
+            host = cast("Host", device.host)
+            # Per-device commit (repo contract: observation loops commit per device
+            # after the locked write window). Without it the first written device row
+            # stays locked across every later device's agent HTTP call.
             await db.commit()
-            prepass_sec += perf_counter() - phase_started
-
-            phase_started = perf_counter()
-            health_by_device_id = await self._probe_host_health(
-                devices,
-                ip_ping_timeout=ip_ping_timeout,
-                ip_ping_count=ip_ping_count,
-                lifecycle_capable=lifecycle_capable,
-                claimed_ports_by_id=claimed_ports_by_id,
-                live_flag_by_id=live_flag_by_id,
-            )
-            probe_sec += perf_counter() - phase_started
-
-            phase_started = perf_counter()
-            # Re-fence after the slow probe phase: leadership may have changed while we
-            # awaited the agents (session_sync pattern). The per-device asserts below
-            # remain as the in-loop guard for the sequential write window.
-            await assert_current_leader(db, settings=self._settings)
-
-            # WI-6 lazy presence: the agent enumeration (a discovery sweep —
-            # SSDP for network packs) runs only when a device's direct health
-            # probe does not confirm presence, and at most once per host per
-            # cycle. A fleet of healthy devices never pays for a sweep.
-            connected_targets: set[str] | None = None
-            enumeration_done = False
-
-            for device in devices:
-                # Per-device commit (see repo contract: observation loops commit
-                # per device after the locked write window). Without this the
-                # cycle ran as one transaction and the first written device row
-                # stayed locked across every later device's agent HTTP call.
-                await db.commit()
-                # Both values come from the concurrent probe phase above, which was
-                # re-fenced once after the gather; these are plain dict lookups. The
-                # per-device assert below guards the sequential write window.
-                health_result, lifecycle_state = health_by_device_id[device.id]
-                await assert_current_leader(db, settings=self._settings)
-                if lifecycle_state is not None:
-                    await self._health.update_emulator_state(db, device, lifecycle_state)
-                if health_result is None:
-                    flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
-                    if flipped:
-                        continue
-                else:
-                    await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
-                healthy = False
-                ip_ping_entry: dict[str, Any] | None = None
-                if health_result is not None:
-                    healthy, ip_ping_entry = await self._evaluate_health_result(
-                        db,
-                        device,
-                        host,
-                        health_result,
-                        ip_ping_threshold=ip_ping_threshold,
-                        probe_failed_threshold=probe_failed_threshold,
-                    )
-
-                if not healthy and health_result is not None:
-                    repaired = await self._maybe_dispatch_repair(
-                        db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
-                    )
-                    if repaired:
-                        healthy = True
-                        ip_ping_entry = None
-
-                if healthy:
-                    # A device answering its own health probe is present — no
-                    # discovery sweep needed (direct-first, sweep-on-miss).
-                    await self._handle_healthy_device(
-                        db, device, ip_ping_entry=ip_ping_entry, ip_ping_threshold=ip_ping_threshold
-                    )
+            health_result, lifecycle_state = health_by_device_id[device.id]
+            if lifecycle_state is not None:
+                await self._health.update_emulator_state(db, device, lifecycle_state)
+            if health_result is None:
+                flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
+                if flipped:
                     continue
+            else:
+                await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+            healthy = False
+            ip_ping_entry: dict[str, Any] | None = None
+            if health_result is not None:
+                healthy, ip_ping_entry = await self._evaluate_health_result(
+                    db,
+                    device,
+                    host,
+                    health_result,
+                    ip_ping_threshold=ip_ping_threshold,
+                    probe_failed_threshold=probe_failed_threshold,
+                )
 
-                if not enumeration_done:
-                    connected_targets = await _get_agent_devices(
-                        host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
-                    )
-                    enumeration_done = True
-                    await assert_current_leader(db, settings=self._settings)
-                if connected_targets is None:
-                    # Agent enumeration unreachable — skip remaining devices this
-                    # cycle (heartbeat handles host status); already-committed
-                    # writes for earlier devices came from successful direct
-                    # probes and stand on their own.
-                    logger.warning(
-                        "Agent enumeration unreachable for host %s; skipping remaining devices this cycle",
-                        host.hostname,
-                    )
-                    break
+            if not healthy and health_result is not None:
+                repaired = await self._maybe_dispatch_repair(
+                    db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
+                )
+                if repaired:
+                    healthy = True
+                    ip_ping_entry = None
 
-                if _device_expected_aliases(device) & connected_targets:
-                    # Present but failing — keep the health-failure path.
-                    if health_result is None:
-                        # Probe unanswered (e.g. no connection_target): preserve
-                        # the recovery-only behavior of the old presence gate.
-                        await self._maybe_auto_recover(db, device)
-                        continue
-                    await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
-                    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
-                else:
-                    # Device disconnected
-                    # Maintenance devices are placed there by operators; transient
-                    # disconnects are not actionable — skip silently to match pre-PR
-                    # behavior (no connectivity_lost event, no lifecycle write).
-                    if device.operational_state == DeviceOperationalState.maintenance:
-                        continue
-                    # Transition gate: this disconnect was already recorded
-                    # (health failed and the node already stopped), so re-running the
-                    # stop / health-write / reconcile would only re-enqueue the device
-                    # every cycle while it stays disconnected. Skip it; the full scan
-                    # re-derives if state drifts. The first disconnect (device still
-                    # marked healthy, or its node still observed-running) falls through
-                    # to the existing handling below.
-                    node = device.appium_node
-                    if device.device_checks_healthy is False and (node is None or not node.observed_running):
-                        continue
-                    await assert_current_leader(db, settings=self._settings)
-                    await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
-                    if device.operational_state == DeviceOperationalState.offline:
-                        continue
-                    if device.operational_state in (
-                        DeviceOperationalState.busy,
-                        DeviceOperationalState.maintenance,
-                    ) or await device_is_reserved(db, device.id):
-                        logger.warning(
-                            "Device %s (%s) appears disconnected on host %s but is %s",
-                            device.name,
-                            device.identity_value,
-                            host.hostname,
-                            _audit_label(device),
-                        )
-                        await self._record_disconnect_if_stable(db, device, held=True)
-                        continue
+            if healthy:
+                # A device answering its own health probe is present — no discovery
+                # sweep needed (direct-first, sweep-on-miss).
+                await self._handle_healthy_device(
+                    db, device, ip_ping_entry=ip_ping_entry, ip_ping_threshold=ip_ping_threshold
+                )
+                continue
+
+            if host.id not in connected_targets_by_host:
+                connected_targets_by_host[host.id] = await _get_agent_devices(
+                    host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+                )
+                # Re-fence after the enumeration agent round-trip (another slow I/O).
+                await assert_current_leader(db, settings=self._settings)
+            connected_targets = connected_targets_by_host[host.id]
+            if connected_targets is None:
+                # Agent enumeration unreachable — skip this device (and every other
+                # device on this host, which hits the cached None and skips too).
+                # Heartbeat handles host status; already-committed writes for earlier
+                # devices came from successful direct probes and stand on their own.
+                logger.warning(
+                    "Agent enumeration unreachable for host %s; skipping device this cycle",
+                    host.hostname,
+                )
+                continue
+
+            if _device_expected_aliases(device) & connected_targets:
+                # Present but failing — keep the health-failure path.
+                if health_result is None:
+                    # Probe unanswered (e.g. no connection_target): preserve the
+                    # recovery-only behavior of the old presence gate.
+                    await self._maybe_auto_recover(db, device)
+                    continue
+                await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
+                await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+            else:
+                # Device disconnected.
+                # Maintenance devices are placed there by operators; transient
+                # disconnects are not actionable — skip silently.
+                if device.operational_state == DeviceOperationalState.maintenance:
+                    continue
+                # Transition gate: this disconnect was already recorded (health failed
+                # and the node already stopped), so re-running the stop / health-write
+                # / reconcile would only re-enqueue the device every cycle while it
+                # stays disconnected. Skip it; the full scan re-derives if state drifts.
+                node = device.appium_node
+                if device.device_checks_healthy is False and (node is None or not node.observed_running):
+                    continue
+                await assert_current_leader(db, settings=self._settings)
+                await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
+                if device.operational_state == DeviceOperationalState.offline:
+                    continue
+                if device.operational_state in (
+                    DeviceOperationalState.busy,
+                    DeviceOperationalState.maintenance,
+                ) or await device_is_reserved(db, device.id):
                     logger.warning(
-                        "Device %s (%s) disconnected from host %s",
+                        "Device %s (%s) appears disconnected on host %s but is %s",
                         device.name,
                         device.identity_value,
                         host.hostname,
+                        _audit_label(device),
                     )
-                    await self._record_disconnect_if_stable(db, device, held=False)
+                    await self._record_disconnect_if_stable(db, device, held=True)
+                    continue
+                logger.warning(
+                    "Device %s (%s) disconnected from host %s",
+                    device.name,
+                    device.identity_value,
+                    host.hostname,
+                )
+                await self._record_disconnect_if_stable(db, device, held=False)
 
-            apply_sec += perf_counter() - phase_started
+        apply_sec = perf_counter() - apply_started
 
         for phase, seconds in (("db_prepass", prepass_sec), ("probe", probe_sec), ("apply", apply_sec)):
             metrics.record_background_loop_phase(LOOP_NAME, phase, seconds)
