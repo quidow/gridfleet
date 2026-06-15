@@ -57,29 +57,25 @@ class _ScriptedAdapter:
 
     # The supervisor only ever calls sidecar_lifecycle, but the protocol requires
     # the rest. Provide stubs to satisfy the type-checker via duck typing.
-    async def discover(self, ctx: object) -> list[object]:  # pragma: no cover - unused
+    async def discover(self, ctx: object) -> list[object]:
         return []
 
-    async def doctor(self, ctx: object) -> list[object]:  # pragma: no cover - unused
+    async def doctor(self, ctx: object) -> list[object]:
         return []
 
-    async def health_check(self, ctx: object) -> list[object]:  # pragma: no cover - unused
+    async def health_check(self, ctx: object) -> list[object]:
         return []
 
-    async def lifecycle_action(
-        self, action_id: object, args: object, ctx: object
-    ) -> object:  # pragma: no cover - unused
+    async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> object:
         return None
 
-    async def pre_session(self, spec: object) -> dict[str, object]:  # pragma: no cover - unused
+    async def pre_session(self, spec: object) -> dict[str, object]:
         return {}
 
-    async def post_session(self, spec: object, outcome: object) -> None:  # pragma: no cover - unused
+    async def post_session(self, spec: object, outcome: object) -> None:
         return None
 
-    async def feature_action(
-        self, feature_id: str, action_id: str, args: object, ctx: object
-    ) -> object:  # pragma: no cover - unused
+    async def feature_action(self, feature_id: str, action_id: str, args: object, ctx: object) -> object:
         return None
 
 
@@ -100,29 +96,25 @@ class _RaisingAdapter:
         self.calls.append((action, feature_id))
         raise RuntimeError("sidecar boom")
 
-    async def discover(self, ctx: object) -> list[object]:  # pragma: no cover - unused
+    async def discover(self, ctx: object) -> list[object]:
         return []
 
-    async def doctor(self, ctx: object) -> list[object]:  # pragma: no cover - unused
+    async def doctor(self, ctx: object) -> list[object]:
         return []
 
-    async def health_check(self, ctx: object) -> list[object]:  # pragma: no cover - unused
+    async def health_check(self, ctx: object) -> list[object]:
         return []
 
-    async def lifecycle_action(
-        self, action_id: object, args: object, ctx: object
-    ) -> object:  # pragma: no cover - unused
+    async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> object:
         return None
 
-    async def pre_session(self, spec: object) -> dict[str, object]:  # pragma: no cover - unused
+    async def pre_session(self, spec: object) -> dict[str, object]:
         return {}
 
-    async def post_session(self, spec: object, outcome: object) -> None:  # pragma: no cover - unused
+    async def post_session(self, spec: object, outcome: object) -> None:
         return None
 
-    async def feature_action(
-        self, feature_id: str, action_id: str, args: object, ctx: object
-    ) -> object:  # pragma: no cover - unused
+    async def feature_action(self, feature_id: str, action_id: str, args: object, ctx: object) -> object:
         return None
 
 

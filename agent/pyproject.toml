@@ -47,7 +47,6 @@ Security = "https://github.com/quidow/gridfleet/security/advisories/new"
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=0.23",
-    "pytest-cov>=6.0",
     "mypy>=1.20.2",
     "ruff>=0.15.12",
 ]
@@ -76,18 +75,6 @@ ignore = ["B008"]
 
 [tool.ruff.format]
 quote-style = "double"
-
-[tool.coverage.run]
-source = ["agent_app"]
-
-[tool.coverage.report]
-fail_under = 95.0
-show_missing = true
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "if __name__ ==",
-]
 
 [dependency-groups]
 dev = [

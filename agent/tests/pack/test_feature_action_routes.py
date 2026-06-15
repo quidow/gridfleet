@@ -61,32 +61,28 @@ class _FakeAdapter:
         self.calls.append((feature_id, action_id, args))
         return self._result
 
-    async def discover(self, ctx: object) -> list[Any]:  # pragma: no cover
+    async def discover(self, ctx: object) -> list[Any]:
         return []
 
-    async def doctor(self, ctx: object) -> list[Any]:  # pragma: no cover
+    async def doctor(self, ctx: object) -> list[Any]:
         return []
 
-    async def health_check(self, ctx: object) -> list[Any]:  # pragma: no cover
+    async def health_check(self, ctx: object) -> list[Any]:
         return []
 
-    async def lifecycle_action(
-        self, action_id: object, args: object, ctx: object
-    ) -> LifecycleActionResult:  # pragma: no cover
+    async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> LifecycleActionResult:
         return LifecycleActionResult(ok=True)
 
-    async def pre_session(self, spec: object) -> dict[str, Any]:  # pragma: no cover
+    async def pre_session(self, spec: object) -> dict[str, Any]:
         return {}
 
-    async def post_session(self, spec: object, outcome: object) -> None:  # pragma: no cover
+    async def post_session(self, spec: object, outcome: object) -> None:
         return None
 
-    async def sidecar_lifecycle(
-        self, feature_id: str, action: Literal["start", "stop", "status"]
-    ) -> SidecarStatus:  # pragma: no cover
+    async def sidecar_lifecycle(self, feature_id: str, action: Literal["start", "stop", "status"]) -> SidecarStatus:
         return SidecarStatus(ok=True)
 
-    async def normalize_device(self, ctx: object) -> NormalizedDevice:  # pragma: no cover
+    async def normalize_device(self, ctx: object) -> NormalizedDevice:
         return NormalizedDevice(
             identity_scheme="",
             identity_scope="",
@@ -99,7 +95,7 @@ class _FakeAdapter:
             field_errors=[],
         )
 
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:  # pragma: no cover
+    async def telemetry(self, ctx: object) -> HardwareTelemetry:
         return HardwareTelemetry(supported=False)
 
 
@@ -295,27 +291,27 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
         async def sidecar_lifecycle(self, feature_id: str, action: Literal["start", "stop", "status"]) -> SidecarStatus:
             return SidecarStatus(ok=True, detail="running", state="running")
 
-        async def discover(self, ctx: object) -> list[object]:  # pragma: no cover
+        async def discover(self, ctx: object) -> list[object]:
             return []
 
-        async def doctor(self, ctx: object) -> list[object]:  # pragma: no cover
+        async def doctor(self, ctx: object) -> list[object]:
             return []
 
-        async def health_check(self, ctx: object) -> list[object]:  # pragma: no cover
+        async def health_check(self, ctx: object) -> list[object]:
             return []
 
-        async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> object:  # pragma: no cover
+        async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> object:
             return None
 
-        async def pre_session(self, spec: object) -> dict[str, object]:  # pragma: no cover
+        async def pre_session(self, spec: object) -> dict[str, object]:
             return {}
 
-        async def post_session(self, spec: object, outcome: object) -> None:  # pragma: no cover
+        async def post_session(self, spec: object, outcome: object) -> None:
             return None
 
         async def feature_action(
             self, _feature_id: str, _action_id: str, args: dict[str, object], ctx: object
-        ) -> object:  # pragma: no cover
+        ) -> object:
             return None
 
     supervisor = SidecarSupervisor(poll_interval_seconds=10.0)

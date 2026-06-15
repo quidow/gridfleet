@@ -74,7 +74,7 @@ class _RecordingAdapter:
             )
         ]
 
-    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:  # pragma: no cover - unused here
+    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
         self.calls.append(("doctor", {"ctx": ctx}))
         return []
 

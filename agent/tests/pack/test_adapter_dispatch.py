@@ -165,15 +165,15 @@ class _TimeoutAdapter:
 
     async def discover(self, ctx: object) -> list[DiscoveryCandidate]:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return []  # pragma: no cover
+        return []
 
     async def doctor(self, ctx: object) -> list[DoctorCheckResult]:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return []  # pragma: no cover
+        return []
 
     async def health_check(self, ctx: object) -> list[HealthCheckResult]:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return []  # pragma: no cover
+        return []
 
     async def lifecycle_action(
         self,
@@ -182,11 +182,11 @@ class _TimeoutAdapter:
         ctx: object,
     ) -> LifecycleActionResult:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return LifecycleActionResult(ok=False)  # pragma: no cover
+        return LifecycleActionResult(ok=False)
 
     async def pre_session(self, spec: object) -> dict[str, object]:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return {}  # pragma: no cover
+        return {}
 
     async def post_session(self, spec: object, outcome: object) -> None:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
@@ -199,7 +199,7 @@ class _TimeoutAdapter:
         ctx: object,
     ) -> FeatureActionResult:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return FeatureActionResult(ok=False)  # pragma: no cover
+        return FeatureActionResult(ok=False)
 
     async def sidecar_lifecycle(
         self,
@@ -207,11 +207,11 @@ class _TimeoutAdapter:
         action: Literal["start", "stop", "status"],
     ) -> SidecarStatus:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return SidecarStatus(ok=False)  # pragma: no cover
+        return SidecarStatus(ok=False)
 
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return NormalizedDevice(  # pragma: no cover
+        return NormalizedDevice(
             identity_scheme="android_serial",
             identity_scope="host",
             identity_value="avd:Pixel_7",
@@ -225,7 +225,7 @@ class _TimeoutAdapter:
 
     async def telemetry(self, ctx: object) -> HardwareTelemetry:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return HardwareTelemetry(supported=False)  # pragma: no cover
+        return HardwareTelemetry(supported=False)
 
 
 class _RaisingAdapter:

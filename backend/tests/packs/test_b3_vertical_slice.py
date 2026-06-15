@@ -219,7 +219,7 @@ class _FakeAgentClient:
     async def __aexit__(self, *_args: object) -> bool:
         return False
 
-    async def get(self, *args: object, **kwargs: object) -> httpx.Response:  # pragma: no cover
+    async def get(self, *args: object, **kwargs: object) -> httpx.Response:
         raise AssertionError("dispatch_feature_action must not GET the agent")
 
     async def post(

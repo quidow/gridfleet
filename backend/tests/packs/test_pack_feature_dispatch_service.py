@@ -74,7 +74,7 @@ class StrictAgentClient:
     async def __aexit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
         return False
 
-    async def get(  # pragma: no cover — dispatch only POSTs.
+    async def get(
         self,
         url: str,
         *,

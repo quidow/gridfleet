@@ -27,7 +27,7 @@ def app() -> FastAPI:
 
     @application.post("/_test-validation")
     async def _validation(body: _Body) -> None:
-        pass  # pragma: no cover
+        pass
 
     return application
 

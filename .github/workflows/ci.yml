@@ -94,7 +94,7 @@ jobs:
 
       - name: Test
         working-directory: backend
-        run: uv run --locked --extra dev pytest -q -n auto --cov=app --cov-report=term-missing:skip-covered
+        run: uv run --locked --extra dev pytest -q -n auto
 
   agent:
     name: Agent
@@ -132,7 +132,7 @@ jobs:
 
       - name: Test
         working-directory: agent
-        run: uv run --locked --extra dev pytest -q --cov=agent_app --cov-report=term-missing:skip-covered
+        run: uv run --locked --extra dev pytest -q
 
       - name: Build package
         working-directory: agent

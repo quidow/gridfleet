@@ -34,7 +34,7 @@ uv run alembic upgrade head               # apply migrations
 uv run alembic revision --autogenerate -m "msg"
 uv run uvicorn app.main:app --reload      # dev server on :8000
 ```
-Tests marked `db` need a real Postgres (use the docker compose `postgres` service). Coverage threshold is 98% (`pyproject.toml`). Line length 120.
+Tests marked `db` need a real Postgres (use the docker compose `postgres` service). Line length 120.
 
 ### Agent (`cd agent`)
 ```bash

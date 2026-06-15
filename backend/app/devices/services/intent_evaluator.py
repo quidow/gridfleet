@@ -180,7 +180,7 @@ def evaluate_recovery(intents: list[DeviceIntent], now: datetime) -> RecoveryDec
             source=deny_winner.source,
         )
     allow_winner = _highest(winners)
-    if allow_winner is None:  # pragma: no cover - winners is non-empty, kept for type narrowing.
+    if allow_winner is None:
         return RecoveryDecision(allowed=True, reason=None, source=None)
     return RecoveryDecision(
         allowed=True,
