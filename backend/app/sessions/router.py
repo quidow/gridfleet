@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db_retry import retry_on_serialization_failure
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.http_errors import found_or_404
@@ -187,5 +188,10 @@ async def post_session_finished(
     db: DbDep,
     session_services: SessionServicesDep,
 ) -> Response:
-    found_or_404(await session_services.crud.mark_session_finished(db, session_id), "Session not found")
+    result = await retry_on_serialization_failure(
+        db,
+        lambda: session_services.crud.mark_session_finished(db, session_id),
+        caller="session_finished",
+    )
+    found_or_404(result, "Session not found")
     return Response(status_code=204)
