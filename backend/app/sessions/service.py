@@ -200,6 +200,25 @@ async def close_running_session(
     from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
 
     sid = session.session_id
+    # Lock order (deadlock avoidance): take the device row lock BEFORE the
+    # session row is dirtied below. Otherwise the autoflush invoked by the
+    # ``select(TestRun ...)`` read stamps the session row first — session →
+    # device — the inverse of mark_session_finished / update_session_status /
+    # the run-release path, and the two end-paths (router /sessions/ended vs
+    # client /finished) deadlock on the same session under concurrent teardown.
+    # A vanished device row means nothing to lock.
+    if session.device_id is not None:
+        with contextlib.suppress(NoResultFound):
+            await device_locking.lock_device(db, session.device_id)
+        # Re-check under the lock: a concurrent closer (mark_session_finished or
+        # the session_sync sweep on another worker) may have terminalized this
+        # row between mark_ended's SELECT and our lock acquisition. Bail to avoid
+        # a double session.ended emit + double intent revoke. A column read (not
+        # the identity-mapped object) sees the winner's committed ended_at; the
+        # session row is still clean here, so this read does not autoflush a
+        # session UPDATE ahead of the lock.
+        if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
+            return
     # A row still ``pending`` at close was never confirmed: ``session.started`` is queued
     # only at confirm (allocation.py), and the row carries a placeholder ``alloc-<uuid>``
     # session_id no consumer ever saw start. Emitting ``session.ended`` for it would be an
