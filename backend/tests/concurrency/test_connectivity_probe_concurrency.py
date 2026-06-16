@@ -127,3 +127,75 @@ async def test_probe_concurrency_respects_settings_knob(db_session: AsyncSession
         ).check_connectivity(db_session)
 
     assert peak == 1, f"expected serialized probes with knob=1, got peak={peak}"
+
+
+async def _seed_two_hosts_one_device_each(db_session: AsyncSession) -> list[str]:
+    """Two online hosts, one available device each (distinct host_ids)."""
+    targets: list[str] = []
+    for h in range(2):
+        host = Host(
+            hostname=f"xhost-{h}",
+            ip=f"10.0.1.{h}",
+            os_type="linux",
+            agent_port=5100,
+            status=HostStatus.online,
+        )
+        db_session.add(host)
+        await db_session.flush()
+        target = f"xh{h}-dev"
+        with state_write_guard.bypass():
+            device = Device(
+                pack_id="appium-uiautomator2",
+                platform_id="android_mobile",
+                identity_scheme="android_serial",
+                identity_scope="host",
+                identity_value=target,
+                connection_target=target,
+                name=f"X Phone {h}",
+                os_version="14",
+                host_id=host.id,
+                operational_state=DeviceOperationalState.available,
+                verified_at=datetime.now(UTC),
+                device_type=DeviceType.real_device,
+                connection_type=ConnectionType.usb,
+            )
+        db_session.add(device)
+        targets.append(target)
+    await db_session.commit()
+    return targets
+
+
+async def test_health_probes_run_concurrently_across_hosts(db_session: AsyncSession) -> None:
+    """Devices on DIFFERENT hosts must probe concurrently even with the per-host
+    knob = 1. The old sequential per-host loop serialized hosts (peak == 1); the
+    cross-host gather overlaps them (peak == 2)."""
+    targets = await _seed_two_hosts_one_device_each(db_session)
+
+    active = 0
+    peak = 0
+
+    async def probing_health(device: Device, **kwargs: object) -> dict[str, object]:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.05)  # hold the probe open so a peer on another host can enter
+        active -= 1
+        return {"healthy": True}
+
+    with (
+        patch(
+            "app.devices.services.connectivity._get_agent_devices",
+            new_callable=AsyncMock,
+            return_value=set(targets),
+        ),
+        patch("app.devices.services.connectivity._get_device_health", probing_health),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({"general.probe_concurrency_per_host": 1}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    assert peak == 2, f"hosts probed serially (peak={peak}); expected cross-host overlap == 2"

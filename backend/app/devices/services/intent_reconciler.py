@@ -391,8 +391,6 @@ async def reconcile_device(
         .scalars()
         .all()
     )
-    intent_count = await db.scalar(select(func.count()).select_from(DeviceIntent))
-    metrics_recorders.INTENT_REGISTRY_INTENTS.set(int(intent_count or 0))
     active_node_intents = [
         intent
         for intent in intents

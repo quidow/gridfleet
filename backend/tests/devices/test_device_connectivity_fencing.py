@@ -91,72 +91,6 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_check_connectivity_aborts_in_connected_branch_when_leadership_lost(
-    db_session: AsyncSession,
-) -> None:
-    host = Host(
-        id=uuid.uuid4(),
-        hostname="conn-b-h",
-        ip="10.0.0.43",
-        agent_port=5100,
-        status=HostStatus.online,
-        os_type=OSType.linux,
-    )
-    db_session.add(host)
-    await db_session.flush()
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="conn-b-001",
-            connection_target="conn-b-001",
-            name="Conn B Device",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.commit()
-    initial_state = device.operational_state
-
-    with (
-        patch(
-            "app.devices.services.connectivity._get_agent_devices",
-            new_callable=AsyncMock,
-            return_value={"conn-b-001"},
-        ),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            return_value={"healthy": True},
-        ),
-        patch(
-            "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, LeadershipLost("site b")],
-        ) as mock_leader,
-        pytest.raises(LeadershipLost),
-    ):
-        await ConnectivityService(
-            publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=AsyncMock(),
-        ).check_connectivity(db_session)
-
-    await db_session.refresh(device, attribute_names=["operational_state"])
-    assert device.operational_state == initial_state
-    # Post-probe fence passed (call 1), after-lifecycle fence raised (call 2),
-    # before the connected-device write path. Pins the abort to that fence.
-    assert mock_leader.await_count == 2
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
 async def test_check_connectivity_aborts_before_stop_disconnected_node_when_leadership_lost(
     db_session: AsyncSession,
 ) -> None:
@@ -208,7 +142,7 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
         ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, None, None, LeadershipLost("site stop")],
+            side_effect=[None, None, LeadershipLost("site stop")],
         ) as mock_leader,
         pytest.raises(LeadershipLost),
     ):
@@ -223,10 +157,10 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
     stop_called.assert_not_called()
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state
-    # Fence sequence to this branch: post-probe (1), after-lifecycle (2),
-    # after-enumeration (3), then the disconnected-branch fence (4) raises before
-    # _stop_disconnected_node. Pins the abort to that fence.
-    assert mock_leader.await_count == 4
+    # Fence sequence to this branch (per-device hot-path fence removed): post-probe
+    # (1), after-enumeration (2), then the disconnected-branch fence (3) raises
+    # before _stop_disconnected_node. Pins the abort to that fence.
+    assert mock_leader.await_count == 3
 
 
 @pytest.mark.db
@@ -355,35 +289,44 @@ async def test_check_connectivity_commits_per_device(
         patch(
             "app.devices.services.connectivity._get_agent_devices",
             new_callable=AsyncMock,
-            return_value=set(),
+            return_value=set(),  # enumeration reachable but reports no devices -> disconnected branch
         ),
         patch(
             "app.devices.services.connectivity._get_device_health",
-            new=AsyncMock(return_value=None),
+            new=AsyncMock(return_value=None),  # probe unanswered for both devices
         ),
         patch(
             "app.devices.services.connectivity._fetch_lifecycle_state",
             new=AsyncMock(return_value=None),
         ),
-        # Fence sequence: post-probe (1), device-1 after-lifecycle (2) — device 1
-        # then writes its probe_unanswered counter and short-circuits (threshold
-        # 1 flips immediately) — device-2 after-lifecycle (3) raises.
+        # No node is observed_running, so _stop_disconnected_node is reached.
+        patch(
+            "app.devices.services.connectivity._stop_disconnected_node",
+            new=AsyncMock(return_value=None),
+        ),
+        # Fence sequence with the per-device hot-path fence removed and a high
+        # unanswered threshold (no early escalation): post-probe (1); device-1
+        # after-enumeration (2); device-1 pre-stop (3); device-2 commits device-1's
+        # disconnect write at the top of its iteration, then device-2 pre-stop (4)
+        # raises. (Enumeration is cached per host, so it is not re-fenced for device 2.)
         patch(
             "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, None, LeadershipLost("mid-cycle")],
+            side_effect=[None, None, None, LeadershipLost("mid-cycle")],
         ),
         pytest.raises(LeadershipLost),
     ):
         await ConnectivityService(
             publisher=event_bus,
-            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 1}),
+            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
             health=AsyncMock(),
         ).check_connectivity(db_session)
 
-    # Verify from a FRESH session: exactly one device's counter was committed
-    # (the loop order between the two devices is not guaranteed, so count both).
+    # Verify from a FRESH session: device-1's probe_unanswered counter (written
+    # before its disconnect handling and committed at the top of device-2's
+    # iteration) survived the abort during device-2. Exactly one device committed
+    # (loop order between the two devices is not guaranteed, so count both).
     async with db_session_maker() as verify:
         values = [
             await control_plane_state_store.get_value(verify, PROBE_UNANSWERED_NAMESPACE, iv) for iv in identity_values
