@@ -14,7 +14,10 @@ if TYPE_CHECKING:
 
 
 def _route_paths() -> set[str]:
-    return {getattr(route, "path", "") for route in app.routes}
+    # FastAPI 0.137 stores included routers as a tree, so ``app.routes`` is no
+    # longer a flat list of ``APIRoute`` objects. Enumerate via the OpenAPI
+    # schema, which still reflects every registered path operation.
+    return set(app.openapi()["paths"])
 
 
 def test_claim_route_not_registered() -> None:
