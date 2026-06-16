@@ -24,13 +24,17 @@ If `/health/ready` is unhealthy, stop here and focus on the failing `checks` ent
 
 ```bash
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | \
-  egrep '^(pending_jobs|active_sessions|background_loop_errors_total|background_loop_runs_total|agent_calls_total|webhook_deliveries_total)'
+  egrep '^(pending_jobs|active_sessions|background_loop_errors_total|background_loop_runs_total|background_loop_overrun_total|http_unhandled_exception_total|agent_calls_total|webhook_deliveries_total)'
 ```
 
 Prioritize these patterns:
 
 - `background_loop_errors_total{loop_name="..."}` increasing:
   - one control-plane loop is failing repeatedly
+- `background_loop_overrun_total{loop_name="..."}` increasing:
+  - that loop is taking longer than its interval (e.g. delayed offline/disconnect detection) even though it isn't erroring
+- `http_unhandled_exception_total{path,exc_type,pgcode}` increasing:
+  - requests are returning 500s; `exc_type`/`pgcode` name the cause (e.g. `pgcode="40P01"` is a Postgres deadlock)
 - `pending_jobs` climbing:
   - durable work is backing up
 - `agent_calls_total{outcome!="success"}` increasing:
@@ -66,16 +70,32 @@ docker compose --env-file .env -f docker-compose.prod.yml exec postgres \
 
 If most connections are stuck `active` for a long time, inspect the backend logs before raising pool sizes.
 
+The backend also exports its own pool view (per worker) — check it before assuming exhaustion:
+
+```bash
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | \
+  egrep '^db_pool_(size|checked_out|overflow)'
+```
+
+`db_pool_checked_out` near `db_pool_size + max_overflow` (and `db_pool_overflow` pinned at its max) means the worker is pool-starved; otherwise the contention is row-level, not pool-level.
+
 ## 5. Check whether the issue is queue pressure or device scarcity
 
 ```bash
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/runs | python -m json.tool
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" 'http://localhost:8000/api/devices?status=available' | python -m json.tool
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" 'http://localhost:8000/api/devices?status=offline' | python -m json.tool
+
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | \
+  egrep '^(gridfleet_grid_eligible_devices|gridfleet_grid_queue_depth|gridfleet_devices_in_cooldown|gridfleet_grid_allocate_queue_wait_seconds|gridfleet_grid_try_allocate_duration_seconds)'
 ```
 
 Interpretation:
 
+- `gridfleet_grid_eligible_devices` near zero while `gridfleet_grid_queue_depth` rises:
+  - genuine device scarcity (often tightened by `gridfleet_devices_in_cooldown` holding devices out of the eligible set)
+- `gridfleet_grid_allocate_queue_wait_seconds` tail high but `gridfleet_grid_try_allocate_duration_seconds` low:
+  - clients are waiting for capacity, not for a slow allocation path (the allocate long-poll is working as designed)
 - many active runs + very few available devices:
   - expected reservation pressure
 - many offline devices or hosts:

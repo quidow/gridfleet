@@ -12,6 +12,13 @@ HTTP_REQUESTS_TOTAL = Counter(
     "Total HTTP requests handled by the backend.",
     labelnames=("method", "path", "status"),
 )
+HTTP_UNHANDLED_EXCEPTIONS_TOTAL = Counter(
+    "http_unhandled_exception_total",
+    "Uncaught exceptions that reached the catch-all handler and returned HTTP 500.",
+    # ``path`` is the templated route path (not the raw URL) to bound cardinality;
+    # ``pgcode`` carries the Postgres SQLSTATE for DBAPIError, else empty string.
+    labelnames=("path", "exc_type", "pgcode"),
+)
 AGENT_CALL_DURATION_SECONDS = Histogram(
     "agent_call_duration_seconds",
     "Agent HTTP call duration in seconds.",
@@ -43,6 +50,11 @@ BACKGROUND_LOOP_RUNS_TOTAL = Counter(
 BACKGROUND_LOOP_ERRORS_TOTAL = Counter(
     "background_loop_errors_total",
     "Total failed background loop iterations.",
+    labelnames=("loop_name",),
+)
+BACKGROUND_LOOP_OVERRUN_TOTAL = Counter(
+    "background_loop_overrun_total",
+    "Background loop cycles whose duration exceeded the loop's configured interval.",
     labelnames=("loop_name",),
 )
 APPIUM_RECONCILER_ORPHANS_STOPPED = Counter(
@@ -210,6 +222,16 @@ def record_background_loop_error(loop_name: str, duration_seconds: float) -> Non
     BACKGROUND_LOOP_DURATION_SECONDS.labels(loop_name=loop_name).observe(duration_seconds)
 
 
+def record_background_loop_overrun(loop_name: str, duration_seconds: float, *, interval_seconds: float) -> None:
+    """Count a cycle that missed its cadence (took longer than its interval).
+
+    Mirrors ``record_heartbeat_cycle``'s overrun signal. ``interval_seconds <= 0``
+    (doorbell-woken loops with no fixed cadence) never counts as an overrun.
+    """
+    if interval_seconds > 0 and duration_seconds > interval_seconds:
+        BACKGROUND_LOOP_OVERRUN_TOTAL.labels(loop_name=loop_name).inc()
+
+
 def record_webhook_delivery(status: str, count: int = 1) -> None:
     if count <= 0:
         return
@@ -305,4 +327,18 @@ DB_SERIALIZATION_RETRY_TOTAL = Counter(
     "db_serialization_retry_total",
     "Transactions rolled back and re-run after a transient Postgres deadlock/serialization failure (40P01/40001).",
     labelnames=("caller", "outcome"),
+)
+
+DB_POOL_SIZE = Gauge(
+    "db_pool_size",
+    "Configured SQLAlchemy connection pool size (base capacity, excludes overflow).",
+)
+DB_POOL_CHECKED_OUT = Gauge(
+    "db_pool_checked_out",
+    "Connections currently checked out of the SQLAlchemy pool.",
+)
+DB_POOL_OVERFLOW = Gauge(
+    "db_pool_overflow",
+    "Current pool overflow: connections opened beyond pool_size. "
+    "Negative means spare base capacity (fewer connections open than pool_size).",
 )

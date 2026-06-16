@@ -26,7 +26,9 @@ from app.core.dependencies import DbDep
 from app.core.timeutil import now_utc
 from app.devices.models import Device
 from app.grid.allocation import (
+    GRID_ALLOCATE_QUEUE_WAIT_SECONDS,
     GRID_ALLOCATION_OUTCOME_TOTAL,
+    GRID_TRY_ALLOCATE_DURATION_SECONDS,
     AllocationNotPendingError,
     AllocationResult,
     RunNotActiveError,
@@ -70,10 +72,14 @@ async def _get_or_create_ticket(
 @router.post("/allocate", response_model=AllocateResponse)
 async def allocate(payload: AllocateRequest, services: GridServicesDep) -> AllocateResponse | JSONResponse:
     allocation = services.allocation
-    deadline = time.monotonic() + LONG_POLL_SEC
+    started = time.monotonic()
+    deadline = started + LONG_POLL_SEC
     ticket_id = payload.ticket
 
     def _allocated(result: AllocationResult) -> AllocateResponse:
+        # Queue-wait at the allocated return: separates "devices scarce" from
+        # "allocation path slow" (the per-attempt service time is timed below).
+        GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="allocated").observe(time.monotonic() - started)
         return AllocateResponse(
             status="allocated",
             allocation_id=result.allocation_id,
@@ -100,6 +106,7 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                 if resumed is not None:
                     await db.commit()
                     return _allocated(resumed)
+            attempt_started = time.monotonic()
             try:
                 result = await allocation.try_allocate(db, ticket=ticket)
             except (CapabilityMergeError, RunNotActiveError) as e:
@@ -110,11 +117,13 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                 # generic text above.
                 await db.commit()
                 return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
+            GRID_TRY_ALLOCATE_DURATION_SECONDS.observe(time.monotonic() - attempt_started)
             await db.commit()
         if result is not None:
             return _allocated(result)
         if time.monotonic() >= deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
+            GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="queued").observe(time.monotonic() - started)
             return AllocateResponse(status="queued", ticket=ticket_id)
         await asyncio.sleep(RETRY_INTERVAL_SEC)
 

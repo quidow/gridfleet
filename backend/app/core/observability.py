@@ -15,7 +15,11 @@ from uuid import uuid4
 import structlog
 
 from app.core.database import async_session
-from app.core.metrics_recorders import record_background_loop_error, record_background_loop_run
+from app.core.metrics_recorders import (
+    record_background_loop_error,
+    record_background_loop_overrun,
+    record_background_loop_run,
+)
 from app.core.timeutil import parse_iso
 
 if TYPE_CHECKING:
@@ -436,6 +440,7 @@ class BackgroundLoopObservation:
                     error=str(exc),
                 )
                 record_background_loop_error(self.loop_name, duration)
+                record_background_loop_overrun(self.loop_name, duration, interval_seconds=self.interval_seconds)
                 raise
             else:
                 finished_at = _now()
@@ -448,6 +453,7 @@ class BackgroundLoopObservation:
                     duration_seconds=duration,
                 )
                 record_background_loop_run(self.loop_name, duration)
+                record_background_loop_overrun(self.loop_name, duration, interval_seconds=self.interval_seconds)
 
 
 def observe_background_loop(loop_name: str, interval_seconds: float) -> BackgroundLoopObservation:

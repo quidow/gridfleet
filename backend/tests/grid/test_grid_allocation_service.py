@@ -116,6 +116,17 @@ async def test_allocate_creates_pending_and_busy(
 
 
 @pytest.mark.db
+async def test_eligible_devices_sets_gauge(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    from app.grid.allocation import GRID_ELIGIBLE_DEVICES
+
+    eligible = await allocation_service._eligible_devices(db_session)
+    assert seeded_available_device.id in {d.id for d in eligible}
+    assert GRID_ELIGIBLE_DEVICES._value.get() == len(eligible)  # type: ignore[attr-defined]
+
+
+@pytest.mark.db
 async def test_allocate_extracts_test_name_from_capabilities(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
 ) -> None:

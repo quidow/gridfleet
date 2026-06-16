@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
+from app.core.metrics import register_gauge_refresher
+from app.core.metrics_recorders import DB_POOL_CHECKED_OUT, DB_POOL_OVERFLOW, DB_POOL_SIZE
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -43,3 +45,19 @@ class Base(DeclarativeBase):
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
         yield session
+
+
+async def _refresh_db_pool_gauges(_db: AsyncSession) -> None:
+    """Publish connection-pool stats at scrape time (pool stats are process-global,
+    so the scrape session argument is unused). Guarded with ``getattr`` because
+    non-queue pools (e.g. ``NullPool``) do not expose these accessors."""
+    pool = engine.pool
+    if callable(size := getattr(pool, "size", None)):
+        DB_POOL_SIZE.set(size())
+    if callable(checked_out := getattr(pool, "checkedout", None)):
+        DB_POOL_CHECKED_OUT.set(checked_out())
+    if callable(overflow := getattr(pool, "overflow", None)):
+        DB_POOL_OVERFLOW.set(overflow())
+
+
+register_gauge_refresher(_refresh_db_pool_gauges)

@@ -10,10 +10,38 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
 
+from app.core.metrics_recorders import HTTP_UNHANDLED_EXCEPTIONS_TOTAL
 from app.core.observability import get_logger
 
 logger = get_logger(__name__)
+
+
+def _templated_path(request: Request) -> str:
+    """Return the matched route's templated path (e.g. ``/api/sessions/{id}/finished``).
+
+    Mirrors the HTTP-metrics middleware so the exception counter shares the same
+    bounded-cardinality label instead of the raw, per-resource URL path.
+    """
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    if isinstance(route_path, str) and route_path:
+        return route_path
+    return request.url.path
+
+
+def _pgcode(exc: BaseException) -> str:
+    """Postgres SQLSTATE for a DBAPIError, walking the driver cause chain; else ""."""
+    if not isinstance(exc, DBAPIError):
+        return ""
+    cause: BaseException | None = exc.orig
+    while cause is not None:
+        sqlstate = getattr(cause, "sqlstate", None)
+        if isinstance(sqlstate, str) and sqlstate:
+            return sqlstate
+        cause = cause.__cause__
+    return ""
 
 
 class AppError(Exception):
@@ -230,6 +258,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled request error", path=request.url.path)
+        HTTP_UNHANDLED_EXCEPTIONS_TOTAL.labels(
+            path=_templated_path(request),
+            exc_type=type(exc).__name__,
+            pgcode=_pgcode(exc),
+        ).inc()
         return envelope_response(
             status_code=500,
             code="INTERNAL_ERROR",

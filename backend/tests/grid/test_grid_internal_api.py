@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
+    from prometheus_client import Histogram
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
@@ -65,6 +66,43 @@ async def test_allocate_immediate_match(client: AsyncClient, seeded_available_de
     assert data["allocation_id"]
     assert data["target"].startswith("http://")
     assert data["claim_window_sec"] == 120
+
+
+def _hist_count(hist: Histogram, **labels: str) -> float:
+    for metric in hist.collect():
+        for sample in metric.samples:
+            if sample.name.endswith("_count") and all(sample.labels.get(k) == v for k, v in labels.items()):
+                return float(sample.value)
+    return 0.0
+
+
+@pytest.mark.db
+async def test_allocate_records_service_time_and_queue_wait_metrics(
+    client: AsyncClient, seeded_available_device: Device
+) -> None:
+    from app.grid.allocation import GRID_ALLOCATE_QUEUE_WAIT_SECONDS, GRID_TRY_ALLOCATE_DURATION_SECONDS
+
+    try_before = _hist_count(GRID_TRY_ALLOCATE_DURATION_SECONDS)
+    wait_before = _hist_count(GRID_ALLOCATE_QUEUE_WAIT_SECONDS, outcome="allocated")
+
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    assert resp.json()["status"] == "allocated"
+
+    # An immediate match runs exactly one try_allocate attempt and returns "allocated".
+    assert _hist_count(GRID_TRY_ALLOCATE_DURATION_SECONDS) == try_before + 1
+    assert _hist_count(GRID_ALLOCATE_QUEUE_WAIT_SECONDS, outcome="allocated") == wait_before + 1
+
+
+@pytest.mark.db
+async def test_allocate_no_match_records_queued_queue_wait(
+    client: AsyncClient, seeded_available_device: Device
+) -> None:
+    from app.grid.allocation import GRID_ALLOCATE_QUEUE_WAIT_SECONDS
+
+    queued_before = _hist_count(GRID_ALLOCATE_QUEUE_WAIT_SECONDS, outcome="queued")
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="iOS")})
+    assert resp.json()["status"] == "queued"
+    assert _hist_count(GRID_ALLOCATE_QUEUE_WAIT_SECONDS, outcome="queued") == queued_before + 1
 
 
 @pytest.mark.db

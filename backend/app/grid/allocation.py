@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol, cast
 
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy import ColumnElement, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
@@ -63,6 +63,24 @@ GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL = Counter(
     "gridfleet_grid_stereotype_lookup_error",
     "Pack/platform lookups that failed while rendering a device's slot stereotype "
     "(device falls back to an empty pack stereotype and is unmatchable until repaired).",
+)
+GRID_ELIGIBLE_DEVICES = Gauge(
+    "gridfleet_grid_eligible_devices",
+    "Devices eligible for allocation at the most recent allocate attempt "
+    "(available, node-viable, no live session). Excludes cooldown/busy devices.",
+)
+GRID_TRY_ALLOCATE_DURATION_SECONDS = Histogram(
+    "gridfleet_grid_try_allocate_duration_seconds",
+    "Server-side duration of a single try_allocate attempt (excludes long-poll queue wait).",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+GRID_ALLOCATE_QUEUE_WAIT_SECONDS = Histogram(
+    "gridfleet_grid_allocate_queue_wait_seconds",
+    "Total wall-clock time a /internal/grid/allocate long-poll waited before returning, by outcome. "
+    "Separates capacity scarcity (queue wait) from try_allocate service time.",
+    labelnames=("outcome",),  # allocated | queued
+    # The long poll runs to LONG_POLL_SEC (25s); extend past the 10s default ceiling (#9).
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 25.0, 30.0),
 )
 
 # Extra budget on top of grid.claim_window_sec before the reaper fails a pending row.
@@ -644,7 +662,9 @@ class AllocationService:
             .where(node_viable_predicate())
             .where(~select(Session.id).where(Session.device_id == Device.id, live_session_predicate()).exists())
         )
-        return list((await db.execute(stmt)).scalars().all())
+        devices = list((await db.execute(stmt)).scalars().all())
+        GRID_ELIGIBLE_DEVICES.set(len(devices))
+        return devices
 
     @staticmethod
     def _reservation_run_id(reservation_run: TestRun | None, device_id: uuid.UUID) -> uuid.UUID | None:
