@@ -5,15 +5,19 @@ Built-in FastAPI routes (``/openapi.json``, ``/docs``,
 ``/docs/oauth2-redirect``, ``/redoc``) are filtered out because they
 vary by FastAPI version and environment.
 
-Also pins the ``response_model=`` declarations that already exist on
-the current ``main.py`` so a router extraction cannot silently drop them.
+Also pins the ``response_model=`` declaration on the ``normalize`` route
+(surfaced through the OpenAPI schema) so a router extraction cannot
+silently drop it.
+
+Routes are read from the OpenAPI schema rather than ``app.routes``:
+FastAPI 0.137 stores included routers as a tree, so ``app.routes`` is no
+longer a flat list of route objects.
 """
 
 from __future__ import annotations
 
-from starlette.routing import Route
-
 from agent_app.main import app
+from agent_app.pack.schemas import NormalizeDeviceResponse
 
 EXPECTED_HTTP_ROUTES = {
     ("GET", "/agent/health"),
@@ -36,18 +40,18 @@ EXPECTED_HTTP_ROUTES = {
     ("GET", "/agent/tools/status"),
 }
 
+# OpenAPI path-item keys that denote HTTP operations (vs "parameters", etc.).
+_HTTP_METHODS = {"get", "put", "post", "delete", "patch"}
+
 
 def _gridfleet_http_routes() -> set[tuple[str, str]]:
     pairs: set[tuple[str, str]] = set()
-    for route in app.routes:
-        if not isinstance(route, Route):
+    for path, item in app.openapi()["paths"].items():
+        if not path.startswith("/agent/"):
             continue
-        if not route.path.startswith("/agent/"):
-            continue
-        for method in route.methods or set():
-            if method == "HEAD":
-                continue
-            pairs.add((method, route.path))
+        for method in item:
+            if method in _HTTP_METHODS:
+                pairs.add((method.upper(), path))
     return pairs
 
 
@@ -56,14 +60,6 @@ def test_route_map_matches_golden() -> None:
 
 
 def test_normalize_device_response_model_preserved() -> None:
-    from agent_app.pack.schemas import NormalizeDeviceResponse
-
-    route = _find_route("POST", "/agent/pack/devices/normalize")
-    assert route.response_model is NormalizeDeviceResponse
-
-
-def _find_route(method: str, path: str) -> Route:
-    for route in app.routes:
-        if isinstance(route, Route) and route.path == path and method in (route.methods or set()):
-            return route
-    raise AssertionError(f"route {method} {path} not found")
+    operation = app.openapi()["paths"]["/agent/pack/devices/normalize"]["post"]
+    ref = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith(f"/{NormalizeDeviceResponse.__name__}")
