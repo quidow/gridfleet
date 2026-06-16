@@ -140,7 +140,7 @@ async def test_action_route_rejects_bad_body(client: AsyncClient) -> None:
 
 async def test_router_registered_on_app() -> None:
     """The feature-action router must be wired into ``app.main.app``."""
-    paths = {route.path for route in app.routes if hasattr(route, "path")}
+    paths = set(app.openapi()["paths"])
     assert any("/api/hosts/" in p and "/features/" in p and "/actions/" in p for p in paths), (
         "host_driver_pack_features router not registered on app"
     )
