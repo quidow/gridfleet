@@ -20,6 +20,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
 from app.core.leader.advisory import LeadershipLost
+from app.core.metrics_recorders import record_background_loop_effective_period
 from app.core.observability import get_logger, observe_background_loop
 
 if TYPE_CHECKING:
@@ -96,4 +97,10 @@ class BackgroundLoop(ABC):
                 self._on_cycle_end(time.monotonic() - cycle_start, interval)
             else:
                 self._on_cycle_end(time.monotonic() - cycle_start, interval)
-            await self._wait(interval)
+            # Sleep only the remainder of the interval so the cycle period is a
+            # true cadence (interval), not interval + cycle_duration. Doorbell
+            # overrides forward this value as their wait_for_wake timeout, so the
+            # cadence fix applies to them too.
+            await self._wait(max(0.0, interval - (time.monotonic() - cycle_start)))
+            # Real cadence (cycle work + sleep); captures early doorbell wakes too.
+            record_background_loop_effective_period(self.loop_name, time.monotonic() - cycle_start)

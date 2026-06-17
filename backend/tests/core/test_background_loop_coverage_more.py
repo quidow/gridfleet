@@ -175,7 +175,11 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     with pytest.raises(asyncio.CancelledError):
         await loop.run()
 
-    sleep.assert_awaited_once_with(1)
+    # Sleeps the remainder of the 1s interval after a near-instant failed cycle
+    # (cadence = interval - elapsed), not the full interval on top of cycle time.
+    sleep.assert_awaited_once()
+    (slept,) = sleep.await_args.args
+    assert slept == pytest.approx(1.0, abs=0.1)
 
 
 async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
