@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 
 import pytest
 
@@ -185,3 +186,68 @@ def test_leadership_event_name_override() -> None:
             return "legacy_leadership_lost"
 
     assert _LegacyNameLoop()._leadership_lost_event() == "legacy_leadership_lost"
+
+
+class _ClockLoop(_RecordingLoop):
+    """Drives a fake monotonic clock so cadence math is deterministic.
+
+    `cycle_cost` is added to the clock during each cycle body; `_wait` records
+    the sleep it is asked for and advances the clock by that amount (mimicking a
+    real sleep) so the observed period is `cycle_cost + sleep`.
+    """
+
+    def __init__(self, *, interval: float, cycle_cost: float) -> None:
+        super().__init__()
+        self._interval_seconds = interval
+        self._cycle_cost = cycle_cost
+        self.clock = 0.0
+        self.waits: list[float] = []
+
+    def _interval(self) -> float:
+        return self._interval_seconds
+
+    async def _run_cycle(self, db) -> None:  # noqa: ANN001 - stub session
+        self.cycles += 1
+        self.clock += self._cycle_cost
+
+    async def _wait(self, interval: float) -> None:
+        self.waits.append(interval)
+        self.clock += interval
+        await asyncio.sleep(0)
+
+
+async def test_wait_uses_interval_minus_cycle_elapsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run() must sleep `interval - elapsed` so the period is a true cadence."""
+    loop = _ClockLoop(interval=10.0, cycle_cost=4.0)
+    monkeypatch.setattr("app.core.background_loop.time", types.SimpleNamespace(monotonic=lambda: loop.clock))
+
+    await _run_cycles(loop, until=lambda: len(loop.waits) >= 2)
+    # 10s interval minus the 4s the cycle consumed → 6s sleep, every cycle.
+    assert loop.waits[0] == pytest.approx(6.0)
+    assert loop.waits[1] == pytest.approx(6.0)
+
+
+async def test_wait_clamps_to_zero_when_cycle_overruns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cycle longer than its interval sleeps 0, never a negative duration."""
+    loop = _ClockLoop(interval=10.0, cycle_cost=15.0)
+    monkeypatch.setattr("app.core.background_loop.time", types.SimpleNamespace(monotonic=lambda: loop.clock))
+
+    await _run_cycles(loop, until=lambda: len(loop.waits) >= 1)
+    assert loop.waits[0] == 0.0
+
+
+async def test_effective_period_gauge_reflects_true_cadence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The effective-period gauge reports the real cadence, not the configured interval."""
+    from app.core.metrics_recorders import BACKGROUND_LOOP_EFFECTIVE_PERIOD_SECONDS
+
+    class _IsolatedClockLoop(_ClockLoop):
+        loop_name = "scaffold_effective_period"  # isolate the gauge label from other tests
+
+    loop = _IsolatedClockLoop(interval=10.0, cycle_cost=4.0)
+    monkeypatch.setattr("app.core.background_loop.time", types.SimpleNamespace(monotonic=lambda: loop.clock))
+
+    # Wait for the second sleep so the first iteration's post-wait gauge write has run.
+    await _run_cycles(loop, until=lambda: len(loop.waits) >= 2)
+    # 4s cycle + 6s sleep = 10s real period, matching the configured interval.
+    gauge = BACKGROUND_LOOP_EFFECTIVE_PERIOD_SECONDS.labels(loop_name="scaffold_effective_period")
+    assert gauge._value.get() == pytest.approx(10.0)  # type: ignore[attr-defined]

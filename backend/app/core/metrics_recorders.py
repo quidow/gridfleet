@@ -57,6 +57,11 @@ BACKGROUND_LOOP_OVERRUN_TOTAL = Counter(
     "Background loop cycles whose duration exceeded the loop's configured interval.",
     labelnames=("loop_name",),
 )
+BACKGROUND_LOOP_EFFECTIVE_PERIOD_SECONDS = Gauge(
+    "background_loop_effective_period_seconds",
+    "Wall-clock seconds between the start of one cycle and the next (cycle duration + inter-cycle sleep).",
+    labelnames=("loop_name",),
+)
 APPIUM_RECONCILER_ORPHANS_STOPPED = Counter(
     "appium_reconciler_orphans_stopped_total",
     "Agent appium processes stopped by the reconciler because no DB row claimed them.",
@@ -230,6 +235,16 @@ def record_background_loop_overrun(loop_name: str, duration_seconds: float, *, i
     """
     if interval_seconds > 0 and duration_seconds > interval_seconds:
         BACKGROUND_LOOP_OVERRUN_TOTAL.labels(loop_name=loop_name).inc()
+
+
+def record_background_loop_effective_period(loop_name: str, period_seconds: float) -> None:
+    """Record the real cadence (cycle start to next cycle start) of a loop.
+
+    Unlike ``background_loop_duration_seconds`` (cycle work only) this includes
+    the inter-cycle sleep, so operators see the true period rather than the
+    configured interval.
+    """
+    BACKGROUND_LOOP_EFFECTIVE_PERIOD_SECONDS.labels(loop_name=loop_name).set(period_seconds)
 
 
 def record_webhook_delivery(status: str, count: int = 1) -> None:
