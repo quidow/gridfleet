@@ -745,6 +745,15 @@ class SessionCrudService:
             return session
         await db.refresh(session)
 
+        # Terminalize any allocation ticket whose claim minted this session. The
+        # router /sessions/ended terminalizer (close_running_session) no-ops once
+        # this path has stamped ended_at, so without this the claimed ticket lingers
+        # for the reaper (orphan_claim_reaped churn that masks a real leak). Guarded
+        # no-op for non-allocation sessions.
+        from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
+
+        await expire_tickets_for_session(db, session.id)
+
         if session.device_id is not None:
             # Mirror the ``update_session_status`` revoke path. Without this,
             # testkit clients that POST /finished without a follow-up PATCH /status
@@ -807,6 +816,15 @@ class SessionCrudService:
             session.ended_at = now_utc()
 
         if status != SessionStatus.running and session.device_id is not None:
+            # Terminalize any allocation ticket whose claim minted this session
+            # (expire-then-revoke, mirroring close_running_session). The router
+            # /sessions/ended terminalizer no-ops once this path has stamped
+            # ended_at, so without this the claimed ticket lingers for the reaper
+            # (orphan_claim_reaped churn that masks a real leak). Guarded no-op for
+            # non-allocation sessions.
+            from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
+
+            await expire_tickets_for_session(db, session.id)
             # Revoke the active_session intent for this specific session before
             # locking the device. Mirror the Grid-driven session-end path in
             # service_sync.py:390-395 — without this, testkit-driven terminal
