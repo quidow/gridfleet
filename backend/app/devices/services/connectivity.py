@@ -670,32 +670,39 @@ class ConnectivityService:
         eager-loaded by the caller. The per-host concurrency ceiling comes from
         the settings registry (general.probe_concurrency_per_host), shared with
         node_health and session_sync. The two fetches for one device run
-        sequentially inside its slot; the win is cross-device AND cross-host
-        concurrency.
+        concurrently inside its slot (independent agent reads, no shared state),
+        so the win is in-slot, cross-device, AND cross-host concurrency. The
+        semaphore still bounds the heavier health call to the configured
+        concurrency (one per slot).
         """
         probe_concurrency = self._settings.get_int("general.probe_concurrency_per_host")
         host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(probe_concurrency)
         )
 
+        async def _maybe_lifecycle(device: Device) -> str | None:
+            if device.id not in lifecycle_capable:
+                return None
+            return await _fetch_lifecycle_state(
+                device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+            )
+
         async def _probe(device: Device) -> tuple[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
             async with host_semaphores[device.host_id]:
-                lifecycle_state = (
-                    await _fetch_lifecycle_state(
-                        device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
-                    )
-                    if device.id in lifecycle_capable
-                    else None
-                )
-                health = await _get_device_health(
-                    device,
-                    ip_ping_timeout_sec=ip_ping_timeout,
-                    ip_ping_count=ip_ping_count,
-                    claimed_ports=claimed_ports_by_id.get(device.id),
-                    has_live_session=live_flag_by_id.get(device.id),
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
+                # Independent agent reads — run them concurrently within the slot so
+                # a lifecycle-capable device costs max(lifecycle, health), not the sum.
+                health, lifecycle_state = await asyncio.gather(
+                    _get_device_health(
+                        device,
+                        ip_ping_timeout_sec=ip_ping_timeout,
+                        ip_ping_count=ip_ping_count,
+                        claimed_ports=claimed_ports_by_id.get(device.id),
+                        has_live_session=live_flag_by_id.get(device.id),
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
+                        pool=self._pool,
+                    ),
+                    _maybe_lifecycle(device),
                 )
                 return device.id, (health, lifecycle_state)
 
