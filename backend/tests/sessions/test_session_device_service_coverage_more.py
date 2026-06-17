@@ -219,7 +219,9 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     # First execute is the lock-order device row lock — the vanished device
     # raises NoResultFound, which the close path must tolerate. Second is the
     # conditional close-claim UPDATE (re-review B3), which must report a win.
-    db.execute = AsyncMock(side_effect=[NoResultFound(), SimpleNamespace(rowcount=1)])
+    # Third is the grid-ticket expiry bulk UPDATE (audit M2); a non-allocation
+    # session transitions no tickets (rowcount 0).
+    db.execute = AsyncMock(side_effect=[NoResultFound(), SimpleNamespace(rowcount=1), SimpleNamespace(rowcount=0)])
     db.refresh = AsyncMock()
     db.flush = AsyncMock()
     db.commit = AsyncMock()
