@@ -185,16 +185,23 @@ def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
         next(generator)
 
 
-def test_device_config_uses_runtime_connection_target():
-    gridfleet_client = types.SimpleNamespace(get_device_config=lambda target: {"target": target})
-    driver = types.SimpleNamespace(capabilities={"appium:udid": "SERIAL123"})
+def test_device_config_uses_device_id_from_cap():
+    captured: dict[str, str] = {}
+
+    def fake_get_device_config(device_id: str) -> dict[str, str]:
+        captured["device_id"] = device_id
+        return {"device_id": device_id}
+
+    gridfleet_client = types.SimpleNamespace(get_device_config=fake_get_device_config)
+    driver = types.SimpleNamespace(capabilities={"appium:gridfleet:deviceId": "dev-1"})
 
     fixture_fn = pytest_plugin.device_config.__wrapped__
-    assert fixture_fn(driver, gridfleet_client) == {"target": "SERIAL123"}
+    assert fixture_fn(driver, gridfleet_client) == {"device_id": "dev-1"}
+    assert captured["device_id"] == "dev-1"
 
 
-def test_device_config_skips_when_connection_target_missing():
-    gridfleet_client = types.SimpleNamespace(get_device_config=lambda target: {"target": target})
+def test_device_config_skips_when_deviceid_cap_missing():
+    gridfleet_client = types.SimpleNamespace(get_device_config=lambda device_id: {"device_id": device_id})
     driver = types.SimpleNamespace(capabilities={})
 
     fixture_fn = pytest_plugin.device_config.__wrapped__
