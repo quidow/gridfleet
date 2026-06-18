@@ -54,6 +54,23 @@ pub fn extract_session_capabilities(body: &[u8]) -> Option<serde_json::Value> {
     caps.is_object().then_some(caps)
 }
 
+/// Inject `appium:gridfleet:deviceId` into a W3C create-session response's
+/// `value.capabilities`. Best-effort: returns `body` unchanged on any
+/// unexpected shape — injection must never fail a session create.
+pub fn inject_device_id(body: &[u8], device_id: &str) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    let Some(caps) = v["value"]["capabilities"].as_object_mut() else {
+        return body.to_vec();
+    };
+    caps.insert(
+        "appium:gridfleet:deviceId".to_string(),
+        serde_json::Value::String(device_id.to_string()),
+    );
+    serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +144,30 @@ mod tests {
         assert!(extract_session_ids(br#"{"value":{}}"#).is_empty());
         assert!(extract_session_ids(br#"{"value":[]}"#).is_empty());
         assert!(extract_session_ids(br#"{"value":[{"foo":"bar"}]}"#).is_empty());
+    }
+
+    #[test]
+    fn inject_device_id_adds_cap_and_preserves_others() {
+        let body = br#"{"value":{"sessionId":"app-1","capabilities":{"platformName":"Android"}}}"#;
+        let out = inject_device_id(body, "dev-uuid-1");
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(
+            v["value"]["capabilities"]["appium:gridfleet:deviceId"],
+            "dev-uuid-1"
+        );
+        assert_eq!(v["value"]["capabilities"]["platformName"], "Android");
+        assert_eq!(v["value"]["sessionId"], "app-1");
+    }
+
+    #[test]
+    fn inject_device_id_missing_caps_object_is_unchanged() {
+        let body = br#"{"value":{"sessionId":"app-1"}}"#;
+        assert_eq!(inject_device_id(body, "dev-uuid-1"), body.to_vec());
+    }
+
+    #[test]
+    fn inject_device_id_garbage_body_is_unchanged() {
+        let body = b"not json";
+        assert_eq!(inject_device_id(body, "dev-uuid-1"), body.to_vec());
     }
 }
