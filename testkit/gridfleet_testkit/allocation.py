@@ -138,7 +138,7 @@ def hydrate_allocated_device(
     inline_config = payload.get("config")
     if isinstance(inline_config, dict):
         config: JsonObject | None = cast("JsonObject", inline_config)
-    elif fetch_config and connection_target and "config" not in unavailable_set:
+    elif fetch_config and "config" not in unavailable_set:
         config = client.get_device_config(device_id)
     else:
         config = None

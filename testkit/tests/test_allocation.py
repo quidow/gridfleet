@@ -369,3 +369,15 @@ def test_hydrate_fetches_test_data_when_flag_enabled() -> None:
     )
     assert allocated.test_data == {"fetched": True}
     assert client.test_data_calls == ["dev-1"]
+
+
+def test_hydrate_fetches_config_when_connection_target_absent() -> None:
+    client = FakeClient()
+    allocated = hydrate_allocated_device(
+        device_handle(connection_target=None),
+        run_id="run-1",
+        client=client,
+        fetch_config=True,
+    )
+    assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
+    assert client.config_calls == ["dev-1"]
