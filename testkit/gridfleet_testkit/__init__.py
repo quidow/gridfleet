@@ -1,7 +1,8 @@
 """Supported Python integration helpers for GridFleet.
 
 `device_config` values returned by the manager are verbatim; the testkit no
-longer distinguishes between masked and revealed payloads. Code that wants the live Appium-side config can resolve the device id from the
+longer distinguishes between masked and revealed payloads. Code that wants the
+live Appium-side config can resolve the device id from the
 `appium:gridfleet:deviceId` session capability via `get_device_id_from_driver(driver)`
 and then call `client.get_device_config(device_id)`.
 
