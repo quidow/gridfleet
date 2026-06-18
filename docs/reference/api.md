@@ -260,11 +260,9 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/sessions` | List recorded Appium sessions | filters: `device_id`, `status`, `pack_id`, `platform_id`, `run_id`, `started_after`, `started_before`, `limit`, `offset`, `cursor`, `direction`, `sort_by`, `sort_dir`, `include_probes` | `{ items: SessionDetail[], total, limit, offset }` |
 | `GET` | `/api/sessions/{session_id}` | Read one recorded session | path `session_id` | `SessionDetail` |
-| `POST` | `/api/sessions` | Create or register a tracked session attempt, including device-less setup failures | `SessionCreate` | `SessionRead` |
 | `PATCH` | `/api/sessions/{session_id}/status` | Write final session status from an external test harness | `SessionStatusUpdate` | `SessionRead` |
-| `POST` | `/api/sessions/{session_id}/finished` | Push-notify session end from testkit `driver.quit`; stamps `ended_at` without touching `status`; idempotent | path `session_id` (WebDriver token string) | 204 No Content |
 
-`SessionCreate` now accepts optional setup-attempt fields:
+Session rows are created by the router/grid allocation flow (via the internal grid API), not by clients. `SessionRead` / `SessionDetail` expose setup-attempt fields populated from the requested capabilities alongside the existing session metadata:
 
 - `status`
 - `requested_pack_id`
@@ -274,8 +272,6 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 - `requested_capabilities`
 - `error_type`
 - `error_message`
-
-`SessionRead` / `SessionDetail` now return the same setup-attempt fields alongside the existing session metadata. `requested_capabilities` is validated with a 32 KB serialized size limit.
 
 `SessionDetail` also exposes:
 

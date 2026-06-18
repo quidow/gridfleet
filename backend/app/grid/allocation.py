@@ -315,10 +315,9 @@ class AllocationService:
             )
             await db.flush()
         except IntegrityError:
-            # A running row already carries this Appium session id (the partial unique
-            # ux_sessions_session_id_running) — e.g. the legacy register_session API
-            # inserted running(X) for the same session while this alloc row still held
-            # its 'alloc-<uuid>' placeholder. That is exactly the conflict the 409 path
+            # Another running row already carries this Appium session id (the partial
+            # unique ux_sessions_session_id_running) while this alloc row still held its
+            # 'alloc-<uuid>' placeholder. That is exactly the conflict the 409 path
             # exists for: roll the failed UPDATE back (it left the transaction poisoned)
             # and surface it as not-pending so the router rolls back the Appium session
             # via 409 — never as an unhandled 500 that wedges the allocation.

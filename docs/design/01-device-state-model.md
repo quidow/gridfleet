@@ -68,10 +68,9 @@ async def set_operational_state(
 
 It publishes `device.operational_state_changed` via `publisher.queue_for_session` (queued for commit) unless `publish_event=False`, and returns `False` when the value is unchanged. A row-level lock is required before calling it; most writers acquire it through `app.devices.locking.lock_device` or `lock_devices`.
 
-Besides the reconciler, `set_operational_state` has **four direct (non-reconciler) production callers** for specific entry/exit states:
+Besides the reconciler, `set_operational_state` has **three direct (non-reconciler) production callers** for specific entry/exit states:
 
 - `app.verification.services.execution` — transient `verifying` entry state.
-- `app.sessions.service` (`register_session`) — sets `busy` on session registration.
 - `app.appium_nodes.services.heartbeat` — host-offline path that marks every device on a downed host `offline`.
 - `app.runs.service_lifecycle_release` (`release_devices`) — restores the ready operational state when a run ends.
 

@@ -191,4 +191,3 @@ The `device_events` table is narrower than the live event bus. The persisted enu
 
 - The current event contract is code-owned and additive; this repo does not yet publish a separate versioned schema for each event payload.
 - `notifications.toast_events` is validated and normalized against this emitted-event catalog.
-- A device-less setup failure created directly through `POST /api/sessions` emits both `session.started` and `session.ended` so SSE/webhook consumers still observe a lifecycle-shaped sequence.
