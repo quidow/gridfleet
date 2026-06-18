@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator  # noqa: TC003 - fixture signature is
 from typing import Any
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.plugins.dependencies import (

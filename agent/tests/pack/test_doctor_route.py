@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import DoctorCheckResult

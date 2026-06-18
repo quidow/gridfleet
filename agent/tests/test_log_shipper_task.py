@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from agent_app.logs.schemas import ShippedLogLine

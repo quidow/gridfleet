@@ -9,7 +9,7 @@ from typing import Any, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from agent_app.appium.exceptions import (

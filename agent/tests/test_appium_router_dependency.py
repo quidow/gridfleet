@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.appium.dependencies import get_appium_mgr
 from agent_app.error_codes import AgentErrorCode

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry

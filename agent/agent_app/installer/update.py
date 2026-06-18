@@ -5,7 +5,7 @@ import platform
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-import httpx
+import httpx2 as httpx
 
 from agent_app.installer.install import (
     HealthCheckCallable,

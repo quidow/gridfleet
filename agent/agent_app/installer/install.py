@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-import httpx
+import httpx2 as httpx
 
 from agent_app.installer.plan import (
     InstallConfig,

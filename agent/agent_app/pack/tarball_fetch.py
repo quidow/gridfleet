@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import httpx
+    import httpx2 as httpx
 
 
 class TarballSha256MismatchError(RuntimeError):

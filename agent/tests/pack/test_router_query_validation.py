@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.main import app
 

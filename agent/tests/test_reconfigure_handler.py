@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.appium.dependencies import get_appium_mgr
 from agent_app.appium.exceptions import DeviceNotFoundError

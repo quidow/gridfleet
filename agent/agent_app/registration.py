@@ -8,7 +8,7 @@ import platform
 import socket
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 
 from agent_app import __version__
 from agent_app.config import agent_settings, secret_value

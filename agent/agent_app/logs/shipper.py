@@ -12,7 +12,7 @@ from agent_app import observability as agent_observability
 from agent_app.logs.schemas import AgentLogBatch, ShippedLogLine
 
 if TYPE_CHECKING:
-    import httpx
+    import httpx2 as httpx
 
     from agent_app.pack.host_identity import HostIdentity
 
