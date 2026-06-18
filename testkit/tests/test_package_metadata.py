@@ -20,7 +20,6 @@ def test_pytest_plugin_entry_point_is_declared() -> None:
 def test_bucket_a_public_exports_are_available() -> None:
     expected = {
         "AllocatedDevice",
-        "build_error_session_payload",
         "hydrate_allocated_device",
         "hydrate_allocated_device_from_driver",
     }
@@ -39,7 +38,6 @@ def test_documented_public_exports_are_available() -> None:
         "UnavailableInclude",
         "UnknownIncludeError",
         "build_appium_options",
-        "build_error_session_payload",
         "create_appium_driver",
         "get_connection_target_from_driver",
         "get_device_config_for_driver",

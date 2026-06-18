@@ -3,10 +3,8 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db_retry import retry_on_serialization_failure
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.http_errors import found_or_404
@@ -17,7 +15,6 @@ from app.sessions import service_kill
 from app.sessions.dependencies import SessionServicesDep
 from app.sessions.models import Session, SessionStatus
 
-SessionCreate = device_schemas.SessionCreate
 SessionDetail = device_schemas.SessionDetail
 SessionListRead = device_schemas.SessionListRead
 SessionRead = device_schemas.SessionRead
@@ -144,32 +141,6 @@ async def kill_session(
     )
 
 
-@router.post("", response_model=SessionRead)
-async def register_session(
-    data: SessionCreate,
-    db: DbDep,
-    session_services: SessionServicesDep,
-) -> Session:
-    try:
-        return await session_services.crud.register_session(
-            db,
-            session_id=data.session_id,
-            test_name=data.test_name,
-            device_id=data.device_id,
-            connection_target=data.connection_target,
-            status=data.status,
-            requested_pack_id=data.requested_pack_id,
-            requested_platform_id=data.requested_platform_id,
-            requested_device_type=data.requested_device_type,
-            requested_connection_type=data.requested_connection_type,
-            requested_capabilities=data.requested_capabilities,
-            error_type=data.error_type,
-            error_message=data.error_message,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
 @router.patch("/{session_id}/status", response_model=SessionRead)
 async def update_session_status(
     session_id: str,
@@ -180,18 +151,3 @@ async def update_session_status(
     return found_or_404(
         await session_services.crud.update_session_status(db, session_id, data.status), "Session not found"
     )
-
-
-@router.post("/{session_id}/finished", status_code=204)
-async def post_session_finished(
-    session_id: str,
-    db: DbDep,
-    session_services: SessionServicesDep,
-) -> Response:
-    result = await retry_on_serialization_failure(
-        db,
-        lambda: session_services.crud.mark_session_finished(db, session_id),
-        caller="session_finished",
-    )
-    found_or_404(result, "Session not found")
-    return Response(status_code=204)

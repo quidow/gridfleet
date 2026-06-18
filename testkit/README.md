@@ -20,7 +20,6 @@
 - Supported public allocation/session helpers:
   - `AllocatedDevice`
   - `UnavailableInclude`
-  - `build_error_session_payload`
   - `hydrate_allocated_device`
   - `hydrate_allocated_device_from_driver`
   - `resolve_device_handle_from_driver`
@@ -125,7 +124,7 @@ If you need raw Appium control instead, omit `pack_id` and `platform_id`, then p
 - Exposes `gridfleet_worker_id` which returns the pytest-xdist worker id, or `"controller"` for non-worker processes
 - Relies on manager-owned runtime isolation for Appium driver sub-ports and XCUITest build paths
 
-If Appium driver creation fails before a Grid session exists, the pytest fixture registers a device-less terminal error session with an `error-<uuid>` session id, attempted capabilities, requested pack/platform metadata when available, and exception details, then re-raises the original exception. These rows make setup failures visible in the GridFleet Sessions view.
+If Appium driver creation fails before a Grid session exists, the exception propagates directly to the test. The router/grid allocation flow owns session-row lifecycle; pre-session failures are not recorded by the testkit.
 
 ## Direct Appium Usage
 
@@ -169,15 +168,11 @@ finally:
 | `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
 | `GridFleetClient.report_preparation_failure(run_id, device_id, message, source="ci_preparation")` | Exclude one reserved device after setup fails |
-| `GridFleetClient.register_session(fields)` | Register a Grid/Appium session with optional requested capability metadata |
-| `GridFleetClient.register_session_from_driver(driver, fields)` | Extract session id and capabilities from an Appium driver and register the session |
-| `GridFleetClient.notify_session_finished(session_id)` | Tell the manager the WebDriver session has ended |
 | `GridFleetClient.update_session_status(session_id, status)` | Report final session status |
 | `GridFleetClient.complete_run(run_id)` | Complete a run |
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
-| `build_error_session_payload(fields)` | Build a `/api/sessions` payload for driver-creation failures without importing pytest |
 | `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional device config and live capabilities |
 | `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |

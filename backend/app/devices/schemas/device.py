@@ -1,10 +1,9 @@
 import enum
-import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, model_validator
 
 from app.appium_nodes.services.effective_state import compute_effective_state
 from app.devices.models import (
@@ -374,34 +373,6 @@ class SessionListRead(BaseModel):
 
 class SessionStatusUpdate(BaseModel):
     status: SessionStatus
-
-
-class SessionCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str
-    test_name: str | None = None
-    device_id: uuid.UUID | None = None
-    connection_target: str | None = None
-    status: SessionStatus = SessionStatus.running
-    requested_pack_id: str | None = None
-    requested_platform_id: str | None = None
-    requested_device_type: DeviceType | None = None
-    requested_connection_type: ConnectionType | None = None
-    requested_capabilities: dict[str, Any] | None = None
-    error_type: str | None = None
-    error_message: str | None = None
-    run_id: uuid.UUID | None = None
-
-    @field_validator("requested_capabilities")
-    @classmethod
-    def validate_requested_capabilities_size(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is None:
-            return None
-        size = len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-        if size > 32 * 1024:
-            raise ValueError("requested_capabilities must serialize to 32 KB or less")
-        return value
 
 
 class SessionKillResult(BaseModel):

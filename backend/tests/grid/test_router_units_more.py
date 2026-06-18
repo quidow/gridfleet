@@ -1003,38 +1003,6 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
             await sessions.get_session("s1", db=object(), session_services=SimpleNamespace(crud=crud_found))  # type: ignore[arg-type]
         )["session_id"] == "s1"
 
-    create_payload = SimpleNamespace(
-        session_id="s1",
-        test_name="test",
-        device_id=uuid.uuid4(),
-        connection_target="serial",
-        status=None,
-        requested_pack_id=None,
-        requested_platform_id=None,
-        requested_device_type=None,
-        requested_connection_type=None,
-        requested_capabilities=None,
-        error_type=None,
-        error_message=None,
-    )
-    crud_reg_err = SimpleNamespace(register_session=AsyncMock(side_effect=ValueError("missing")))
-    with pytest.raises(HTTPException) as exc:
-        await sessions.register_session(
-            create_payload,
-            db=object(),
-            session_services=SimpleNamespace(crud=crud_reg_err),  # type: ignore[arg-type]
-        )
-    assert exc.value.status_code == 404
-    crud_reg_ok = SimpleNamespace(register_session=AsyncMock(return_value=session_obj))
-    assert (
-        await sessions.register_session(
-            create_payload,
-            db=object(),
-            session_services=SimpleNamespace(crud=crud_reg_ok),  # type: ignore[arg-type]
-        )
-        is session_obj
-    )
-
     status_payload = SimpleNamespace(status="passed")
     crud_upd_none = SimpleNamespace(update_session_status=AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as exc:
@@ -1055,23 +1023,6 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         )
         is session_obj
     )
-
-    crud_fin_none = SimpleNamespace(mark_session_finished=AsyncMock(return_value=None))
-    with pytest.raises(HTTPException) as exc:
-        await sessions.post_session_finished(
-            "missing",
-            db=object(),
-            session_services=SimpleNamespace(crud=crud_fin_none),  # type: ignore[arg-type]
-        )
-    assert exc.value.status_code == 404
-    crud_fin_ok = SimpleNamespace(mark_session_finished=AsyncMock(return_value=session_obj))
-    assert (
-        await sessions.post_session_finished(
-            "s1",
-            db=object(),
-            session_services=SimpleNamespace(crud=crud_fin_ok),  # type: ignore[arg-type]
-        )
-    ).status_code == 204
 
 
 async def test_plugins_router_maps_service_conflicts_and_missing_resources() -> None:

@@ -73,12 +73,6 @@ class _FakeClient:
     def get_driver_pack_catalog(self) -> dict[str, object]:
         return {"packs": []}
 
-    def register_session_from_driver(self, driver: object, **kwargs: object) -> dict[str, object]:
-        return {"ok": True}
-
-    def register_session(self, **kwargs: object) -> dict[str, object]:
-        return {"ok": True}
-
     def update_session_status(self, session_id: str, status: str, *, suppress_errors: bool = True) -> dict[str, object]:
         return {"ok": True}
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -15,7 +14,7 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import GridFleetClient, _default_grid_url
-from .sessions import build_error_session_payload, resolve_device_handle_from_driver
+from .sessions import resolve_device_handle_from_driver
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -84,29 +83,10 @@ def appium_driver(
     """
     options = _build_driver_options(request, gridfleet_client)
 
-    try:
-        driver = webdriver.Remote(_resolve_grid_url(None), options=options)
-    except Exception as exc:
-        # Driver creation failed before a Grid session was established (e.g.
-        # SessionNotCreatedException). Register a device-less error session so the
-        # failure is visible in the Dashboard Sessions view.
-        params = _request_params(request)
-        pack_id = params.get("pack_id")
-        platform_id = params.get("platform_id")
-        payload = build_error_session_payload(
-            session_id=f"error-{uuid.uuid4()}",
-            test_name=request.node.name,
-            options=options,
-            exc=exc,
-            pack_id=pack_id if isinstance(pack_id, str) and pack_id else None,
-            platform_id=platform_id if isinstance(platform_id, str) and platform_id else None,
-        )
-        gridfleet_client.register_session(**payload, suppress_errors=True)
-        raise
+    driver = webdriver.Remote(_resolve_grid_url(None), options=options)
     session_id = driver.session_id
     if not isinstance(session_id, str) or not session_id:
         raise RuntimeError("Created Appium driver did not expose a session ID")
-    gridfleet_client.register_session_from_driver(driver, test_name=request.node.name, suppress_errors=True)
 
     yield driver
 

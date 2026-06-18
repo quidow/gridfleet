@@ -1877,8 +1877,7 @@ export interface paths {
         /** List Sessions */
         get: operations["list_sessions_api_sessions_get"];
         put?: never;
-        /** Register Session */
-        post: operations["register_session_api_sessions_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1896,23 +1895,6 @@ export interface paths {
         get: operations["get_session_api_sessions__session_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sessions/{session_id}/finished": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Session Finished */
-        post: operations["post_session_finished_api_sessions__session_id__finished_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5155,35 +5137,6 @@ export interface components {
              * @default 0
              */
             total: number;
-        };
-        /** SessionCreate */
-        SessionCreate: {
-            /** Connection Target */
-            connection_target?: string | null;
-            /** Device Id */
-            device_id?: string | null;
-            /** Error Message */
-            error_message?: string | null;
-            /** Error Type */
-            error_type?: string | null;
-            /** Requested Capabilities */
-            requested_capabilities?: {
-                [key: string]: unknown;
-            } | null;
-            requested_connection_type?: components["schemas"]["ConnectionType"] | null;
-            requested_device_type?: components["schemas"]["DeviceType"] | null;
-            /** Requested Pack Id */
-            requested_pack_id?: string | null;
-            /** Requested Platform Id */
-            requested_platform_id?: string | null;
-            /** Run Id */
-            run_id?: string | null;
-            /** Session Id */
-            session_id: string;
-            /** @default running */
-            status: components["schemas"]["SessionStatus"];
-            /** Test Name */
-            test_name?: string | null;
         };
         /** SessionDetail */
         SessionDetail: {
@@ -12475,66 +12428,6 @@ export interface operations {
             };
         };
     };
-    register_session_api_sessions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SessionCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionRead"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request body validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     get_session_api_sessions__session_id__get: {
         parameters: {
             query?: never;
@@ -12554,62 +12447,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SessionDetail"];
                 };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request body validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    post_session_finished_api_sessions__session_id__finished_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Authentication required */
             401: {

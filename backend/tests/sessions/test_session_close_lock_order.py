@@ -99,32 +99,6 @@ async def test_update_session_status_locks_device_before_dirtying_session_row(
     )
 
 
-async def test_mark_session_finished_locks_device_before_claiming_session_row(
-    db_session: AsyncSession,
-    default_host_id: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, session = await _seed_running_session(
-        db_session, default_host_id, identity="lock-order-finished", session_id="lock-order-finished-sess"
-    )
-
-    recorded: list[bool] = []
-    # The claim is an explicit ``UPDATE sessions SET ended_at`` — once it has
-    # run, the ORM row reports a non-null ended_at after the refresh. At the
-    # first device lock the claim must not have happened yet.
-    _install_first_lock_probe(monkeypatch, lambda db: session.ended_at is not None, recorded)
-
-    crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
-    finished = await crud.mark_session_finished(db_session, "lock-order-finished-sess")
-
-    assert finished is not None
-    assert finished.ended_at is not None
-    assert recorded == [False], (
-        "session row was claimed (ended_at stamped) before the first device row "
-        "lock; close paths must lock device → session to match the run release path"
-    )
-
-
 async def test_close_running_session_locks_device_before_dirtying_session_row(
     db_session: AsyncSession,
     default_host_id: str,

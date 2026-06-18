@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from prometheus_client import Counter
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
@@ -115,12 +114,6 @@ def appium_node_stop_in_flight(device: Device) -> bool:
 
 
 # --- derived-state evaluation (formerly state_derivation.py) ---
-
-GATING_VIOLATION = Counter(
-    "gridfleet_device_state_gating_violation_total",
-    "An allocation landed on a device whose operational state forbade it (invariant breach).",
-    ["kind"],
-)
 
 
 @dataclass(frozen=True)

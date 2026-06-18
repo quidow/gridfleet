@@ -30,7 +30,7 @@ from app.core.leader import watcher as control_plane_leader_watcher
 from app.core.observability import sanitize_log_value
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceType
-from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState, SessionCreate
+from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState
 from app.devices.schemas.test_data import TestDataPayload
 from app.devices.services import (
     bulk as bulk_service,
@@ -151,9 +151,6 @@ def test_schema_validator_and_model_guard_branches() -> None:
     assert WebhookUpdate(event_types=None).event_types is None
     with pytest.raises(ValueError, match="JSON object"):
         TestDataPayload.model_construct(root=[])._validate()  # type: ignore[arg-type]
-
-    session_create = SessionCreate(session_id="session-1", requested_capabilities=None)
-    assert session_create.requested_capabilities is None
 
 
 def test_device_readiness_effective_state_branches() -> None:

@@ -63,25 +63,8 @@ class RecordingClient(FakeCatalogClient):
     instances: ClassVar[list[RecordingClient]] = []
 
     def __init__(self) -> None:
-        self.registered_drivers: list[tuple[object, str | None, str | None, bool]] = []
-        self.registered_payloads: list[dict[str, object]] = []
         self.reported_statuses: list[tuple[str, str, bool]] = []
         RecordingClient.instances.append(self)
-
-    def register_session_from_driver(
-        self,
-        driver: object,
-        *,
-        test_name: str | None = None,
-        run_id: str | None = None,
-        suppress_errors: bool = True,
-    ) -> dict[str, object]:
-        self.registered_drivers.append((driver, test_name, run_id, suppress_errors))
-        return {"ok": True}
-
-    def register_session(self, **kwargs: object) -> dict[str, object]:
-        self.registered_payloads.append(kwargs)
-        return {"ok": True}
 
     def update_session_status(
         self,
@@ -165,7 +148,6 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     assert created_drivers[0][1]["gridfleet:testName"] == "test_launch"
     assert created_drivers[0][1]["appium:platform"] == "android_mobile"
     assert RecordingClient.instances == [gridfleet_client]
-    assert gridfleet_client.registered_drivers == [(driver, "test_launch", None, True)]
 
     request.node.rep_call = report
     with pytest.raises(StopIteration):
@@ -239,8 +221,10 @@ def test_build_driver_options_supports_explicit_platform_name_escape_hatch(monke
     assert "appium:platform" not in options.capabilities
 
 
-def test_appium_driver_setup_failure_registers_device_less_error_session(monkeypatch):
-    """When driver creation raises before a Grid session exists, the fixture registers a synthetic error session."""
+def test_appium_driver_setup_failure_propagates_exception(monkeypatch):
+    """When driver creation raises before a session exists, the exception
+    propagates and the fixture reports nothing to the backend. The router/grid
+    flow owns session rows; pre-session failures are no longer recorded."""
 
     def remote_raises(url: str, *, options: FakeOptions) -> FakeDriver:
         raise RuntimeError("Session could not be created")
@@ -251,14 +235,7 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
     gridfleet_client = RecordingClient()
 
     request = FakeRequest(
-        {
-            "pack_id": "appium-uiautomator2",
-            "platform_id": "android_mobile",
-            "appium:automationName": "UiAutomator2",
-            "appium:device_type": "real_device",
-            "appium:connection_type": "network",
-            "appium:appPackage": "io.appium.android.apis",
-        },
+        {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
         test_name="test_broken",
     )
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
@@ -267,28 +244,7 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
     with pytest.raises(RuntimeError, match="Session could not be created"):
         next(generator)
 
-    assert RecordingClient.instances == [gridfleet_client]
-    assert len(gridfleet_client.registered_payloads) == 1
-    payload = gridfleet_client.registered_payloads[0]
-    assert str(payload["session_id"]).startswith("error-")
-    assert payload["test_name"] == "test_broken"
-    assert payload["status"] == "error"
-    assert payload["requested_pack_id"] == "appium-uiautomator2"
-    assert payload["requested_platform_id"] == "android_mobile"
-    assert payload["requested_device_type"] == "real_device"
-    assert payload["requested_connection_type"] == "network"
-    assert payload["error_type"] == "RuntimeError"
-    assert payload["error_message"] == "Session could not be created"
-    assert payload["suppress_errors"] is True
-    assert payload["requested_capabilities"] == {
-        "appium:automationName": "UiAutomator2",
-        "appium:device_type": "real_device",
-        "appium:connection_type": "network",
-        "appium:appPackage": "io.appium.android.apis",
-        "platformName": "Android",
-        "gridfleet:testName": "test_broken",
-        "appium:platform": "android_mobile",
-    }
+    assert gridfleet_client.reported_statuses == []
 
 
 def test_private_session_helpers_are_not_exported() -> None:

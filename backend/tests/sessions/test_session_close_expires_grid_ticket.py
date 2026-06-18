@@ -55,19 +55,6 @@ async def _running_session_with_claimed_ticket(
     return session, ticket
 
 
-async def test_mark_session_finished_expires_grid_ticket(db_session: AsyncSession, db_host: Host) -> None:
-    session, ticket = await _running_session_with_claimed_ticket(
-        db_session, db_host.id, session_id="finished-expires-ticket-1"
-    )
-    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
-
-    result = await crud.mark_session_finished(db_session, session.session_id)
-
-    assert result is not None and result.ended_at is not None
-    await db_session.refresh(ticket)
-    assert ticket.status == GridQueueStatus.expired
-
-
 async def test_update_session_status_expires_grid_ticket(db_session: AsyncSession, db_host: Host) -> None:
     session, ticket = await _running_session_with_claimed_ticket(
         db_session, db_host.id, session_id="status-expires-ticket-1"
