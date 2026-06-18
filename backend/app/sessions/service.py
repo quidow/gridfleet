@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import uuid  # noqa: TC003 - used in function signatures resolved at runtime
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +22,8 @@ from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
 
