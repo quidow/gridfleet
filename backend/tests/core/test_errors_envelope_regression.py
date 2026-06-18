@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, HTTPException
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from pydantic import BaseModel
 
 from app.core.errors import register_exception_handlers

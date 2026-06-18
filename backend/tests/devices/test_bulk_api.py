@@ -1,7 +1,7 @@
 from typing import Any
 
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.helpers import create_device_record, create_host

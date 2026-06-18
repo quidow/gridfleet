@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any, Final, cast
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 from pydantic import ValidationError as PydanticValidationError
 
 from app.agent_comm.client import (

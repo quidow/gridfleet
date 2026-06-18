@@ -28,7 +28,7 @@ from app.runs.models import RunState, TestRun
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 

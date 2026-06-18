@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import async_sessionmaker

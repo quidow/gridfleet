@@ -27,7 +27,7 @@ _AGENT_DIR = Path(__file__).resolve().parents[2] / "agent"
 # Inline script that the agent venv executes to emit OpenAPI JSON to stdout.
 _FETCHER = """
 import asyncio, json, sys
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from agent_app.main import app
 
 async def main() -> None:

@@ -13,7 +13,7 @@ from app.packs.models import HostPackDoctorResult
 from app.packs.models.pack import DriverPack
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
 

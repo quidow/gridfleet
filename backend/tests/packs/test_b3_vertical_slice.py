@@ -36,7 +36,7 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
+import httpx2 as httpx
 import pytest
 from sqlalchemy import select
 
@@ -48,7 +48,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory, AgentHttpClient

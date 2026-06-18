@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2 as httpx
 
 from app.core.observability import get_logger
 

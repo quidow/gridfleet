@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from app.auth import auth_settings as settings
 from app.main import app

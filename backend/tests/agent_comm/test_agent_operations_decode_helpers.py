@@ -1,6 +1,6 @@
 """Unit tests for the shared agent response decode helpers."""
 
-import httpx
+import httpx2 as httpx
 import pytest
 from pydantic import BaseModel
 

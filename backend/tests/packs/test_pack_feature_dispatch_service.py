@@ -19,7 +19,7 @@ import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2 as httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select

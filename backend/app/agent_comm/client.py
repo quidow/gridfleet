@@ -4,8 +4,8 @@ from collections.abc import Callable
 from time import perf_counter
 from typing import TYPE_CHECKING, Protocol, Self, cast
 
-import httpx
-from httpx._types import HeaderTypes, QueryParamTypes
+import httpx2 as httpx
+from httpx2._types import HeaderTypes, QueryParamTypes
 
 from app.core.errors import AgentUnreachableError, CircuitOpenError, classify_httpx_transport
 from app.core.metrics_recorders import record_agent_call

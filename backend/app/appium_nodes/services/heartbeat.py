@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 

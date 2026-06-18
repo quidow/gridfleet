@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 

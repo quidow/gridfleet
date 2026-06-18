@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
