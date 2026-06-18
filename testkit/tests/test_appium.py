@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,6 +12,7 @@ from gridfleet_testkit import (
     get_connection_target_from_driver,
     get_device_config_for_driver,
 )
+from gridfleet_testkit.appium import get_device_id_from_driver
 
 if TYPE_CHECKING:
     from gridfleet_testkit.types import JsonObject
@@ -185,22 +187,22 @@ def test_get_connection_target_from_driver_rejects_missing_udid() -> None:
         get_connection_target_from_driver(driver)
 
 
-def test_get_device_config_for_driver_uses_runtime_connection_target() -> None:
-    driver = FakeDriver({"appium:udid": "SERIAL123"})
+def test_get_device_config_for_driver_uses_device_id() -> None:
+    driver = FakeDriver({"appium:gridfleet:deviceId": "dev-uuid-99"})
 
     class FakeClient:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def get_device_config(self, connection_target: str) -> JsonObject:
-            self.calls.append(connection_target)
-            return {"target": connection_target}
+        def get_device_config(self, device_id: str) -> JsonObject:
+            self.calls.append(device_id)
+            return {"device_id": device_id}
 
     client = FakeClient()
     assert get_device_config_for_driver(driver, gridfleet_client=client) == {
-        "target": "SERIAL123",
+        "device_id": "dev-uuid-99",
     }
-    assert client.calls == ["SERIAL123"]
+    assert client.calls == ["dev-uuid-99"]
 
 
 def test_create_appium_driver_reads_grid_url_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -211,3 +213,16 @@ def test_create_appium_driver_reads_grid_url_lazily(monkeypatch: pytest.MonkeyPa
     create_appium_driver(capabilities={"platformName": "Android"})
 
     assert created[0][0] == "http://env-grid:4444"
+
+
+def test_get_device_id_from_driver_returns_injected_cap() -> None:
+    driver = MagicMock()
+    driver.capabilities = {"appium:gridfleet:deviceId": "dev-uuid-1"}
+    assert get_device_id_from_driver(driver) == "dev-uuid-1"
+
+
+def test_get_device_id_from_driver_rejects_missing_cap() -> None:
+    driver = MagicMock()
+    driver.capabilities = {"appium:udid": "10.0.0.8:5555"}
+    with pytest.raises(ValueError, match="appium:gridfleet:deviceId"):
+        get_device_id_from_driver(driver)

@@ -41,6 +41,7 @@ def test_documented_public_exports_are_available() -> None:
         "create_appium_driver",
         "get_connection_target_from_driver",
         "get_device_config_for_driver",
+        "get_device_id_from_driver",
         "get_device_test_data_for_driver",
         "hydrate_allocated_device",
         "hydrate_allocated_device_from_driver",

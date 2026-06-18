@@ -9,7 +9,6 @@ import signal
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
-from urllib.parse import quote
 
 import httpx
 
@@ -259,31 +258,15 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("JsonObject", resp.json())
 
-    def get_device_by_connection_target(self, target: str) -> JsonObject:
-        """Fetch one device detail row by runtime connection target."""
+    def get_device_config(self, device_id: str) -> JsonObject:
+        """Fetch device config by backend device id."""
         resp = httpx.get(
-            f"{self.base_url}/devices/by-connection-target/{quote(target, safe='')}",
+            f"{self.base_url}/devices/{device_id}/config",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
         return cast("JsonObject", resp.json())
-
-    def resolve_device_id_by_connection_target(self, connection_target: str) -> str:
-        """Look up the backend device id for a runtime connection target."""
-        device = self.get_device_by_connection_target(connection_target)
-        return cast("str", device["id"])
-
-    def get_device_config(self, connection_target: str) -> JsonObject:
-        """Fetch device config by looking up the current runtime connection target."""
-        device_id = self.resolve_device_id_by_connection_target(connection_target)
-        config_resp = httpx.get(
-            f"{self.base_url}/devices/{device_id}/config",
-            timeout=10,
-            auth=self._auth,
-        )
-        config_resp.raise_for_status()
-        return cast("JsonObject", config_resp.json())
 
     def get_device_capabilities(self, device_id: str) -> JsonObject:
         """Fetch the current Appium capabilities for a specific device."""

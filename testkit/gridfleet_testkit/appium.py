@@ -166,14 +166,26 @@ def get_connection_target_from_driver(driver: WebDriver) -> str:
     return connection_target
 
 
+def get_device_id_from_driver(driver: WebDriver) -> str:
+    """Return the GridFleet device id from a live Appium driver's session caps."""
+    capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
+    device_id = capabilities.get("appium:gridfleet:deviceId")
+    if not isinstance(device_id, str) or not device_id:
+        raise ValueError(
+            "Session capabilities are missing 'appium:gridfleet:deviceId'; "
+            "the GridFleet router must be new enough to inject it"
+        )
+    return device_id
+
+
 def get_device_config_for_driver(
     driver: WebDriver,
     *,
     gridfleet_client: GridFleetClient | None = None,
 ) -> JsonObject:
-    """Fetch device config for a live Appium driver using its runtime connection target."""
+    """Fetch device config for a live Appium driver using its GridFleet device id."""
     client = gridfleet_client or GridFleetClient()
-    return client.get_device_config(get_connection_target_from_driver(driver))
+    return client.get_device_config(get_device_id_from_driver(driver))
 
 
 def get_device_test_data_for_driver(
@@ -183,6 +195,5 @@ def get_device_test_data_for_driver(
 ) -> JsonObject:
     """Fetch operator-attached test_data for a live Appium driver session."""
     client = gridfleet_client or GridFleetClient()
-    connection_target = get_connection_target_from_driver(driver)
-    device_id = client.resolve_device_id_by_connection_target(connection_target)
+    device_id = get_device_id_from_driver(driver)
     return client.get_device_test_data(device_id)
