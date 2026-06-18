@@ -157,25 +157,30 @@ def create_appium_driver(
     return webdriver.Remote(_resolve_grid_url(grid_url), options=options)
 
 
+def _required_str_cap(driver: WebDriver, key: str, message: str) -> str:
+    """Return a required non-empty string session capability, or raise ValueError."""
+    capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
+    value = capabilities.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(message)
+    return value
+
+
 def get_connection_target_from_driver(driver: WebDriver) -> str:
     """Return the runtime connection target from a live Appium driver."""
-    capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
-    connection_target = capabilities.get("appium:udid")
-    if not isinstance(connection_target, str) or not connection_target:
-        raise ValueError("Could not determine device connection target from session capabilities")
-    return connection_target
+    return _required_str_cap(
+        driver, "appium:udid", "Could not determine device connection target from session capabilities"
+    )
 
 
 def get_device_id_from_driver(driver: WebDriver) -> str:
     """Return the GridFleet device id from a live Appium driver's session caps."""
-    capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
-    device_id = capabilities.get("appium:gridfleet:deviceId")
-    if not isinstance(device_id, str) or not device_id:
-        raise ValueError(
-            "Session capabilities are missing 'appium:gridfleet:deviceId'; "
-            "the GridFleet router must be new enough to inject it"
-        )
-    return device_id
+    return _required_str_cap(
+        driver,
+        "appium:gridfleet:deviceId",
+        "Session capabilities are missing 'appium:gridfleet:deviceId'; "
+        "the GridFleet router must be new enough to inject it",
+    )
 
 
 def get_device_config_for_driver(
