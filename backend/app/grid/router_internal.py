@@ -85,6 +85,7 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
             allocation_id=result.allocation_id,
             target=result.target,
             claim_window_sec=int(cast("int", services.settings.get("grid.claim_window_sec"))),
+            device_id=result.device_id,
         )
 
     while True:

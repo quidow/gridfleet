@@ -101,6 +101,7 @@ async def test_allocate_creates_pending_and_busy(
     await db_session.flush()
     result = await allocation_service.try_allocate(db_session, ticket=ticket)
     assert result is not None
+    assert result.device_id == seeded_available_device.id
     assert result.target.startswith("http://") and result.target.endswith(":4730")
     row = await db_session.get(Session, result.allocation_id)
     assert row is not None
