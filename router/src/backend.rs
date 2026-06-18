@@ -12,6 +12,10 @@ pub enum AllocateOutcome {
         /// older backends, in which case the create call is bounded by
         /// `proxy_timeout` alone.
         claim_window_sec: Option<u64>,
+        /// The allocated GridFleet device id, injected into the new-session
+        /// response caps as `appium:gridfleet:deviceId`. `None` when an older
+        /// backend does not supply it (best-effort: no injection then).
+        device_id: Option<String>,
     },
     Queued {
         ticket: String,
@@ -129,6 +133,7 @@ impl BackendClient {
                         allocation_id: v["allocation_id"].as_str().unwrap_or_default().to_string(),
                         target: v["target"].as_str().unwrap_or_default().to_string(),
                         claim_window_sec: v["claim_window_sec"].as_u64(),
+                        device_id: v["device_id"].as_str().map(str::to_string),
                     })
                 } else {
                     Ok(AllocateOutcome::Queued {

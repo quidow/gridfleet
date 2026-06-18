@@ -34,6 +34,7 @@ async fn allocate_allocated_roundtrip() {
             allocation_id,
             target,
             claim_window_sec,
+            device_id: _,
         } => {
             assert_eq!(allocation_id, "00000000-0000-0000-0000-000000000001");
             assert_eq!(target, "http://10.0.0.5:4723");

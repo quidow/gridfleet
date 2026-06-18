@@ -43,14 +43,9 @@ class DummyResponse:
             raise httpx.HTTPStatusError("request failed", request=httpx.Request("GET", "http://test"), response=None)
 
 
-def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
+def test_get_device_config_fetches_config_by_device_id(monkeypatch):
     calls: list[tuple[str, str, JsonObject | None, int | None]] = []
-    responses = iter(
-        [
-            DummyResponse({"id": "dev-1"}),
-            DummyResponse({"username": "operator"}),
-        ]
-    )
+    responses = iter([DummyResponse({"username": "operator"})])
 
     def fake_get(
         url: str,
@@ -65,11 +60,10 @@ def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
     monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
 
     client = GridFleetClient("http://manager/api")
-    config = client.get_device_config("10.0.0.8:5555")
+    config = client.get_device_config("dev-1")
 
     assert config == {"username": "operator"}
     assert calls == [
-        ("GET", "http://manager/api/devices/by-connection-target/10.0.0.8%3A5555", None, 10),
         ("GET", "http://manager/api/devices/dev-1/config", None, 10),
     ]
 

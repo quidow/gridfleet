@@ -122,7 +122,9 @@ def gridfleet_client() -> GridFleetClient:
 @pytest.fixture
 def device_config(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
     """
-    Fetch device config after the Grid assigns a runtime connection target.
+    Fetch device config for the device the live session landed on.
+
+    The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
 
     Usage:
         def test_login(appium_driver, device_config):
@@ -131,26 +133,32 @@ def device_config(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -
     try:
         return get_device_config_for_driver(appium_driver, gridfleet_client=gridfleet_client)
     except ValueError as exc:
-        pytest.skip("Could not determine device connection target from session capabilities")
+        pytest.skip(str(exc))
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc
 
 
 @pytest.fixture
 def device_test_data(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
-    """Fetch operator-attached test_data after the Grid assigns a runtime connection target."""
+    """Fetch operator-attached test_data for the device the live session landed on.
+
+    The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
+    """
     try:
         return get_device_test_data_for_driver(appium_driver, gridfleet_client=gridfleet_client)
     except ValueError as exc:
-        pytest.skip("Could not determine device connection target from session capabilities")
+        pytest.skip(str(exc))
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc
 
 
 @pytest.fixture
 def device_handle(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
-    """Fetch the canonical manager device row after Grid assigns a runtime target."""
+    """Fetch the canonical manager device row for the device the live session landed on.
+
+    The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
+    """
     try:
         return resolve_device_handle_from_driver(appium_driver, client=gridfleet_client)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         pytest.skip(str(exc))
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc
 

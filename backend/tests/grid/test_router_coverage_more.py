@@ -455,10 +455,6 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     listed_plain = await devices_core.list_devices(filters, limit=None, offset=None, db=db, device_services=_mock_ds)
     assert listed_plain == [{"id": str(device_id)}]
 
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
-    with pytest.raises(HTTPException):
-        await devices_core.get_device_by_connection_target("missing", db=db, device_services=_mock_ds)
-
     _mock_crud.update_device = AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
     with pytest.raises(HTTPException) as conflict:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
@@ -475,19 +471,6 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     _mock_crud.delete_device = AsyncMock(return_value=False)
     with pytest.raises(HTTPException):
         await devices_core.delete_device(device_id, db=db, device_services=_mock_ds)
-
-    found_result = SimpleNamespace(
-        scalar_one_or_none=lambda: SimpleNamespace(
-            id=device_id,
-            pack_id="pack",
-            platform_id="platform",
-        )
-    )
-    db.execute = AsyncMock(return_value=found_result)
-    monkeypatch.setattr(devices_core.platform_label_service, "load_platform_label", AsyncMock(return_value="Android"))
-    assert await devices_core.get_device_by_connection_target("target", db=db, device_services=_mock_ds) == {
-        "id": str(device_id)
-    }
 
     monkeypatch.setattr(devices_core, "get_device_or_404", AsyncMock(return_value=device))
     assert await devices_core.get_device(device_id, db=db, device_services=_mock_ds) == {"detail": str(device_id)}

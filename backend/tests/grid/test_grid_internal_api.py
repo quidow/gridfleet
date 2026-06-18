@@ -66,6 +66,7 @@ async def test_allocate_immediate_match(client: AsyncClient, seeded_available_de
     assert data["allocation_id"]
     assert data["target"].startswith("http://")
     assert data["claim_window_sec"] == 120
+    assert data["device_id"] == str(seeded_available_device.id)
 
 
 def _hist_count(hist: Histogram, **labels: str) -> float:
@@ -124,6 +125,7 @@ async def test_allocate_no_match_queues_and_ticket_is_reusable(
         "target": None,
         "ticket": ticket,
         "claim_window_sec": None,
+        "device_id": None,
     }
 
 

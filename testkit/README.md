@@ -154,14 +154,12 @@ finally:
 | --- | --- |
 | `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
 | `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
-| `GridFleetClient.get_device_config(connection_target)` | Look up a device by runtime connection target and fetch its config |
-| `GridFleetClient.get_device_by_connection_target(connection_target)` | Fetch one device detail row by runtime connection target |
+| `GridFleetClient.get_device_config(device_id)` | Fetch the config for a device by its backend device id |
 | `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
 | `GridFleetClient.merge_device_test_data(device_id, body)` | Deep-merge into device test_data |
-| `GridFleetClient.resolve_device_id_by_connection_target(connection_target)` | Resolve the backend device id for a runtime connection target |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
 | `GridFleetClient.signal_ready(run_id)` | Signal that a run is ready |
@@ -173,6 +171,7 @@ finally:
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
+| `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
 | `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional device config and live capabilities |
 | `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
@@ -362,7 +361,7 @@ for device_handle in run["devices"]:
 
 `include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
 
-`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries, which carry a top-level `device_id`. A `get_device_by_connection_target` row keys its primary id as `id`, so it must have that field remapped to `device_id` before being passed in.
+`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries, which carry a top-level `device_id`.
 
 ## Examples
 

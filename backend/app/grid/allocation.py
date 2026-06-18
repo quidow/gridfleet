@@ -208,6 +208,7 @@ class StereotypeProvider(Protocol):
 class AllocationResult:
     allocation_id: uuid.UUID
     target: str
+    device_id: uuid.UUID
 
 
 class RunNotActiveError(Exception):
@@ -651,7 +652,8 @@ class AllocationService:
             # rather than hand back a dead target.
             transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_target")
             return None
-        return AllocationResult(allocation_id=row.id, target=target)
+        device = row.device
+        return AllocationResult(allocation_id=row.id, target=target, device_id=device.id)
 
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
         stmt = (
@@ -826,7 +828,7 @@ class AllocationService:
         await db.flush()
         intent = self._intent_factory(db)
         await intent.mark_dirty_and_reconcile(locked.id, reason="grid_allocation_pending", publisher=self._publisher)
-        return AllocationResult(allocation_id=row.id, target=target)
+        return AllocationResult(allocation_id=row.id, target=target, device_id=locked.id)
 
 
 async def pack_slot_stereotype(
