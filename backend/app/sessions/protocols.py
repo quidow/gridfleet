@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.pagination import CursorPage
-    from app.devices.models import ConnectionType, Device, DeviceType
+    from app.devices.models import Device
     from app.sessions.models import Session, SessionStatus
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
@@ -61,26 +61,6 @@ class SessionCrudProtocol(Protocol):
     ) -> list[tuple[datetime, SessionStatus]]: ...
 
     # --- writes ---
-    async def register_session(
-        self,
-        db: AsyncSession,
-        *,
-        session_id: str,
-        test_name: str | None,
-        device_id: uuid.UUID | None = None,
-        connection_target: str | None = None,
-        status: SessionStatus = ...,
-        requested_pack_id: str | None = None,
-        requested_platform_id: str | None = None,
-        requested_device_type: DeviceType | None = None,
-        requested_connection_type: ConnectionType | None = None,
-        requested_capabilities: dict[str, Any] | None = None,
-        error_type: str | None = None,
-        error_message: str | None = None,
-    ) -> Session: ...
-
-    async def mark_session_finished(self, db: AsyncSession, session_id: str) -> Session | None: ...
-
     async def update_session_status(
         self, db: AsyncSession, session_id: str, status: SessionStatus
     ) -> Session | None: ...

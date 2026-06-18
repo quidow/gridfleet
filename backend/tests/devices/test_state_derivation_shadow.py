@@ -8,17 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import (
-    GATING_VIOLATION,
     apply_derived_state,
 )
 from app.events.protocols import EventPublisher
 from tests.helpers import create_device_record, create_host, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
-
-
-def test_gating_counter_exists() -> None:
-    GATING_VIOLATION.labels(kind="session_on_non_available").inc(0)
 
 
 @pytest.mark.db

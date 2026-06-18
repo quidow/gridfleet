@@ -1,12 +1,11 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from app.devices.services import state_write_guard
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
@@ -351,184 +350,6 @@ async def test_get_session_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_register_session_by_device_id(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    device = await _create_device(db_session, default_host_id)
-
-    resp = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "registered-sess-1",
-            "device_id": device["id"],
-            "test_name": "test_registered",
-        },
-    )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["session_id"] == "registered-sess-1"
-    assert data["status"] == "running"
-    assert data["test_name"] == "test_registered"
-
-
-async def test_register_session_by_active_connection_target(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-
-    device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="avd:Pixel_6",
-        connection_target="Pixel_6",
-    )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device["id"],
-                port=4723,
-                active_connection_target="emulator-5554",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-            )
-        )
-    await db_session.commit()
-
-    resp = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "registered-sess-2",
-            "connection_target": "emulator-5554",
-            "test_name": "test_runtime_target",
-        },
-    )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["session_id"] == "registered-sess-2"
-    assert data["status"] == "running"
-
-
-async def test_register_session_without_device_creates_device_less_error_session(
-    client: AsyncClient,
-) -> None:
-    """POST /api/sessions with no device_id/connection_target should succeed and
-    create a device-less session (used to record setup-phase failures from the
-    pytest plugin)."""
-    resp = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "error-aaaabbbbccccdddd",
-            "test_name": "test_broken_setup",
-        },
-    )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["session_id"] == "error-aaaabbbbccccdddd"
-    assert data["status"] == "running"
-    assert data["test_name"] == "test_broken_setup"
-
-
-async def test_register_running_session_with_unknown_connection_target_returns_404(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "missing-target-session",
-            "test_name": "test_missing_target",
-            "connection_target": "missing-target",
-        },
-    )
-
-    assert resp.status_code == 404
-
-
-async def test_register_terminal_error_session_persists_setup_failure_context(client: AsyncClient) -> None:
-    resp = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "error-setup-context",
-            "test_name": "test_broken_setup",
-            "status": "error",
-            "requested_pack_id": "appium-uiautomator2",
-            "requested_platform_id": "android_mobile",
-            "requested_device_type": "real_device",
-            "requested_connection_type": "network",
-            "requested_capabilities": {
-                "platformName": "Android",
-                "appium:automationName": "UiAutomator2",
-                "appium:appPackage": "io.appium.android.apis",
-            },
-            "error_type": "RuntimeError",
-            "error_message": "Session could not be created",
-        },
-    )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "error"
-    assert data["ended_at"] is not None
-    assert data["requested_pack_id"] == "appium-uiautomator2"
-    assert data["requested_platform_id"] == "android_mobile"
-    assert "requested_platform" not in data
-    assert data["requested_device_type"] == "real_device"
-    assert data["requested_connection_type"] == "network"
-    assert data["requested_capabilities"]["appium:appPackage"] == "io.appium.android.apis"
-    assert data["error_type"] == "RuntimeError"
-    assert data["error_message"] == "Session could not be created"
-
-    detail_resp = await client.get("/api/sessions/error-setup-context")
-    assert detail_resp.status_code == 200
-    detail = detail_resp.json()
-    assert detail["device_id"] is None
-    assert detail["device_name"] is None
-    assert detail["requested_pack_id"] == "appium-uiautomator2"
-    assert detail["requested_platform_id"] == "android_mobile"
-    assert "requested_platform" not in detail
-    assert detail["error_message"] == "Session could not be created"
-
-    await drain_handlers(event_bus)
-    events = recent_events(event_bus, limit=2)
-    assert [event["type"] for event in events] == ["session.started", "session.ended"]
-    assert events[0]["data"]["requested_pack_id"] == "appium-uiautomator2"
-    assert events[0]["data"]["requested_platform_id"] == "android_mobile"
-    assert events[1]["data"]["status"] == "error"
-    assert events[1]["data"]["error_type"] == "RuntimeError"
-
-
-async def test_register_session_rejects_invalid_requested_enum_value(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "invalid-enum",
-            "status": "error",
-            "requested_pack_id": "appium-uiautomator2",
-            "requested_device_type": "handset",
-        },
-    )
-
-    assert response.status_code == 422
-
-
-async def test_register_session_rejects_oversized_requested_capabilities(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/sessions",
-        json={
-            "session_id": "too-large",
-            "requested_capabilities": {"blob": "x" * (33 * 1024)},
-        },
-    )
-
-    assert response.status_code == 422
-    assert "requested_capabilities must serialize to 32 KB or less" in response.text
-
-
 async def test_list_sessions_includes_device_less_sessions(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -750,49 +571,6 @@ async def test_grid_queue(client: AsyncClient, db_session: AsyncSession) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_session_without_reservation_has_null_run_id(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Session created on a device with no active reservation keeps run_id=null."""
-    device = await _create_device(db_session, default_host_id)
-
-    resp = await client.post(
-        "/api/sessions",
-        json={"session_id": "no-run-sess", "device_id": device["id"], "test_name": "test_orphan"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["run_id"] is None
-
-    detail = await client.get("/api/sessions/no-run-sess")
-    assert detail.status_code == 200
-    assert detail.json()["run_id"] is None
-
-
-async def test_session_with_active_reservation_persists_run_id(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Session registered while a live reservation is active picks up that run_id."""
-    device = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="run-device",
-        connection_target="run-device",
-        name="Run Device",
-    )
-    run = await create_reserved_run(db_session, name="my-run", devices=[device])
-
-    resp = await client.post(
-        "/api/sessions",
-        json={"session_id": "run-sess-1", "device_id": str(device.id), "test_name": "test_run_flow"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["run_id"] == str(run.id)
-
-
 async def test_list_sessions_filter_by_run_id_offset_mode(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -872,216 +650,6 @@ async def test_list_sessions_invalid_run_id_format_returns_422(client: AsyncClie
     assert resp.status_code == 422
 
 
-# ---------------------------------------------------------------------------
-# D2: POST /api/sessions/{id}/finished push endpoint
-# ---------------------------------------------------------------------------
-
-
-async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """POST /api/sessions/{session_id}/finished stamps ended_at on the row and returns 204.
-
-    The URL token is the WebDriver session token (Session.session_id), NOT the
-    row PK. This mirrors the real testkit call shape: driver.session_id is the
-    WebDriver-issued token, which maps to the Session.session_id string column.
-
-    CRITICAL: the endpoint must NOT clobber Session.status — terminal status is
-    owned by update_session_status (testkit) or session_sync_loop (fallback).
-    """
-    from unittest.mock import AsyncMock, patch
-
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(db_session, default_host_id)
-
-    session = Session(
-        session_id="push-end-sess-1",
-        device_id=device["id"],
-        status=SessionStatus.running,
-        ended_at=None,
-    )
-    db_session.add(session)
-    await db_session.commit()
-    # Use session.session_id (the WebDriver token), not session.id (the PK).
-    webdriver_token = session.session_id
-
-    with patch(
-        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
-        new=AsyncMock(return_value=None),
-    ) as mock_lifecycle:
-        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
-
-    assert resp.status_code == 204
-    mock_lifecycle.assert_awaited_once()
-
-    await db_session.refresh(session)
-    assert session.ended_at is not None, "ended_at must be stamped by the push endpoint"
-    # Status must be preserved — the push endpoint does NOT own terminal status.
-    assert session.status == SessionStatus.running, (
-        "POST /finished must not mutate Session.status; "
-        "terminal status belongs to update_session_status or session_sync_loop"
-    )
-
-
-async def test_post_session_finished_not_found_returns_404(client: AsyncClient) -> None:
-    """POST /api/sessions/{unknown_id}/finished returns 404 when the row is absent."""
-    resp = await client.post("/api/sessions/nonexistent-webdriver-token/finished")
-    assert resp.status_code == 404
-
-
-async def test_post_session_finished_is_idempotent_and_does_not_double_fire_lifecycle(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Calling the endpoint twice returns 204 both times.
-
-    handle_session_finished must be awaited exactly once — the second call is a
-    no-op because ended_at is already set.
-    """
-    from unittest.mock import AsyncMock, patch
-
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(db_session, default_host_id)
-
-    session = Session(
-        session_id="push-end-sess-idempotent",
-        device_id=device["id"],
-        status=SessionStatus.running,
-        ended_at=None,
-    )
-    db_session.add(session)
-    await db_session.commit()
-    # Use session.session_id (the WebDriver token), not session.id (the PK).
-    webdriver_token = session.session_id
-
-    with patch(
-        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
-        new=AsyncMock(return_value=None),
-    ) as mock_lifecycle:
-        resp1 = await client.post(f"/api/sessions/{webdriver_token}/finished")
-        resp2 = await client.post(f"/api/sessions/{webdriver_token}/finished")
-
-    assert resp1.status_code == 204
-    assert resp2.status_code == 204
-    mock_lifecycle.assert_awaited_once()
-
-
-async def test_post_session_finished_real_testkit_call_shape(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Mirror the real testkit call shape: register a session with a known string
-    session_id, then POST to that string token in the URL.
-
-    The testkit's _wrap_quit_for_notify calls notify_session_finished(driver.session_id)
-    where driver.session_id is the WebDriver token — a string that maps to
-    Session.session_id, NOT the row PK. This test confirms the endpoint resolves
-    via the string column and that D2 push detection works for real testkit traffic.
-    """
-    from unittest.mock import AsyncMock, patch
-
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(db_session, default_host_id)
-
-    # Register a session with an explicit WebDriver-style token, as the testkit does.
-    webdriver_token = "webdriver-abc-123"
-    session = Session(
-        session_id=webdriver_token,
-        device_id=device["id"],
-        status=SessionStatus.running,
-        ended_at=None,
-    )
-    db_session.add(session)
-    await db_session.commit()
-
-    with patch(
-        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
-        new=AsyncMock(return_value=None),
-    ):
-        # POST to the string token — exactly what the testkit sends.
-        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
-
-    assert resp.status_code == 204
-
-    await db_session.refresh(session)
-    assert session.ended_at is not None, (
-        "ended_at must be set when posting the WebDriver token — "
-        "PK lookup would have returned 404 (silent no-op in testkit)"
-    )
-
-
-# ---------------------------------------------------------------------------
-# D2 regression: ended_at must be durable (actually committed, not just flushed)
-# ---------------------------------------------------------------------------
-
-
-async def test_post_session_finished_ended_at_is_durable_after_request_closes(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    db_session_maker: object,
-    default_host_id: str,
-) -> None:
-    """Regression: mark_session_finished must commit ended_at, not just flush.
-
-    The NO_PENDING branch of handle_session_finished returns without committing.
-    Before the fix, mark_session_finished relied on the lifecycle helper to commit,
-    so the flushed ended_at write was rolled back when the request-scoped get_db
-    session closed — POST returned 204 but the row's ended_at stayed null.
-
-    This test catches the bug by verifying durability via a *second, independent*
-    session that cannot see uncommitted writes from db_session.
-    """
-    from unittest.mock import AsyncMock, patch
-
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(db_session, default_host_id)
-
-    session_obj = Session(
-        session_id="push-end-durable-regression",
-        device_id=device["id"],
-        status=SessionStatus.running,
-        ended_at=None,
-    )
-    db_session.add(session_obj)
-    await db_session.commit()
-    row_id = session_obj.id
-    webdriver_token = session_obj.session_id
-
-    # Simulate the NO_PENDING path: handle_session_finished returns without
-    # calling db.commit(). This is the exact path that exposed the bug.
-    with patch(
-        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
-        new=AsyncMock(return_value=None),
-    ):
-        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
-
-    assert resp.status_code == 204
-
-    # Verify durability using an independent session that cannot see
-    # uncommitted writes. If mark_session_finished only flushed (did not
-    # commit), this second session will see ended_at=None and the assertion
-    # will fail — catching the regression.
-    maker = cast("async_sessionmaker[AsyncSession]", db_session_maker)
-    async with maker() as fresh_session:
-        refreshed = await fresh_session.get(Session, row_id)
-        assert refreshed is not None
-        assert refreshed.ended_at is not None, (
-            "ended_at must be committed (not just flushed) by mark_session_finished; "
-            "the NO_PENDING lifecycle path returns without committing, so "
-            "mark_session_finished must own the final db.commit()"
-        )
-
-
 async def test_session_detail_exposes_actual_capabilities(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
@@ -1118,6 +686,19 @@ def test_confirm_request_drops_oversized_capabilities() -> None:
 
     absent = ConfirmRequest(appium_session_id="s1")
     assert absent.appium_capabilities is None
+
+
+async def test_register_and_finished_endpoints_are_removed(client: AsyncClient) -> None:
+    """The Selenium Grid-era client session-bookkeeping endpoints are gone.
+
+    Session rows are owned by the router/grid allocation flow; clients only
+    PATCH the outcome. POST /api/sessions has no method (GET survives → 405);
+    POST /api/sessions/{id}/finished has no route at all (404).
+    """
+    resp = await client.post("/api/sessions", json={"session_id": "x"})
+    assert resp.status_code == 405
+    resp = await client.post("/api/sessions/some-session/finished")
+    assert resp.status_code == 404
 
 
 async def test_list_sessions_active_filter(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:

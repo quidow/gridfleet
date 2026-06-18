@@ -1,27 +1,22 @@
 from __future__ import annotations
 
 import contextlib
-import uuid
+import uuid  # noqa: TC003 - used in function signatures resolved at runtime
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Select, and_, asc, desc, func, or_, select, text, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import Select, and_, asc, desc, func, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 
-from app.appium_nodes.models import AppiumNode
-from app.core.errors import AppError
 from app.core.observability import get_logger
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.devices.services.observation_reason import ObservationReason
-from app.devices.services.state import GATING_VIOLATION
-from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.live_session_predicate import live_session_predicate
@@ -36,19 +31,6 @@ if TYPE_CHECKING:
     from app.sessions.protocols import DeviceSessionLifecycle
 
 logger = get_logger(__name__)
-
-
-class DeviceLiveSessionConflictError(AppError):
-    """The target device already has a different live session (register_session, harness P1).
-
-    Surfaced as HTTP 409 by the global ``AppError`` handler: registering a second
-    live session for a device the grid router is mid-confirming (or that another
-    client already holds) would double-bind the hardware. The session_id idempotency
-    check keys on session_id, not the device, so it does not catch this.
-    """
-
-    status_code = 409
-    code = "DEVICE_BUSY"
 
 
 async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
@@ -279,72 +261,6 @@ async def _has_session_rows(
     return result.scalar_one_or_none() is not None
 
 
-async def _resolve_device_for_session(
-    db: AsyncSession,
-    *,
-    device_id: uuid.UUID | None,
-    connection_target: str | None,
-) -> Device | None:
-    if device_id is not None:
-        stmt = (
-            select(Device)
-            .where(Device.id == device_id)
-            .options(selectinload(Device.host), selectinload(Device.appium_node))
-        )
-        result = await db.execute(stmt)
-        device = result.scalar_one_or_none()
-        if device is not None:
-            return device
-
-    if not connection_target:
-        return None
-
-    stmt = (
-        select(Device)
-        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(
-            or_(
-                Device.connection_target == connection_target,
-                AppiumNode.active_connection_target == connection_target,
-            )
-        )
-        .options(selectinload(Device.host), selectinload(Device.appium_node))
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-def _device_matches_session_connection(device: Device, connection_target: str | None) -> bool:
-    if not connection_target:
-        return True
-    if device.connection_target == connection_target:
-        return True
-    node = device.__dict__.get("appium_node")
-    return node is not None and node.active_connection_target == connection_target
-
-
-async def _lock_resolved_device_for_session(
-    db: AsyncSession,
-    *,
-    device_id: uuid.UUID | None,
-    connection_target: str | None,
-) -> Device | None:
-    device = await _resolve_device_for_session(
-        db,
-        device_id=device_id,
-        connection_target=connection_target,
-    )
-    if device is None:
-        return None
-
-    locked = await device_locking.lock_device(db, device.id)
-    if device_id is not None and locked.id == device_id:
-        return locked
-    if _device_matches_session_connection(locked, connection_target):
-        return locked
-    return None
-
-
 class SessionCrudService:
     def __init__(self, *, publisher: EventPublisher, lifecycle: DeviceSessionLifecycle) -> None:
         self._publisher = publisher
@@ -522,271 +438,6 @@ class SessionCrudService:
         stmt = exclude_non_test_sessions(stmt)
         result = await db.execute(stmt)
         return [(row.started_at, row.status) for row in result.all()]
-
-    async def register_session(
-        self,
-        db: AsyncSession,
-        *,
-        session_id: str,
-        test_name: str | None,
-        device_id: uuid.UUID | None = None,
-        connection_target: str | None = None,
-        status: SessionStatus = SessionStatus.running,
-        requested_pack_id: str | None = None,
-        requested_platform_id: str | None = None,
-        requested_device_type: DeviceType | None = None,
-        requested_connection_type: ConnectionType | None = None,
-        requested_capabilities: dict[str, Any] | None = None,
-        error_type: str | None = None,
-        error_message: str | None = None,
-    ) -> Session:
-        existing = await self.get_session(db, session_id)
-        if existing is not None:
-            return existing
-
-        if status == SessionStatus.running:
-            device = await _lock_resolved_device_for_session(
-                db,
-                device_id=device_id,
-                connection_target=connection_target,
-            )
-            if device is None and (device_id is not None or connection_target is not None):
-                raise ValueError("No matching device found for running session target")
-            if device is not None:
-                # Device-level live-session guard (harness P1). The row lock is held;
-                # recheck for a live (running|pending) session bound to this device
-                # whose session_id differs from ours. The grid allocator commits a
-                # ``pending`` placeholder row while the device still derives
-                # ``available``, so without this recheck a concurrent register_session
-                # for a different id would insert a second live row and double-bind the
-                # device the router is mid-confirming. Same session_id is the legitimate
-                # idempotent re-register and is allowed through.
-                conflicting = await db.scalar(
-                    select(Session.session_id)
-                    .where(live_session_predicate(device.id), Session.session_id != session_id)
-                    .limit(1)
-                )
-                if conflicting is not None:
-                    raise DeviceLiveSessionConflictError(
-                        f"device {device.id} already has a live session ({conflicting})"
-                    )
-                if device.operational_state in (
-                    DeviceOperationalState.maintenance,
-                    DeviceOperationalState.offline,
-                    DeviceOperationalState.verifying,
-                ):
-                    # Gating tripwire: a running session landing here is an invariant
-                    # breach the state derivation then ABSORBS (has_running_session wins
-                    # over every other fact, so the device just reads ``busy``) — this
-                    # counter is the only production witness. Detection only: the
-                    # registration proceeds unchanged. ``busy`` is excluded (the
-                    # live-session guard above owns double-binds).
-                    GATING_VIOLATION.labels(kind="session_on_non_available").inc()
-                    logger.warning(
-                        "session_gating_violation device=%s state=%s session=%s",
-                        device.id,
-                        device.operational_state.value,
-                        session_id,
-                    )
-        else:
-            device = await _resolve_device_for_session(
-                db,
-                device_id=device_id,
-                connection_target=connection_target,
-            )
-
-        reservation_run_id: uuid.UUID | None = None
-        if device is not None:
-            reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, device.id)
-            if (
-                reservation_run is not None
-                and reservation_run.state == RunState.active
-                and not run_service.reservation_entry_is_excluded(reservation_entry)
-            ):
-                reservation_run_id = reservation_run.id
-
-        # Insert idempotently. Only ``running`` rows are guarded by the partial
-        # unique index, so for non-running registrations we fall back to a plain
-        # ORM add (the historical races only matter for live sessions).
-        if status == SessionStatus.running:
-            insert_stmt = (
-                pg_insert(Session)
-                .values(
-                    id=uuid.uuid4(),
-                    session_id=session_id,
-                    device_id=device.id if device is not None else None,
-                    test_name=test_name,
-                    status=status,
-                    ended_at=None,
-                    requested_pack_id=requested_pack_id,
-                    requested_platform_id=requested_platform_id,
-                    requested_device_type=requested_device_type,
-                    requested_connection_type=requested_connection_type,
-                    requested_capabilities=requested_capabilities,
-                    error_type=error_type,
-                    error_message=error_message,
-                    run_id=reservation_run_id,
-                )
-                .on_conflict_do_nothing(
-                    index_elements=[Session.session_id],
-                    index_where=text("status = 'running' AND ended_at IS NULL"),
-                )
-                .returning(Session.id)
-            )
-            inserted_id = (await db.execute(insert_stmt)).scalar_one_or_none()
-            if inserted_id is None:
-                # Concurrent registrant won; commit our reservation lookup work
-                # (no state mutations were queued yet) and return their row.
-                await db.commit()
-                existing_after_race = await self.get_session(db, session_id)
-                if existing_after_race is not None:
-                    return existing_after_race
-                raise ValueError("Session insert conflicted but no existing row found")
-
-            session = await db.get(Session, inserted_id)
-            assert session is not None
-            if device is not None:
-                await IntentService(db).mark_dirty_and_reconcile(
-                    device.id,
-                    reason=f"session {session_id} registered",
-                    publisher=self._publisher,
-                    observed_reason=ObservationReason.session,
-                )
-            queue_session_started_event(
-                db,
-                session,
-                device=device,
-                run_id=str(reservation_run_id) if reservation_run_id is not None else None,
-                publisher=self._publisher,
-            )
-            await db.commit()
-            await db.refresh(session)
-            return session
-
-        # Pin ``started_at`` and ``ended_at`` to the same Python timestamp so a
-        # late-registered terminal session never persists with ``ended_at <
-        # started_at`` (the column default is ``server_default=func.now()`` which
-        # fires later than ``now_utc()``, producing negative durations).
-        now = now_utc()
-        session = Session(
-            session_id=session_id,
-            device_id=device.id if device is not None else None,
-            test_name=test_name,
-            status=status,
-            started_at=now,
-            ended_at=now,
-            requested_pack_id=requested_pack_id,
-            requested_platform_id=requested_platform_id,
-            requested_device_type=requested_device_type,
-            requested_connection_type=requested_connection_type,
-            requested_capabilities=requested_capabilities,
-            error_type=error_type,
-            error_message=error_message,
-            run_id=reservation_run_id,
-        )
-        db.add(session)
-        queue_session_started_event(db, session, device=device, run_id=None, publisher=self._publisher)
-        queue_session_ended_event(db, session, device=device, publisher=self._publisher)
-        await db.commit()
-        await db.refresh(session)
-        if device is not None:
-            await self._lifecycle.complete_deferred_stop_if_session_ended(db, device)
-        return session
-
-    async def mark_session_finished(self, db: AsyncSession, session_id: str) -> Session | None:
-        """Stamp ``ended_at`` (if null) and run lifecycle bookkeeping.
-
-        Idempotent: a row that already has ``ended_at`` set returns unchanged
-        and does NOT re-fire ``handle_session_finished``.
-
-        Does NOT modify ``Session.status``. Terminal status (passed / failed /
-        error) is owned by ``update_session_status`` (testkit) or by the
-        ``session_sync_loop`` reconciliation path (fallback for non-testkit
-        clients). Mutating status here would race against the testkit's
-        follow-up ``update_session_status`` call and cause a brief
-        ``ended → passed`` flicker visible in the UI.
-
-        ``session_id`` is the WebDriver session token (``Session.session_id``
-        string column), NOT the row primary key. The testkit passes
-        ``driver.session_id`` which is the WebDriver-issued token.
-        """
-        session = await self.get_session(db, session_id)
-        if session is None:
-            return None
-        if session.ended_at is not None:
-            return session
-
-        if session.device_id is not None:
-            # Lock order (deadlock avoidance): take the device row lock before
-            # the claim UPDATE below stamps the session row. The run release
-            # path holds device rows while closing their sessions; stamping the
-            # session row first inverts that order (session → device) and the
-            # two paths deadlock under concurrent teardown.
-            # A vanished device row means nothing to lock; the lifecycle pass
-            # below tolerates the missing row.
-            with contextlib.suppress(NoResultFound):
-                await device_locking.lock_device(db, session.device_id)
-
-        # Claim the close with a conditional UPDATE (wave-5 re-review B3): the
-        # read above takes no row lock, so a concurrent closer (the session_sync
-        # sweep on another worker) committing between our SELECT and our write
-        # would otherwise go unnoticed — both closers stamp the row and
-        # double-run the revoke + lifecycle bookkeeping below. rowcount 0 means
-        # another worker already terminalized the row; refresh and return it
-        # untouched. This is what makes the idempotency documented above true
-        # at the database level.
-        result = await db.execute(
-            update(Session).where(Session.id == session.id, Session.ended_at.is_(None)).values(ended_at=now_utc())
-        )
-        if int(getattr(result, "rowcount", 0) or 0) == 0:
-            # READ COMMITTED: the refresh statement sees the winner's committed
-            # row even inside our open transaction.
-            await db.refresh(session)
-            return session
-        await db.refresh(session)
-
-        # Terminalize any allocation ticket whose claim minted this session. The
-        # router /sessions/ended terminalizer (close_running_session) no-ops once
-        # this path has stamped ended_at, so without this the claimed ticket lingers
-        # for the reaper (orphan_claim_reaped churn that masks a real leak). Guarded
-        # no-op for non-allocation sessions.
-        from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
-
-        await expire_tickets_for_session(db, session.id)
-
-        if session.device_id is not None:
-            # Mirror the ``update_session_status`` revoke path. Without this,
-            # testkit clients that POST /finished without a follow-up PATCH /status
-            # leak one ``active_session:{sid}`` intent per session served.
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=session.device_id,
-                sources=[f"active_session:{session_id}"],
-                reason=f"Session {session_id} ended",
-                publisher=self._publisher,
-                observed_reason=ObservationReason.session_ended,
-            )
-
-            # handle_session_finished re-locks the device row internally via
-            # _reload_device. Pass an unlocked Device fetched by id; do NOT
-            # acquire an outer FOR UPDATE here — that would just be a redundant
-            # round trip with the inner lock.
-            device = await db.get(Device, session.device_id)
-            if device is None:
-                # Defensive: device row was deleted out from under the session.
-                # Skip lifecycle bookkeeping but still persist ended_at.
-                await db.commit()
-                return session
-
-            await self._lifecycle.handle_session_finished(db, device)
-
-        # mark_session_finished owns persistence of ended_at. handle_session_finished
-        # commits only on its terminal branches (CLEARED_RECOVERED, AUTO_STOPPED);
-        # the common NO_PENDING path returns without committing, which would
-        # otherwise let the request-scoped session roll back our flushed write
-        # when get_db closes. An extra commit is idempotent on already-committed
-        # branches.
-        await db.commit()
-        return session
 
     async def update_session_status(
         self,

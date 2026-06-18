@@ -20,8 +20,6 @@ from app.packs.models import DriverPack
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.runs.service_allocator import RunAllocatorService, _find_matching_devices, _readiness_for_match
-from app.runs.service_lifecycle import RunLifecycleService
-from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
 from tests.conftest import test_circuit_breaker
@@ -1156,62 +1154,6 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     body = resp.json()
     reserved_ids = {dev["device_id"] for dev in body["devices"]}
     assert str(devices[0].id) not in reserved_ids
-
-
-@pytest.mark.asyncio
-async def test_sessions_straddle_active_signal_boundary(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Sessions started while a run is preparing carry run_id=NULL; sessions
-    started after the explicit /active signal are linked to the run."""
-    from app.runs.models import RunState
-    from app.sessions.service import SessionCrudService
-    from tests.helpers import create_reserved_run
-
-    device = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="straddle-boundary",
-        connection_target="straddle-boundary",
-        name="Straddle Boundary Device",
-        os_version="14",
-        operational_state="available",
-    )
-    device.verified_at = datetime.now(UTC)
-    await db_session.commit()
-    run = await create_reserved_run(db_session, name="Straddle Run", devices=[device], state=RunState.preparing)
-
-    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
-    prep_session = await crud.register_session(
-        db_session,
-        session_id="sess-prep",
-        test_name="prep-warmup",
-        device_id=device.id,
-    )
-    assert prep_session.run_id is None
-
-    crud_mock = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
-    await crud_mock.update_session_status(db_session, "sess-prep", SessionStatus.passed)
-
-    _release = RunReleaseService(
-        publisher=event_bus,
-        settings=_settings,
-        deferred_stop=AsyncMock(),
-    )
-    _lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release)
-    await _lifecycle.signal_active(db_session, run.id)
-    await db_session.refresh(run)
-    assert run.state == RunState.active
-    assert run.started_at is not None
-
-    real_session = await crud.register_session(
-        db_session,
-        session_id="sess-real",
-        test_name="real-test",
-        device_id=device.id,
-    )
-    assert real_session.run_id == run.id
 
 
 async def test_create_run_excludes_device_mid_appium_restart(

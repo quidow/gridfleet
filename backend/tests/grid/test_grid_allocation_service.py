@@ -14,7 +14,6 @@ import pytest_asyncio
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from unittest.mock import AsyncMock
 
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
@@ -23,7 +22,6 @@ from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service import DeviceLiveSessionConflictError, SessionCrudService
 from tests.helpers import drain_handlers, recent_events, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
@@ -461,34 +459,6 @@ async def test_confirm_emits_one_session_started_with_run_id(
 
 
 @pytest.mark.db
-async def test_allocate_confirm_register_emits_session_started_once(
-    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
-) -> None:
-    """De-dup: the full allocate -> confirm -> legacy register flow yields exactly ONE
-    session.started. confirm() emits; register_session then finds the already-running
-    row and returns early without a second emission."""
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
-    db_session.add(ticket)
-    await db_session.flush()
-    result = await allocation_service.try_allocate(db_session, ticket=ticket)
-    assert result is not None
-    await allocation_service.confirm(db_session, allocation_id=result.allocation_id, appium_session_id="dedup-ssn")
-    await db_session.commit()
-
-    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
-    await crud.register_session(
-        db_session,
-        session_id="dedup-ssn",
-        test_name="dedup",
-        device_id=seeded_available_device.id,
-        status=SessionStatus.running,
-    )
-
-    started = await _started_events_for("dedup-ssn")
-    assert len(started) == 1
-
-
-@pytest.mark.db
 async def test_confirm_conflicting_running_row_raises_not_pending_not_500(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
 ) -> None:
@@ -545,30 +515,6 @@ async def test_older_run_waiter_does_not_veto_free_ticket_on_unreserved_device(
     await db_session.flush()
     result = await allocation_service.try_allocate(db_session, ticket=younger)
     assert result is not None
-
-
-@pytest.mark.db
-async def test_register_session_rejects_different_id_when_device_has_pending(
-    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
-) -> None:
-    """P1: a device already holding a live (pending) grid allocation must reject a
-    legacy register_session for a DIFFERENT session id — otherwise the device is
-    double-bound while the router is mid-confirm."""
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
-    db_session.add(ticket)
-    await db_session.flush()
-    result = await allocation_service.try_allocate(db_session, ticket=ticket)
-    assert result is not None  # device now carries a pending row
-
-    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
-    with pytest.raises(DeviceLiveSessionConflictError):
-        await crud.register_session(
-            db_session,
-            session_id="some-other-id",
-            test_name="intruder",
-            device_id=seeded_available_device.id,
-            status=SessionStatus.running,
-        )
 
 
 @pytest.mark.db
