@@ -10,7 +10,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
-import httpx
+import httpx2 as httpx
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -4,7 +4,7 @@ import signal
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 # Both import styles are intentional:
