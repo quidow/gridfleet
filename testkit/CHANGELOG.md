@@ -2,6 +2,23 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.12.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.11.0...gridfleet-testkit-v0.12.0) (2026-06-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** remove Selenium Grid-era session registration
+
+### Features
+
+* **testkit:** remove Selenium Grid-era session registration ([6b22582](https://github.com/quidow/gridfleet/commit/6b2258206758f6e60a3d32f962ac82c968cb69fb))
+
+
+### Dependencies
+
+* **deps:** bump pytest in /testkit in the python-dependencies group ([#595](https://github.com/quidow/gridfleet/issues/595)) ([3a39406](https://github.com/quidow/gridfleet/commit/3a39406eb93f0082027a0d1a3460627479ff1f1a))
+* **deps:** bump ruff in /testkit in the python-dependencies group ([#584](https://github.com/quidow/gridfleet/issues/584)) ([1b68d43](https://github.com/quidow/gridfleet/commit/1b68d439a73255857d11ef4cf9791c9629b93736))
+
 ## [0.11.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.10.0...gridfleet-testkit-v0.11.0) (2026-06-11)
 
 
