@@ -17,8 +17,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import FrameType
 
-    from appium.webdriver.webdriver import WebDriver
-
     from .types import JsonObject, JsonObjectList, QueryParamValue
 
 DEFAULT_GRID_URL = "http://localhost:4444"
@@ -428,73 +426,6 @@ class GridFleetClient:
             return None
         return cast("JsonObject", resp.json())
 
-    def register_session(
-        self,
-        *,
-        session_id: str,
-        test_name: str | None = None,
-        device_id: str | None = None,
-        connection_target: str | None = None,
-        status: str = "running",
-        requested_pack_id: str | None = None,
-        requested_platform_id: str | None = None,
-        requested_device_type: str | None = None,
-        requested_connection_type: str | None = None,
-        requested_capabilities: JsonObject | None = None,
-        error_type: str | None = None,
-        error_message: str | None = None,
-        run_id: str | None = None,
-        suppress_errors: bool = True,
-    ) -> JsonObject | None:
-        """Register a Grid/Appium session with the manager."""
-        try:
-            resp = httpx.post(
-                f"{self.base_url}/sessions",
-                json={
-                    "session_id": session_id,
-                    "test_name": test_name,
-                    "device_id": device_id,
-                    "connection_target": connection_target,
-                    "status": status,
-                    "requested_pack_id": requested_pack_id,
-                    "requested_platform_id": requested_platform_id,
-                    "requested_device_type": requested_device_type,
-                    "requested_connection_type": requested_connection_type,
-                    "requested_capabilities": requested_capabilities,
-                    "error_type": error_type,
-                    "error_message": error_message,
-                    "run_id": run_id,
-                },
-                timeout=5,
-                auth=self._auth,
-            )
-            resp.raise_for_status()
-        except (httpx.HTTPError, TypeError, ValueError) as exc:
-            _raise_or_warn("register session", suppress_errors, exc)
-            return None
-        return cast("JsonObject", resp.json())
-
-    def notify_session_finished(
-        self,
-        session_id: str,
-        *,
-        suppress_errors: bool = True,
-    ) -> None:
-        """Tell the manager the WebDriver session has ended.
-
-        Idempotent on the backend — repeated calls are a no-op once the
-        Session row is marked ended.
-        """
-        try:
-            resp = httpx.post(
-                f"{self.base_url}/sessions/{session_id}/finished",
-                timeout=5,
-                auth=self._auth,
-            )
-            resp.raise_for_status()
-        except (httpx.HTTPError, TypeError, ValueError) as exc:
-            _raise_or_warn("notify session finished", suppress_errors, exc)
-
     def update_session_status(
         self,
         session_id: str,
@@ -515,71 +446,6 @@ class GridFleetClient:
             _raise_or_warn("report session status", suppress_errors, exc)
             return None
         return cast("JsonObject", resp.json())
-
-    def register_session_from_driver(
-        self,
-        driver: WebDriver,
-        *,
-        test_name: str | None = None,
-        run_id: str | None = None,
-        suppress_errors: bool = True,
-    ) -> JsonObject | None:
-        """Register a running Appium session and wire ``driver.quit`` for notify.
-
-        The testkit does not try to derive a device identity from
-        ``driver.capabilities``. ``udid`` / ``deviceName`` are not unique
-        across drivers (Roku reuses the IP, AVDs reuse port-named handles,
-        iOS simulators reuse a UDID across reboots), and the Appium driver
-        strips the ``appium:`` vendor prefix and drops nested vendor keys
-        like ``appium:gridfleet:deviceId`` from the W3C echo, so identifying
-        caps cannot be read reliably from the client side at all.
-
-        The row is registered with only ``session_id`` + capabilities; the
-        backend ``session_sync_loop`` queries the Grid hub on each cycle and
-        binds the row to its Device by reading ``slot.session.stereotype``,
-        which is prefix-stable and carries ``appium:gridfleet:deviceId``.
-        ``driver.quit`` is wrapped so the first call posts to ``/finished``
-        exactly once; errors from notify are suppressed so they never break
-        the caller.
-        """
-        capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
-        if not isinstance(capabilities, dict):
-            capabilities = {}
-        session_id = getattr(driver, "session_id", None)
-        if not isinstance(session_id, str) or not session_id:
-            raise RuntimeError("Created Appium driver did not expose a session ID")
-        result = self.register_session(
-            session_id=session_id,
-            test_name=test_name,
-            requested_capabilities=capabilities,
-            run_id=run_id,
-            suppress_errors=suppress_errors,
-        )
-        self._wrap_quit_for_notify(driver, session_id)
-        return result
-
-    def _wrap_quit_for_notify(self, driver: WebDriver, session_id: str) -> None:
-        """Replace ``driver.quit`` with a wrapper that also notifies the manager.
-
-        The notify fires at most once per registration: after the first quit
-        succeeds, subsequent quit() calls run the underlying quit but do
-        NOT post to /finished again. The underlying quit still runs every
-        call.
-
-        Raises AttributeError if the driver lacks a quit method.
-        """
-        original_quit = driver.quit
-        notified: dict[str, bool] = {"done": False}
-
-        def wrapped_quit() -> object:
-            try:
-                return original_quit()
-            finally:
-                if not notified["done"]:
-                    notified["done"] = True
-                    self.notify_session_finished(session_id, suppress_errors=True)
-
-        object.__setattr__(driver, "quit", wrapped_quit)
 
     def complete_run(self, run_id: str) -> JsonObject:
         resp = httpx.post(

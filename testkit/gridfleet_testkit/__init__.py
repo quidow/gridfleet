@@ -43,7 +43,7 @@ from .client import (
     register_run_cleanup,
     run_grid_url,
 )
-from .sessions import build_error_session_payload, resolve_device_handle_from_driver
+from .sessions import resolve_device_handle_from_driver
 
 try:
     __version__ = version("gridfleet-testkit")
@@ -64,7 +64,6 @@ __all__ = [
     "UnknownIncludeError",
     "__version__",
     "build_appium_options",
-    "build_error_session_payload",
     "create_appium_driver",
     "get_connection_target_from_driver",
     "get_device_config_for_driver",
