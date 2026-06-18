@@ -39,7 +39,6 @@ Current auth behavior:
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `reserved`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, `tags.<key>` | `DeviceRead[]` |
-| `GET` | `/api/devices/by-connection-target/{target}` | Resolve the manager device row for a runtime connection target reported by Appium/Grid | path `target` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
@@ -251,7 +250,7 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 `POST /api/runs` supports an optional `?include=` query parameter:
 
 - `include=config` — inlines the Appium configuration for each reserved device in the response. Useful when the CI orchestrator wants device-level config without a follow-up request.
-- `include=capabilities` is rejected with `422` (`details.code = "reserve_capabilities_unsupported"`) because live Appium capabilities are only available after a Grid session is established. Resolve the assigned device from the session's connection target with `GET /api/devices/by-connection-target/{target}`.
+- `include=capabilities` is rejected with `422` (`details.code = "reserve_capabilities_unsupported"`) because live Appium capabilities are only available after a Grid session is established. Read the device id from the live session capability `appium:gridfleet:deviceId` and fetch it with `GET /api/devices/{id}`.
 - Unknown include values return `422` with `details.code = "unknown_include"`.
 
 ## Sessions
