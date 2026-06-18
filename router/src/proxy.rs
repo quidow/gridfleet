@@ -504,9 +504,10 @@ impl GridRouter {
                     allocation_id,
                     target,
                     claim_window_sec,
+                    device_id,
                 }) => {
                     alloc_outcome("allocated");
-                    break (allocation_id, target, claim_window_sec);
+                    break (allocation_id, target, claim_window_sec, device_id);
                 }
                 Ok(crate::backend::AllocateOutcome::Queued { ticket: t }) => {
                     alloc_outcome("queued");
@@ -575,7 +576,7 @@ impl GridRouter {
                 .await;
             }
         };
-        let (allocation_id, target, claim_window_sec) = allocation;
+        let (allocation_id, target, claim_window_sec, device_id) = allocation;
         // 3. Create the session on Appium with the SAME raw body (byte-identical).
         // The create call is bounded by the claim window (the backend reaps the
         // unconfirmed allocation after it) so we never hand back a session the
@@ -709,7 +710,11 @@ impl GridRouter {
                 // Appium, tell the backend it ended (the row is `running`
                 // post-confirm), and drop the local route. This is the terminal
                 // guard for the undetected-disconnect case.
-                match respond(session, status, body, "application/json").await {
+                let relay_body = match &device_id {
+                    Some(id) => w3c::inject_device_id(&body, id),
+                    None => body,
+                };
+                match respond(session, status, relay_body, "application/json").await {
                     Ok(v) => Ok(v),
                     Err(e) => {
                         crate::metrics::metrics()
