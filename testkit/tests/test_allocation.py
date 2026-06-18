@@ -22,8 +22,8 @@ class FakeClient:
         self.device_calls: list[str] = []
         self.test_data_calls: list[str] = []
 
-    def get_device_config(self, connection_target: str) -> JsonObject:
-        self.config_calls.append(connection_target)
+    def get_device_config(self, device_id: str) -> JsonObject:
+        self.config_calls.append(device_id)
         return {"ip": "10.0.0.8", "username": "operator"}
 
     def get_device_capabilities(self, device_id: str) -> JsonObject:
@@ -91,7 +91,7 @@ def test_hydrate_allocated_device_uses_device_handle_and_fetches_config() -> Non
         live_capabilities=None,
         test_data=None,
     )
-    assert client.config_calls == ["SERIAL123"]
+    assert client.config_calls == ["dev-1"]
     assert client.capability_calls == []
     assert client.device_calls == []
 
@@ -206,12 +206,16 @@ def test_hydrate_allocated_device_uses_inline_config_and_skips_get() -> None:
 
 
 def test_hydrate_allocated_device_falls_back_to_get_device_config_when_inline_absent() -> None:
+    """get_device_config must be called with device_id, not connection_target."""
     client = FakeClient()
+    # Use distinct values so the assertion is meaningful: "dev-1" != "10.0.0.8:5555"
+    payload = device_handle(device_id="dev-1", connection_target="10.0.0.8:5555")
 
-    allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client)
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
 
     assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
-    assert client.config_calls == ["SERIAL123"]
+    assert client.config_calls == ["dev-1"], "get_device_config must receive device_id, not connection_target"
+    assert "10.0.0.8:5555" not in client.config_calls
 
 
 def test_hydrate_allocated_device_uses_inline_live_capabilities_and_skips_get() -> None:
