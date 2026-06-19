@@ -57,6 +57,7 @@ disallow_any_explicit = true
 module = [
     "test_allocation",
     "test_appium",
+    "test_catalog",
     "test_client",
     "test_config",
     "test_pytest_plugin",
