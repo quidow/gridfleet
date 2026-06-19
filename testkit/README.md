@@ -18,7 +18,6 @@
 - Supported public allocation/session helpers:
   - `AllocatedDevice`
   - `hydrate_allocated_device`
-  - `hydrate_allocated_device_from_driver`
   - `resolve_device_handle_from_driver`
 - Supported public result types:
   - `CooldownResult`
@@ -201,7 +200,6 @@ driver = create_appium_driver(
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
 | `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
 | `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional live capabilities and test data |
-| `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |

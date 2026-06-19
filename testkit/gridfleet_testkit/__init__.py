@@ -19,7 +19,6 @@ from importlib.metadata import PackageNotFoundError, version
 from .allocation import (
     AllocatedDevice,
     hydrate_allocated_device,
-    hydrate_allocated_device_from_driver,
 )
 from .client import (
     GridFleetClient,
@@ -61,7 +60,6 @@ __all__ = [
     "get_device_test_data_for_driver",
     "grid_url",
     "hydrate_allocated_device",
-    "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
     "resolve_device_handle_from_driver",
     "run_grid_url",

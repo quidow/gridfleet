@@ -21,7 +21,6 @@ def test_bucket_a_public_exports_are_available() -> None:
     expected = {
         "AllocatedDevice",
         "hydrate_allocated_device",
-        "hydrate_allocated_device_from_driver",
     }
 
     assert expected.issubset(set(gridfleet_testkit.__all__))
@@ -39,7 +38,6 @@ def test_documented_public_exports_are_available() -> None:
         "get_device_id_from_driver",
         "get_device_test_data_for_driver",
         "hydrate_allocated_device",
-        "hydrate_allocated_device_from_driver",
         "register_run_cleanup",
     }
 

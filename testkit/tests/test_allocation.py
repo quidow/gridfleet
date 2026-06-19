@@ -7,7 +7,6 @@ import pytest
 from gridfleet_testkit.allocation import (
     AllocatedDevice,
     hydrate_allocated_device,
-    hydrate_allocated_device_from_driver,
 )
 
 if TYPE_CHECKING:
@@ -155,18 +154,6 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.udid == "emulator-5554"
     assert allocated.device_ip == "10.0.0.9"
     assert allocated.platform_name == "Android"
-
-
-def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
-    client = FakeClient()
-    allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client)
-    driver = type("Driver", (), {"capabilities": {"appium:udid": "SERIAL123", "platformName": "Android"}})()
-
-    updated = hydrate_allocated_device_from_driver(allocated, driver, client=client)
-
-    assert updated is not allocated
-    assert updated.live_capabilities == {"appium:udid": "SERIAL123", "platformName": "Android"}
-    assert allocated.live_capabilities is None
 
 
 def test_hydrate_allocated_device_populates_inline_tags() -> None:

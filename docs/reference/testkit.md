@@ -10,7 +10,7 @@
 - Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
-- Supported public allocation/session helpers: `AllocatedDevice`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
+- Supported public allocation/session helpers: `AllocatedDevice`, `hydrate_allocated_device`, `resolve_device_handle_from_driver`
 - Supported public result types: `CooldownResult`, `CooldownSetResult`, `CooldownEscalatedResult`
 - Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`, `GRIDFLEET_RUN_ID`
 - Manual hardware examples live under `testkit/examples/`
@@ -152,7 +152,6 @@ The resolved URLs are also available programmatically via `gridfleet_testkit.gri
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
 | `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional live capabilities and test data |
-| `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 

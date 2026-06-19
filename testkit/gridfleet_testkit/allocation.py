@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from appium.webdriver.webdriver import WebDriver
-
     from .client import GridFleetClient
     from .types import JsonObject
 
@@ -133,18 +131,3 @@ def hydrate_allocated_device(
         test_data=test_data,
         tags=tags,
     )
-
-
-def hydrate_allocated_device_from_driver(
-    allocated: AllocatedDevice,
-    driver: WebDriver,
-    *,
-    client: GridFleetClient,
-) -> AllocatedDevice:
-    """Refresh live capabilities from a running Appium driver session."""
-    capabilities = getattr(driver, "capabilities", None)
-    if isinstance(capabilities, dict):
-        live_capabilities = cast("JsonObject", dict(capabilities))
-    else:
-        live_capabilities = client.get_device_capabilities(allocated.device_id)
-    return replace(allocated, live_capabilities=live_capabilities)
