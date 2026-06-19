@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { useNavigationType } from 'react-router-dom';
 import { Bell } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import { useEventCatalog } from '../hooks/useEventCatalog';
@@ -98,6 +99,23 @@ function NotificationsContent() {
   });
   const filterType = searchParams.get('type') ?? '';
   const severities = parseSeverities(searchParams.get('severity'));
+  const navigationType = useNavigationType();
+
+  // react-router's setSearchParams functional updater reads the params captured
+  // at the last committed render, not the latest pending value. Under the async
+  // data router, rapid checkbox toggles fire faster than each navigation commits,
+  // so they would compose against stale state and drop updates. Keep the intended
+  // selection in a ref that every toggle advances synchronously, so each
+  // navigation carries the full set (last-write-wins resolves to the right
+  // selection). Only re-adopt the URL on POP (back/forward) — our own
+  // (REPLACE) commits would otherwise clobber the ref with a stale intermediate
+  // value mid-burst.
+  const severitiesRef = useRef(severities);
+  useEffect(() => {
+    if (navigationType === 'POP') {
+      severitiesRef.current = parseSeverities(searchParams.get('severity'));
+    }
+  }, [navigationType, searchParams]);
 
   const { data: eventCatalog, isLoading: eventCatalogLoading } = useEventCatalog();
   const types = filterType ? [filterType] : undefined;
@@ -120,18 +138,16 @@ function NotificationsContent() {
   }, [events, isLoading, page, setPage]);
 
   function toggleSeverity(target: EventSeverity) {
+    const next = toggleSeverityInSet(severitiesRef.current, target);
+    severitiesRef.current = next;
     updateParams(
-      {
-        severity: (prev) => {
-          const next = toggleSeverityInSet(parseSeverities(prev), target);
-          return next.length ? next.join(',') : null;
-        },
-      },
-      { resetPage: true },
+      { severity: next.length ? next.join(',') : null },
+      { resetPage: true, replace: true },
     );
   }
 
   function clearAll() {
+    severitiesRef.current = [];
     updateParams({ type: null, severity: null }, { resetPage: true });
   }
 
