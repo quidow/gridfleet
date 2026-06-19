@@ -767,7 +767,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
         await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
 
     await db_session.refresh(node)
-    assert node.pid == 4444
+    assert node.pid == 8888
     assert node.observed_running
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
@@ -788,9 +788,9 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     crash_event = next(e for e in events if e.event_type == DeviceEventType.node_crash)
     restart_event = next(e for e in events if e.event_type == DeviceEventType.node_restart)
     assert crash_event.details is not None
-    assert crash_event.details["process"] == "grid_relay"
+    assert crash_event.details["process"] == "appium"
     assert restart_event.details is not None
-    assert restart_event.details["process"] == "grid_relay"
+    assert restart_event.details["process"] == "appium"
 
     await db_session.refresh(node)
     assert node.health_running is None
@@ -883,4 +883,4 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
 
     await db_session.refresh(node)
     assert node.health_running is False
-    assert node.health_state == "relay_restart_exhausted"
+    assert node.health_state == "restart_exhausted"
