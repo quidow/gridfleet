@@ -286,12 +286,6 @@ test.describe('Accessibility', () => {
     await page.route((url) => new URL(url).pathname === '/api/devices/device-1/test_data', async (route) => {
       await fulfillJson(route, { test_name: null, test_suite: null, test_result: null });
     });
-    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/diagnostic-snapshots', async (route) => {
-      await fulfillJson(route, { items: [], total: 0, limit: 5, offset: 0, next_cursor: null, prev_cursor: null });
-    });
-    await page.route((url) => new URL(url).pathname === '/api/diagnostics/devices/device-1/snapshots', async (route) => {
-      await fulfillJson(route, { items: [], total: 0, limit: 5, offset: 0, next_cursor: null, prev_cursor: null });
-    });
 
     // Host detail
     await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/tools/status', async (route) => {

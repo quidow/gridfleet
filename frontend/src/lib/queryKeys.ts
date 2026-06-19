@@ -39,15 +39,6 @@ export const qk = {
   deviceSessionOutcomeHeatmap: {
     byDevice: (id: string, days: number) => ['device-session-outcome-heatmap', id, days] as const,
   },
-  deviceDiagnosticSnapshots: {
-    root: ['device-diagnostic-snapshots'] as const,
-    byDevice: (deviceId: string) => ['device-diagnostic-snapshots', deviceId] as const,
-    list: (deviceId: string, limit: number) => ['device-diagnostic-snapshots', deviceId, limit] as const,
-  },
-  deviceDiagnosticSnapshot: {
-    detail: (deviceId: string, snapshotId: string | null, redact: boolean) =>
-      ['device-diagnostic-snapshot', deviceId, snapshotId, redact] as const,
-  },
   deviceGroups: { root: ['device-groups'] as const },
   deviceGroup: {
     root: ['device-group'] as const,
