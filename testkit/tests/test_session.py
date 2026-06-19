@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 
-import gridfleet_testkit.session as session_mod
 from gridfleet_testkit.client import GridFleetClient
 from gridfleet_testkit.session import (
     get_connection_target_from_driver,
@@ -102,6 +102,7 @@ def test_resolves_handle_via_device_id() -> None:
 
 
 def test_session_module_does_not_have_old_sessions_symbols() -> None:
+    session_mod = sys.modules["gridfleet_testkit.session"]
     assert not hasattr(session_mod, "raw_attempted_capabilities")
     assert not hasattr(session_mod, "infer_requested_platform_id")
     assert not hasattr(session_mod, "read_enum_capability")
