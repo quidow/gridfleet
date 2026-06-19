@@ -15,9 +15,8 @@
   - `GridFleetClient`
   - `HeartbeatThread`
   - `register_run_cleanup`
-- Supported public allocation/session helpers:
-  - `AllocatedDevice`
-  - `hydrate_allocated_device`
+- Supported public device/session helpers:
+  - `Device` (return type of `get_device` / `list_devices`)
   - `resolve_device_handle_from_driver`
 - Supported public result types:
   - `CooldownResult`
@@ -130,7 +129,7 @@ def gridfleet_client_config():
 - Resolves the WebDriver endpoint from `GRIDFLEET_RUN_ID`: run-scoped URL inside a reserved run, bare grid URL otherwise. No GridFleet identity is injected into capabilities.
 - Reports final session status back to `GRIDFLEET_API_URL`
 - Exposes `device_test_data` for post-session operator-attached test data using the runtime connection target
-- Exposes `device_handle` for fetching the canonical manager device row using the runtime connection target
+- Exposes `device_handle` (a typed `Device`) for the device the live session landed on
 - Exposes `gridfleet_worker_id` which returns the pytest-xdist worker id, or `"controller"` for non-worker processes
 - Relies on manager-owned runtime isolation for Appium driver sub-ports and XCUITest build paths
 
@@ -180,8 +179,8 @@ driver = create_appium_driver(
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
-| `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...); returns a list of typed `Device` objects |
+| `GridFleetClient.get_device(device_id)` | Fetch one device as a typed `Device` (curated base fields) by backend device id |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
@@ -198,8 +197,7 @@ driver = create_appium_driver(
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
 | `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
-| `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional live capabilities and test data |
-| `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
+| `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned device as a typed `Device` from a running Appium session |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
@@ -310,25 +308,26 @@ elif result["status"] == "maintenance_escalated":
 
 The manager enforces a maximum TTL via the `general.device_cooldown_max_sec` setting. The default is 3600 seconds. An `httpx.HTTPStatusError` with status 422 is raised if `ttl_seconds` exceeds the maximum.
 
-### Allocated Device Hydration
+### Typed Device Reads
 
-Use `hydrate_allocated_device(...)` immediately after reserving a run when a custom plugin needs a stable object instead of raw device-handle JSON.
+`get_device` and `list_devices` return typed `Device` objects so callers see the available fields in their IDE instead of guessing dict keys.
 
 ```python
-from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver
+from gridfleet_testkit import GridFleetClient, resolve_device_handle_from_driver
 
 client = GridFleetClient()
-run_id = "run-123"
 
-# After creating an Appium session, resolve the assigned device handle
-device_handle = resolve_device_handle_from_driver(driver, client=client)
-allocated = hydrate_allocated_device(device_handle, run_id=run_id, client=client)
+# After creating an Appium session, resolve the assigned device row
+device = resolve_device_handle_from_driver(driver, client=client)
+assert device.id
+assert device.platform_label in {"Android", "iOS", "tvOS", "Roku", None}
 
-assert allocated.device_id == device_handle["device_id"]
-assert allocated.platform_name in {"Android", "iOS", "tvOS", "Roku"}
+# Or fetch / list directly
+one = client.get_device(device.id)
+available = client.list_devices(status="available")
 ```
 
-Pass `fetch_test_data=True` to populate `allocated.test_data`.
+`Device` carries the curated base field set both endpoints emit (`id`, `identity_value`, `connection_target`, `name`, `pack_id`, `platform_id`, `platform_label`, `os_version`, `os_version_display`, `host_id`, `device_type`, `connection_type`, `manufacturer`, `model`, `tags`, `operational_state`, `is_reserved`). Volatile long-tail fields (battery, telemetry, readiness, health summary, ...) are intentionally not surfaced. For operator-attached free-form data, use `client.get_device_test_data(device.id)` or the `device_test_data` fixture.
 
 ### Run Cleanup Policy
 
@@ -360,8 +359,6 @@ test_data = get_device_test_data_for_driver(driver)
 ### Errors and Result Types
 
 - `CooldownResult`: union response type from `cooldown_device`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
-
-`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries, which carry a top-level `device_id`.
 
 ## Examples
 
