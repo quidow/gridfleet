@@ -186,16 +186,17 @@ async def close_running_session(
     # Lock order (deadlock avoidance): take the device row lock BEFORE the
     # session row is dirtied below. Otherwise the autoflush invoked by the
     # ``select(TestRun ...)`` read stamps the session row first — session →
-    # device — the inverse of mark_session_finished / update_session_status /
-    # the run-release path, and the two end-paths (router /sessions/ended vs
-    # client /finished) deadlock on the same session under concurrent teardown.
-    # A vanished device row means nothing to lock.
+    # device — the inverse of update_session_status and the run-release path
+    # (which holds device rows while closing their sessions). The two orders
+    # deadlock on the same session under concurrent teardown. A vanished
+    # device row means nothing to lock.
     if session.device_id is not None:
         with contextlib.suppress(NoResultFound):
             await device_locking.lock_device(db, session.device_id)
-        # Re-check under the lock: a concurrent closer (mark_session_finished or
-        # the session_sync sweep on another worker) may have terminalized this
-        # row between mark_ended's SELECT and our lock acquisition. Bail to avoid
+        # Re-check under the lock: a concurrent closer — the leader session_sync
+        # sweep, the router /sessions/ended handler, or run-release on another
+        # worker — may have terminalized this row between mark_ended's SELECT and
+        # our lock acquisition. Bail to avoid
         # a double session.ended emit + double intent revoke. A column read (not
         # the identity-mapped object) sees the winner's committed ended_at; the
         # session row is still clean here, so this read does not autoflush a
@@ -478,13 +479,13 @@ class SessionCrudService:
 
             await expire_tickets_for_session(db, session.id)
             # Revoke the active_session intent for this specific session before
-            # locking the device. Mirror the Grid-driven session-end path in
-            # service_sync.py:390-395 — without this, testkit-driven terminal
-            # status calls leak an ``active_session:{sid}`` intent per session
-            # served, and the intent table accumulates a NODE_PROCESS row per
-            # session-the-device-ever-ran. ``reconcile_device`` runs inside the
-            # helper so ``node.stop_pending`` and ``node.desired_state`` reflect
-            # the post-session intent set when the row lock is taken below.
+            # locking the device. Mirrors the session_sync revoke site — without
+            # this, testkit-driven terminal status calls leak an
+            # ``active_session:{sid}`` intent per session served, and the intent
+            # table accumulates a NODE_PROCESS row per session-the-device-ever-ran.
+            # ``reconcile_device`` runs inside the helper so ``node.stop_pending``
+            # and ``node.desired_state`` reflect the post-session intent set when
+            # the row lock is taken below.
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=session.device_id,
                 sources=[f"active_session:{session_id}"],
