@@ -323,7 +323,7 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
         "crash_detected",
     ]
     assert [event["process"] for event in data["recent_recovery_events"]] == [
-        "grid_relay",
+        "appium",
         "appium",
     ]
     assert [event["event_type"] for event in data["recent_recovery_events"]] == [

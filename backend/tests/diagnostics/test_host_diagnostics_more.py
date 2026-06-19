@@ -22,8 +22,6 @@ def test_host_diagnostics_normalizers_reject_invalid_shapes() -> None:
     assert host_diagnostics._coerce_int(7.9) == 7
     assert host_diagnostics._coerce_int("42") == 42
     assert host_diagnostics._coerce_int("bad") is None
-    assert host_diagnostics._normalize_recovery_process("grid_relay") == "grid_relay"
-    assert host_diagnostics._normalize_recovery_process("unexpected") == "appium"
     other_event = DeviceEvent(
         device_id=__import__("uuid").uuid4(),
         event_type=DeviceEventType.hardware_health_changed,
@@ -174,7 +172,7 @@ async def test_get_host_diagnostics_filters_and_normalizes_recent_recovery_event
     assert diagnostics is not None
     assert [event.event_type for event in diagnostics.recent_recovery_events] == ["node_crash", "node_restart"]
     crash = diagnostics.recent_recovery_events[0]
-    assert crash.process == "grid_relay"
+    assert crash.process == "appium"
     assert crash.kind == "crash_detected"
     assert crash.sequence == 3
     assert crash.port == 4731

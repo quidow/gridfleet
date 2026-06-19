@@ -61,12 +61,6 @@ def _is_agent_local_recovery_event(event: DeviceEvent) -> bool:
     return False
 
 
-def _normalize_recovery_process(value: object) -> str:
-    if value == "grid_relay":
-        return "grid_relay"
-    return "appium"
-
-
 def _normalize_occurred_at(value: object, fallback: datetime) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -186,7 +180,7 @@ async def _list_recent_recovery_events(db: AsyncSession, host: Host) -> list[Hos
                 device_id=device.id,
                 device_name=device.name,
                 event_type=event.event_type.value,
-                process=_normalize_recovery_process(details.get("process")),
+                process="appium",
                 kind=kind,
                 sequence=_coerce_int(details.get("sequence")),
                 port=_coerce_int(details.get("port")),

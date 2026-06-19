@@ -115,10 +115,10 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
     assert heartbeat._coerce_int(True) is None
     assert heartbeat._coerce_int(4.9) == 4
     assert heartbeat._coerce_int("bad") is None
-    assert heartbeat._restart_process("grid_relay") == "grid_relay"
+    assert heartbeat._restart_process("grid_relay") == "appium"
     assert heartbeat._restart_process("unknown") == "appium"
-    assert heartbeat._restart_error_message("restart_exhausted", "grid_relay", 7) == (
-        "Agent auto-restart exhausted after Grid relay exit (code 7)"
+    assert heartbeat._restart_error_message("restart_exhausted", 7) == (
+        "Agent auto-restart exhausted after Appium exit (code 7)"
     )
 
 

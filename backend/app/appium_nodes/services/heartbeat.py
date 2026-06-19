@@ -56,7 +56,7 @@ APPIUM_RESTART_SEQUENCE_NAMESPACE = "heartbeat.appium_restart_sequence"
 LOOP_NAME = "heartbeat"
 BACKGROUND_TASK_DRAIN_TIMEOUT_SEC = 5.0
 APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "restart_exhausted"})
-APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium", "grid_relay"})
+APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium"})
 
 
 def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
@@ -244,12 +244,11 @@ def _restart_process(value: object) -> str:
     return "appium"
 
 
-def _restart_error_message(kind: str, process: str, exit_code: int | None) -> str:
+def _restart_error_message(kind: str, exit_code: int | None) -> str:
     exit_detail = f" (code {exit_code})" if exit_code is not None else ""
-    process_label = "Grid relay" if process == "grid_relay" else "Appium"
     if kind == "restart_exhausted":
-        return f"Agent auto-restart exhausted after {process_label} exit{exit_detail}"
-    return f"Agent detected {process_label} exit{exit_detail}"
+        return f"Agent auto-restart exhausted after Appium exit{exit_detail}"
+    return f"Agent detected Appium exit{exit_detail}"
 
 
 def _restart_event_observation_changed(
@@ -461,7 +460,7 @@ async def _ingest_appium_restart_events(
             )
             continue
 
-        error_message = _restart_error_message(kind, process, exit_code)
+        error_message = _restart_error_message(kind, exit_code)
         publisher.queue_for_session(
             db,
             "node.crash",
@@ -496,10 +495,7 @@ async def _ingest_appium_restart_events(
                 "error": error_message,
             },
         )
-        if process == "grid_relay":
-            degraded_state = "relay_restart_exhausted" if kind == "restart_exhausted" else "relay_restarting"
-        else:
-            degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
+        degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
         await DeviceHealthService(publisher=publisher).apply_node_state_transition(
             db,
             device,
