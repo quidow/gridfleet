@@ -58,7 +58,6 @@ async def _seed_roku_pack(session: AsyncSession) -> None:
             appium_platform_name="roku",
             device_types=["real_device"],
             connection_types=["network"],
-            grid_slots=["native"],
             data={
                 "device_fields_schema": [
                     {

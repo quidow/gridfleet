@@ -4604,8 +4604,6 @@ export interface components {
             };
             /** Display Name */
             display_name: string;
-            /** Grid Slots */
-            grid_slots: string[];
             /** Health Checks */
             health_checks?: components["schemas"]["HealthCheckLabelOut"][];
             /** Id */

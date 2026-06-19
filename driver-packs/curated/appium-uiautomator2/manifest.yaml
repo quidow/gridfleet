@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-uiautomator2
-release: 2026.06.7
+release: 2026.06.8
 display_name: Appium UiAutomator2
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -32,7 +32,6 @@ platforms:
     appium_platform_name: Android
     device_types: [real_device, emulator]
     connection_types: [usb, network, virtual]
-    grid_slots: [native, chrome]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"
@@ -99,7 +98,6 @@ platforms:
     appium_platform_name: Android
     device_types: [real_device, emulator]
     connection_types: [usb, network, virtual]
-    grid_slots: [native, chrome]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"
@@ -166,7 +164,6 @@ platforms:
     appium_platform_name: Android
     device_types: [real_device]
     connection_types: [usb, network]
-    grid_slots: [native, chrome]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"

@@ -41,7 +41,6 @@ class ResolvedPackPlatform:
     appium_platform_name: str
     device_types: list[str]
     connection_types: list[str]
-    grid_slots: list[str]
     identity_scheme: str
     identity_scope: str
     capabilities: dict[str, Any]
@@ -99,7 +98,6 @@ async def resolve_pack_platform(
         appium_platform_name=platform.appium_platform_name,
         device_types=list(platform.device_types),
         connection_types=list(platform.connection_types),
-        grid_slots=list(platform.grid_slots),
         identity_scheme=identity["scheme"],
         identity_scope=identity["scope"],
         capabilities=dict(platform.data.get("capabilities", {})),

@@ -41,7 +41,6 @@ class _FakeClient(PackStateClient):
                             "automation_name": "UiAutomator2",
                             "device_types": ["real_device"],
                             "connection_types": ["usb"],
-                            "grid_slots": ["native"],
                             "identity": {"scheme": "android_serial", "scope": "host"},
                             "display_name": "x",
                             "appium_platform_name": "Android",
@@ -212,7 +211,6 @@ async def test_state_loop_installs_pack_without_probe_family_filtering() -> None
                             "automation_name": "XCUITest",
                             "device_types": ["real_device"],
                             "connection_types": ["usb"],
-                            "grid_slots": ["native"],
                             "identity": {"scheme": "apple_udid", "scope": "global"},
                             "capabilities": {"stereotype": {"platformName": "iOS"}},
                         }

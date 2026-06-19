@@ -114,7 +114,6 @@ class DriverPackPlatform(Base):
     appium_platform_name: Mapped[str] = mapped_column(String, nullable=False)
     device_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     connection_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    grid_slots: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     release: Mapped[DriverPackRelease] = relationship("DriverPackRelease", back_populates="platforms")

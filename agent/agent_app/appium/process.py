@@ -253,7 +253,6 @@ class AppiumLaunchSpec:
     appium_platform_name: str | None = None
     appium_env: dict[str, str] | None = None
     insecure_features: list[str] = field(default_factory=list)
-    grid_slots: list[str] = field(default_factory=lambda: ["native"])
     lifecycle_actions: list[dict[str, Any]] = field(default_factory=list)
     connection_behavior: dict[str, Any] = field(default_factory=dict)
     headless: bool = True
@@ -695,7 +694,6 @@ class AppiumProcessManager:
         appium_platform_name: str | None = None,
         appium_env: dict[str, str] | None = None,
         insecure_features: list[str] | None = None,
-        grid_slots: list[str] | None = None,
         lifecycle_actions: list[dict[str, Any]] | None = None,
         connection_behavior: dict[str, Any] | None = None,
     ) -> AppiumProcessInfo:
@@ -752,7 +750,6 @@ class AppiumProcessManager:
             appium_platform_name=appium_platform_name,
             appium_env=dict(appium_env) if appium_env else None,
             insecure_features=list(insecure_features) if insecure_features else [],
-            grid_slots=list(grid_slots) if grid_slots else ["native"],
             lifecycle_actions=list(lifecycle_actions) if lifecycle_actions else [],
             connection_behavior=dict(connection_behavior) if connection_behavior else {},
             headless=headless,

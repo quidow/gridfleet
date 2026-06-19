@@ -64,7 +64,6 @@ async def start_appium(req: AppiumStartRequest, mgr: AppiumMgrDep) -> dict[str, 
             appium_platform_name=req.appium_platform_name,
             appium_env=req.appium_env,
             insecure_features=req.insecure_features,
-            grid_slots=req.grid_slots,
             lifecycle_actions=req.lifecycle_actions,
             connection_behavior=req.connection_behavior,
         )

@@ -34,7 +34,6 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
         appium_platform_name=None,
         appium_env=None,
         insecure_features=[],
-        grid_slots=["native"],
         lifecycle_actions=[],
         connection_behavior={},
         headless=False,

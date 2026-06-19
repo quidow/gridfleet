@@ -23,7 +23,6 @@ platforms:
     appium_platform_name: SidecarOS
     device_types: [real_device]
     connection_types: [network]
-    grid_slots: [native]
     capabilities:
       stereotype: {}
     identity:

@@ -256,7 +256,6 @@ async def ingest_pack_tarball(
                 appium_platform_name=platform.appium_platform_name,
                 device_types=list(platform.device_types),
                 connection_types=list(platform.connection_types),
-                grid_slots=list(platform.grid_slots),
                 data=platform.model_dump(exclude_none=True, mode="json"),
             )
         )

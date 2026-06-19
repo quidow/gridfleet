@@ -44,7 +44,6 @@ def _android_pack(pack_id: str = "appium-uiautomator2", release: str = "2026.04.
                 "automation_name": "UiAutomator2",
                 "device_types": ["real_device"],
                 "connection_types": ["usb"],
-                "grid_slots": ["native"],
                 "identity": {"scheme": "android_serial", "scope": "host"},
                 "display_name": "Android",
                 "appium_platform_name": "Android",

@@ -40,7 +40,6 @@ platforms:
     appium_platform_name: Vendor
     device_types: [real_device]
     connection_types: [network]
-    grid_slots: [native]
     capabilities: { stereotype: {}, session_required: [] }
     identity: { scheme: vendor_uid, scope: global }
 features:
@@ -130,7 +129,6 @@ platforms:
     appium_platform_name: Vendor
     device_types: [real_device]
     connection_types: [network]
-    grid_slots: [native]
     capabilities: { stereotype: {}, session_required: [] }
     identity: { scheme: vendor_uid, scope: global }
 """

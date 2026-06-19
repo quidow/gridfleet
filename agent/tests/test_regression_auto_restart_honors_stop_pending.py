@@ -41,7 +41,6 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
         appium_platform_name=None,
         appium_env=None,
         insecure_features=[],
-        grid_slots=["native"],
         lifecycle_actions=[],
         connection_behavior={},
         headless=False,

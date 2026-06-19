@@ -71,7 +71,6 @@ def _desired_pack(tarball_sha256: str) -> DesiredPack:
                 automation_name="Roku",
                 device_types=["real_device"],
                 connection_types=["network"],
-                grid_slots=["native"],
                 identity_scheme="roku_serial",
                 identity_scope="global",
                 stereotype={},

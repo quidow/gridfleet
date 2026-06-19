@@ -174,7 +174,6 @@ async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:
                 automation_name="A",
                 device_types=[],
                 connection_types=[],
-                grid_slots=[],
                 identity_scheme="a",
                 identity_scope="host",
                 stereotype={},

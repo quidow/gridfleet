@@ -53,7 +53,6 @@ async def test_desired_state_includes_manifest_features(db_session: AsyncSession
                         "appium_platform_name": "SidecarOS",
                         "device_types": ["real_device"],
                         "connection_types": ["network"],
-                        "grid_slots": ["native"],
                         "capabilities": {"stereotype": {}},
                         "identity": {"scheme": "sidecar_id", "scope": "global"},
                     }

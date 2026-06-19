@@ -47,7 +47,6 @@ platforms:
     appium_platform_name: Export
     device_types: [real_device]
     connection_types: [network]
-    grid_slots: [native]
     capabilities: { stereotype: {}, session_required: [] }
     identity: { scheme: export_uid, scope: global }
 """

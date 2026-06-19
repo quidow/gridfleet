@@ -40,7 +40,6 @@ class AppiumStartRequest(BaseModel):
     device_type: Annotated[str | None, Field(title="Device Type")] = None
     extra_caps: Annotated[dict[str, Any] | None, Field(title="Extra Caps")] = None
     grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")] = None
-    grid_slots: Annotated[list[str] | None, Field(title="Grid Slots")] = ["native"]
     headless: Annotated[bool | None, Field(title="Headless")] = True
     insecure_features: Annotated[list[str] | None, Field(title="Insecure Features")] = []
     ip_address: Annotated[str | None, Field(title="Ip Address")] = None

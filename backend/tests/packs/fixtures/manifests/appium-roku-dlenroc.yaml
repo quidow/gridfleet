@@ -27,7 +27,6 @@ platforms:
     appium_platform_name: roku
     device_types: [real_device]
     connection_types: [network]
-    grid_slots: [native]
     display:
       icon_kind: set_top
     health_checks:

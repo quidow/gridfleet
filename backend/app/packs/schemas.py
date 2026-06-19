@@ -87,7 +87,6 @@ class PlatformOut(BaseModel):
     appium_platform_name: str
     device_types: list[str]
     connection_types: list[str]
-    grid_slots: list[str]
     identity_scheme: str
     identity_scope: str
     lifecycle_actions: list[LifecycleActionOut] = Field(default_factory=list)

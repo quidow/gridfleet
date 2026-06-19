@@ -163,7 +163,6 @@ async def build_pack_start_payload(
         "appium_platform_name": appium_platform_name,
         "appium_env": appium_env,
         "insecure_features": insecure_features,
-        "grid_slots": resolved_platform.grid_slots,
         "lifecycle_actions": resolved_platform.lifecycle_actions,
         "connection_behavior": resolved_platform.connection_behavior,
     }

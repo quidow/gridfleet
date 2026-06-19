@@ -33,7 +33,6 @@ class AppiumStartRequest(BaseModel):
     appium_platform_name: str | None = None
     appium_env: dict[str, str] | None = None
     insecure_features: list[str] = []
-    grid_slots: list[str] = ["native"]
     lifecycle_actions: list[dict[str, Any]] = []
     connection_behavior: dict[str, Any] = {}
 
