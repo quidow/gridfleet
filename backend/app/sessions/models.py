@@ -10,7 +10,6 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.devices.models import ConnectionType, DeviceType
 
 
 class SessionStatus(enum.StrEnum):
@@ -57,10 +56,6 @@ class Session(Base):
     # running session never vanishes from the router's route table mid-flight (#6).
     router_target: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[SessionStatus] = mapped_column(Enum(SessionStatus), default=SessionStatus.running, nullable=False)
-    requested_pack_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    requested_platform_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    requested_device_type: Mapped[DeviceType | None] = mapped_column(Enum(DeviceType), nullable=True)
-    requested_connection_type: Mapped[ConnectionType | None] = mapped_column(Enum(ConnectionType), nullable=True)
     requested_capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # Negotiated capabilities from the Appium create-session response, captured by
     # the router at confirm time. NULL for pre-feature rows and for sessions
