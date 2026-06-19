@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from appium.webdriver.webdriver import WebDriver
     from pluggy import Result
 
+    from .device import Device
     from .types import JsonObject
 
 
@@ -139,8 +140,8 @@ def device_test_data(appium_driver: WebDriver, gridfleet_client: GridFleetClient
 
 
 @pytest.fixture
-def device_handle(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
-    """Fetch the canonical manager device row for the device the live session landed on.
+def device_handle(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> Device:
+    """Fetch the canonical manager device row (typed ``Device``) for the device the live session landed on.
 
     The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
     """

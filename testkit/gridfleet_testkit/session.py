@@ -9,6 +9,7 @@ from .client import GridFleetClient
 if TYPE_CHECKING:
     from appium.webdriver.webdriver import WebDriver
 
+    from .device import Device
     from .types import JsonObject
 
 
@@ -42,6 +43,6 @@ def get_device_test_data_for_driver(
     return client.get_device_test_data(device_id)
 
 
-def resolve_device_handle_from_driver(driver: WebDriver, *, client: GridFleetClient) -> JsonObject:
-    """Resolve a canonical device handle from a running WebDriver session."""
+def resolve_device_handle_from_driver(driver: WebDriver, *, client: GridFleetClient) -> Device:
+    """Resolve the assigned manager device row as a typed ``Device`` from a running session."""
     return client.get_device(get_device_id_from_driver(driver))
