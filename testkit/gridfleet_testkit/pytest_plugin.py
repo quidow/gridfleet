@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from appium import webdriver
 
 from .appium import (
+    _remote_with_owned_endpoint,
     _resolve_grid_url,
     build_appium_options,
     get_device_config_for_driver,
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from appium.options.common import AppiumOptions
+    from appium.webdriver.client_config import AppiumClientConfig
     from appium.webdriver.webdriver import WebDriver
     from pluggy import Result
 
@@ -67,9 +68,20 @@ def _build_driver_options(
 
 
 @pytest.fixture
+def gridfleet_client_config() -> AppiumClientConfig | None:
+    """Override in your conftest to tune the Appium HTTP transport (connection
+    retries, timeouts, proxy, TLS) for every ``appium_driver`` session. The
+    testkit still owns the endpoint, so any ``remote_server_addr`` is overwritten
+    with the resolved grid URL.
+    """
+    return None
+
+
+@pytest.fixture
 def appium_driver(
     request: pytest.FixtureRequest,
     gridfleet_client: GridFleetClient,
+    gridfleet_client_config: AppiumClientConfig | None,
 ) -> Generator[WebDriver, None, None]:
     """
     Create an Appium Remote driver through the WebDriver router.
@@ -80,10 +92,12 @@ def appium_driver(
             [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}],
             indirect=True,
         )
+
+    Override the ``gridfleet_client_config`` fixture to tune the HTTP transport.
     """
     options = _build_driver_options(request, gridfleet_client)
 
-    driver = webdriver.Remote(_resolve_grid_url(None), options=options)
+    driver = _remote_with_owned_endpoint(_resolve_grid_url(None), options, gridfleet_client_config)
     session_id = driver.session_id
     if not isinstance(session_id, str) or not session_id:
         raise RuntimeError("Created Appium driver did not expose a session ID")

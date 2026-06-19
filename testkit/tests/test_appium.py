@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from appium.webdriver.client_config import AppiumClientConfig
 
 import gridfleet_testkit.appium as appium_mod
 from gridfleet_testkit import (
@@ -73,10 +74,16 @@ AMBIGUOUS_CATALOG = {
 }
 
 
-def install_fake_appium(monkeypatch: pytest.MonkeyPatch, created_drivers: list[tuple[str, dict[str, object]]]) -> None:
-    def remote(url: str, *, options: FakeOptions) -> FakeDriver:
+def install_fake_appium(
+    monkeypatch: pytest.MonkeyPatch,
+    created_drivers: list[tuple[str, dict[str, object]]],
+    client_configs: list[object] | None = None,
+) -> None:
+    def remote(url: str, *, options: FakeOptions, client_config: object = None) -> FakeDriver:
         capabilities = {"platformName": options.platform_name, **options.capabilities}
         created_drivers.append((url, capabilities))
+        if client_configs is not None:
+            client_configs.append(client_config)
         return FakeDriver(capabilities)
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
@@ -172,6 +179,48 @@ def test_create_appium_driver_uses_factory_options(monkeypatch: pytest.MonkeyPat
             },
         )
     ]
+
+
+def test_create_appium_driver_forwards_client_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_drivers: list[tuple[str, JsonObject]] = []
+    client_configs: list[object] = []
+    install_fake_appium(monkeypatch, created_drivers, client_configs)
+
+    class FakeClientConfig:
+        def __init__(self) -> None:
+            self.remote_server_addr = "placeholder"
+
+    config = FakeClientConfig()
+    create_appium_driver(
+        capabilities={"platformName": "Android"},
+        grid_url="http://grid:4444",
+        client_config=config,
+    )
+
+    # The passed config is forwarded to webdriver.Remote ...
+    assert client_configs == [config]
+    # ... and the testkit owns the endpoint: it overwrites remote_server_addr
+    # with its resolved grid URL rather than the caller's placeholder.
+    assert config.remote_server_addr == "http://grid:4444"
+    assert created_drivers[0][0] == "http://grid:4444"
+
+
+def test_create_appium_driver_sets_endpoint_on_real_client_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Guards against the real AppiumClientConfig.remote_server_addr descriptor
+    # becoming read-only; the fake config in the test above cannot catch that.
+    created_drivers: list[tuple[str, JsonObject]] = []
+    client_configs: list[object] = []
+    install_fake_appium(monkeypatch, created_drivers, client_configs)
+
+    config = AppiumClientConfig(remote_server_addr="placeholder")
+    create_appium_driver(
+        capabilities={"platformName": "Android"},
+        grid_url="http://grid:4444",
+        client_config=config,
+    )
+
+    assert client_configs == [config]
+    assert config.remote_server_addr == "http://grid:4444"
 
 
 def test_get_connection_target_from_driver_returns_runtime_udid() -> None:

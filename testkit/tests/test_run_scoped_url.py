@@ -81,14 +81,14 @@ def _make_plugin_generator(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[
     """Return (captured_calls, generator) after installing a minimal webdriver.Remote spy."""
     captured: list[tuple[str, object]] = []
 
-    def fake_remote(url: str, *, options: object) -> _FakeDriver:
+    def fake_remote(url: str, *, options: object, client_config: object = None) -> _FakeDriver:
         captured.append((url, options))
         return _FakeDriver()
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", _FakeOptions)
-    # String target: `pytest_plugin.webdriver` is a transitive module attribute
+    # String target: `appium.webdriver` is a transitive module attribute
     # mypy strict (no_implicit_reexport) refuses to access statically.
-    monkeypatch.setattr("gridfleet_testkit.pytest_plugin.webdriver.Remote", fake_remote)
+    monkeypatch.setattr("gridfleet_testkit.appium.webdriver.Remote", fake_remote)
 
     request = types.SimpleNamespace(
         param={"platformName": "Android"},
@@ -97,7 +97,7 @@ def _make_plugin_generator(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[
     # pytest wraps fixtures in FixtureFunctionDefinition; __wrapped__ exists at
     # runtime but not in pytest's stubs, so reach it via getattr.
     fixture_fn = getattr(pytest_plugin.appium_driver, "__wrapped__")  # noqa: B009
-    gen: Iterator[object] = fixture_fn(request, _FakeClient())
+    gen: Iterator[object] = fixture_fn(request, _FakeClient(), None)
     return captured, gen
 
 

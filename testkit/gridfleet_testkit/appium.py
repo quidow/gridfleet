@@ -13,6 +13,7 @@ from .client import GridFleetClient, _default_grid_url, run_grid_url
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from appium.webdriver.client_config import AppiumClientConfig
     from appium.webdriver.webdriver import WebDriver
 
     from .types import JsonObject
@@ -137,6 +138,21 @@ def _resolve_grid_url(grid_url: str | None) -> str:
     return _default_grid_url()
 
 
+def _remote_with_owned_endpoint(
+    grid_endpoint: str,
+    options: AppiumOptions,
+    client_config: AppiumClientConfig | None,
+) -> WebDriver:
+    """Build the Appium driver with the testkit owning the connection endpoint.
+
+    Appium's ``webdriver.Remote`` ignores the URL argument when a ``client_config``
+    is supplied, so the resolved grid endpoint is written onto the config in place.
+    """
+    if client_config is not None:
+        client_config.remote_server_addr = grid_endpoint
+    return webdriver.Remote(grid_endpoint, options=options, client_config=client_config)
+
+
 def create_appium_driver(
     *,
     pack_id: str | None = None,
@@ -145,8 +161,15 @@ def create_appium_driver(
     test_name: str | None = None,
     grid_url: str | None = None,
     catalog_client: object | None = None,
+    client_config: AppiumClientConfig | None = None,
 ) -> WebDriver:
-    """Create an Appium remote driver through the WebDriver router."""
+    """Create an Appium remote driver through the WebDriver router.
+
+    ``client_config`` lets callers tune the HTTP transport (connection retries,
+    timeouts, proxy, TLS, headers). The testkit still owns the endpoint: any
+    ``remote_server_addr`` set on the config is overwritten with the resolved
+    grid URL.
+    """
     options = build_appium_options(
         pack_id=pack_id,
         platform_id=platform_id,
@@ -154,7 +177,7 @@ def create_appium_driver(
         test_name=test_name,
         catalog_client=catalog_client,
     )
-    return webdriver.Remote(_resolve_grid_url(grid_url), options=options)
+    return _remote_with_owned_endpoint(_resolve_grid_url(grid_url), options, client_config)
 
 
 def _required_str_cap(driver: WebDriver, key: str, message: str) -> str:

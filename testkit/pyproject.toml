@@ -25,7 +25,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "Appium-Python-Client>=4.5,<6",
+    "Appium-Python-Client>=5.0,<6",
     "httpx2>=2.4,<3",
     "pytest>=9.0.3,<10",
 ]
