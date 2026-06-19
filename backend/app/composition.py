@@ -45,7 +45,7 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
-from app.grid.allocation import AllocationService, pack_slot_stereotype
+from app.grid.allocation import AllocationService, device_match_surface
 from app.grid.services_container import GridServices
 from app.hosts.service import HostCrudService
 from app.hosts.service_agent_logs import AgentLogsService
@@ -373,7 +373,7 @@ def compose_app(
             allocation=AllocationService(
                 intent_factory=IntentService,
                 publisher=bus,
-                stereotype_provider=pack_slot_stereotype,
+                stereotype_provider=device_match_surface,
                 settings=settings_svc,
             ),
         ),
