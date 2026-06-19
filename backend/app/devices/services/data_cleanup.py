@@ -13,7 +13,6 @@ from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger, schedule_background_loop
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
-from app.diagnostics.models import DeviceDiagnosticSnapshot
 from app.events.models import SystemEvent
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
@@ -44,7 +43,6 @@ CleanupModel = (
     | type[ConfigAuditLog]
     | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
-    | type[DeviceDiagnosticSnapshot]
     | type[HostResourceSample]
     | type[HostAgentLogEntry]
     | type[AnalyticsCapacitySnapshot]
@@ -99,7 +97,6 @@ class DataCleanupService:
         host_resource_samples_deleted = 0
         agent_log_entries_deleted = 0
         capacity_snapshots_deleted = 0
-        diagnostic_snapshots_deleted = 0
         agent_reconfigure_outbox_deleted = 0
         grid_queue_tickets_deleted = 0
         system_events_deleted = 0
@@ -239,16 +236,6 @@ class DataCleanupService:
                 cutoff=cutoff,
             )
 
-        diagnostic_snapshots_days: int = self._settings.get("retention.diagnostic_snapshots_days")
-        if diagnostic_snapshots_days > 0:
-            cutoff = now - timedelta(days=diagnostic_snapshots_days)
-            diagnostic_snapshots_deleted = await _delete_in_batches(
-                db,
-                model=DeviceDiagnosticSnapshot,
-                timestamp_column=DeviceDiagnosticSnapshot.captured_at,
-                cutoff=cutoff,
-            )
-
         # SystemEvent — webhook_deliveries rows cascade via FK ON DELETE CASCADE.
         system_events_days: int = self._settings.get("retention.system_events_days")
         if system_events_days > 0:
@@ -289,7 +276,7 @@ class DataCleanupService:
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
             "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
-            "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d, grid_queue_tickets=%d"
+            "agent_reconfigure_outbox=%d, grid_queue_tickets=%d"
             ", system_events=%d, test_runs=%d, jobs=%d",
             sessions_deleted,
             probe_sessions_deleted,
@@ -299,7 +286,6 @@ class DataCleanupService:
             host_resource_samples_deleted,
             agent_log_entries_deleted,
             capacity_snapshots_deleted,
-            diagnostic_snapshots_deleted,
             agent_reconfigure_outbox_deleted,
             grid_queue_tickets_deleted,
             system_events_deleted,
@@ -317,7 +303,6 @@ class DataCleanupService:
                 "host_resource_samples_deleted": host_resource_samples_deleted,
                 "agent_log_entries_deleted": agent_log_entries_deleted,
                 "capacity_snapshots_deleted": capacity_snapshots_deleted,
-                "diagnostic_snapshots_deleted": diagnostic_snapshots_deleted,
                 "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
                 "grid_queue_tickets_deleted": grid_queue_tickets_deleted,
                 "system_events_deleted": system_events_deleted,

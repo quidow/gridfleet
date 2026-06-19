@@ -44,8 +44,6 @@ from app.devices.services.review import ReviewService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
-from app.diagnostics.services.export import DiagnosticExportService
-from app.diagnostics.services_container import DiagnosticsServices
 from app.events.services_container import EventServices
 from app.grid.allocation import AllocationService, pack_slot_stereotype
 from app.grid.services_container import GridServices
@@ -107,7 +105,6 @@ class AppServices:
     settings: SettingsServices
     agent_comm: AgentCommServices
     devices: DeviceServices
-    diagnostics: DiagnosticsServices
     verification: VerificationServices
     portability: PortabilityServices
     lifecycle: LifecycleServices
@@ -176,9 +173,7 @@ def compose_app(
     )
 
     device_capability_svc = DeviceCapabilityService()
-    diagnostics_export_svc = DiagnosticExportService()
-    diagnostics_services = DiagnosticsServices(export=diagnostics_export_svc)
-    review_svc = ReviewService(diagnostics=diagnostics_export_svc)
+    review_svc = ReviewService()
     reservation_svc = RunReservationService(review=review_svc)
     incidents_svc = LifecycleIncidentService(publisher=bus)
     lifecycle_actions_svc = LifecyclePolicyActionsService(
@@ -334,7 +329,6 @@ def compose_app(
             circuit_breaker=circuit_breaker,
             pool=http_pool,
         ),
-        diagnostics=diagnostics_services,
         verification=verification_services,
         portability=portability_services,
         lifecycle=lifecycle_services,

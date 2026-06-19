@@ -13,7 +13,6 @@ of truth for the event payload.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -24,16 +23,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
-    from app.devices.protocols import DiagnosticCapture
-
-logger = logging.getLogger(__name__)
 
 
 class ReviewService:
     """Set/clear the ``Device.review_required`` shelving flag."""
-
-    def __init__(self, *, diagnostics: DiagnosticCapture) -> None:
-        self._diagnostics = diagnostics
 
     async def mark_review_required(
         self,
@@ -83,16 +76,6 @@ class ReviewService:
                 "review_set_at": device.review_set_at.isoformat(),
             },
         )
-        try:
-            await db.flush()
-            await db.refresh(device)
-            await self._diagnostics.capture_snapshot(db, device, trigger="review_required", reason=reason)
-        except Exception:  # noqa: BLE001 - snapshot capture must not block the review flag flip.
-            logger.warning(
-                "Failed to capture diagnostic snapshot for device %s; flag flip proceeds",
-                device.id,
-                exc_info=True,
-            )
         return True
 
     async def clear_review_required(
