@@ -24,11 +24,11 @@ class _DummyResponse:
 def test_get_device_test_data_calls_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_get(url: str, **kwargs: object) -> _DummyResponse:
+    def fake_request(method: str, url: str, **kwargs: object) -> _DummyResponse:
         captured["url"] = url
         return _DummyResponse({"k": "v"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
     client = GridFleetClient(base_url="http://test/api")
     assert client.get_device_test_data("abc") == {"k": "v"}
     assert isinstance(captured["url"], str)
@@ -38,30 +38,34 @@ def test_get_device_test_data_calls_endpoint(monkeypatch: pytest.MonkeyPatch) ->
 def test_replace_device_test_data_uses_put(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_put(url: str, **kwargs: object) -> _DummyResponse:
+    def fake_request(method: str, url: str, **kwargs: object) -> _DummyResponse:
+        captured["method"] = method
         captured["url"] = url
         captured["json"] = kwargs.get("json")
         return _DummyResponse({"k": "v"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.put", fake_put)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
     client = GridFleetClient(base_url="http://test/api")
     assert client.replace_device_test_data("abc", {"k": "v"}) == {"k": "v"}
     assert isinstance(captured["url"], str)
     assert captured["url"].endswith("/devices/abc/test_data")
     assert captured["json"] == {"k": "v"}
+    assert captured["method"] == "PUT"
 
 
 def test_merge_device_test_data_uses_patch(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_patch(url: str, **kwargs: object) -> _DummyResponse:
+    def fake_request(method: str, url: str, **kwargs: object) -> _DummyResponse:
+        captured["method"] = method
         captured["url"] = url
         captured["json"] = kwargs.get("json")
         return _DummyResponse({"a": 1, "b": 2})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.patch", fake_patch)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
     client = GridFleetClient(base_url="http://test/api")
     assert client.merge_device_test_data("abc", {"b": 2}) == {"a": 1, "b": 2}
     assert isinstance(captured["url"], str)
     assert captured["url"].endswith("/devices/abc/test_data")
     assert captured["json"] == {"b": 2}
+    assert captured["method"] == "PATCH"

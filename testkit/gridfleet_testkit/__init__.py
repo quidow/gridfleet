@@ -34,15 +34,17 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import (
-    CooldownEscalatedResult,
-    CooldownResult,
-    CooldownSetResult,
     GridFleetClient,
 )
 from .config import api_url, grid_url, run_grid_url
 from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread, register_run_cleanup
 from .sessions import resolve_device_handle_from_driver
+from .types import (
+    CooldownEscalatedResult,
+    CooldownResult,
+    CooldownSetResult,
+)
 
 try:
     __version__ = version("gridfleet-testkit")

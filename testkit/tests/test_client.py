@@ -36,17 +36,19 @@ def test_get_device_config_fetches_config_by_device_id(monkeypatch):
     calls: list[tuple[str, str, JsonObject | None, int | None]] = []
     responses = iter([DummyResponse({"username": "operator"})])
 
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
         params: JsonObject | None = None,
         timeout: int | None = None,
         auth: object = None,
     ) -> DummyResponse:
-        calls.append(("GET", url, params, timeout))
+        calls.append((method, url, params, timeout))
         return next(responses)
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     config = client.get_device_config("dev-1")
@@ -60,17 +62,19 @@ def test_get_device_config_fetches_config_by_device_id(monkeypatch):
 def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
     calls: list[tuple[str, str, JsonObject | None, int | None]] = []
 
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
         params: JsonObject | None = None,
         timeout: int | None = None,
         auth: object = None,
     ) -> DummyResponse:
-        calls.append(("GET", url, params, timeout))
+        calls.append((method, url, params, timeout))
         return DummyResponse({"appium:udid": "emulator-5554"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     capabilities = client.get_device_capabilities("dev-1")
@@ -84,9 +88,11 @@ def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
 def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
     calls: list[tuple[str, JsonObject | list[tuple[str, str]], int | None]] = []
 
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
         params: JsonObject | list[tuple[str, str]] | None = None,
         timeout: int | None = None,
         auth: object = None,
@@ -94,7 +100,7 @@ def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
         calls.append((url, params or {}, timeout))
         return DummyResponse([{"id": "dev-1", "operational_state": "available"}])
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     devices = client.list_devices(
@@ -143,16 +149,18 @@ def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
 
 
 def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypatch):
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
         params: JsonObject | list[tuple[str, str]] | None = None,
         timeout: int | None = None,
         auth: object = None,
     ) -> DummyResponse:
         return DummyResponse({"items": [{"id": "dev-1"}], "total": 1, "limit": 50, "offset": 0})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
 
@@ -162,16 +170,19 @@ def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypa
 def test_get_device_fetches_device_detail_by_id(monkeypatch):
     calls: list[tuple[str, int | None]] = []
 
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
+        params: JsonObject | None = None,
         timeout: int | None = None,
         auth: object = None,
     ) -> DummyResponse:
         calls.append((url, timeout))
         return DummyResponse({"id": "dev-1", "name": "Pixel 6"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
 
@@ -182,16 +193,19 @@ def test_get_device_fetches_device_detail_by_id(monkeypatch):
 def test_get_run_fetches_run_endpoint(monkeypatch):
     calls: list[tuple[str, int | None]] = []
 
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
+        params: JsonObject | None = None,
         timeout: int | None = None,
         auth: object = None,
     ) -> DummyResponse:
         calls.append((url, timeout))
         return DummyResponse({"id": "run-1", "name": "smoke"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     run = client.get_run("run-1")
@@ -203,9 +217,11 @@ def test_get_run_fetches_run_endpoint(monkeypatch):
 def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
     calls: list[tuple[str, str, JsonObject | None, int | None]] = []
 
-    def fake_get(
+    def fake_request(
+        method: str,
         url: str,
         *,
+        json: JsonObject | None = None,
         params: JsonObject | None = None,
         timeout: int | None = None,
         auth: object = None,
@@ -213,7 +229,7 @@ def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
         calls.append(("GET", url, params, timeout))
         return DummyResponse({"packs": []})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     catalog = client.get_driver_pack_catalog()
@@ -227,11 +243,12 @@ def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
 def test_reserve_devices_posts_expected_payload(monkeypatch):
     recorded: JsonObject = {}
 
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        timeout: int = 10,
         params: list[tuple[str, str]] | None = None,
         auth: object = None,
     ) -> DummyResponse:
@@ -240,7 +257,7 @@ def test_reserve_devices_posts_expected_payload(monkeypatch):
         recorded["timeout"] = timeout
         return DummyResponse({"id": "run-1"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     result = client.reserve_devices(
@@ -268,11 +285,12 @@ def test_reserve_devices_posts_expected_payload(monkeypatch):
 def test_reserve_devices_all_available_payload(monkeypatch):
     recorded: JsonObject = {}
 
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        timeout: int = 10,
         params: list[tuple[str, str]] | None = None,
         auth: object = None,
     ) -> DummyResponse:
@@ -281,7 +299,7 @@ def test_reserve_devices_all_available_payload(monkeypatch):
         recorded["timeout"] = timeout
         return DummyResponse({"id": "run-all", "devices": [{"device_id": "dev-1"}]})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     result = client.reserve_devices(
@@ -323,13 +341,21 @@ def test_reserve_devices_all_available_payload(monkeypatch):
 def test_run_state_methods_hit_expected_endpoints(monkeypatch):
     calls: list[tuple[str, str, int | None]] = []
 
-    def fake_post(url: str, *, timeout: int, auth: object = None) -> DummyResponse:
-        calls.append(("POST", url, timeout))
+    def fake_request(
+        method: str,
+        url: str,
+        *,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int | None = None,
+        auth: object = None,
+    ) -> DummyResponse:
+        calls.append((method, url, timeout))
         if url.endswith("/heartbeat"):
             return DummyResponse({"state": "active"})
         return DummyResponse({"ok": True})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     assert client.signal_ready("run-1") == {"ok": True}
@@ -350,11 +376,13 @@ def test_run_state_methods_hit_expected_endpoints(monkeypatch):
 def test_report_preparation_failure_posts_expected_payload(monkeypatch):
     recorded: JsonObject = {}
 
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
         auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -362,7 +390,7 @@ def test_report_preparation_failure_posts_expected_payload(monkeypatch):
         recorded["timeout"] = timeout
         return DummyResponse({"state": "preparing"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     result = client.report_preparation_failure("run-1", "device-2", "ADB install failed", source="github_actions")
@@ -381,11 +409,13 @@ def test_report_preparation_failure_posts_expected_payload(monkeypatch):
 def test_update_session_status_patches_status(monkeypatch):
     recorded: JsonObject = {}
 
-    def fake_patch(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
         auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -393,7 +423,7 @@ def test_update_session_status_patches_status(monkeypatch):
         recorded["timeout"] = timeout
         return DummyResponse({"session_id": "sess-1", "status": "passed"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.patch", fake_patch)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
 
@@ -441,18 +471,19 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
 
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        timeout: int = 10,
         params: list[tuple[str, str]] | None = None,
         auth: object = None,
     ) -> DummyResponse:
         captured["auth"] = auth
         return DummyResponse({"id": "run-1"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     client.reserve_devices(name="run", requirements=[])
@@ -466,18 +497,19 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
 
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        timeout: int = 10,
         params: list[tuple[str, str]] | None = None,
         auth: object = None,
     ) -> DummyResponse:
         captured["auth"] = auth
         return DummyResponse({"id": "run-1"})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     explicit = httpx.BasicAuth("override-user", "override-pass")
     client = GridFleetClient("http://manager/api", auth=explicit)
@@ -500,7 +532,7 @@ def test_raise_for_status_maps_unknown_include_422_to_typed_exception():
     )
 
     with pytest.raises(UnknownIncludeError) as exc_info:
-        _raise_for_status(resp, run_id="run-1")
+        _raise_for_status(resp)
 
     assert exc_info.value.values == ["garbage"]
 
@@ -518,24 +550,25 @@ def test_raise_for_status_maps_reserve_capabilities_unsupported_422_to_typed_exc
     )
 
     with pytest.raises(ReserveCapabilitiesUnsupportedError):
-        _raise_for_status(resp, run_id="")
+        _raise_for_status(resp)
 
 
 def test_raise_for_status_passes_through_unrelated_422():
     resp = DummyResponse({"detail": "validation"}, status_code=422)
 
     with pytest.raises(httpx.HTTPStatusError):
-        _raise_for_status(resp, run_id="")
+        _raise_for_status(resp)
 
 
 def test_reserve_devices_threads_include_query_param(monkeypatch):
     captured: dict[str, object] = {}
 
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        timeout: int = 10,
         params: list[tuple[str, str]] | None = None,
         auth: object = None,
     ) -> DummyResponse:
@@ -543,7 +576,7 @@ def test_reserve_devices_threads_include_query_param(monkeypatch):
         captured["params"] = params
         return DummyResponse({"id": "run-1", "devices": []})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     client.reserve_devices(name="r", requirements=[], include=("config",))
@@ -554,11 +587,11 @@ def test_reserve_devices_threads_include_query_param(monkeypatch):
 def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypatch):
     called: list[str] = []
 
-    def fake_post(*args: object, **kwargs: object) -> DummyResponse:
-        called.append("post")
+    def fake_request(*args: object, **kwargs: object) -> DummyResponse:
+        called.append("request")
         return DummyResponse({})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     with pytest.raises(ReserveCapabilitiesUnsupportedError):
@@ -570,11 +603,11 @@ def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypat
 def test_reserve_devices_rejects_string_include_before_http_call(monkeypatch):
     called: list[str] = []
 
-    def fake_post(*args: object, **kwargs: object) -> DummyResponse:
-        called.append("post")
+    def fake_request(*args: object, **kwargs: object) -> DummyResponse:
+        called.append("request")
         return DummyResponse({})
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     with pytest.raises(TypeError, match="must be a sequence of strings"):
@@ -584,11 +617,12 @@ def test_reserve_devices_rejects_string_include_before_http_call(monkeypatch):
 
 
 def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypatch):
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        timeout: int = 10,
         params: list[tuple[str, str]] | None = None,
         auth: object = None,
     ) -> DummyResponse:
@@ -603,7 +637,7 @@ def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypa
             status_code=422,
         )
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
     # Use include=("config",) so the client-side guard does not fire.
@@ -616,16 +650,18 @@ def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypa
 
 
 def test_report_preparation_failure_can_suppress_errors(monkeypatch, caplog):
-    def fake_post(
+    def fake_request(
+        method: str,
         url: str,
         *,
-        json: JsonObject,
-        timeout: int,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
         auth: object = None,
     ) -> DummyResponse:
         raise httpx.ConnectError("network down")
 
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
 
@@ -666,3 +702,25 @@ def test_module_grid_url_reads_environment_lazily(monkeypatch):
 def test_module_api_url_reads_environment_lazily(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_API_URL", "http://lazy-manager/api")
     assert gridfleet_testkit.api_url() == "http://lazy-manager/api"
+
+
+def test_send_applies_base_url_auth_and_timeout(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, *, json, params, timeout, auth):
+        captured.update(method=method, url=url, timeout=timeout, auth=auth)
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+        return _Resp()
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
+    client = GridFleetClient(base_url="http://api/api", auth=None)
+    client._send("GET", "/devices")
+    assert captured["method"] == "GET"
+    assert captured["url"] == "http://api/api/devices"
+    assert captured["timeout"] == 10
