@@ -137,14 +137,14 @@ def hydrate_allocated_device(
     connection_target = _optional_string_value(payload, "connection_target")
     inline_config = payload.get("config")
     if isinstance(inline_config, dict):
-        config: JsonObject | None = cast("JsonObject", inline_config)
+        config: JsonObject | None = inline_config
     elif fetch_config and "config" not in unavailable_set:
         config = client.get_device_config(device_id)
     else:
         config = None
     inline_capabilities = payload.get("live_capabilities")
     if isinstance(inline_capabilities, dict):
-        live_capabilities: JsonObject | None = cast("JsonObject", inline_capabilities)
+        live_capabilities: JsonObject | None = inline_capabilities
     elif fetch_capabilities and "capabilities" not in unavailable_set:
         live_capabilities = client.get_device_capabilities(device_id)
     else:
@@ -152,7 +152,7 @@ def hydrate_allocated_device(
 
     inline_test_data = payload.get("test_data")
     if isinstance(inline_test_data, dict):
-        test_data: JsonObject | None = cast("JsonObject", inline_test_data)
+        test_data: JsonObject | None = inline_test_data
     elif fetch_test_data and "test_data" not in unavailable_set:
         test_data = client.get_device_test_data(device_id)
     else:

@@ -654,7 +654,7 @@ def test_default_auth_returns_basic_auth_when_env_set(monkeypatch):
 
 
 def test_client_threads_default_auth_into_requests(monkeypatch):
-    captured: JsonObject = {}
+    captured: dict[str, object] = {}
 
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
@@ -679,7 +679,7 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
 
 
 def test_client_explicit_auth_overrides_env_default(monkeypatch):
-    captured: JsonObject = {}
+    captured: dict[str, object] = {}
 
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
@@ -705,7 +705,7 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
 
 
 def test_heartbeat_thread_passes_auth(monkeypatch):
-    captured: JsonObject = {}
+    captured: dict[str, object] = {}
 
     explicit = httpx.BasicAuth("hb-user", "hb-pass")
     thread = HeartbeatThread("http://manager/api", "run-x", interval=0, auth=explicit)
@@ -771,7 +771,7 @@ def test_raise_for_status_passes_through_unrelated_422():
 
 
 def test_reserve_devices_threads_include_query_param(monkeypatch):
-    captured: JsonObject = {}
+    captured: dict[str, object] = {}
 
     def fake_post(
         url: str,
