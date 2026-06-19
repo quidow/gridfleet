@@ -144,7 +144,6 @@ async def test_draining_stays_draining_with_live_session(db_session: AsyncSessio
         session_id="sess-1",
         device_id=device.id,
         status=SessionStatus.running,
-        requested_pack_id="test-pack",
     )
     db_session.add(session)
     await db_session.flush()

@@ -125,8 +125,8 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 
 | Event | Typical `data` fields | Default severity | Allowed severities | Source |
 | --- | --- | --- | --- | --- |
-| `session.started` | `session_id`, `device_id`, `device_name`, optional `test_name`, optional `run_id`, optional requested-lane fields | `info` | `info` | Session registration at allocation confirm, and direct terminal setup-failure registration |
-| `session.ended` | `session_id`, `device_id`, `device_name`, `status`, optional requested-lane fields, optional `error_type`, optional `error_message` | `info` | `info`, `success`, `warning`, `critical` | Observed session end (state change in the direct-to-Appium session-sync sweep or the router's session-end notification) and external terminal status reporting |
+| `session.started` | `session_id`, `device_id`, `device_name`, optional `test_name`, optional `run_id`, optional `requested_capabilities` | `info` | `info` | Session registration at allocation confirm |
+| `session.ended` | `session_id`, `device_id`, `device_name`, `status`, optional `requested_capabilities`, optional `error_type`, optional `error_message` | `info` | `info`, `success`, `warning`, `critical` | Observed session end (state change in the direct-to-Appium session-sync sweep or the router's session-end notification) and external terminal status reporting |
 | `run.created` | `run_id`, `name`, `device_count`, `created_by` | `info` | `info` | run creation |
 | `run.active` | `run_id`, `name` | `info` | `info` | run state transition |
 | `run.completed` | `run_id`, `name`, `duration` | `success` | `success`, `warning` | run completion |

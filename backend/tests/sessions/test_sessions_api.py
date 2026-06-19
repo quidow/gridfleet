@@ -379,51 +379,6 @@ async def test_list_sessions_includes_device_less_sessions(
     assert orphan["status"] == "error"
 
 
-async def test_list_sessions_filters_device_less_rows_by_requested_platform_id(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="ios-device",
-        connection_target="ios-device",
-        pack_id="appium-xcuitest",
-        platform_id="ios",
-        identity_scheme="apple_udid",
-        identity_scope="global",
-        name="iPhone 15",
-    )
-    db_session.add_all(
-        [
-            Session(
-                session_id="device-less-android-error",
-                device_id=None,
-                status=SessionStatus.error,
-                requested_pack_id="appium-uiautomator2",
-                requested_platform_id="android_mobile",
-            ),
-            Session(
-                session_id="ios-device-session",
-                device_id=device["id"],
-                status=SessionStatus.passed,
-            ),
-        ]
-    )
-    await db_session.commit()
-    db_session.expunge_all()
-
-    response = await client.get("/api/sessions", params={"platform_id": "android_mobile"})
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["total"] == 1
-    assert [row["session_id"] for row in body["items"]] == ["device-less-android-error"]
-
-
 async def test_device_session_outcome_heatmap_404_unknown_device(client: AsyncClient) -> None:
     resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000001/session-outcome-heatmap")
 

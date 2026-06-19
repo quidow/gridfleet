@@ -62,17 +62,7 @@ def _session_ended_severity(status: str, error_type: str | None) -> EventSeverit
 
 
 def _session_requested_metadata_payload(session: Session) -> dict[str, Any]:
-    return {
-        "requested_pack_id": session.requested_pack_id,
-        "requested_platform_id": session.requested_platform_id,
-        "requested_device_type": (
-            str(session.requested_device_type) if session.requested_device_type is not None else None
-        ),
-        "requested_connection_type": (
-            str(session.requested_connection_type) if session.requested_connection_type is not None else None
-        ),
-        "requested_capabilities": session.requested_capabilities,
-    }
+    return {"requested_capabilities": session.requested_capabilities}
 
 
 def build_session_started_event_payload(
@@ -287,14 +277,14 @@ class SessionCrudService:
     ) -> tuple[list[Session], int]:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
-        platform_id_expr = func.coalesce(Device.platform_id, Session.requested_platform_id)
+        platform_id_expr = Device.platform_id
 
         if device_id is not None:
             stmt = stmt.where(Session.device_id == device_id)
         if status is not None:
             stmt = stmt.where(Session.status == status)
         if pack_id is not None:
-            stmt = stmt.where(func.coalesce(Device.pack_id, Session.requested_pack_id) == pack_id)
+            stmt = stmt.where(Device.pack_id == pack_id)
         if platform_id is not None:
             stmt = stmt.where(platform_id_expr == platform_id)
         if started_after is not None:
@@ -359,9 +349,9 @@ class SessionCrudService:
         if status is not None:
             stmt = stmt.where(Session.status == status)
         if pack_id is not None:
-            stmt = stmt.where(func.coalesce(Device.pack_id, Session.requested_pack_id) == pack_id)
+            stmt = stmt.where(Device.pack_id == pack_id)
         if platform_id is not None:
-            stmt = stmt.where(func.coalesce(Device.platform_id, Session.requested_platform_id) == platform_id)
+            stmt = stmt.where(Device.platform_id == platform_id)
         if started_after is not None:
             stmt = stmt.where(Session.started_at >= started_after)
         if started_before is not None:

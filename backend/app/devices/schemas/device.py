@@ -153,10 +153,6 @@ class SessionRead(BaseModel):
     started_at: datetime
     ended_at: datetime | None
     status: SessionStatus
-    requested_pack_id: str | None = None
-    requested_platform_id: str | None = None
-    requested_device_type: DeviceType | None = None
-    requested_connection_type: ConnectionType | None = None
     requested_capabilities: dict[str, Any] | None = None
     actual_capabilities: dict[str, Any] | None = None
     error_type: str | None = None
@@ -345,10 +341,6 @@ class SessionDetail(SessionRead):
             started_at=session.started_at,
             ended_at=session.ended_at,
             status=session.status,
-            requested_pack_id=session.requested_pack_id,
-            requested_platform_id=session.requested_platform_id,
-            requested_device_type=session.requested_device_type,
-            requested_connection_type=session.requested_connection_type,
             requested_capabilities=session.requested_capabilities,
             actual_capabilities=session.actual_capabilities,
             error_type=session.error_type,
