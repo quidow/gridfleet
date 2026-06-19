@@ -62,7 +62,9 @@ def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
         tags={"team": "qa", "rack": "A1"},
     )
 
-    assert devices == [{"id": "dev-1", "operational_state": "available"}]
+    assert len(devices) == 1
+    assert devices[0].id == "dev-1"
+    assert devices[0].operational_state == "available"
     assert calls == [
         (
             "http://manager/api/devices",
@@ -105,7 +107,9 @@ def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypa
 
     client = GridFleetClient("http://manager/api")
 
-    assert client.list_devices(status="available") == [{"id": "dev-1"}]
+    devices = client.list_devices(status="available")
+    assert len(devices) == 1
+    assert devices[0].id == "dev-1"
 
 
 def test_get_device_fetches_device_detail_by_id(monkeypatch):
@@ -127,7 +131,9 @@ def test_get_device_fetches_device_detail_by_id(monkeypatch):
 
     client = GridFleetClient("http://manager/api")
 
-    assert client.get_device("dev-1") == {"id": "dev-1", "name": "Pixel 6"}
+    device = client.get_device("dev-1")
+    assert device.id == "dev-1"
+    assert device.name == "Pixel 6"
     assert calls == [("http://manager/api/devices/dev-1", 10)]
 
 

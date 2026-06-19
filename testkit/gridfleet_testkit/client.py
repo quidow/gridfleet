@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import httpx2 as httpx
 
 from . import config
+from .device import Device
 from .run_lifecycle import HeartbeatThread
 
 if TYPE_CHECKING:
@@ -96,7 +97,7 @@ class GridFleetClient:
         hardware_telemetry_state: str | None = None,
         needs_attention: bool | None = None,
         tags: dict[str, str] | None = None,
-    ) -> JsonObjectList:
+    ) -> list[Device]:
         """List devices with backend filter passthrough."""
         params = _query_params(
             {
@@ -120,12 +121,14 @@ class GridFleetClient:
             params.extend((f"tags.{key}", value) for key, value in tags.items())
         payload = self._send("GET", "/devices", params=params).json()
         if isinstance(payload, dict) and isinstance(payload.get("items"), list):
-            return cast("JsonObjectList", payload["items"])
-        return cast("JsonObjectList", payload)
+            rows = cast("JsonObjectList", payload["items"])
+        else:
+            rows = cast("JsonObjectList", payload)
+        return [Device.from_payload(row) for row in rows]
 
-    def get_device(self, device_id: str) -> JsonObject:
-        """Fetch one device detail row by backend device id."""
-        return cast("JsonObject", self._send("GET", f"/devices/{device_id}").json())
+    def get_device(self, device_id: str) -> Device:
+        """Fetch one device by backend device id, parsed into a typed ``Device``."""
+        return Device.from_payload(cast("JsonObject", self._send("GET", f"/devices/{device_id}").json()))
 
     def get_device_test_data(self, device_id: str) -> JsonObject:
         """Fetch operator-attached free-form test data for a specific device."""
