@@ -29,11 +29,10 @@ from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
-    IDENTITY_KEYS,
     LEGACY_RUN_ID_CAP,
-    TAG_PREFIX,
     CapabilityMergeError,
     candidate_matches_stereotype,
+    is_match_relevant_key,
     merge_candidates,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -590,14 +589,15 @@ class AllocationService:
         # Batch the reservation load for every eligible device once instead of one
         # SELECT per device per long-poll tick (#11).
         reservation_map = await run_service.get_device_reservation_map(db, [d.id for d in eligible])
-        # Memoize the pack-rendered stereotype per device within this attempt: the
-        # render hits the DB per device, and the device loop below may re-touch a
-        # device. The interpolated result is per-device (udid, os_version) so it is
-        # NOT poolable across same-pack devices. The DB-touching half — the pack
-        # template — IS device-independent, so it is cached separately by
-        # (pack_id, platform_id) within this attempt, collapsing N same-pack DB
-        # lookups to one (#11). Both caches are per-attempt; stereotypes follow pack
-        # releases so cross-tick caching is avoided (#13).
+        # Memoize the per-device match surface within this attempt: building it may
+        # hit the DB per device, and the device loop below may re-touch a device. The
+        # surface is per-device — it carries the device's deviceId + tag fanout (plus
+        # any identity/tag keys an uploaded pack interpolates) — so it is NOT poolable
+        # across same-pack devices. The DB-touching half — the pack template — IS
+        # device-independent, so it is cached separately by (pack_id, platform_id)
+        # within this attempt, collapsing N same-pack DB lookups to one (#11). Both
+        # caches are per-attempt; templates follow pack releases so cross-tick caching
+        # is avoided (#13).
         stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
         template_cache: StereotypeTemplateCache = {}
         for device in eligible:
@@ -844,7 +844,7 @@ def _match_relevant_base(template: StereotypeTemplate, device: Device) -> dict[s
     packs declare none, so the common path renders nothing and skips the device
     snapshot. When present, the keys are interpolated per-device (reusing the node-start
     template engine) and projected down to just the matcher-relevant subset."""
-    keys = [k for k in template.stereotype_base if k in IDENTITY_KEYS or k.startswith(TAG_PREFIX)]
+    keys = [k for k in template.stereotype_base if is_match_relevant_key(k)]
     if not keys:
         return {}
     rendered = template.interpolate(build_device_context(device))

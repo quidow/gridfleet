@@ -288,6 +288,7 @@ async def test_device_match_surface_template_cache_collapses_lookups(
     caps_b = await allocation_module.device_match_surface(db_session, dev_b, template_cache=cache)
     assert caps_a["platformName"] == "Android"
     assert caps_b["platformName"] == "Android"
+    # Distinct devices -> distinct routing surface, identical pack template.
     assert caps_a["appium:gridfleet:deviceId"] == str(dev_a.id)
     assert caps_b["appium:gridfleet:deviceId"] == str(dev_b.id)
     assert len(calls) == 1
@@ -314,7 +315,8 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
             stereotype_base={
                 "appium:platform": "{device.platform_id}",  # non-constraining -> dropped
                 "appium:os_version": "{device.os_version}",  # non-constraining -> dropped
-                "appium:gridfleet:tag:pool": "ci",  # constraining -> kept
+                "appium:gridfleet:tag:pool": "ci",  # constraining literal -> kept verbatim
+                "appium:udid": "{device.identity_value}",  # constraining + templated -> kept, interpolated
             },
         )
 
@@ -324,6 +326,9 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
     surface = await allocation_module.device_match_surface(db_session, device)
     assert surface["platformName"] == "Android"
     assert surface["appium:gridfleet:tag:pool"] == "ci"
+    # A templated identity key must flow through the per-device interpolation path,
+    # not merely survive key selection — pins that _interpolate actually substitutes.
+    assert surface["appium:udid"] == device.identity_value
     assert surface["appium:gridfleet:deviceId"] == str(device.id)
     assert "appium:platform" not in surface
     assert "appium:os_version" not in surface
