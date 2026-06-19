@@ -81,7 +81,7 @@ def _make_plugin_generator(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[
     """Return (captured_calls, generator) after installing a minimal webdriver.Remote spy."""
     captured: list[tuple[str, object]] = []
 
-    def fake_remote(url: str, *, options: object) -> _FakeDriver:
+    def fake_remote(url: str, *, options: object, client_config: object = None) -> _FakeDriver:
         captured.append((url, options))
         return _FakeDriver()
 
@@ -97,7 +97,7 @@ def _make_plugin_generator(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[
     # pytest wraps fixtures in FixtureFunctionDefinition; __wrapped__ exists at
     # runtime but not in pytest's stubs, so reach it via getattr.
     fixture_fn = getattr(pytest_plugin.appium_driver, "__wrapped__")  # noqa: B009
-    gen: Iterator[object] = fixture_fn(request, _FakeClient())
+    gen: Iterator[object] = fixture_fn(request, _FakeClient(), None)
     return captured, gen
 
 

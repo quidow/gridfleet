@@ -6,7 +6,7 @@
 
 - Stable import root: `gridfleet_testkit`
 - Supported pytest plugin: `gridfleet_testkit.pytest_plugin`
-- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `device_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
+- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers:
   - `build_appium_options`
   - `create_appium_driver`
@@ -112,6 +112,24 @@ When exactly one enabled pack provides a platform id, `platform_id` alone is acc
 
 If you need raw Appium control instead, omit `pack_id` and `platform_id`, then pass `platformName` as a normal capability key.
 
+### Tuning the HTTP Transport
+
+To tune the Appium HTTP transport for every `appium_driver` session — connection retries, timeouts, proxy, TLS — override the `gridfleet_client_config` fixture in your `conftest.py`. It defaults to `None`. The testkit still owns the endpoint, so any `remote_server_addr` you set is overwritten with the resolved grid URL:
+
+```python
+# conftest.py
+import pytest
+from appium.webdriver.client_config import AppiumClientConfig
+from urllib3.util.retry import Retry
+
+@pytest.fixture
+def gridfleet_client_config():
+    return AppiumClientConfig(
+        remote_server_addr="",  # overwritten by the testkit
+        init_args_for_pool_manager={"init_args_for_pool_manager": {"retries": Retry(total=3, backoff_factor=0.5)}},
+    )
+```
+
 ### Plugin Lifecycle
 
 - Creates an Appium session through `GRID_URL`
@@ -147,6 +165,24 @@ finally:
 ```
 
 `create_appium_driver(...)` reuses the same driver-pack catalog resolver as the pytest fixture. Managed nodes still get their host-scoped runtime allocations from the manager, so callers should not hard-code `systemPort`, `chromedriverPort`, `mjpegServerPort`, `wdaLocalPort`, or `derivedDataPath`. `get_device_config_for_driver(...)` is the non-pytest equivalent of the `device_config` fixture. If you only need the options object, use `build_appium_options(...)`.
+
+To tune the HTTP transport — connection retries, timeouts, proxy, TLS — pass an `AppiumClientConfig` via `client_config`. The testkit still owns the endpoint, so any `remote_server_addr` you set is overwritten with the resolved grid URL:
+
+```python
+from appium.webdriver.client_config import AppiumClientConfig
+from urllib3.util.retry import Retry
+
+client_config = AppiumClientConfig(
+    remote_server_addr="",  # overwritten by the testkit
+    init_args_for_pool_manager={"init_args_for_pool_manager": {"retries": Retry(total=3, backoff_factor=0.5)}},
+)
+
+driver = create_appium_driver(
+    pack_id="appium-uiautomator2",
+    platform_id="firetv_real",
+    client_config=client_config,
+)
+```
 
 ## Client Helpers
 

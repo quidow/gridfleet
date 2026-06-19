@@ -7,7 +7,7 @@
 - Supported public package: `gridfleet-testkit`
 - Supported import root: `gridfleet_testkit`
 - Supported pytest plugin: `gridfleet_testkit.pytest_plugin`
-- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `device_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
+- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_connection_target_from_driver`, `get_device_config_for_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
 - Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
@@ -91,6 +91,7 @@ The plugin:
 - creates an Appium session through `GRID_URL`
 - injects `gridfleet:testName` with the pytest test name
 - reports final session status back to `GRIDFLEET_API_URL`
+- accepts an overridable `gridfleet_client_config` fixture (default `None`) to tune the HTTP transport (connection retries, timeouts, proxy, TLS) for every session; the testkit still owns the endpoint
 - exposes `device_config` for post-session device-config lookup using live `appium:udid`
 - exposes `device_test_data` for post-session operator-attached test data using the runtime connection target
 - exposes `gridfleet_worker_id` which returns the pytest-xdist worker id, or `"controller"` for non-worker processes
@@ -161,7 +162,7 @@ Public Appium helpers:
 | Helper | Purpose |
 | --- | --- |
 | `build_appium_options(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, catalog_client=None)` | Build an Appium options object for an explicit driver-pack platform |
-| `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None)` | Create an Appium remote driver through the WebDriver router for an explicit driver-pack platform |
+| `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None, client_config=None)` | Create an Appium remote driver through the WebDriver router for an explicit driver-pack platform. `client_config` (an `AppiumClientConfig`) tunes the HTTP transport (connection retries, timeouts, proxy); the testkit still owns the endpoint |
 | `get_connection_target_from_driver(driver)` | Read the active connection target from a live Appium session |
 | `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
 | `get_device_config_for_driver(driver, gridfleet_client=None)` | Fetch device config for a live Appium session using the device id from `appium:gridfleet:deviceId` |

@@ -78,10 +78,10 @@ class RecordingClient(FakeCatalogClient):
 
 
 def install_fake_appium(monkeypatch, created_drivers):
-    def remote(url: str, *, options: FakeOptions) -> FakeDriver:
+    def remote(url: str, *, options: FakeOptions, client_config: object = None) -> FakeDriver:
         capabilities = {"platformName": options.platform_name, **options.capabilities}
         driver = FakeDriver(capabilities)
-        created_drivers.append((url, capabilities, driver))
+        created_drivers.append((url, capabilities, driver, client_config))
         return driver
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
@@ -113,7 +113,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     )
 
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request, gridfleet_client)
+    generator = fixture_fn(request, gridfleet_client, None)
     driver = next(generator)
     original_quit = driver.quit
     original_update_session_status = RecordingClient.update_session_status
@@ -158,6 +158,38 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     assert gridfleet_client.reported_statuses == [("sess-1", expected_status, True)]
 
 
+def test_appium_driver_forwards_client_config(monkeypatch):
+    created_drivers = []
+    install_fake_appium(monkeypatch, created_drivers)
+    monkeypatch.setenv("GRID_URL", "http://cfg-grid:4444")
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
+
+    class FakeClientConfig:
+        def __init__(self) -> None:
+            self.remote_server_addr = "placeholder"
+
+    config = FakeClientConfig()
+    request = FakeRequest(
+        {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
+        test_name="test_cfg",
+    )
+
+    fixture_fn = pytest_plugin.appium_driver.__wrapped__
+    generator = fixture_fn(request, gridfleet_client, config)
+    driver = next(generator)
+
+    # The overridden gridfleet_client_config is forwarded to webdriver.Remote ...
+    assert created_drivers[0][3] is config
+    # ... and the testkit owns the endpoint.
+    assert config.remote_server_addr == "http://cfg-grid:4444"
+    assert created_drivers[0][0] == "http://cfg-grid:4444"
+
+    driver.quit()
+    with pytest.raises(StopIteration):
+        next(generator)
+
+
 def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
     created_drivers = []
     install_fake_appium(monkeypatch, created_drivers)
@@ -174,7 +206,7 @@ def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
     )
 
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request, gridfleet_client)
+    generator = fixture_fn(request, gridfleet_client, None)
     driver = next(generator)
 
     assert created_drivers[0][1]["appium:gridfleet:tag:screen_type"] == "4k"
@@ -233,7 +265,7 @@ def test_appium_driver_setup_failure_propagates_exception(monkeypatch):
     propagates and the fixture reports nothing to the backend. The router/grid
     flow owns session rows; pre-session failures are no longer recorded."""
 
-    def remote_raises(url: str, *, options: FakeOptions) -> FakeDriver:
+    def remote_raises(url: str, *, options: FakeOptions, client_config: object = None) -> FakeDriver:
         raise RuntimeError("Session could not be created")
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
@@ -246,7 +278,7 @@ def test_appium_driver_setup_failure_propagates_exception(monkeypatch):
         test_name="test_broken",
     )
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request, gridfleet_client)
+    generator = fixture_fn(request, gridfleet_client, None)
 
     with pytest.raises(RuntimeError, match="Session could not be created"):
         next(generator)
@@ -279,13 +311,46 @@ def test_appium_driver_fixture_uses_current_grid_url_env(monkeypatch):
     )
 
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request, gridfleet_client)
+    generator = fixture_fn(request, gridfleet_client, None)
     next(generator)
 
     assert created_drivers[0][0] == "http://lazy-plugin-grid:4444"
 
     with pytest.raises(StopIteration):
         next(generator)
+
+
+def test_gridfleet_client_config_defaults_to_none(pytester: pytest.Pytester) -> None:
+    """The default gridfleet_client_config fixture resolves to None via the installed plugin."""
+    pytester.makepyfile(
+        test_default="""
+        def test_x(gridfleet_client_config):
+            assert gridfleet_client_config is None
+        """
+    )
+    result = pytester.runpytest_subprocess("-q")
+    result.assert_outcomes(passed=1)
+
+
+def test_gridfleet_client_config_is_overridable(pytester: pytest.Pytester) -> None:
+    """A conftest override of gridfleet_client_config wins, so suites can tune the transport."""
+    pytester.makeconftest(
+        """
+        import pytest
+
+        @pytest.fixture
+        def gridfleet_client_config():
+            return "OVERRIDDEN"
+        """
+    )
+    pytester.makepyfile(
+        test_override="""
+        def test_x(gridfleet_client_config):
+            assert gridfleet_client_config == "OVERRIDDEN"
+        """
+    )
+    result = pytester.runpytest_subprocess("-q")
+    result.assert_outcomes(passed=1)
 
 
 def test_gridfleet_worker_id_returns_xdist_worker_id() -> None:
