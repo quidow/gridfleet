@@ -159,7 +159,7 @@ def hydrate_allocated_device(
         test_data = None
     inline_tags = payload.get("tags")
     if isinstance(inline_tags, dict):
-        tags: dict[str, str] | None = inline_tags
+        tags: dict[str, str] | None = {key: value for key, value in inline_tags.items() if isinstance(value, str)}
     else:
         tags = None
 
