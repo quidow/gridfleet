@@ -159,7 +159,9 @@ def hydrate_allocated_device(
         test_data = None
     inline_tags = payload.get("tags")
     if isinstance(inline_tags, dict):
-        tags: dict[str, str] | None = {key: value for key, value in inline_tags.items() if isinstance(value, str)}
+        # Preserve the manager payload verbatim (GridFleet tags are string->string);
+        # cast rather than comprehension-narrow so no entry is silently dropped.
+        tags: dict[str, str] | None = cast("dict[str, str]", inline_tags)
     else:
         tags = None
 

@@ -316,6 +316,31 @@ def test_appium_driver_fixture_uses_current_grid_url_env(monkeypatch):
 
     assert created_drivers[0][0] == "http://lazy-plugin-grid:4444"
 
+
+def test_appium_driver_fixture_uses_run_scoped_url_when_run_id_set(monkeypatch):
+    """When GRIDFLEET_RUN_ID is set, the fixture connects to GRID_URL/run/{id}."""
+    created_drivers: list[tuple[str, dict[str, object], object]] = []
+    install_fake_appium(monkeypatch, created_drivers)
+    monkeypatch.setenv("GRID_URL", "http://router:4444")
+    monkeypatch.setenv("GRIDFLEET_RUN_ID", "0c8c057f-3ec1-4b9c-9d2e-9f3a86a2c001")
+
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
+
+    request = FakeRequest(
+        {
+            "pack_id": "appium-uiautomator2",
+            "platform_id": "android_mobile",
+        },
+        test_name="test_run_scoped",
+    )
+
+    fixture_fn = pytest_plugin.appium_driver.__wrapped__
+    generator = fixture_fn(request, gridfleet_client, None)
+    next(generator)
+
+    assert created_drivers[0][0] == "http://router:4444/run/0c8c057f-3ec1-4b9c-9d2e-9f3a86a2c001"
+
     with pytest.raises(StopIteration):
         next(generator)
 

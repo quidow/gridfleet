@@ -227,3 +227,10 @@ def test_create_appium_driver_reads_grid_url_lazily(monkeypatch: pytest.MonkeyPa
     create_appium_driver(capabilities={"platformName": "Android"})
 
     assert created[0][0] == "http://env-grid:4444"
+
+
+def test_no_run_id_capability_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cap-era contract is dead: no gridfleet:run_id is injected regardless of env."""
+    monkeypatch.setenv("GRIDFLEET_RUN_ID", "0c8c057f-3ec1-4b9c-9d2e-9f3a86a2c001")
+    options = build_appium_options(capabilities={"platformName": "Android"})
+    assert "gridfleet:run_id" not in dict(options.to_capabilities())
