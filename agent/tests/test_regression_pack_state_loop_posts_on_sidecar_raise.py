@@ -130,7 +130,6 @@ def _desired_payload() -> dict[str, Any]:
                         "automation_name": "UiAutomator2",
                         "device_types": ["real_device"],
                         "connection_types": ["usb"],
-                        "grid_slots": ["native"],
                         "identity": {"scheme": "android_serial", "scope": "host"},
                         "appium_platform_name": "Android",
                         "capabilities": {

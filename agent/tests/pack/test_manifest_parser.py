@@ -31,7 +31,6 @@ def test_parse_minimal_desired_payload() -> None:
                         "display_name": "Android (real device)",
                         "appium_platform_name": "Android",
                         "connection_types": ["usb"],
-                        "grid_slots": ["native"],
                         "capabilities": {
                             "stereotype": {"appium:platformName": "Android"},
                             "session_required": [],

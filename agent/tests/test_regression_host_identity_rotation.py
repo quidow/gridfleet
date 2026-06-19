@@ -141,7 +141,6 @@ def _doctor_pack_payload() -> dict[str, Any]:
                 "automation_name": "Vendor",
                 "device_types": ["real_device"],
                 "connection_types": ["usb"],
-                "grid_slots": ["native"],
                 "identity": {"scheme": "vendor_serial", "scope": "host"},
                 "display_name": "Vendor",
                 "appium_platform_name": "Vendor",

@@ -12,7 +12,6 @@ class DesiredPlatform:
     automation_name: str
     device_types: list[str]
     connection_types: list[str]
-    grid_slots: list[str]
     identity_scheme: str
     identity_scope: str
     stereotype: dict[str, Any]
@@ -141,7 +140,6 @@ def _platform(raw: dict[str, Any]) -> DesiredPlatform:
         appium_platform_name=raw.get("appium_platform_name", ""),
         device_types=list(raw["device_types"]),
         connection_types=list(raw["connection_types"]),
-        grid_slots=list(raw["grid_slots"]),
         identity_scheme=raw["identity"]["scheme"],
         identity_scope=raw["identity"]["scope"],
         stereotype=raw["capabilities"].get("stereotype", {}),

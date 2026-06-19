@@ -29,7 +29,6 @@ def test_parse_desired_payload_keeps_sidecar_features() -> None:
                             "automation_name": "SidecarAutomation",
                             "device_types": ["real_device"],
                             "connection_types": ["network"],
-                            "grid_slots": ["native"],
                             "capabilities": {"stereotype": {}},
                             "discovery": {"kind": "adapter"},
                             "identity": {"scheme": "sidecar_id", "scope": "global"},

@@ -77,7 +77,6 @@ def _pack(features: dict[str, Any]) -> dict[str, Any]:
                 "automation_name": "SidecarAutomation",
                 "device_types": ["real_device"],
                 "connection_types": ["network"],
-                "grid_slots": ["native"],
                 "capabilities": {"stereotype": {}},
                 "identity": {"scheme": "sidecar_id", "scope": "global"},
             }
