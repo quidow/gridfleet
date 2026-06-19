@@ -115,7 +115,5 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - Versioning, compatibility, and release checklist for public tags.
 - `reference/device-lifecycle.md`
   - Device operational states and state-machine transitions.
-- `reference/diagnostics.md`
-  - Device diagnostic export bundle schema, redaction, and retention.
 - `reference/intents.md`
   - Device intent resolution and desired-state reconciliation.

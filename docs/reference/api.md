@@ -210,14 +210,6 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `GET` | `/api/hosts/{host_id}/plugins` | Read plugin status for one host | path `host_id` | `HostPluginStatus[]` |
 | `POST` | `/api/hosts/{host_id}/plugins/sync` | Sync plugins on one host | path `host_id` | `PluginSyncResult` |
 
-## Diagnostics
-
-| Method | Path | Purpose | Main input | Primary response |
-| --- | --- | --- | --- | --- |
-| `POST` | `/api/diagnostics/devices/{device_id}/export` | Capture a diagnostic snapshot for a device | path `device_id` | `DiagnosticExportResponse` |
-| `GET` | `/api/diagnostics/devices/{device_id}/snapshots` | List diagnostic snapshots for a device | path `device_id` | `DiagnosticSnapshotListResponse` |
-| `GET` | `/api/diagnostics/devices/{device_id}/snapshots/{snapshot_id}` | Read one diagnostic snapshot | path `device_id`, `snapshot_id` | `DiagnosticSnapshotDetail` |
-
 ## Runs
 
 | Method | Path | Purpose | Main input | Primary response |

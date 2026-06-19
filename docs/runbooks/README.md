@@ -12,8 +12,6 @@ Use `docs/runbooks/` when the system is already misbehaving and the operator nee
   - Manager-to-agent reachability, service-manager checks, and recovery flow (host approval + discovery refresh) for hosts stuck `pending` or flipped `offline`.
 - `stuck-devices.md`
   - Recovery steps for devices stuck in `busy` or `reserved`.
-- `../reference/diagnostics.md`
-  - Device diagnostic export bundle schema, redaction, retention, and curl examples.
 - `webhook-delivery-failures.md`
   - Delivery history, retry, test-event, and disable/fix workflow for failing outbound webhooks.
 - `backend-deploy-restart-rollback.md`
