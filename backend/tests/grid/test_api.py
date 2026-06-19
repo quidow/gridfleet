@@ -52,10 +52,10 @@ async def test_grid_status(client: AsyncClient, db_session: AsyncSession, defaul
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["grid"]["ready"] is True
-    assert data["grid"]["value"]["ready"] is True
-    assert data["grid"]["value"]["nodes"] == []
-    assert data["grid"]["value"]["sessionQueueRequests"] == []
+    assert data["ready"] is True
+    assert data["active_session_ids"] == []
+    assert data["queued_request_ids"] == []
+    assert data["running_node_count"] == 0
     assert data["registry"]["device_count"] == 1
     assert data["registry"]["devices"][0]["identity_value"] == "emulator-5554"
     assert data["registry"]["devices"][0]["platform_id"] == "android_mobile"
@@ -68,7 +68,7 @@ async def test_grid_status(client: AsyncClient, db_session: AsyncSession, defaul
 async def test_grid_status_with_running_node_and_session(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    """Grid status reflects running nodes and maps running sessions into slots."""
+    """Grid status reflects running nodes and lists active session ids."""
     device = await _seed_device(db_session, default_host_id, operational_state="available")
 
     with state_write_guard.bypass():
@@ -102,8 +102,8 @@ async def test_grid_status_with_running_node_and_session(
     assert dev_entry["node_port"] == 4723
     assert dev_entry["operational_state"] == "available"
 
-    assert len(data["grid"]["value"]["nodes"]) == 1
-    assert data["grid"]["value"]["nodes"][0]["slots"] == [{"session": "sess-abc"}]
+    assert data["running_node_count"] == 1
+    assert data["active_session_ids"] == ["sess-abc"]
     assert data["active_sessions"] == 1
 
 
@@ -140,7 +140,7 @@ async def test_grid_status_counts_pending_allocation(
     assert resp.status_code == 200
     data = resp.json()
     assert data["active_sessions"] == 1
-    assert data["grid"]["value"]["nodes"][0]["slots"] == [{"session": "alloc-pending-placeholder"}]
+    assert data["active_session_ids"] == ["alloc-pending-placeholder"]
 
 
 async def test_grid_status_queue_size(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -158,7 +158,7 @@ async def test_grid_status_queue_size(client: AsyncClient, db_session: AsyncSess
     assert resp.status_code == 200
     data = resp.json()
     assert data["queue_size"] == 1
-    assert len(data["grid"]["value"]["sessionQueueRequests"]) == 1
+    assert len(data["queued_request_ids"]) == 1
 
 
 async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
