@@ -56,7 +56,6 @@ async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str
     waiting = await _waiting_tickets(db)
 
     registry_devices = []
-    nodes: list[dict[str, Any]] = []
     for device in devices:
         node = device.appium_node
         running = bool(node and node.observed_running)
@@ -72,32 +71,18 @@ async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 "node_port": node.port if node else None,
             }
         )
-        if running:
-            slots = [{"session": sid} for sid in sessions_by_device.get(device.id, [])]
-            nodes.append({"slots": slots})
 
-    active_sessions = sum(len(sids) for sids in sessions_by_device.values())
-    queue_request_ids = [str(ticket.id) for ticket in waiting]
-
-    grid = {
+    active_session_ids = [sid for sids in sessions_by_device.values() for sid in sids]
+    running_node_count = sum(1 for device in devices if device.appium_node and device.appium_node.observed_running)
+    return {
         "ready": True,
         "message": CONTROL_PLANE_MESSAGE,
-        "value": {
-            "ready": True,
-            "message": CONTROL_PLANE_MESSAGE,
-            "nodes": nodes,
-            "sessionQueueRequests": queue_request_ids,
-        },
-    }
-
-    return {
-        "grid": grid,
-        "registry": {
-            "device_count": len(registry_devices),
-            "devices": registry_devices,
-        },
-        "active_sessions": active_sessions,
+        "registry": {"device_count": len(registry_devices), "devices": registry_devices},
+        "active_sessions": len(active_session_ids),
+        "active_session_ids": active_session_ids,
+        "running_node_count": running_node_count,
         "queue_size": len(waiting),
+        "queued_request_ids": [str(ticket.id) for ticket in waiting],
     }
 
 

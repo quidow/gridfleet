@@ -145,20 +145,28 @@ describe('dashboardSummary', () => {
     expect(getGridHealth(undefined)).toBeNull();
     expect(
       getGridHealth({
-        grid: { ready: true },
+        ready: true,
+        message: 'gridfleet control plane',
         registry: { device_count: 0, devices: [] },
         active_sessions: 0,
+        active_session_ids: [],
+        running_node_count: 0,
         queue_size: 0,
+        queued_request_ids: [],
       }),
     ).toMatchObject({ tone: 'ready', label: 'Ready' });
     expect(
       getGridHealth({
-        grid: { ready: false, error: 'Grid down' },
+        ready: false,
+        message: 'gridfleet control plane',
         registry: { device_count: 0, devices: [] },
         active_sessions: 0,
+        active_session_ids: [],
+        running_node_count: 0,
         queue_size: 0,
+        queued_request_ids: [],
       }),
-    ).toMatchObject({ tone: 'error', label: 'Unavailable' });
+    ).toMatchObject({ tone: 'warning', label: 'Idle' });
   });
 
   it('maps incident event_type to badge tone', () => {

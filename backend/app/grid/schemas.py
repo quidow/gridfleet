@@ -22,12 +22,14 @@ class GridRegistryRead(BaseModel):
 
 
 class GridStatusRead(BaseModel):
-    # Hub-shaped envelope synthesized from DB state; kept flexible so the frontend's
-    # existing grid.value.{ready,message,nodes} readers keep working post-hub-removal.
-    grid: dict[str, Any]
+    ready: bool
+    message: str
     registry: GridRegistryRead
     active_sessions: int
+    active_session_ids: list[str]
+    running_node_count: int
     queue_size: int
+    queued_request_ids: list[str]
 
 
 class GridQueueRequestRead(BaseModel):

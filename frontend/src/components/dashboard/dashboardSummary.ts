@@ -108,34 +108,19 @@ export function isActiveRun(run: Pick<RunRead, 'state'>): boolean {
 
 export function getGridHealth(status: GridStatus | null | undefined): GridHealth | null {
   if (!status) return null;
-
-  const nodeCount = status.grid.value?.nodes?.length ?? 0;
+  const nodeCount = status.running_node_count ?? 0;
   const registeredDevices = status.registry.device_count ?? 0;
-  const ready = status.grid.value?.ready ?? status.grid.ready ?? false;
-  const message = status.grid.value?.message ?? status.grid.message ?? null;
-  const error = status.grid.error ?? null;
+  const ready = status.ready ?? false;
+  const message = status.message ?? null;
 
   if (ready) return { tone: 'ready', label: 'Ready', detail: message ?? 'Accepting traffic' };
-  if (error) return { tone: 'error', label: 'Unavailable', detail: error };
   if (nodeCount > 0) {
-    return {
-      tone: 'warning',
-      label: 'Starting',
-      detail: message ?? 'Waiting for nodes to finish registering',
-    };
+    return { tone: 'warning', label: 'Starting', detail: message ?? 'Waiting for nodes to finish registering' };
   }
   if (registeredDevices > 0) {
-    return {
-      tone: 'warning',
-      label: 'Waiting for nodes',
-      detail: 'No Appium nodes registered yet',
-    };
+    return { tone: 'warning', label: 'Waiting for nodes', detail: 'No Appium nodes registered yet' };
   }
-  return {
-    tone: 'warning',
-    label: 'Idle',
-    detail: message ?? 'Waiting for devices to register',
-  };
+  return { tone: 'warning', label: 'Idle', detail: message ?? 'Waiting for devices to register' };
 }
 
 export function deriveSystemHealthSummary(

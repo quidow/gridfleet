@@ -4,22 +4,6 @@ import type { CursorDirection } from './shared';
 
 type Schemas = components['schemas'];
 
-type GridRuntimeStatus = {
-  ready?: boolean;
-  error?: string;
-  message?: string;
-  value?: {
-    ready?: boolean;
-    message?: string;
-    nodes?: Array<{
-      slots?: Array<{
-        session?: unknown;
-      }>;
-    }>;
-    sessionQueueRequests?: unknown[];
-  };
-};
-
 type HealthChecks = {
   database?: string;
   [key: string]: unknown;
@@ -27,9 +11,7 @@ type HealthChecks = {
 
 type DeviceGroupType = Schemas['GroupType'];
 
-export type GridStatus = Omit<Schemas['GridStatusRead'], 'grid'> & {
-  grid: GridRuntimeStatus;
-};
+export type GridStatus = Schemas['GridStatusRead'];
 
 export type GridQueueRequest = Schemas['GridQueueRequestRead'];
 

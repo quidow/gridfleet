@@ -1825,7 +1825,8 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     assert status["registry"]["devices"][0]["node_state"] == "running"
     assert "hold" not in status["registry"]["devices"][1]
     assert status["registry"]["devices"][1]["operational_state"] == "offline"
-    assert status["grid"]["value"]["nodes"] == [{"slots": [{"session": "s1"}]}]
+    assert status["active_session_ids"] == ["s1"]
+    assert status["running_node_count"] == 1
     assert status["active_sessions"] == 1
     assert status["queue_size"] == 1
     assert queue["queue_size"] == 1

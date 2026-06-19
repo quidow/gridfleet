@@ -3688,15 +3688,21 @@ export interface components {
         };
         /** GridStatusRead */
         GridStatusRead: {
+            /** Active Session Ids */
+            active_session_ids: string[];
             /** Active Sessions */
             active_sessions: number;
-            /** Grid */
-            grid: {
-                [key: string]: unknown;
-            };
+            /** Message */
+            message: string;
             /** Queue Size */
             queue_size: number;
+            /** Queued Request Ids */
+            queued_request_ids: string[];
+            /** Ready */
+            ready: boolean;
             registry: components["schemas"]["GridRegistryRead"];
+            /** Running Node Count */
+            running_node_count: number;
         };
         /**
          * GroupByOption
