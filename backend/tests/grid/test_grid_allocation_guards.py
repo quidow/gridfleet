@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import select
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.packs.services.capability import StereotypeTemplate

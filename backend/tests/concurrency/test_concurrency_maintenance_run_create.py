@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 

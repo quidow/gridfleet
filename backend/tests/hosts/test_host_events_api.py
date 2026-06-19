@@ -8,7 +8,7 @@ from tests.helpers import drain_handlers
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
     from app.hosts.models import Host
 

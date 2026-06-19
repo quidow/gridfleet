@@ -93,7 +93,7 @@ def configure_logging(*, force: bool = False) -> None:
 
     # httpx logs every request at INFO; the shipper's own POSTs would feed
     # back into the shipper queue and self-amplify into a hot loop.
-    for noisy in ("httpx", "httpcore"):
+    for noisy in ("httpx2", "httpcore2"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     logging.setLogRecordFactory(_record_factory)

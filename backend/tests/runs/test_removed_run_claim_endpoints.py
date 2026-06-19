@@ -10,7 +10,7 @@ import pytest
 from app.main import app
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
 
 def _route_paths() -> set[str]:

@@ -29,7 +29,7 @@ from app.devices.services.intent_types import NODE_PROCESS
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 

@@ -10,7 +10,7 @@ from app.hosts.schemas import AgentLogBatchIngest, ShippedLogLineIngest
 from app.hosts.service_agent_logs import AgentLogsService
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host

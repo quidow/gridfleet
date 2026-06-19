@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2 as httpx
 from prometheus_client import Counter
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound

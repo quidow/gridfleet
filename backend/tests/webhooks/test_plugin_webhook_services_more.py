@@ -4,7 +4,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import httpx2 as httpx
 
 from app.core.errors import AgentCallError
 from app.hosts.models import Host, HostStatus, OSType

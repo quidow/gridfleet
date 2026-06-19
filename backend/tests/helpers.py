@@ -22,7 +22,7 @@ from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.type_defs import SessionFactory

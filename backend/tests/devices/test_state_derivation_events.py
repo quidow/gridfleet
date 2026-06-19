@@ -14,7 +14,7 @@ Maintenance enter/exit transitions on the operational axis are structurally unam
 from datetime import UTC, datetime
 
 import pytest
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

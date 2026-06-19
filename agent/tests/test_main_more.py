@@ -62,7 +62,7 @@ async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
 
 
 async def test_start_appium_invalid_payload_error() -> None:
-    from httpx import ASGITransport, AsyncClient
+    from httpx2 import ASGITransport, AsyncClient
 
     from agent_app.appium.exceptions import InvalidStartPayloadError
 
@@ -86,7 +86,7 @@ async def test_start_appium_invalid_payload_error() -> None:
 
 
 async def test_start_appium_generic_runtime_error() -> None:
-    from httpx import ASGITransport, AsyncClient
+    from httpx2 import ASGITransport, AsyncClient
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -109,7 +109,7 @@ async def test_start_appium_generic_runtime_error() -> None:
 
 
 async def test_start_appium_unexpected_exception() -> None:
-    from httpx import ASGITransport, AsyncClient
+    from httpx2 import ASGITransport, AsyncClient
 
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
@@ -131,7 +131,7 @@ async def test_start_appium_unexpected_exception() -> None:
 
 
 async def test_normalize_device_route_no_adapter_registry() -> None:
-    from httpx import ASGITransport, AsyncClient
+    from httpx2 import ASGITransport, AsyncClient
 
     app.state.adapter_registry = None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -145,7 +145,7 @@ async def test_normalize_device_route_no_adapter_registry() -> None:
 
 
 async def test_feature_action_route_no_adapter() -> None:
-    from httpx import ASGITransport, AsyncClient
+    from httpx2 import ASGITransport, AsyncClient
 
     app.state.adapter_registry = AdapterRegistry()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -159,7 +159,7 @@ async def test_feature_action_route_no_adapter() -> None:
 
 
 async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:
-    from httpx import ASGITransport, AsyncClient
+    from httpx2 import ASGITransport, AsyncClient
 
     from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 

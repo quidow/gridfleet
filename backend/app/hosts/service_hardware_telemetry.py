@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 

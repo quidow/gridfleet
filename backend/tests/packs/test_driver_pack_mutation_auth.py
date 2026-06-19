@@ -9,7 +9,7 @@ from app.auth import auth_settings as process_settings
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
 pytestmark = pytest.mark.asyncio
 

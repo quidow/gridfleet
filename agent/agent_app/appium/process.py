@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 
 from agent_app import http_client
 from agent_app.appium.exceptions import (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import select
 
 from app.agent_comm.operations import list_plugins as list_agent_plugins

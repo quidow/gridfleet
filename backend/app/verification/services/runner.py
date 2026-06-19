@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION

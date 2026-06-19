@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from httpx import AsyncClient  # noqa: TC002
+from httpx2 import AsyncClient  # noqa: TC002
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 

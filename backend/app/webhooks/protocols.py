@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     import uuid
 
-    import httpx
+    import httpx2 as httpx
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.events import Event

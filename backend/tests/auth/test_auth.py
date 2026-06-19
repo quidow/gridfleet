@@ -3,7 +3,7 @@ from collections.abc import Iterator
 
 import jwt as _pyjwt
 import pytest
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from pydantic import ValidationError
 from starlette.datastructures import Headers
 

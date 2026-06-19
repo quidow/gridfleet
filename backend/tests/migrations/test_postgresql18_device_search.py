@@ -7,7 +7,7 @@ import pytest
 from tests.devices.test_devices_api import _create_device
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
 

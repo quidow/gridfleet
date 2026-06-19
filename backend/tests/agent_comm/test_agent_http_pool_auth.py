@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import httpx
+import httpx2 as httpx
 
 from app.agent_comm.config import AgentCommConfig
 from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth

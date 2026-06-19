@@ -1,6 +1,6 @@
 import pytest
 from fastapi import Depends, FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from app.auth.dependencies import require_admin
 

@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Mapping
 
-    import httpx
+    import httpx2 as httpx
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device

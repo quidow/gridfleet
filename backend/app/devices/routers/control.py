@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from app.agent_comm.dependencies import AgentCommServicesDep

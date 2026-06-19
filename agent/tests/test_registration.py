@@ -2,7 +2,7 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from agent_app.config import ManagerSettings

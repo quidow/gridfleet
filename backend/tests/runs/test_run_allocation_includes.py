@@ -5,7 +5,7 @@ from typing import Any, get_type_hints
 
 import pytest
 from fastapi import HTTPException
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession

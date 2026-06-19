@@ -2,7 +2,7 @@ import asyncio
 from typing import ClassVar
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry

@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events.models import SystemEvent

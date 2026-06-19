@@ -5,7 +5,7 @@ from typing import Annotated
 
 import pytest
 from fastapi import Depends, FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from app.auth import auth_settings as settings
 from app.auth import service as auth

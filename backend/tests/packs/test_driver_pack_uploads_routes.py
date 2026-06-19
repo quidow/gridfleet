@@ -22,7 +22,7 @@ from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host

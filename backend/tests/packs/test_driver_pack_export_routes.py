@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
 pytestmark = pytest.mark.asyncio
 

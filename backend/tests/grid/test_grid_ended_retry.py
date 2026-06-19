@@ -18,7 +18,7 @@ from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")

@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode

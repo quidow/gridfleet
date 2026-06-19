@@ -33,7 +33,7 @@ from tests.helpers import create_device, create_host
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 

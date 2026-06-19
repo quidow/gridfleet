@@ -15,7 +15,7 @@ from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host

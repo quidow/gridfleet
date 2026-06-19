@@ -6,7 +6,7 @@ from typing import Protocol, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
 from agent_app.appium.dependencies import get_appium_mgr

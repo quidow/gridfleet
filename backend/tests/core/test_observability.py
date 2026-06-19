@@ -1,10 +1,10 @@
 import json
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2 as httpx
 import pytest
 import structlog
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.client import request as agent_request

@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
 
     from app.hosts.models import Host
 

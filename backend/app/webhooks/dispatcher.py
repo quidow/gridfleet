@@ -4,7 +4,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2 as httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from tenacity import RetryCallState, Retrying

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2 as httpx
 
 from app.agent_comm.operations import pack_device_lifecycle_action
 from app.core.leader import state_store

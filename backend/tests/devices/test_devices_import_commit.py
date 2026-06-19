@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

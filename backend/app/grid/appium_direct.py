@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 
 logger = logging.getLogger(__name__)
 

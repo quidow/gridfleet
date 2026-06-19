@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock
 from uuid import uuid4
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from app.agent_comm.http_pool import AgentHttpPool

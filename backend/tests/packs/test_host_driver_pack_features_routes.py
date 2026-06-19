@@ -24,7 +24,7 @@ from app.packs.services.feature_dispatch import FeatureService
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from httpx import AsyncClient
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.asyncio
