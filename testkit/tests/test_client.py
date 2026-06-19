@@ -5,19 +5,14 @@ from typing import TYPE_CHECKING
 import httpx2 as httpx
 import pytest
 
-# Both import styles are intentional:
-# - `import gridfleet_testkit` tests the module-level __getattr__ surface (GRID_URL, GRIDFLEET_API_URL).
-# - `import gridfleet_testkit.client as client_mod` provides the monkeypatching target strings
-#   used by tests that patch gridfleet_testkit.client.* symbols.
 import gridfleet_testkit
-import gridfleet_testkit.client as client_mod
 from gridfleet_testkit.client import (
     GridFleetClient,
     ReserveCapabilitiesUnsupportedError,
     UnknownIncludeError,
-    _default_auth,
     _raise_for_status,
 )
+from gridfleet_testkit.config import auth_from_env
 from gridfleet_testkit.run_lifecycle import HeartbeatThread
 
 if TYPE_CHECKING:
@@ -429,14 +424,14 @@ def test_default_auth_returns_none_when_env_unset(monkeypatch):
     monkeypatch.delenv("GRIDFLEET_TESTKIT_USERNAME", raising=False)
     monkeypatch.delenv("GRIDFLEET_TESTKIT_PASSWORD", raising=False)
 
-    assert _default_auth() is None
+    assert auth_from_env() is None
 
 
 def test_default_auth_returns_basic_auth_when_env_set(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
 
-    auth = _default_auth()
+    auth = auth_from_env()
     assert isinstance(auth, httpx.BasicAuth)
 
 
@@ -660,16 +655,14 @@ def test_default_auth_reads_environment_lazily(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "secret")
 
-    assert isinstance(_default_auth(), httpx.BasicAuth)
+    assert isinstance(auth_from_env(), httpx.BasicAuth)
 
 
 def test_module_grid_url_reads_environment_lazily(monkeypatch):
     monkeypatch.setenv("GRID_URL", "http://lazy-grid:4444")
-    assert gridfleet_testkit.GRID_URL == "http://lazy-grid:4444"
-    assert client_mod.GRID_URL == "http://lazy-grid:4444"
+    assert gridfleet_testkit.grid_url() == "http://lazy-grid:4444"
 
 
 def test_module_api_url_reads_environment_lazily(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_API_URL", "http://lazy-manager/api")
-    assert gridfleet_testkit.GRIDFLEET_API_URL == "http://lazy-manager/api"
-    assert client_mod.GRIDFLEET_API_URL == "http://lazy-manager/api"
+    assert gridfleet_testkit.api_url() == "http://lazy-manager/api"

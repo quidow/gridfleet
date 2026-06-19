@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 import httpx2 as httpx
 
+from . import config
 from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread
 
@@ -16,46 +16,7 @@ if TYPE_CHECKING:
 
     from .types import JsonObject, JsonObjectList, QueryParamValue
 
-DEFAULT_GRID_URL = "http://localhost:4444"
-DEFAULT_GRIDFLEET_API_URL = "http://localhost:8000/api"
-
 logger = logging.getLogger("gridfleet_testkit")
-
-
-def _default_grid_url() -> str:
-    return os.getenv("GRID_URL", DEFAULT_GRID_URL)
-
-
-def run_grid_url(run_id: str, *, base: str | None = None) -> str:
-    """Run-scoped WebDriver endpoint for *run_id* (``{base}/run/{run_id}``).
-
-    Sessions created through it are admitted only to devices reserved for the
-    run; free sessions use the bare grid URL. Replaces the retired
-    ``gridfleet:run_id`` capability.
-    """
-    root = (base or _default_grid_url()).rstrip("/")
-    return f"{root}/run/{run_id}"
-
-
-def _default_api_url() -> str:
-    return os.getenv("GRIDFLEET_API_URL", DEFAULT_GRIDFLEET_API_URL)
-
-
-def __getattr__(name: str) -> str:
-    if name == "GRID_URL":
-        return _default_grid_url()
-    if name == "GRIDFLEET_API_URL":
-        return _default_api_url()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def _default_auth() -> httpx.BasicAuth | None:
-    """Build httpx Basic auth from env vars, or return None when unset."""
-    username = os.getenv("GRIDFLEET_TESTKIT_USERNAME")
-    password = os.getenv("GRIDFLEET_TESTKIT_PASSWORD")
-    if not username or not password:
-        return None
-    return httpx.BasicAuth(username, password)
 
 
 def _raise_for_status(resp: httpx.Response, *, run_id: str) -> None:
@@ -139,8 +100,8 @@ class GridFleetClient:
         base_url: str | None = None,
         auth: httpx.BasicAuth | None = None,
     ):
-        self.base_url = (base_url or _default_api_url()).rstrip("/")
-        self._auth = auth if auth is not None else _default_auth()
+        self.base_url = (base_url or config.api_url()).rstrip("/")
+        self._auth = auth if auth is not None else config.auth_from_env()
 
     def list_devices(
         self,

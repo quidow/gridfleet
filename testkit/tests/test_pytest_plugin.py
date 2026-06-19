@@ -141,7 +141,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
 
     driver.quit = quit_with_event
 
-    assert created_drivers[0][0] == pytest_plugin.GRID_URL
+    assert created_drivers[0][0] == pytest_plugin.config.grid_url()
     assert created_drivers[0][1]["platformName"] == "Android"
     assert created_drivers[0][1]["appium:automationName"] == "UiAutomator2"
     assert created_drivers[0][1]["appium:udid"] == "10.0.0.8:5555"

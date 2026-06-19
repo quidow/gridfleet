@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, cast
 from appium import webdriver
 from appium.options.common import AppiumOptions
 
-from .client import GridFleetClient, _default_grid_url, run_grid_url
+from . import config
+from .client import GridFleetClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -126,18 +127,6 @@ def build_appium_options(
     return options
 
 
-def _resolve_grid_url(grid_url: str | None) -> str:
-    """Executor resolution: explicit URL wins; GRIDFLEET_RUN_ID (set externally
-    by the run launcher or CI before pytest starts) composes the run-scoped
-    endpoint; otherwise the bare grid URL — an explicit free session."""
-    if grid_url is not None:
-        return grid_url
-    run_id = os.environ.get("GRIDFLEET_RUN_ID")
-    if run_id:
-        return run_grid_url(run_id)
-    return _default_grid_url()
-
-
 def _remote_with_owned_endpoint(
     grid_endpoint: str,
     options: AppiumOptions,
@@ -177,7 +166,7 @@ def create_appium_driver(
         test_name=test_name,
         catalog_client=catalog_client,
     )
-    return _remote_with_owned_endpoint(_resolve_grid_url(grid_url), options, client_config)
+    return _remote_with_owned_endpoint(config.resolve_grid_url(grid_url), options, client_config)
 
 
 def _required_str_cap(driver: WebDriver, key: str, message: str) -> str:
