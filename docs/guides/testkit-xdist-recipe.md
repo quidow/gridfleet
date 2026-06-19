@@ -114,18 +114,16 @@ Tune this:
 ```python
 import pytest
 
-from gridfleet_testkit import hydrate_allocated_device, resolve_device_handle_from_driver
+from gridfleet_testkit import resolve_device_handle_from_driver
 
 
 @pytest.fixture
 def allocated_device(request: pytest.FixtureRequest):
     config = request.config
-    run = config.stash[GRIDFLEET_RUN]
     client = config.stash[GRIDFLEET_CLIENT]
     driver = request.getfixturevalue("appium_driver")
 
-    device_handle = resolve_device_handle_from_driver(driver, client=client)
-    return hydrate_allocated_device(device_handle, run_id=run["id"], client=client)
+    return resolve_device_handle_from_driver(driver, client=client)
 ```
 
 Tune this:
