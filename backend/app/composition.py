@@ -248,7 +248,7 @@ def compose_app(
         incidents=incidents_svc,
         pool=http_pool,
     )
-    run_query = RunQueryService(capability=device_capability_svc)
+    run_query = RunQueryService()
 
     reconciler_svc = ReconcilerService(
         publisher=bus,

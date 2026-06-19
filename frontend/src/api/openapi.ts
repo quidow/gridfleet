@@ -4818,10 +4818,6 @@ export interface components {
         };
         /** ReservedDeviceInfo */
         ReservedDeviceInfo: {
-            /** Config */
-            config?: {
-                [key: string]: unknown;
-            } | null;
             /** Connection Target */
             connection_target?: string | null;
             /** Connection Type */
@@ -4857,10 +4853,6 @@ export interface components {
             host_ip?: string | null;
             /** Identity Value */
             identity_value: string;
-            /** Live Capabilities */
-            live_capabilities?: {
-                [key: string]: unknown;
-            } | null;
             /** Manufacturer */
             manufacturer?: string | null;
             /** Model */
@@ -4879,12 +4871,6 @@ export interface components {
             tags?: {
                 [key: string]: string;
             } | null;
-            /** Test Data */
-            test_data?: {
-                [key: string]: unknown;
-            } | null;
-            /** Unavailable Includes */
-            unavailable_includes?: components["schemas"]["UnavailableInclude"][] | null;
         };
         /** RunCooldownEscalatedResponse */
         RunCooldownEscalatedResponse: {
@@ -5419,13 +5405,6 @@ export interface components {
             name: string;
             /** Version */
             version?: string | null;
-        };
-        /** UnavailableInclude */
-        UnavailableInclude: {
-            /** Include */
-            include: string;
-            /** Reason */
-            reason: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -11583,10 +11562,7 @@ export interface operations {
     };
     create_run_api_runs_post: {
         parameters: {
-            query?: {
-                /** @description Comma-separated: config,test_data (capabilities not supported on reserve) */
-                include?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;

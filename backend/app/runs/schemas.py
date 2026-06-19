@@ -49,11 +49,6 @@ class RunPreparationFailureReport(BaseModel):
     source: str = "ci_preparation"
 
 
-class UnavailableInclude(BaseModel):
-    include: str
-    reason: str
-
-
 class ReservedDeviceInfo(BaseModel):
     device_id: str
     identity_value: str
@@ -75,10 +70,6 @@ class ReservedDeviceInfo(BaseModel):
     cooldown_remaining_sec: int | None = None
     cooldown_count: int = 0
     cooldown_escalated: bool = False
-    config: dict[str, Any] | None = None
-    live_capabilities: dict[str, Any] | None = None
-    test_data: dict[str, Any] | None = None
-    unavailable_includes: list[UnavailableInclude] | None = None
     tags: dict[str, str] | None = None
 
 

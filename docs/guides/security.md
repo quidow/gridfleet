@@ -39,24 +39,6 @@ Environment variables control the base credentials and routing strings. These sh
 - `GRIDFLEET_AUTH_SESSION_SECRET`: Signing secret for stateless browser sessions.
 - `GRIDFLEET_MACHINE_AUTH_PASSWORD`: Password for machine Basic-auth clients such as agents, CI helpers, and metrics scrapers.
 
-### Inline allocation includes
-
-`POST /api/runs?include=config` embeds the device config verbatim in the
-response. The manager does not mask or filter any fields on the inline path --
-the full `device_config` object is returned as stored. The auth gate
-(`GRIDFLEET_AUTH_ENABLED`) is the only trust boundary: callers without valid
-credentials cannot reach this endpoint at all.
-
-`include=capabilities` is rejected on `POST /api/runs` (HTTP 422,
-`details.code = "reserve_capabilities_unsupported"`). On claim,
-`live_capabilities` carries the same payload as `GET /api/devices/{id}/capabilities`:
-pack-derived defaults plus a live overlay from the agent's `AppiumNode` resource
-allocations when the node is in the `running` state. With no running node, the
-overlay is empty but the rest of the synthesis (`appium:noReset`, `platformName`,
-etc.) still resolves. The field is named `live_capabilities` to mirror internal
-terminology — the "live" qualifier covers static pack-derived caps too, not
-exclusively probe-time values.
-
 ## Webhook Security
 
 The Backend provides event-based webhooks configured by Operators via the UI. When creating webhook endpoints:

@@ -618,7 +618,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             health=DeviceHealthService(publisher=test_event_bus),
             incidents=LifecycleIncidentService(),
         )
-        run_query = RunQueryService(capability=DeviceCapabilityService())
+        run_query = RunQueryService()
         return RunServices(
             allocator=run_allocator,
             lifecycle=run_lifecycle,
