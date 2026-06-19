@@ -5,10 +5,14 @@ import { SystemHealthPills } from './SystemHealthPills';
 
 const mockGridStatus = vi.fn(() => ({
   data: {
-    grid: { ready: true, value: { ready: true, nodes: [] } },
-    registry: { device_count: 0 },
+    ready: true,
+    message: 'gridfleet control plane',
+    registry: { device_count: 0, devices: [] },
     active_sessions: 0,
+    active_session_ids: [],
+    running_node_count: 0,
     queue_size: 0,
+    queued_request_ids: [],
   },
 }));
 const mockEventStream = vi.fn(() => ({ connected: true }));
@@ -54,10 +58,14 @@ describe('SystemHealthPills', () => {
   it('links Grid pill to /sessions when grid is not ready', () => {
     mockGridStatus.mockReturnValueOnce({
       data: {
-        grid: { ready: false, value: { ready: false, nodes: [] } },
-        registry: { device_count: 0 },
+        ready: false,
+        message: 'gridfleet control plane',
+        registry: { device_count: 0, devices: [] },
         active_sessions: 0,
+        active_session_ids: [],
+        running_node_count: 0,
         queue_size: 0,
+        queued_request_ids: [],
       },
     });
     render(
