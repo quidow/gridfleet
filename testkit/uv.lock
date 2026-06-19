@@ -152,7 +152,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "appium-python-client", specifier = ">=4.5,<6" },
+    { name = "appium-python-client", specifier = ">=5.0,<6" },
     { name = "httpx2", specifier = ">=2.4,<3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20.2,<3" },
     { name = "pytest", specifier = ">=9.0.3,<10" },

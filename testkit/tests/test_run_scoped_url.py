@@ -86,9 +86,9 @@ def _make_plugin_generator(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[
         return _FakeDriver()
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", _FakeOptions)
-    # String target: `pytest_plugin.webdriver` is a transitive module attribute
+    # String target: `appium.webdriver` is a transitive module attribute
     # mypy strict (no_implicit_reexport) refuses to access statically.
-    monkeypatch.setattr("gridfleet_testkit.pytest_plugin.webdriver.Remote", fake_remote)
+    monkeypatch.setattr("gridfleet_testkit.appium.webdriver.Remote", fake_remote)
 
     request = types.SimpleNamespace(
         param={"platformName": "Android"},

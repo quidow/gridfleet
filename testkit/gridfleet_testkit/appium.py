@@ -138,6 +138,21 @@ def _resolve_grid_url(grid_url: str | None) -> str:
     return _default_grid_url()
 
 
+def _remote_with_owned_endpoint(
+    grid_endpoint: str,
+    options: AppiumOptions,
+    client_config: AppiumClientConfig | None,
+) -> WebDriver:
+    """Build the Appium driver with the testkit owning the connection endpoint.
+
+    Appium's ``webdriver.Remote`` ignores the URL argument when a ``client_config``
+    is supplied, so the resolved grid endpoint is written onto the config in place.
+    """
+    if client_config is not None:
+        client_config.remote_server_addr = grid_endpoint
+    return webdriver.Remote(grid_endpoint, options=options, client_config=client_config)
+
+
 def create_appium_driver(
     *,
     pack_id: str | None = None,
@@ -162,10 +177,7 @@ def create_appium_driver(
         test_name=test_name,
         catalog_client=catalog_client,
     )
-    grid_endpoint = _resolve_grid_url(grid_url)
-    if client_config is not None:
-        client_config.remote_server_addr = grid_endpoint
-    return webdriver.Remote(grid_endpoint, options=options, client_config=client_config)
+    return _remote_with_owned_endpoint(_resolve_grid_url(grid_url), options, client_config)
 
 
 def _required_str_cap(driver: WebDriver, key: str, message: str) -> str:

@@ -85,7 +85,7 @@ def install_fake_appium(monkeypatch, created_drivers):
         return driver
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
-    monkeypatch.setattr(pytest_plugin.webdriver, "Remote", remote)
+    monkeypatch.setattr(appium_mod.webdriver, "Remote", remote)
 
 
 @pytest.mark.parametrize(
@@ -269,7 +269,7 @@ def test_appium_driver_setup_failure_propagates_exception(monkeypatch):
         raise RuntimeError("Session could not be created")
 
     monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
-    monkeypatch.setattr(pytest_plugin.webdriver, "Remote", remote_raises)
+    monkeypatch.setattr(appium_mod.webdriver, "Remote", remote_raises)
     RecordingClient.instances.clear()
     gridfleet_client = RecordingClient()
 

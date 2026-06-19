@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from appium import webdriver
 
 from .appium import (
+    _remote_with_owned_endpoint,
     _resolve_grid_url,
     build_appium_options,
     get_device_config_for_driver,
@@ -71,7 +71,8 @@ def _build_driver_options(
 def gridfleet_client_config() -> AppiumClientConfig | None:
     """Override in your conftest to tune the Appium HTTP transport (connection
     retries, timeouts, proxy, TLS) for every ``appium_driver`` session. The
-    testkit still owns the endpoint, so any ``remote_server_addr`` is ignored.
+    testkit still owns the endpoint, so any ``remote_server_addr`` is overwritten
+    with the resolved grid URL.
     """
     return None
 
@@ -96,10 +97,7 @@ def appium_driver(
     """
     options = _build_driver_options(request, gridfleet_client)
 
-    grid_endpoint = _resolve_grid_url(None)
-    if gridfleet_client_config is not None:
-        gridfleet_client_config.remote_server_addr = grid_endpoint
-    driver = webdriver.Remote(grid_endpoint, options=options, client_config=gridfleet_client_config)
+    driver = _remote_with_owned_endpoint(_resolve_grid_url(None), options, gridfleet_client_config)
     session_id = driver.session_id
     if not isinstance(session_id, str) or not session_id:
         raise RuntimeError("Created Appium driver did not expose a session ID")
