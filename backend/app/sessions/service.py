@@ -62,17 +62,7 @@ def _session_ended_severity(status: str, error_type: str | None) -> EventSeverit
 
 
 def _session_requested_metadata_payload(session: Session) -> dict[str, Any]:
-    return {
-        "requested_pack_id": session.requested_pack_id,
-        "requested_platform_id": session.requested_platform_id,
-        "requested_device_type": (
-            str(session.requested_device_type) if session.requested_device_type is not None else None
-        ),
-        "requested_connection_type": (
-            str(session.requested_connection_type) if session.requested_connection_type is not None else None
-        ),
-        "requested_capabilities": session.requested_capabilities,
-    }
+    return {"requested_capabilities": session.requested_capabilities}
 
 
 def build_session_started_event_payload(

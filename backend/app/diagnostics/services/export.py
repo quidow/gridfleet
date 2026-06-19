@@ -230,8 +230,6 @@ async def _read_sessions(db: AsyncSession, device: Device) -> dict[str, list[dic
             "ended_at": session.ended_at.isoformat() if session.ended_at else None,
             "error_type": session.error_type,
             "error_message": session.error_message,
-            "requested_pack_id": session.requested_pack_id,
-            "requested_platform_id": session.requested_platform_id,
         }
 
     return {
