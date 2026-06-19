@@ -229,7 +229,6 @@ class Platform(BaseModel):
     appium_platform_name: str
     device_types: list[str]
     connection_types: list[str]
-    grid_slots: list[str]
     capabilities: Capabilities
     identity: Identity
     device_fields_schema: list[FieldSchema] = Field(default_factory=list)

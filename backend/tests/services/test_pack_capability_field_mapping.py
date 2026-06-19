@@ -12,7 +12,6 @@ def _make_resolved(device_fields_schema: list[dict]) -> ResolvedPackPlatform:
         appium_platform_name="roku",
         device_types=["real_device"],
         connection_types=["network"],
-        grid_slots=["native"],
         identity_scheme="roku_serial",
         identity_scope="global",
         capabilities={"stereotype": {"appium:platformName": "roku"}},

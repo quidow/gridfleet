@@ -161,7 +161,6 @@ platforms:
     appium_platform_name: B3
     device_types: [real_device]
     connection_types: [network]
-    grid_slots: [native]
     capabilities: {{stereotype: {{}}, session_required: []}}
     identity: {{scheme: b3_uid, scope: global}}
 features:

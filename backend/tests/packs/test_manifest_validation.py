@@ -24,7 +24,6 @@ def _base_yaml() -> str:
             appium_platform_name: TestOS
             device_types: [real_device]
             connection_types: [network]
-            grid_slots: [native]
             capabilities: {stereotype: {"appium:platformName": "TestOS"}}
             identity: {scheme: test_id, scope: host}
         """

@@ -72,7 +72,6 @@ async def _seed_pack_with_releases(
             appium_platform_name="Android",
             device_types=["real_device"],
             connection_types=["usb"],
-            grid_slots=["default"],
             data={"identity": {"scheme": "android_serial", "scope": "host"}},
         )
     )
@@ -85,7 +84,6 @@ async def _seed_pack_with_releases(
             appium_platform_name="Android",
             device_types=["real_device"],
             connection_types=["usb"],
-            grid_slots=["default"],
             data={"identity": {"scheme": "android_serial", "scope": "host"}},
         )
     )
@@ -163,7 +161,6 @@ async def test_delete_release_guards_installed_and_orphaned_platforms(
             appium_platform_name="Roku",
             device_types=["real_device"],
             connection_types=["network"],
-            grid_slots=["default"],
             data={},
         )
     )

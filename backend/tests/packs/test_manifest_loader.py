@@ -35,7 +35,6 @@ def _valid_yaml() -> str:
             appium_platform_name: Android
             device_types: [real_device]
             connection_types: [usb, network]
-            grid_slots: [native]
             capabilities:
               stereotype: { "appium:platformName": "Android" }
               session_required: []

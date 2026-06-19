@@ -25,7 +25,6 @@ platforms:
     appium_platform_name: Android
     device_types: [real_device, emulator]
     connection_types: [usb, network, virtual]
-    grid_slots: [native, chrome]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"
@@ -82,7 +81,6 @@ platforms:
     appium_platform_name: Android
     device_types: [real_device, emulator]
     connection_types: [usb, network, virtual]
-    grid_slots: [native, chrome]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"
@@ -139,7 +137,6 @@ platforms:
     appium_platform_name: Android
     device_types: [real_device]
     connection_types: [usb, network]
-    grid_slots: [native, chrome]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"

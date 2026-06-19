@@ -51,7 +51,6 @@ def _platform() -> DriverPackPlatform:
         appium_platform_name="Android",
         device_types=["real_device"],
         connection_types=["usb"],
-        grid_slots=["default"],
         data={
             "identity": {"scheme": "serial", "scope": "host"},
             "lifecycle_actions": [{"id": "reconnect"}],
@@ -62,7 +61,7 @@ def _platform() -> DriverPackPlatform:
             "default_capabilities": {"automationName": "UiAutomator2"},
             "connection_behavior": {"requires_host": True},
             "parallel_resources": {"usb": 1},
-            "device_type_overrides": {"emulator": {"grid_slots": ["emulator"]}},
+            "device_type_overrides": {"emulator": {}},
         },
     )
 

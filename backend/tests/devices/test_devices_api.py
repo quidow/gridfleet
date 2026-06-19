@@ -2064,7 +2064,6 @@ async def test_device_detail_uses_catalog_readiness_for_local_pack(
             appium_platform_name="TestOS",
             device_types=["real_device"],
             connection_types=["network"],
-            grid_slots=["native"],
             data={
                 "identity": {"scheme": "test_id", "scope": "host"},
                 "device_fields_schema": [

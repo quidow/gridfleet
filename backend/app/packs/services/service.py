@@ -133,7 +133,6 @@ def _platform_out(platform: DriverPackPlatform) -> PlatformOut:
         appium_platform_name=platform.appium_platform_name,
         device_types=platform.device_types,
         connection_types=platform.connection_types,
-        grid_slots=platform.grid_slots,
         identity_scheme=platform.data["identity"]["scheme"],
         identity_scope=platform.data["identity"]["scope"],
         lifecycle_actions=platform.data.get("lifecycle_actions", []),

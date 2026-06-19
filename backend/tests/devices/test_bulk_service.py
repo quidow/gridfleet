@@ -146,7 +146,6 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         appium_platform_name="Android",
         device_types=["real_device"],
         connection_types=["usb", "network"],
-        grid_slots=["default"],
         identity_scheme="android_serial",
         identity_scope="host",
         capabilities={},

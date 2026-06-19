@@ -175,7 +175,6 @@ async def test_start_remote_node_error_and_override_paths(
                 "platform_id": "android_mobile",
                 "appium_platform_name": "Android",
                 "stereotype_caps": {"browserName": "Chrome"},
-                "grid_slots": 2,
                 "lifecycle_actions": {"health": "check"},
                 "connection_behavior": {"default_connection_type": "usb"},
                 "insecure_features": ["adb_shell"],

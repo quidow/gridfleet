@@ -34,7 +34,6 @@ platforms:
     appium_platform_name: iOS
     device_types: [real_device, simulator]
     connection_types: [usb, network, virtual]
-    grid_slots: [native]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"
@@ -152,7 +151,6 @@ platforms:
     appium_platform_name: tvOS
     device_types: [real_device, simulator]
     connection_types: [usb, network, virtual]
-    grid_slots: [native]
     capabilities:
       stereotype:
         "appium:platform": "{device.platform_id}"

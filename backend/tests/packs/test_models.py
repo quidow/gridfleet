@@ -113,7 +113,6 @@ async def test_driver_pack_platform(db_session: AsyncSession) -> None:
         appium_platform_name="android",
         device_types=["real_device", "emulator"],
         connection_types=["usb", "network"],
-        grid_slots=["android_mobile"],
         data={"example": "data"},
     )
     db_session.add(platform)
@@ -128,7 +127,6 @@ async def test_driver_pack_platform(db_session: AsyncSession) -> None:
     assert rows[0].manifest_platform_id == "android-platform"
     assert rows[0].device_types == ["real_device", "emulator"]
     assert rows[0].connection_types == ["usb", "network"]
-    assert rows[0].grid_slots == ["android_mobile"]
 
 
 @pytest.mark.asyncio
