@@ -22,7 +22,6 @@ const basePack = {
       appium_platform_name: 'Android',
       device_types: ['real_device'],
       connection_types: ['usb', 'network'],
-      grid_slots: ['native', 'chrome'],
       identity_scheme: 'android_serial',
       identity_scope: 'host',
       device_fields_schema: [

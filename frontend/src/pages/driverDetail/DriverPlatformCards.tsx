@@ -19,8 +19,7 @@ function PlatformCard({ platform }: { platform: DriverPackPlatform }) {
     { term: 'Appium Platform', definition: platform.appium_platform_name },
     { term: 'Device Types', definition: listValue(platform.device_types) },
     { term: 'Connection Types', definition: listValue(platform.connection_types) },
-    { term: 'Grid Slots', definition: listValue(platform.grid_slots) },
-    { term: 'Identity', definition: `${platform.identity_scheme} (${platform.identity_scope})` },
+{ term: 'Identity', definition: `${platform.identity_scheme} (${platform.identity_scope})` },
   ];
 
   return (
