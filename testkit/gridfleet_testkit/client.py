@@ -15,9 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from .types import (
-        CooldownEscalatedResult,  # noqa: F401
         CooldownResult,
-        CooldownSetResult,  # noqa: F401
         JsonObject,
         JsonObjectList,
         JsonValue,
