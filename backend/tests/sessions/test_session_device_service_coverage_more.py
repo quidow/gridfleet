@@ -7,10 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import encode_cursor
 from app.devices.models import (
-    ConnectionType,
     DeviceOperationalState,
     DeviceReservation,
-    DeviceType,
     HardwareHealthStatus,
 )
 from app.devices.schemas.device import HardwareTelemetryState
@@ -49,20 +47,14 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
             status=SessionStatus.passed,
             started_at=now - timedelta(minutes=3),
             ended_at=now - timedelta(minutes=2),
-            requested_pack_id="appium-uiautomator2",
-            requested_platform_id="android_mobile",
         ),
         Session(
             session_id="sess-new",
-            device_id=None,
+            device_id=device.id,
             test_name="new",
             status=SessionStatus.error,
             started_at=now - timedelta(minutes=1),
             ended_at=now,
-            requested_pack_id="appium-uiautomator2",
-            requested_platform_id="android_mobile",
-            requested_device_type=DeviceType.real_device,
-            requested_connection_type=ConnectionType.usb,
             requested_capabilities={"browserName": "Chrome"},
             error_type="driver",
             error_message="boom",
@@ -108,7 +100,10 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     )
     assert [session.session_id for session in filtered_page.items] == ["sess-old"]
     heatmap_rows = await crud.get_device_session_outcome_heatmap_rows(db_session, device.id, days=1)
-    assert heatmap_rows == [(sessions[0].started_at, SessionStatus.passed)]
+    assert heatmap_rows == [
+        (sessions[0].started_at, SessionStatus.passed),
+        (sessions[1].started_at, SessionStatus.error),
+    ]
 
     empty_page = await crud.list_sessions_cursor(
         db_session,
@@ -119,7 +114,6 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     started_payload = session_service.build_session_started_event_payload(sessions[1], device=None, run_id="run-1")
     ended_payload = session_service.build_session_ended_event_payload(sessions[1], device=None)
     assert started_payload["device_id"] is None
-    assert started_payload["requested_device_type"] == "real_device"
     assert ended_payload["error_type"] == "driver"
     assert ended_payload["error_message"] == "boom"
 

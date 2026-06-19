@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import cast, func, literal, or_, select, union
+from sqlalchemy import cast, func, literal, select, union
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import selectinload
 
@@ -57,10 +57,7 @@ class PackLifecycleService:
                     # it here keeps the drain from tearing down the runtime mid-create
                     # (wave-5 #9).
                     live_session_predicate(),
-                    or_(
-                        Session.requested_pack_id == pack_id,
-                        Device.pack_id == pack_id,
-                    ),
+                    Device.pack_id == pack_id,
                 )
             )
         ).scalar_one()

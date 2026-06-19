@@ -286,14 +286,14 @@ class SessionCrudService:
     ) -> tuple[list[Session], int]:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
-        platform_id_expr = func.coalesce(Device.platform_id, Session.requested_platform_id)
+        platform_id_expr = Device.platform_id
 
         if device_id is not None:
             stmt = stmt.where(Session.device_id == device_id)
         if status is not None:
             stmt = stmt.where(Session.status == status)
         if pack_id is not None:
-            stmt = stmt.where(func.coalesce(Device.pack_id, Session.requested_pack_id) == pack_id)
+            stmt = stmt.where(Device.pack_id == pack_id)
         if platform_id is not None:
             stmt = stmt.where(platform_id_expr == platform_id)
         if started_after is not None:
@@ -358,9 +358,9 @@ class SessionCrudService:
         if status is not None:
             stmt = stmt.where(Session.status == status)
         if pack_id is not None:
-            stmt = stmt.where(func.coalesce(Device.pack_id, Session.requested_pack_id) == pack_id)
+            stmt = stmt.where(Device.pack_id == pack_id)
         if platform_id is not None:
-            stmt = stmt.where(func.coalesce(Device.platform_id, Session.requested_platform_id) == platform_id)
+            stmt = stmt.where(Device.platform_id == platform_id)
         if started_after is not None:
             stmt = stmt.where(Session.started_at >= started_after)
         if started_before is not None:
