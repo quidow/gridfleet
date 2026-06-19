@@ -494,10 +494,11 @@ async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval
     return elapsed >= interval_sec
 
 
-# The router's W3C capability matcher rejects a request when ``alwaysMatch``
-# carries keys that are not in the device's capability set. The device stereotype
-# identifies routing via ``appium:gridfleet:deviceId`` (stable, backend-owned)
-# and deliberately omits ``appium:udid`` / ``appium:deviceName`` — those are
+# The manager's W3C capability matcher (``app.grid.matching``) rejects a request
+# when ``alwaysMatch`` carries an identity key the device's stereotype does not
+# declare. The device stereotype identifies routing via
+# ``appium:gridfleet:deviceId`` (stable, backend-owned) and deliberately omits
+# ``appium:udid`` / ``appium:deviceName`` — those are
 # driver connection details, not routing keys, and for emulators the stored
 # udid (AVD name) never matched the live serial. Probes therefore pin on
 # ``appium:gridfleet:deviceId`` plus the platform and probe markers so
