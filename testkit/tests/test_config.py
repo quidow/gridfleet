@@ -32,6 +32,12 @@ def test_resolve_grid_url_uses_run_scope_when_run_id_set(monkeypatch):
     assert resolve_grid_url(None) == "http://localhost:4444/run/run-9"
 
 
+def test_resolve_grid_url_free_session_when_no_run_id(monkeypatch):
+    monkeypatch.setenv("GRID_URL", "http://router:4444")
+    monkeypatch.delenv("GRIDFLEET_RUN_ID", raising=False)
+    assert resolve_grid_url(None) == "http://router:4444"
+
+
 def test_module_no_longer_exposes_grid_url_attribute():
     # The env-magic module attributes are gone; the function form replaces them.
     assert not hasattr(gridfleet_testkit, "GRID_URL")
