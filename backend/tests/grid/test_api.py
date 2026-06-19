@@ -141,6 +141,7 @@ async def test_grid_status_counts_pending_allocation(
     data = resp.json()
     assert data["active_sessions"] == 1
     assert data["active_session_ids"] == ["alloc-pending-placeholder"]
+    assert data["running_node_count"] == 1
 
 
 async def test_grid_status_queue_size(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
