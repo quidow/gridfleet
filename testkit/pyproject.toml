@@ -62,7 +62,7 @@ module = [
     "test_config",
     "test_pytest_plugin",
     "test_run_lifecycle",
-    "test_sessions",
+    "test_session",
 ]
 disallow_untyped_defs = false
 disallow_untyped_calls = false

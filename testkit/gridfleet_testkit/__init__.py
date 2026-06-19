@@ -28,10 +28,6 @@ from .allocation import (
 from .appium import (
     build_appium_options,
     create_appium_driver,
-    get_connection_target_from_driver,
-    get_device_config_for_driver,
-    get_device_id_from_driver,
-    get_device_test_data_for_driver,
 )
 from .client import (
     GridFleetClient,
@@ -39,7 +35,13 @@ from .client import (
 from .config import api_url, grid_url, run_grid_url
 from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread, register_run_cleanup
-from .sessions import resolve_device_handle_from_driver
+from .session import (
+    get_connection_target_from_driver,
+    get_device_config_for_driver,
+    get_device_id_from_driver,
+    get_device_test_data_for_driver,
+    resolve_device_handle_from_driver,
+)
 from .types import (
     CooldownEscalatedResult,
     CooldownResult,
