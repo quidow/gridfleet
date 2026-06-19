@@ -47,8 +47,6 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
-from app.diagnostics.dependencies import get_diagnostics_services
-from app.diagnostics.services_container import DiagnosticsServices
 from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
@@ -116,7 +114,7 @@ from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.models import Webhook, WebhookDelivery
 from app.webhooks.service import WebhookCrudService
 from app.webhooks.services_container import WebhookServices
-from tests.fakes import build_diagnostics_export, build_review_service
+from tests.fakes import build_review_service
 from tests.helpers import create_host, reset_event_bus, test_event_bus
 
 settings_service = SettingsService()
@@ -496,9 +494,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             runner=AsyncMock(),
         )
 
-    def override_get_diagnostics_services() -> DiagnosticsServices:
-        return DiagnosticsServices(export=build_diagnostics_export())
-
     def override_get_portability_services() -> PortabilityServices:
         return PortabilityServices(
             export=PortabilityExportService(),
@@ -738,7 +733,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
     app.dependency_overrides[get_device_services] = override_get_device_services
     app.dependency_overrides[get_verification_services] = override_get_verification_services
-    app.dependency_overrides[get_diagnostics_services] = override_get_diagnostics_services
     app.dependency_overrides[get_portability_services] = override_get_portability_services
     app.dependency_overrides[get_lifecycle_services] = override_get_lifecycle_services
     app.dependency_overrides[get_host_services] = override_get_host_services

@@ -16,8 +16,6 @@ import { SetupVerificationModal } from './devices/SetupVerificationModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { DeviceVerificationUpdate } from '../types';
 import { DeviceCapabilitiesPanel } from '../components/deviceDetail/DeviceCapabilitiesPanel';
-import { DiagnosticBundleButton } from '../components/deviceDetail/DiagnosticBundleButton';
-import { DiagnosticHistoryPanel } from '../components/deviceDetail/DiagnosticHistoryPanel';
 import { DeviceHealthPanel } from '../components/deviceDetail/DeviceHealthPanel';
 import { DeviceLifecyclePolicyPanel } from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
 import { DeviceHardwareTelemetryCard } from '../components/deviceDetail/DeviceHardwareTelemetryCard';
@@ -295,17 +293,6 @@ export function DeviceDetail() {
                 </div>
               </Card>
             </div>
-
-            <Card padding="none" as="section" className="overflow-hidden">
-              <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold text-text-1">Diagnostics</h2>
-                </div>
-                <DiagnosticBundleButton deviceId={device.id} />
-              </div>
-            </Card>
-
-            <DiagnosticHistoryPanel deviceId={device.id} />
           </>
         ) : null}
 

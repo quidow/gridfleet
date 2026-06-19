@@ -10,9 +10,6 @@ describe('queryKeys', () => {
     expect(qk.sessions.cursorList(undefined).slice(0, 1)).toEqual([...qk.sessions.root]);
     expect(qk.webhooks.deliveries('w1', 10).slice(0, 1)).toEqual([...qk.webhooks.root]);
     expect(qk.hostPlugins.byHost('h1').slice(0, 1)).toEqual([...qk.hostPlugins.root]);
-    expect(qk.deviceDiagnosticSnapshots.list('d1', 5).slice(0, 2)).toEqual([
-      ...qk.deviceDiagnosticSnapshots.byDevice('d1'),
-    ]);
   });
 
   it('cursor lists keep the literal "cursor" segment (useEventStream newest-page predicate depends on it)', () => {

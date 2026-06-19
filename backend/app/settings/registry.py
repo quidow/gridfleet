@@ -783,15 +783,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3650,
     ),
     SettingDefinition(
-        key="retention.diagnostic_snapshots_days",
-        category="retention",
-        setting_type="int",
-        default=30,
-        description="Delete device diagnostic snapshots older than N days",
-        min_value=1,
-        max_value=3650,
-    ),
-    SettingDefinition(
         key="retention.system_events_days",
         category="retention",
         setting_type="int",

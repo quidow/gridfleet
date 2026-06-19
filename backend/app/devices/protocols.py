@@ -41,13 +41,6 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class DiagnosticCapture(Protocol):
-    async def capture_snapshot(
-        self, db: AsyncSession, device: Device, *, trigger: str, reason: str | None
-    ) -> uuid.UUID | None: ...
-
-
-@runtime_checkable
 class ReviewProtocol(Protocol):
     async def mark_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
     async def clear_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...

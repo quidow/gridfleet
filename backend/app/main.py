@@ -49,7 +49,6 @@ from app.devices import services as device_services
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import state_write_guard
-from app.diagnostics import router as diagnostics_router
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import appium_direct
@@ -302,7 +301,6 @@ app.include_router(
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
 app.include_router(portability_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(diagnostics_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid_router_internal.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

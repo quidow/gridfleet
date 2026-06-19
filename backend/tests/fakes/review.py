@@ -1,19 +1,14 @@
 """Helper constructing a real ReviewService for tests.
 
-``ReviewService`` is a thin wrapper around the diagnostic-snapshot capture
-edge; tests that only need a constructed dependency use this factory rather
-than wiring the diagnostics service by hand.
+``ReviewService`` is a thin stateless wrapper around the ``review_required``
+shelving flag; tests that only need a constructed dependency use this factory
+rather than instantiating it by hand.
 """
 
 from __future__ import annotations
 
 from app.devices.services.review import ReviewService
-from app.diagnostics.services.export import DiagnosticExportService
 
 
 def build_review_service() -> ReviewService:
-    return ReviewService(diagnostics=DiagnosticExportService())
-
-
-def build_diagnostics_export() -> DiagnosticExportService:
-    return DiagnosticExportService()
+    return ReviewService()
