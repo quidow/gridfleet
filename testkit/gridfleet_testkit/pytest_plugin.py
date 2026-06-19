@@ -6,15 +6,13 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .appium import (
+from . import config
+from .client import GridFleetClient
+from .driver import (
     _remote_with_owned_endpoint,
-    _resolve_grid_url,
     build_appium_options,
-    get_device_config_for_driver,
-    get_device_test_data_for_driver,
 )
-from .client import GridFleetClient, _default_grid_url
-from .sessions import resolve_device_handle_from_driver
+from .session import get_device_config_for_driver, get_device_test_data_for_driver, resolve_device_handle_from_driver
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -25,12 +23,6 @@ if TYPE_CHECKING:
     from pluggy import Result
 
     from .types import JsonObject
-
-
-def __getattr__(name: str) -> str:
-    if name == "GRID_URL":
-        return _default_grid_url()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _normalize_usage_error_message(message: str) -> str:
@@ -97,7 +89,7 @@ def appium_driver(
     """
     options = _build_driver_options(request, gridfleet_client)
 
-    driver = _remote_with_owned_endpoint(_resolve_grid_url(None), options, gridfleet_client_config)
+    driver = _remote_with_owned_endpoint(config.resolve_grid_url(None), options, gridfleet_client_config)
     session_id = driver.session_id
     if not isinstance(session_id, str) or not session_id:
         raise RuntimeError("Created Appium driver did not expose a session ID")

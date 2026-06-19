@@ -129,6 +129,8 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
 | `GRIDFLEET_RUN_ID` | unset | Optional run id. When set, drivers are created through the run-scoped grid endpoint `GRID_URL/run/{id}` so sessions land only on devices reserved for the run. Unset = free session on unreserved devices. Set externally by the run launcher/CI. |
 
+The resolved URLs are also available programmatically via `gridfleet_testkit.grid_url()` and `gridfleet_testkit.api_url()`.
+
 ## Client Surface
 
 | Helper | Purpose |

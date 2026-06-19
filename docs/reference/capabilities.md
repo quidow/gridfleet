@@ -245,11 +245,11 @@ The auto-generated capabilities provide the manager-owned session defaults plus 
 import httpx
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
-from gridfleet_testkit import GRIDFLEET_API_URL, GRID_URL
+from gridfleet_testkit import api_url, grid_url
 
-caps = httpx.get(f"{GRIDFLEET_API_URL}/devices/{device_id}/capabilities", timeout=10).json()
+caps = httpx.get(f"{api_url()}/devices/{device_id}/capabilities", timeout=10).json()
 caps.update({"appium:app": "/path/to/app.apk"})
-driver = webdriver.Remote(GRID_URL, options=UiAutomator2Options().load_capabilities(caps))
+driver = webdriver.Remote(grid_url(), options=UiAutomator2Options().load_capabilities(caps))
 ```
 
 The supported `gridfleet-testkit` package does not currently wrap this endpoint as a dedicated client helper; fetch it directly from the API when needed.

@@ -5,7 +5,7 @@ from typing import ClassVar
 
 import pytest
 
-import gridfleet_testkit.appium as appium_mod
+import gridfleet_testkit.driver as appium_mod
 from gridfleet_testkit import pytest_plugin
 
 # Required for the pytester fixture (sub-pytest session runner).
@@ -141,7 +141,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
 
     driver.quit = quit_with_event
 
-    assert created_drivers[0][0] == pytest_plugin.GRID_URL
+    assert created_drivers[0][0] == pytest_plugin.config.grid_url()
     assert created_drivers[0][1]["platformName"] == "Android"
     assert created_drivers[0][1]["appium:automationName"] == "UiAutomator2"
     assert created_drivers[0][1]["appium:udid"] == "10.0.0.8:5555"
@@ -315,6 +315,31 @@ def test_appium_driver_fixture_uses_current_grid_url_env(monkeypatch):
     next(generator)
 
     assert created_drivers[0][0] == "http://lazy-plugin-grid:4444"
+
+
+def test_appium_driver_fixture_uses_run_scoped_url_when_run_id_set(monkeypatch):
+    """When GRIDFLEET_RUN_ID is set, the fixture connects to GRID_URL/run/{id}."""
+    created_drivers: list[tuple[str, dict[str, object], object]] = []
+    install_fake_appium(monkeypatch, created_drivers)
+    monkeypatch.setenv("GRID_URL", "http://router:4444")
+    monkeypatch.setenv("GRIDFLEET_RUN_ID", "0c8c057f-3ec1-4b9c-9d2e-9f3a86a2c001")
+
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
+
+    request = FakeRequest(
+        {
+            "pack_id": "appium-uiautomator2",
+            "platform_id": "android_mobile",
+        },
+        test_name="test_run_scoped",
+    )
+
+    fixture_fn = pytest_plugin.appium_driver.__wrapped__
+    generator = fixture_fn(request, gridfleet_client, None)
+    next(generator)
+
+    assert created_drivers[0][0] == "http://router:4444/run/0c8c057f-3ec1-4b9c-9d2e-9f3a86a2c001"
 
     with pytest.raises(StopIteration):
         next(generator)

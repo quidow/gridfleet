@@ -13,6 +13,9 @@ Environment variables read by the client:
 - GRIDFLEET_TESTKIT_USERNAME: optional Basic auth username.
 - GRIDFLEET_TESTKIT_PASSWORD: optional Basic auth password.
 
+The resolved URLs are also available programmatically via ``grid_url()`` and
+``api_url()`` exported from this package.
+
 Recipe-local run-state sharing variables are intentionally not exported from
 this package because run-state sharing is consumer policy.
 """
@@ -25,28 +28,28 @@ from .allocation import (
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
-from .appium import (
+from .client import (
+    GridFleetClient,
+)
+from .config import api_url, grid_url, run_grid_url
+from .driver import (
     build_appium_options,
     create_appium_driver,
+)
+from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
+from .run_lifecycle import HeartbeatThread, register_run_cleanup
+from .session import (
     get_connection_target_from_driver,
     get_device_config_for_driver,
     get_device_id_from_driver,
     get_device_test_data_for_driver,
+    resolve_device_handle_from_driver,
 )
-from .client import (
+from .types import (
     CooldownEscalatedResult,
     CooldownResult,
     CooldownSetResult,
-    GridFleetClient,
-    HeartbeatThread,
-    ReserveCapabilitiesUnsupportedError,
-    UnknownIncludeError,
-    _default_api_url,
-    _default_grid_url,
-    register_run_cleanup,
-    run_grid_url,
 )
-from .sessions import resolve_device_handle_from_driver
 
 try:
     __version__ = version("gridfleet-testkit")
@@ -54,8 +57,6 @@ except PackageNotFoundError:
     __version__ = "0.12.0"
 
 __all__ = [
-    "GRIDFLEET_API_URL",
-    "GRID_URL",
     "AllocatedDevice",
     "CooldownEscalatedResult",
     "CooldownResult",
@@ -66,23 +67,17 @@ __all__ = [
     "UnavailableInclude",
     "UnknownIncludeError",
     "__version__",
+    "api_url",
     "build_appium_options",
     "create_appium_driver",
     "get_connection_target_from_driver",
     "get_device_config_for_driver",
     "get_device_id_from_driver",
     "get_device_test_data_for_driver",
+    "grid_url",
     "hydrate_allocated_device",
     "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
     "resolve_device_handle_from_driver",
     "run_grid_url",
 ]
-
-
-def __getattr__(name: str) -> str:
-    if name == "GRID_URL":
-        return _default_grid_url()
-    if name == "GRIDFLEET_API_URL":
-        return _default_api_url()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
