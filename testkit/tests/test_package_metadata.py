@@ -19,9 +19,7 @@ def test_pytest_plugin_entry_point_is_declared() -> None:
 
 def test_bucket_a_public_exports_are_available() -> None:
     expected = {
-        "AllocatedDevice",
-        "hydrate_allocated_device",
-        "hydrate_allocated_device_from_driver",
+        "Device",
     }
 
     assert expected.issubset(set(gridfleet_testkit.__all__))
@@ -31,15 +29,13 @@ def test_bucket_a_public_exports_are_available() -> None:
 
 def test_documented_public_exports_are_available() -> None:
     expected = {
-        "AllocatedDevice",
+        "Device",
         "GridFleetClient",
         "HeartbeatThread",
         "build_appium_options",
         "create_appium_driver",
         "get_device_id_from_driver",
         "get_device_test_data_for_driver",
-        "hydrate_allocated_device",
-        "hydrate_allocated_device_from_driver",
         "register_run_cleanup",
     }
 

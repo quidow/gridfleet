@@ -10,7 +10,7 @@
 - Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
-- Supported public allocation/session helpers: `AllocatedDevice`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
+- Supported public device/session helpers: `Device` (return type of `get_device` / `list_devices`), `resolve_device_handle_from_driver`
 - Supported public result types: `CooldownResult`, `CooldownSetResult`, `CooldownEscalatedResult`
 - Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`, `GRIDFLEET_RUN_ID`
 - Manual hardware examples live under `testkit/examples/`
@@ -133,9 +133,8 @@ The resolved URLs are also available programmatically via `gridfleet_testkit.gri
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
-| `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
-| `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...); returns a list of typed `Device` objects |
+| `GridFleetClient.get_device(device_id)` | Fetch one device as a typed `Device` (curated base fields) by backend device id |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
 | `GridFleetClient.merge_device_test_data(device_id, body)` | Deep-merge into device test_data |
@@ -151,9 +150,7 @@ The resolved URLs are also available programmatically via `gridfleet_testkit.gri
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
-| `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional live capabilities and test data |
-| `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
-| `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
+| `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned device as a typed `Device` from a running Appium session |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
 Public Appium helpers:
@@ -191,8 +188,6 @@ from gridfleet_testkit import get_device_test_data_for_driver
 
 test_data = get_device_test_data_for_driver(driver)
 ```
-
-Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allocated.test_data` from the manager.
 
 ## Errors and Result Types
 
@@ -271,17 +266,17 @@ The manager enforces a maximum TTL via `general.device_cooldown_max_sec` (defaul
 
 ## Device Handles
 
-Router-routed runs no longer use per-worker claim/release calls. The pytest plugin composes the run-scoped grid endpoint (`GRID_URL/run/{run_id}`) from `GRIDFLEET_RUN_ID` and creates Appium sessions through it, so the router admits each session only to devices reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target.
+Router-routed runs no longer use per-worker claim/release calls. The pytest plugin composes the run-scoped grid endpoint (`GRID_URL/run/{run_id}`) from `GRIDFLEET_RUN_ID` and creates Appium sessions through it, so the router admits each session only to devices reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target — the result is a typed `Device`.
 
 ```python
-from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver
+from gridfleet_testkit import GridFleetClient, resolve_device_handle_from_driver
 
 client = GridFleetClient()
-device_handle = resolve_device_handle_from_driver(driver, client=client)
-allocated = hydrate_allocated_device(device_handle, run_id=run_id, client=client)
+device = resolve_device_handle_from_driver(driver, client=client)
+assert device.id
 ```
 
-`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries or rows returned by `get_device`.
+`Device` exposes the curated base fields (`id`, `identity_value`, `connection_target`, `name`, `pack_id`, `platform_id`, `platform_label`, `os_version`, `os_version_display`, `host_id`, `device_type`, `connection_type`, `manufacturer`, `model`, `tags`, `operational_state`, `is_reserved`). `client.get_device(device_id)` and `client.list_devices(...)` return the same type.
 
 ## Examples
 

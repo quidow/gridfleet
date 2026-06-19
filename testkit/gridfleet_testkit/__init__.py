@@ -16,15 +16,11 @@ this package because run-state sharing is consumer policy.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from .allocation import (
-    AllocatedDevice,
-    hydrate_allocated_device,
-    hydrate_allocated_device_from_driver,
-)
 from .client import (
     GridFleetClient,
 )
 from .config import api_url, grid_url, run_grid_url
+from .device import Device
 from .driver import (
     build_appium_options,
     create_appium_driver,
@@ -47,10 +43,10 @@ except PackageNotFoundError:
     __version__ = "0.12.0"
 
 __all__ = [
-    "AllocatedDevice",
     "CooldownEscalatedResult",
     "CooldownResult",
     "CooldownSetResult",
+    "Device",
     "GridFleetClient",
     "HeartbeatThread",
     "__version__",
@@ -60,8 +56,6 @@ __all__ = [
     "get_device_id_from_driver",
     "get_device_test_data_for_driver",
     "grid_url",
-    "hydrate_allocated_device",
-    "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
     "resolve_device_handle_from_driver",
     "run_grid_url",

@@ -11,7 +11,7 @@ import os
 from collections.abc import Generator
 
 import pytest
-from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver
+from gridfleet_testkit import GridFleetClient, resolve_device_handle_from_driver
 
 
 @pytest.fixture(scope="session")
@@ -28,18 +28,15 @@ def allocated_device(gridfleet_client: GridFleetClient, request: pytest.FixtureR
     # drivers outside the testkit fixtures.
     run_id = os.environ.get("GRIDFLEET_RUN_ID")
     if run_id is None:
-        # hydrate_allocated_device attributes the device to a run (run_id: str);
-        # this fixture is for reserved-run suites, so require the run context.
+        # This fixture is for reserved-run suites, so require the run context.
         pytest.skip("allocated_device requires a reserved run (GRIDFLEET_RUN_ID unset)")
     driver = request.getfixturevalue("appium_driver")
-    device_handle = resolve_device_handle_from_driver(driver, client=gridfleet_client)
-    # resolve_device_handle_from_driver returns the device-detail row keyed by `id`;
-    # hydrate_allocated_device requires a `device_id` key, so map it across.
-    device_handle["device_id"] = device_handle["id"]
-    yield hydrate_allocated_device(device_handle, run_id=run_id, client=gridfleet_client)
+    # resolve_device_handle_from_driver returns a typed Device for the device the
+    # live session landed on; read fields by attribute (e.g. device.id, device.tags).
+    yield resolve_device_handle_from_driver(driver, client=gridfleet_client)
 ```
 
-The plugin owns local fixture naming and worker policy. GridFleet testkit owns API calls, run-scoped grid URL resolution, session reporting helpers, and allocated-device hydration.
+The plugin owns local fixture naming and worker policy. GridFleet testkit owns API calls, run-scoped grid URL resolution, session reporting helpers, and typed device reads.
 
 ## Device Listing
 
