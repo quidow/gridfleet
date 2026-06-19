@@ -1,11 +1,5 @@
 """Supported Python integration helpers for GridFleet.
 
-`device_config` values returned by the manager are verbatim; the testkit no
-longer distinguishes between masked and revealed payloads. Code that wants the
-live Appium-side config can resolve the device id from the
-`appium:gridfleet:deviceId` session capability via `get_device_id_from_driver(driver)`
-and then call `client.get_device_config(device_id)`.
-
 Environment variables read by the client:
 
 - GRID_URL: WebDriver router URL used by Appium helper defaults.
@@ -24,7 +18,6 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .allocation import (
     AllocatedDevice,
-    UnavailableInclude,
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
@@ -36,11 +29,8 @@ from .driver import (
     build_appium_options,
     create_appium_driver,
 )
-from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread, register_run_cleanup
 from .session import (
-    get_connection_target_from_driver,
-    get_device_config_for_driver,
     get_device_id_from_driver,
     get_device_test_data_for_driver,
     resolve_device_handle_from_driver,
@@ -63,15 +53,10 @@ __all__ = [
     "CooldownSetResult",
     "GridFleetClient",
     "HeartbeatThread",
-    "ReserveCapabilitiesUnsupportedError",
-    "UnavailableInclude",
-    "UnknownIncludeError",
     "__version__",
     "api_url",
     "build_appium_options",
     "create_appium_driver",
-    "get_connection_target_from_driver",
-    "get_device_config_for_driver",
     "get_device_id_from_driver",
     "get_device_test_data_for_driver",
     "grid_url",

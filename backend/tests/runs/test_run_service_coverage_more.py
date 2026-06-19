@@ -14,7 +14,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
-from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
@@ -23,7 +22,7 @@ from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
-from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
+from app.runs.schemas import DeviceRequirement
 from app.runs.service_allocator import (
     RunAllocatorService,
     _find_matching_devices,
@@ -47,7 +46,7 @@ RUN_LOOKUP_MODULE = "app.runs.service_reservation"
 
 _settings = FakeSettingsReader({})
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
-_query_svc = RunQueryService(capability=DeviceCapabilityService())
+_query_svc = RunQueryService()
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
@@ -64,83 +63,6 @@ _failure_svc = RunFailureService(
     health=AsyncMock(),
     incidents=LifecycleIncidentService(),
 )
-
-
-async def test_run_service_include_and_hydration_error_branches(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="Hydration Device",
-        identity_value="run-hydrate-001",
-        operational_state=DeviceOperationalState.available,
-        test_data={"token": "secret"},
-    )
-    info = ReservedDeviceInfo(
-        device_id=str(device.id),
-        identity_value=device.identity_value,
-        name=device.name,
-        connection_target=device.connection_target,
-        pack_id=device.pack_id,
-        platform_id=device.platform_id,
-        os_version=device.os_version,
-    )
-
-    monkeypatch.setattr("app.runs.service_query.config_service.get_device_config", AsyncMock(side_effect=RuntimeError))
-    monkeypatch.setattr(
-        "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
-        AsyncMock(side_effect=ValueError),
-    )
-
-    await _query_svc.hydrate_reserved_device_info(
-        db_session,
-        info,
-        device,
-        includes={"config", "capabilities", "test_data"},
-    )
-
-    assert info.config is None
-    assert info.live_capabilities is None
-    assert info.test_data == {"token": "secret"}
-    assert [(item.include, item.reason) for item in info.unavailable_includes or []] == [
-        ("config", "RuntimeError"),
-        ("capabilities", "ValueError"),
-    ]
-
-    run_service.mark_reserved_device_info_includes_unavailable(
-        info,
-        includes={"config", "capabilities", "test_data"},
-        reason="not loaded",
-    )
-    assert info.test_data is None
-    assert {item.include for item in info.unavailable_includes or []} == {"config", "capabilities", "test_data"}
-
-    class BrokenTestDataDevice:
-        @property
-        def test_data(self) -> dict[str, object]:
-            raise RuntimeError("json decode failed")
-
-    broken_info = ReservedDeviceInfo(
-        device_id=str(device.id),
-        identity_value=device.identity_value,
-        name=device.name,
-        connection_target=device.connection_target,
-        pack_id=device.pack_id,
-        platform_id=device.platform_id,
-        os_version=device.os_version,
-    )
-    await _query_svc.hydrate_reserved_device_info(
-        db_session,
-        broken_info,
-        BrokenTestDataDevice(),  # type: ignore[arg-type]
-        includes={"test_data"},
-    )
-    assert broken_info.test_data is None
-    assert broken_info.unavailable_includes is not None
-    assert broken_info.unavailable_includes[0].reason == "RuntimeError"
 
 
 async def test_find_matching_devices_filters_os_tags_and_allocation(

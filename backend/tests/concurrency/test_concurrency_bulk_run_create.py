@@ -176,7 +176,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 health=AsyncMock(),
                 incidents=LifecycleIncidentService(),
             )
-            run_query = RunQueryService(capability=DeviceCapabilityService())
+            run_query = RunQueryService()
             return RunServices(
                 allocator=run_allocator,
                 lifecycle=run_lifecycle,

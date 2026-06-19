@@ -13,14 +13,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class UnavailableInclude:
-    """One include key the backend could not satisfy on this allocation."""
-
-    include: str
-    reason: str
-
-
-@dataclass(frozen=True)
 class AllocatedDevice:
     """Combined view of an allocated device, ready for driver creation."""
 
@@ -38,10 +30,8 @@ class AllocatedDevice:
     connection_type: str
     manufacturer: str | None
     model: str | None
-    config: JsonObject | None
     live_capabilities: JsonObject | None
     test_data: JsonObject | None = None
-    unavailable_includes: tuple[UnavailableInclude, ...] = ()
     tags: dict[str, str] | None = None
 
     @property
@@ -61,14 +51,11 @@ class AllocatedDevice:
 
     @property
     def device_ip(self) -> str | None:
-        """Best-effort address, preferring host IP before live device/config IP fields."""
+        """Best-effort address, preferring host IP before the live device IP field."""
         if self.host_ip:
             return self.host_ip
         live_value = (self.live_capabilities or {}).get("appium:deviceIP")
-        if isinstance(live_value, str) and live_value:
-            return live_value
-        config_value = (self.config or {}).get("ip")
-        return config_value if isinstance(config_value, str) and config_value else None
+        return live_value if isinstance(live_value, str) and live_value else None
 
     @property
     def platform_name(self) -> str:
@@ -101,62 +88,24 @@ def _merge_device_detail(payload: JsonObject, detail: JsonObject) -> JsonObject:
     return merged
 
 
-def _parse_unavailable_includes(payload: JsonObject) -> tuple[UnavailableInclude, ...]:
-    raw = payload.get("unavailable_includes")
-    if not isinstance(raw, list):
-        return ()
-    parsed: list[UnavailableInclude] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        include = entry.get("include")
-        reason = entry.get("reason")
-        if isinstance(include, str) and include and isinstance(reason, str) and reason:
-            parsed.append(UnavailableInclude(include=include, reason=reason))
-    return tuple(parsed)
-
-
 def hydrate_allocated_device(
     device_handle: JsonObject,
     *,
     run_id: str,
     client: GridFleetClient,
-    fetch_config: bool = True,
     fetch_capabilities: bool = False,
     fetch_test_data: bool = False,
 ) -> AllocatedDevice:
-    """Combine a device handle with optional static config and live capabilities."""
+    """Combine a device handle with optional live capabilities and test data."""
     payload = dict(device_handle)
     device_id = _string_value(payload, "device_id")
     if _needs_device_detail(payload):
         payload = _merge_device_detail(payload, client.get_device(device_id))
 
-    unavailable_includes = _parse_unavailable_includes(payload)
-    unavailable_set = {entry.include for entry in unavailable_includes}
-
     connection_target = _optional_string_value(payload, "connection_target")
-    inline_config = payload.get("config")
-    if isinstance(inline_config, dict):
-        config: JsonObject | None = inline_config
-    elif fetch_config and "config" not in unavailable_set:
-        config = client.get_device_config(device_id)
-    else:
-        config = None
-    inline_capabilities = payload.get("live_capabilities")
-    if isinstance(inline_capabilities, dict):
-        live_capabilities: JsonObject | None = inline_capabilities
-    elif fetch_capabilities and "capabilities" not in unavailable_set:
-        live_capabilities = client.get_device_capabilities(device_id)
-    else:
-        live_capabilities = None
+    live_capabilities: JsonObject | None = client.get_device_capabilities(device_id) if fetch_capabilities else None
+    test_data: JsonObject | None = client.get_device_test_data(device_id) if fetch_test_data else None
 
-    inline_test_data = payload.get("test_data")
-    if isinstance(inline_test_data, dict):
-        test_data: JsonObject | None = inline_test_data
-    elif fetch_test_data and "test_data" not in unavailable_set:
-        test_data = client.get_device_test_data(device_id)
-    else:
-        test_data = None
     inline_tags = payload.get("tags")
     if isinstance(inline_tags, dict):
         # Preserve the manager payload verbatim (GridFleet tags are string->string);
@@ -180,10 +129,8 @@ def hydrate_allocated_device(
         connection_type=_string_value(payload, "connection_type"),
         manufacturer=_optional_string_value(payload, "manufacturer"),
         model=_optional_string_value(payload, "model"),
-        config=config,
         live_capabilities=live_capabilities,
         test_data=test_data,
-        unavailable_includes=unavailable_includes,
         tags=tags,
     )
 

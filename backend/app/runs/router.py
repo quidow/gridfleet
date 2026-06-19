@@ -3,8 +3,6 @@ from datetime import UTC, date, datetime, time
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.agent_comm.reconfigure_delivery import InlineReconfigureDeliveryFailedError
 from app.core.dependencies import DbDep
@@ -12,7 +10,6 @@ from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.http_errors import found_or_404
 from app.core.pagination import CursorPaginationError
-from app.devices.models import Device
 from app.runs import service as run_service
 from app.runs.dependencies import RunServicesDep
 from app.runs.models import RunState
@@ -55,54 +52,13 @@ async def create_run(
     data: RunCreate,
     db: DbDep,
     run_services: RunServicesDep,
-    include: str | None = Query(
-        None, description="Comma-separated: config,test_data (capabilities not supported on reserve)"
-    ),
 ) -> dict[str, Any]:
-    includes = run_service.parse_includes(include, allowed={"config", "capabilities", "test_data"})
-    if "capabilities" in includes:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "reserve_capabilities_unsupported",
-                "message": (
-                    "include=capabilities is not supported on reserve; reserved devices may not be"
-                    " online and capabilities require a live agent probe"
-                ),
-            },
-        )
-
     try:
         run, device_infos = await run_services.allocator.create_run(db, data)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-
-    if includes:
-        device_ids = [uuid.UUID(info.device_id) for info in device_infos]
-        devices = (
-            (
-                await db.execute(
-                    select(Device).options(selectinload(Device.appium_node)).where(Device.id.in_(device_ids))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        device_by_id = {str(d.id): d for d in devices}
-        pairs = []
-        for info in device_infos:
-            device = device_by_id.get(info.device_id)
-            if device is None:
-                run_service.mark_reserved_device_info_includes_unavailable(
-                    info,
-                    includes=includes,
-                    reason="device_not_found",
-                )
-                continue
-            pairs.append((info, device))
-        await run_services.query.hydrate_reserved_device_infos(db, pairs, includes=includes)
 
     return {
         "id": run.id,

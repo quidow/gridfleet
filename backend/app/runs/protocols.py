@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
@@ -94,12 +94,6 @@ class RunQueryProtocol(Protocol):
     async def fetch_session_counts(
         self, db: AsyncSession, run_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, SessionCounts]: ...
-    async def hydrate_reserved_device_info(
-        self, db: AsyncSession, info: ReservedDeviceInfo, device: Device, *, includes: set[str]
-    ) -> None: ...
-    async def hydrate_reserved_device_infos(
-        self, db: AsyncSession, pairs: list[tuple[ReservedDeviceInfo, Device]], *, includes: set[str]
-    ) -> None: ...
 
 
 @runtime_checkable
@@ -156,13 +150,6 @@ class RunReservationProtocol(Protocol):
     async def restore_device_to_run(
         self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
     ) -> TestRun | None: ...
-
-
-@runtime_checkable
-class DeviceCapabilityReader(Protocol):
-    async def get_device_capabilities(
-        self, db: AsyncSession, device: Device, *, active_connection_target: str | None = ...
-    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable

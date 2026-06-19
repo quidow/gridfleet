@@ -12,7 +12,7 @@ from .driver import (
     _remote_with_owned_endpoint,
     build_appium_options,
 )
-from .session import get_device_config_for_driver, get_device_test_data_for_driver, resolve_device_handle_from_driver
+from .session import get_device_test_data_for_driver, resolve_device_handle_from_driver
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -123,24 +123,6 @@ def pytest_runtest_makereport(item: pytest.Item) -> Generator[None, Result[pytes
 @pytest.fixture(scope="session")
 def gridfleet_client() -> GridFleetClient:
     return GridFleetClient()
-
-
-@pytest.fixture
-def device_config(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
-    """
-    Fetch device config for the device the live session landed on.
-
-    The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
-
-    Usage:
-        def test_login(appium_driver, device_config):
-            username = device_config["app_username"]
-    """
-    try:
-        return get_device_config_for_driver(appium_driver, gridfleet_client=gridfleet_client)
-    except ValueError as exc:
-        pytest.skip(str(exc))
-        raise RuntimeError("unreachable: pytest.skip did not raise") from exc
 
 
 @pytest.fixture

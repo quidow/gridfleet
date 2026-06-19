@@ -247,12 +247,6 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 - healthy reserved siblings remain attached to the run
 - invalid run/device state currently returns `409`
 
-`POST /api/runs` supports an optional `?include=` query parameter:
-
-- `include=config` — inlines the Appium configuration for each reserved device in the response. Useful when the CI orchestrator wants device-level config without a follow-up request.
-- `include=capabilities` is rejected with `422` (`details.code = "reserve_capabilities_unsupported"`) because live Appium capabilities are only available after a Grid session is established. Read the device id from the live session capability `appium:gridfleet:deviceId` and fetch it with `GET /api/devices/{id}`.
-- Unknown include values return `422` with `details.code = "unknown_include"`.
-
 ## Sessions
 
 | Method | Path | Purpose | Main input | Primary response |

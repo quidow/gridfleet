@@ -171,7 +171,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 health=AsyncMock(),
                 incidents=LifecycleIncidentService(),
             )
-            run_query = RunQueryService(capability=DeviceCapabilityService())
+            run_query = RunQueryService()
             return RunServices(
                 allocator=run_allocator,
                 lifecycle=run_lifecycle,

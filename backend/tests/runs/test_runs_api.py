@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
-from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host
 from app.packs.models import DriverPack
@@ -29,7 +28,7 @@ from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 _settings = FakeSettingsReader({})
-_query_svc = RunQueryService(capability=DeviceCapabilityService())
+_query_svc = RunQueryService()
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,

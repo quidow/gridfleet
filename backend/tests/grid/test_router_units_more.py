@@ -70,7 +70,6 @@ from app.plugins.service import PluginService
 from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import (
-    ReservedDeviceInfo,
     RunCooldownRequest,
     RunCreate,
     RunPreparationFailureReport,
@@ -345,15 +344,12 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         query=AsyncMock(),
     )
     mock_rs_create.allocator.create_run = AsyncMock(return_value=(run, [info]))
-    mock_rs_create.query.hydrate_reserved_device_infos = AsyncMock()
     created = await runs.create_run(
         RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android"}]),
-        include="config",
         db=db,
         run_services=mock_rs_create,
     )
     assert created["id"] == run.id
-    mock_rs_create.query.hydrate_reserved_device_infos.assert_awaited_once()
 
     pack_id = "appium-demo"
     pack = SimpleNamespace(id=pack_id)
@@ -651,47 +647,13 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
     assert caught.value.status_code == 404
 
 
-async def test_runs_router_missing_device_and_cooldown_branches() -> None:
-    info = ReservedDeviceInfo(
-        device_id=str(uuid.uuid4()),
-        identity_value="missing-device",
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        os_version="14",
-    )
-    run = SimpleNamespace(
-        id=uuid.uuid4(),
-        name="run",
-        state=RunState.active,
-        requirements=[],
-        ttl_minutes=60,
-        heartbeat_timeout_sec=120,
-        created_at=datetime.now(UTC),
-    )
+async def test_runs_router_get_run_404_and_cooldown_branches() -> None:
     mock_rs = SimpleNamespace(
         allocator=AsyncMock(),
         lifecycle=AsyncMock(),
         failure=AsyncMock(),
         query=AsyncMock(),
     )
-    mock_rs.allocator.create_run = AsyncMock(return_value=(run, [info]))
-    mock_rs.query.hydrate_reserved_device_infos = AsyncMock()
-
-    with (
-        patch.object(runs.run_service, "mark_reserved_device_info_includes_unavailable") as mark,
-        patch.object(runs, "select") as select_mock,
-    ):
-        select_mock.return_value.where.return_value = object()
-        db = DummySession(execute_result=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
-        response = await runs.create_run(
-            RunCreate(name="r", requirements=[]),
-            include="config",
-            db=db,
-            run_services=mock_rs,
-        )
-    assert response["id"] == run.id
-    mark.assert_called_once()
-    mock_rs.query.hydrate_reserved_device_infos.assert_awaited_once()
 
     with patch.object(runs.run_service, "get_run", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as caught:
@@ -2442,15 +2404,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         query=AsyncMock(),
     )
 
-    with pytest.raises(HTTPException) as exc:
-        await runs.create_run(
-            payload,
-            include="capabilities",
-            db=object(),
-            run_services=mock_rs,
-        )
-    assert exc.value.status_code == 422
-
     for error, status_code in (
         (PackUnavailableError("missing"), 422),
         (PackDisabledError("disabled"), 422),
@@ -2460,7 +2413,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         with pytest.raises(HTTPException) as exc:
             await runs.create_run(
                 payload,
-                include=None,
                 db=object(),
                 run_services=mock_rs,
             )
@@ -2477,7 +2429,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     mock_rs.allocator.create_run = AsyncMock(return_value=(run, [device_info]))
     created = await runs.create_run(
         payload,
-        include=None,
         db=object(),
         run_services=mock_rs,
     )

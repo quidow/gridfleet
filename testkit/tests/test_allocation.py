@@ -6,7 +6,6 @@ import pytest
 
 from gridfleet_testkit.allocation import (
     AllocatedDevice,
-    UnavailableInclude,
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
@@ -17,14 +16,9 @@ if TYPE_CHECKING:
 
 class FakeClient:
     def __init__(self) -> None:
-        self.config_calls: list[str] = []
         self.capability_calls: list[str] = []
         self.device_calls: list[str] = []
         self.test_data_calls: list[str] = []
-
-    def get_device_config(self, device_id: str) -> JsonObject:
-        self.config_calls.append(device_id)
-        return {"ip": "10.0.0.8", "username": "operator"}
 
     def get_device_capabilities(self, device_id: str) -> JsonObject:
         self.capability_calls.append(device_id)
@@ -67,7 +61,7 @@ def device_handle(**overrides: object) -> JsonObject:
     return payload
 
 
-def test_hydrate_allocated_device_uses_device_handle_and_fetches_config() -> None:
+def test_hydrate_allocated_device_uses_device_handle() -> None:
     client = FakeClient()
 
     allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client)
@@ -87,11 +81,9 @@ def test_hydrate_allocated_device_uses_device_handle_and_fetches_config() -> Non
         connection_type="usb",
         manufacturer="Google",
         model="Pixel 6",
-        config={"ip": "10.0.0.8", "username": "operator"},
         live_capabilities=None,
         test_data=None,
     )
-    assert client.config_calls == ["dev-1"]
     assert client.capability_calls == []
     assert client.device_calls == []
 
@@ -105,7 +97,7 @@ def test_hydrate_allocated_device_fetches_device_detail_when_handle_lacks_richer
     del payload["manufacturer"]
     del payload["model"]
 
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
 
     assert allocated.name == "Pixel 6"
     assert allocated.device_type == "real_device"
@@ -113,7 +105,6 @@ def test_hydrate_allocated_device_fetches_device_detail_when_handle_lacks_richer
     assert allocated.manufacturer == "Google"
     assert allocated.model == "Pixel 6"
     assert client.device_calls == ["dev-1"]
-    assert client.config_calls == []
 
 
 def test_hydrate_allocated_device_requires_device_id() -> None:
@@ -132,7 +123,6 @@ def test_hydrate_allocated_device_fetches_capabilities_when_requested() -> None:
         device_handle(),
         run_id="run-1",
         client=client,
-        fetch_config=False,
         fetch_capabilities=True,
     )
 
@@ -156,7 +146,6 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
         connection_type="virtual",
         manufacturer=None,
         model=None,
-        config={"ip": "10.0.0.8"},
         live_capabilities={"appium:udid": "emulator-5554", "appium:deviceIP": "10.0.0.9"},
         test_data=None,
     )
@@ -168,152 +157,9 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.platform_name == "Android"
 
 
-def test_allocated_device_defaults_unavailable_includes() -> None:
-    allocated = AllocatedDevice(
-        run_id="run-1",
-        device_id="dev-1",
-        identity_value="SERIAL123",
-        name="Pixel 6",
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        platform_label="Android",
-        os_version="14",
-        connection_target="SERIAL123",
-        host_ip="192.168.1.10",
-        device_type="real_device",
-        connection_type="usb",
-        manufacturer="Google",
-        model="Pixel 6",
-        config=None,
-        live_capabilities=None,
-        test_data=None,
-    )
-
-    assert allocated.unavailable_includes == ()
-    assert isinstance(allocated.unavailable_includes, tuple)
-    assert all(isinstance(u, UnavailableInclude) for u in allocated.unavailable_includes)
-
-
-def test_hydrate_allocated_device_uses_inline_config_and_skips_get() -> None:
-    client = FakeClient()
-    payload = device_handle(config={"ip": "10.0.0.8", "username": "operator", "password": "********"})
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
-
-    assert allocated.config == {"ip": "10.0.0.8", "username": "operator", "password": "********"}
-    assert client.config_calls == []
-    assert client.device_calls == []
-
-
-def test_hydrate_allocated_device_falls_back_to_get_device_config_when_inline_absent() -> None:
-    """get_device_config must be called with device_id, not connection_target."""
-    client = FakeClient()
-    # Use distinct values so the assertion is meaningful: "dev-1" != "10.0.0.8:5555"
-    payload = device_handle(device_id="dev-1", connection_target="10.0.0.8:5555")
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
-
-    assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
-    assert client.config_calls == ["dev-1"], "get_device_config must receive device_id, not connection_target"
-    assert "10.0.0.8:5555" not in client.config_calls
-
-
-def test_hydrate_allocated_device_uses_inline_live_capabilities_and_skips_get() -> None:
-    client = FakeClient()
-    payload = device_handle(live_capabilities={"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"})
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
-
-    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"}
-    assert client.capability_calls == []
-
-
-def test_hydrate_allocated_device_uses_inline_live_capabilities_even_when_fetch_capabilities_false() -> None:
-    client = FakeClient()
-    payload = device_handle(live_capabilities={"appium:udid": "INLINE-CAP"})
-
-    allocated = hydrate_allocated_device(
-        payload,
-        run_id="run-1",
-        client=client,
-        fetch_config=False,
-        fetch_capabilities=False,
-    )
-
-    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP"}
-    assert client.capability_calls == []
-
-
-def test_hydrate_allocated_device_surfaces_unavailable_includes() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
-    )
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
-
-    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
-
-
-def test_hydrate_allocated_device_unavailable_includes_defaults_to_empty_tuple() -> None:
-    client = FakeClient()
-
-    allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client, fetch_config=False)
-
-    assert allocated.unavailable_includes == ()
-
-
-def test_hydrate_allocated_device_skips_malformed_unavailable_include_entries() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[
-            {"include": "capabilities", "reason": "device_offline"},
-            {"include": "config"},
-            "not-a-dict",
-            {"reason": "missing_include_key"},
-        ],
-    )
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
-
-    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
-
-
-def test_hydrate_allocated_device_skips_config_fetch_when_marked_unavailable() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[{"include": "config", "reason": "device_offline"}],
-    )
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
-
-    assert allocated.config is None
-    assert client.config_calls == []
-    assert allocated.unavailable_includes == (UnavailableInclude(include="config", reason="device_offline"),)
-
-
-def test_hydrate_allocated_device_skips_capabilities_fetch_when_marked_unavailable() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
-    )
-
-    allocated = hydrate_allocated_device(
-        payload,
-        run_id="run-1",
-        client=client,
-        fetch_config=False,
-        fetch_capabilities=True,
-    )
-
-    assert allocated.live_capabilities is None
-    assert client.capability_calls == []
-    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
-
-
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
     client = FakeClient()
-    allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client, fetch_config=False)
+    allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client)
     driver = type("Driver", (), {"capabilities": {"appium:udid": "SERIAL123", "platformName": "Android"}})()
 
     updated = hydrate_allocated_device_from_driver(allocated, driver, client=client)
@@ -323,25 +169,12 @@ def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> N
     assert allocated.live_capabilities is None
 
 
-def test_hydrate_uses_inline_test_data() -> None:
-    client = FakeClient()
-    allocated = hydrate_allocated_device(
-        device_handle(test_data={"k": "v"}),
-        run_id="run-1",
-        client=client,
-        fetch_config=False,
-    )
-    assert allocated.test_data == {"k": "v"}
-    assert client.test_data_calls == []
-
-
 def test_hydrate_allocated_device_populates_inline_tags() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(
         device_handle(tags={"screen_type": "4k"}),
         run_id="run-1",
         client=client,
-        fetch_config=False,
     )
     assert allocated.tags == {"screen_type": "4k"}
 
@@ -352,7 +185,6 @@ def test_hydrate_defaults_test_data_to_none_when_absent() -> None:
         device_handle(),
         run_id="run-1",
         client=client,
-        fetch_config=False,
     )
     assert allocated.test_data is None
     assert client.test_data_calls == []
@@ -364,20 +196,7 @@ def test_hydrate_fetches_test_data_when_flag_enabled() -> None:
         device_handle(),
         run_id="run-1",
         client=client,
-        fetch_config=False,
         fetch_test_data=True,
     )
     assert allocated.test_data == {"fetched": True}
     assert client.test_data_calls == ["dev-1"]
-
-
-def test_hydrate_fetches_config_when_connection_target_absent() -> None:
-    client = FakeClient()
-    allocated = hydrate_allocated_device(
-        device_handle(connection_target=None),
-        run_id="run-1",
-        client=client,
-        fetch_config=True,
-    )
-    assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
-    assert client.config_calls == ["dev-1"]
