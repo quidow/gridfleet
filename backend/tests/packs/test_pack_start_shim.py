@@ -90,28 +90,6 @@ async def test_pack_start_payload_carries_insecure_features_from_manifest(db_ses
 
 
 @pytest.mark.asyncio
-async def test_pack_start_payload_carries_grid_slots_from_manifest(db_session: AsyncSession) -> None:
-    await seed_test_packs(db_session)
-    await db_session.commit()
-
-    device = _make_device("android_mobile", DeviceType.real_device, pack_id="appium-uiautomator2")
-    payload = await build_pack_start_payload(db_session, device=device)
-    assert payload is not None
-    assert payload["grid_slots"] == ["native", "chrome"]
-
-
-@pytest.mark.asyncio
-async def test_pack_start_payload_grid_slots_native_only_for_xcuitest(db_session: AsyncSession) -> None:
-    await seed_test_packs(db_session)
-    await db_session.commit()
-
-    device = _make_device("ios", DeviceType.real_device, pack_id="appium-xcuitest")
-    payload = await build_pack_start_payload(db_session, device=device)
-    assert payload is not None
-    assert payload["grid_slots"] == ["native"]
-
-
-@pytest.mark.asyncio
 async def test_pack_start_payload_includes_launch_metadata_keys(db_session: AsyncSession) -> None:
     """build_pack_start_payload includes adapter-owned launch metadata."""
     await seed_test_packs(db_session)

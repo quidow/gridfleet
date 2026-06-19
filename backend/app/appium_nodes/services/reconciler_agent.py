@@ -419,8 +419,6 @@ async def start_remote_node(
         payload["pack_id"] = pack_overrides["pack_id"]
         payload["platform_id"] = pack_overrides["platform_id"]
         payload["appium_platform_name"] = pack_overrides["appium_platform_name"]
-        if "grid_slots" in pack_overrides:
-            payload["grid_slots"] = pack_overrides["grid_slots"]
         for key in ("lifecycle_actions", "connection_behavior", "insecure_features"):
             if key in pack_overrides:
                 payload[key] = pack_overrides[key]
