@@ -5159,12 +5159,6 @@ export interface components {
             requested_capabilities?: {
                 [key: string]: unknown;
             } | null;
-            requested_connection_type?: components["schemas"]["ConnectionType"] | null;
-            requested_device_type?: components["schemas"]["DeviceType"] | null;
-            /** Requested Pack Id */
-            requested_pack_id?: string | null;
-            /** Requested Platform Id */
-            requested_platform_id?: string | null;
             /** Run Id */
             run_id?: string | null;
             /** Session Id */
@@ -5240,12 +5234,6 @@ export interface components {
             requested_capabilities?: {
                 [key: string]: unknown;
             } | null;
-            requested_connection_type?: components["schemas"]["ConnectionType"] | null;
-            requested_device_type?: components["schemas"]["DeviceType"] | null;
-            /** Requested Pack Id */
-            requested_pack_id?: string | null;
-            /** Requested Platform Id */
-            requested_platform_id?: string | null;
             /** Run Id */
             run_id?: string | null;
             /** Session Id */

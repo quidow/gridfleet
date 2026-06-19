@@ -6,38 +6,11 @@ import { PlatformIcon } from '../PlatformIcon';
 import { Badge } from '../ui/Badge';
 import type { DataTableColumn } from '../ui/DataTable';
 import type { SessionDetail, SessionSortKey } from '../../types';
-import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import { formatDateTime, formatDuration, formatRelativeTime } from '../../utils/dateFormatting';
 
 function formatSessionIdentifier(sessionId: string): string {
   if (sessionId.length <= 18) return sessionId;
   return `${sessionId.slice(0, 8)}...${sessionId.slice(-6)}`;
-}
-
-function isSetupFailureSession(session: SessionDetail): boolean {
-  return session.device_id === null && session.status === 'error';
-}
-
-function buildRequestedLaneSummary(session: SessionDetail): string | null {
-  const parts: string[] = [];
-  if (session.requested_platform_id) {
-    parts.push(resolvePlatformLabel(session.requested_platform_id, null));
-  }
-  if (session.requested_device_type) {
-    parts.push(DEVICE_TYPE_LABELS[session.requested_device_type]);
-  }
-  if (session.requested_connection_type) {
-    parts.push(CONNECTION_TYPE_LABELS[session.requested_connection_type]);
-  }
-  return parts.length > 0 ? parts.join(' • ') : null;
-}
-
-function buildFailureSummary(session: SessionDetail): string | null {
-  if (!session.error_type && !session.error_message) return null;
-  if (session.error_type && session.error_message) {
-    return `${session.error_type}: ${session.error_message}`;
-  }
-  return session.error_type ?? session.error_message;
 }
 
 async function copySessionId(sessionId: string): Promise<void> {
@@ -85,15 +58,10 @@ export function buildSessionColumns(
       header: 'Session ID',
       sortKey: 'session_id',
       render: (s) => {
-        const setupFailure = isSetupFailureSession(s);
         return (
           <div className="flex items-center gap-2">
             <div className="space-y-0.5">
-              {setupFailure && <p className="text-xs uppercase tracking-wide text-text-3">Synthetic ID</p>}
-              <span
-                className={`font-mono text-sm ${setupFailure ? 'text-text-3' : 'text-text-2'}`}
-                title={s.session_id}
-              >
+              <span className="font-mono text-sm text-text-2" title={s.session_id}>
                 {formatSessionIdentifier(s.session_id)}
               </span>
             </div>
@@ -118,20 +86,11 @@ export function buildSessionColumns(
       header: 'Device',
       sortKey: 'device',
       render: (s) => {
-        const laneSummary = buildRequestedLaneSummary(s);
         if (s.device_name && s.device_id) {
           return (
             <Link to={`/devices/${s.device_id}`} className="text-accent hover:underline text-sm">
               {s.device_name}
             </Link>
-          );
-        }
-        if (isSetupFailureSession(s)) {
-          return (
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium text-text-1">Setup failure</p>
-              <p className="text-xs text-text-3">{laneSummary ?? 'Requested lane unavailable'}</p>
-            </div>
           );
         }
         return <span className="text-text-3 text-sm">-</span>;
@@ -154,11 +113,9 @@ export function buildSessionColumns(
           </div>
         );
       }
-      const failureSummary = isSetupFailureSession(s) ? buildFailureSummary(s) : null;
       return (
         <div className="space-y-0.5">
           <p className="text-sm text-text-2">{s.test_name ?? '-'}</p>
-          {failureSummary && <p className="text-xs text-danger-foreground">{failureSummary}</p>}
         </div>
       );
     },
@@ -170,7 +127,7 @@ export function buildSessionColumns(
       header: 'Platform',
       sortKey: 'platform',
       render: (s) => {
-        const platformId = s.device_platform_id ?? s.requested_platform_id;
+        const platformId = s.device_platform_id;
         const platformLabel = s.device_platform_label ?? null;
         return platformId ? <PlatformIcon platformId={platformId} platformLabel={platformLabel} /> : <span className="text-text-3 text-sm">-</span>;
       },

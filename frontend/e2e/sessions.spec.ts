@@ -12,10 +12,6 @@ type SessionRow = {
   started_at: string;
   ended_at: string | null;
   status: string;
-  requested_pack_id: string | null;
-  requested_platform_id: string | null;
-  requested_device_type: string | null;
-  requested_connection_type: string | null;
   requested_capabilities: Record<string, unknown> | null;
   actual_capabilities: Record<string, unknown> | null;
   error_type: string | null;
@@ -38,10 +34,6 @@ async function mockSessionsSurface(page: Page) {
       started_at: new Date(Date.UTC(2026, 3, 1, 10, 0, 0)).toISOString(),
       ended_at: new Date(Date.UTC(2026, 3, 1, 10, 1, 0)).toISOString(),
       status: 'error',
-      requested_pack_id: 'appium-uiautomator2',
-      requested_platform_id: 'android_mobile',
-      requested_device_type: 'real_device',
-      requested_connection_type: 'network',
       requested_capabilities: {
         platformName: 'Android',
         'appium:automationName': 'UiAutomator2',
@@ -64,10 +56,6 @@ async function mockSessionsSurface(page: Page) {
       // The first row is the live running session used by the active-tab tests.
       ended_at: index === 0 ? null : new Date(Date.UTC(2026, 3, 1, 9 - index, 12, 0)).toISOString(),
       status: index === 0 ? 'running' : index % 3 === 0 ? 'passed' : index % 3 === 1 ? 'failed' : 'running',
-      requested_pack_id: null,
-      requested_platform_id: null,
-      requested_device_type: null,
-      requested_connection_type: null,
       requested_capabilities: index === 0 ? { platformName: 'Android' } : null,
       actual_capabilities: index === 0 ? { 'appium:systemPort': 8201 } : null,
       error_type: null,
@@ -121,10 +109,6 @@ async function mockSessionsSurface(page: Page) {
       started_at: new Date(Date.UTC(2026, 3, 1, 11, 30, 0)).toISOString(),
       ended_at: new Date(Date.UTC(2026, 3, 1, 11, 30, 2)).toISOString(),
       status: 'passed',
-      requested_pack_id: null,
-      requested_platform_id: null,
-      requested_device_type: null,
-      requested_connection_type: null,
       requested_capabilities: { 'gridfleet:probeCheckedBy': 'scheduled' },
       actual_capabilities: null,
       error_type: null,
@@ -232,15 +216,6 @@ test.describe('Sessions page', () => {
     await expect
       .poll(() => page.evaluate(() => (window as Window & { __copiedSessionId?: string }).__copiedSessionId ?? null))
       .toBe('error-setup-failure-aaaa1111bbbb2222');
-  });
-
-  test('surfaces requested lane and failure detail for device-less setup failures', async ({ page }) => {
-    await page.goto('/sessions?tab=history');
-
-    await expect(page.getByText('Setup failure')).toBeVisible();
-    await expect(page.getByText('Android Mobile • Real Device • Network')).toBeVisible();
-    await expect(page.getByText('RuntimeError: Session could not be created')).toBeVisible();
-    await expect(page.getByText('Synthetic ID')).toBeVisible();
   });
 
   test('hides probe sessions by default and reveals them when the toggle is enabled', async ({ page }) => {

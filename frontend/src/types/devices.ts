@@ -29,8 +29,6 @@ export type SessionDetail = Omit<
   | 'device_platform_label'
   | 'error_message'
   | 'error_type'
-  | 'requested_pack_id'
-  | 'requested_platform_id'
   | 'run_id'
 > & {
   device_name: string | null;
@@ -39,8 +37,6 @@ export type SessionDetail = Omit<
   device_platform_label: string | null;
   error_message: string | null;
   error_type: string | null;
-  requested_pack_id: string | null;
-  requested_platform_id: string | null;
   run_id: string | null;
 };
 export type SessionKillResult = Schemas['SessionKillResult'];
