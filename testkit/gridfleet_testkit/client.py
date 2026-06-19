@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 import httpx2 as httpx
 
+from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import FrameType
@@ -58,21 +60,6 @@ def _default_auth() -> httpx.BasicAuth | None:
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
-
-
-class UnknownIncludeError(ValueError):
-    """Backend rejected one or more `?include=` keys."""
-
-    def __init__(self, values: list[str]) -> None:
-        super().__init__(f"Backend rejected unknown include values: {values}")
-        self.values = values
-
-
-class ReserveCapabilitiesUnsupportedError(ValueError):
-    """`?include=capabilities` is not supported on reserve."""
-
-    def __init__(self, message: str | None = None) -> None:
-        super().__init__(message or "include=capabilities is not supported on reserve")
 
 
 def _raise_for_status(resp: httpx.Response, *, run_id: str) -> None:

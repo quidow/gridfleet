@@ -39,13 +39,12 @@ from .client import (
     CooldownSetResult,
     GridFleetClient,
     HeartbeatThread,
-    ReserveCapabilitiesUnsupportedError,
-    UnknownIncludeError,
     _default_api_url,
     _default_grid_url,
     register_run_cleanup,
     run_grid_url,
 )
+from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .sessions import resolve_device_handle_from_driver
 
 try:
