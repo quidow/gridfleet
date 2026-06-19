@@ -679,7 +679,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     assert node.transition_token is not None
 
 
-async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
+async def test_unknown_process_restart_events_normalize_to_appium_and_restore_health_summary(
     db_session: AsyncSession,
 ) -> None:
     host = Host(hostname="agent-host", ip="10.0.0.3", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
@@ -804,7 +804,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     assert device_health.build_public_summary(device_reloaded)["node"]["status"] == "ok"
 
 
-async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
+async def test_restart_exhausted_sets_degraded_state(
     db_session: AsyncSession,
 ) -> None:
     host = Host(hostname="agent-host", ip="10.0.0.4", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
