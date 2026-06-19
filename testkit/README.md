@@ -331,7 +331,7 @@ assert allocated.device_id == device_handle["device_id"]
 assert allocated.platform_name in {"Android", "iOS", "tvOS", "Roku"}
 ```
 
-The helper fetches live capabilities only when `fetch_capabilities=True`. Pass `fetch_test_data=True` to also populate `allocated.test_data`. The `test_data` field is also available directly from the reserve response when the manager inlines it.
+The helper fetches live capabilities only when `fetch_capabilities=True`. Pass `fetch_test_data=True` to populate `allocated.test_data`.
 
 ### Run Cleanup Policy
 
