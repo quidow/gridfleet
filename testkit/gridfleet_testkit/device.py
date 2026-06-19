@@ -48,6 +48,8 @@ class Device:
     @classmethod
     def from_payload(cls, payload: JsonObject) -> Device:
         """Build a ``Device`` from a manager device row, ignoring unknown keys."""
+        # Preserve manager tags verbatim (GridFleet tags are str->str); cast rather
+        # than comprehension-narrow so no entry is silently dropped.
         tags = payload.get("tags")
         return cls(
             id=_req_str(payload.get("id")),
