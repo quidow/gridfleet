@@ -51,7 +51,7 @@ from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
-from app.grid.allocation import AllocationService, pack_slot_stereotype
+from app.grid.allocation import AllocationService, device_match_surface
 from app.grid.dependencies import get_grid_services
 from app.grid.services_container import GridServices
 from app.hosts.dependencies import get_host_services
@@ -636,7 +636,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             allocation=AllocationService(
                 intent_factory=IntentService,
                 publisher=test_event_bus,
-                stereotype_provider=pack_slot_stereotype,
+                stereotype_provider=device_match_surface,
                 settings=settings_service,
             ),
         )

@@ -26,6 +26,15 @@ TAG_PREFIX = "appium:gridfleet:tag:"
 LEGACY_RUN_ID_CAP = "gridfleet:run_id"
 
 
+def is_match_relevant_key(key: str) -> bool:
+    """Whether *key* is one the allocation matcher constrains on — an identity key or
+    a ``gridfleet:tag:`` key. Single source of truth shared by the matcher
+    (``candidate_matches_stereotype``) and the surface builder
+    (``device_match_surface``'s ``_match_relevant_base``), so the keys emitted into a
+    device's match surface and the keys the matcher checks cannot drift apart."""
+    return key in IDENTITY_KEYS or key.startswith(TAG_PREFIX)
+
+
 class CapabilityMergeError(ValueError):
     """The new-session body is not valid W3C capabilities."""
 
@@ -56,9 +65,7 @@ def candidate_matches_stereotype(candidate: dict[str, Any], stereotype: dict[str
         if key == "platformName":
             if str(stereotype.get("platformName", "")).lower() != str(requested).lower():
                 return False
-        elif (key in IDENTITY_KEYS or key.startswith(TAG_PREFIX)) and (
-            key not in stereotype or stereotype[key] != requested
-        ):
+        elif is_match_relevant_key(key) and (key not in stereotype or stereotype[key] != requested):
             return False
         # All other keys (appium:* options) do not constrain slot identity.
     return True

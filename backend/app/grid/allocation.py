@@ -28,7 +28,13 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
 from app.grid.constants import RETRY_INTERVAL_SEC
-from app.grid.matching import LEGACY_RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
+from app.grid.matching import (
+    LEGACY_RUN_ID_CAP,
+    CapabilityMergeError,
+    candidate_matches_stereotype,
+    is_match_relevant_key,
+    merge_candidates,
+)
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
@@ -583,14 +589,15 @@ class AllocationService:
         # Batch the reservation load for every eligible device once instead of one
         # SELECT per device per long-poll tick (#11).
         reservation_map = await run_service.get_device_reservation_map(db, [d.id for d in eligible])
-        # Memoize the pack-rendered stereotype per device within this attempt: the
-        # render hits the DB per device, and the device loop below may re-touch a
-        # device. The interpolated result is per-device (udid, os_version) so it is
-        # NOT poolable across same-pack devices. The DB-touching half — the pack
-        # template — IS device-independent, so it is cached separately by
-        # (pack_id, platform_id) within this attempt, collapsing N same-pack DB
-        # lookups to one (#11). Both caches are per-attempt; stereotypes follow pack
-        # releases so cross-tick caching is avoided (#13).
+        # Memoize the per-device match surface within this attempt: building it may
+        # hit the DB per device, and the device loop below may re-touch a device. The
+        # surface is per-device — it carries the device's deviceId + tag fanout (plus
+        # any identity/tag keys an uploaded pack interpolates) — so it is NOT poolable
+        # across same-pack devices. The DB-touching half — the pack template — IS
+        # device-independent, so it is cached separately by (pack_id, platform_id)
+        # within this attempt, collapsing N same-pack DB lookups to one (#11). Both
+        # caches are per-attempt; templates follow pack releases so cross-tick caching
+        # is avoided (#13).
         stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
         template_cache: StereotypeTemplateCache = {}
         for device in eligible:
@@ -831,29 +838,45 @@ class AllocationService:
         return AllocationResult(allocation_id=row.id, target=target, device_id=locked.id)
 
 
-async def pack_slot_stereotype(
+def _match_relevant_base(template: StereotypeTemplate, device: Device) -> dict[str, Any]:
+    """Identity/tag keys an uploaded pack's stereotype base declares — the only base
+    keys the allocation matcher (``candidate_matches_stereotype``) consults. Curated
+    packs declare none, so the common path renders nothing and skips the device
+    snapshot. When present, the keys are interpolated per-device (reusing the node-start
+    template engine) and projected down to just the matcher-relevant subset."""
+    keys = [k for k in template.stereotype_base if is_match_relevant_key(k)]
+    if not keys:
+        return {}
+    rendered = template.interpolate(build_device_context(device))
+    return {k: rendered[k] for k in keys if k in rendered}
+
+
+async def device_match_surface(
     db: DbSession,
     device: Device,
     *,
     template_cache: StereotypeTemplateCache | None = None,
 ) -> dict[str, Any]:
-    """Compose the capability set used to match a W3C request to *device*.
+    """The minimal routing surface the allocator matches a W3C request against.
 
-    Merges the pack-rendered stereotype (platformName, automationName, manifest
-    filters, ``appium:udid`` via device context) with the manager-owned routing
-    surface (deviceId + tag fanout) from ``build_grid_stereotype_caps``.
+    Only the keys ``candidate_matches_stereotype`` consults: ``platformName`` (the
+    pack's advertised platform-name scalar), any identity/tag keys an uploaded pack
+    declares in its stereotype base, and the manager-owned deviceId + tag fanout. The
+    rest of the pack stereotype (``appium:platform``/``os_version``/``device_type``/
+    ``appium:automationName``) is rendered only at node-start (``render_stereotype`` in
+    ``reconciler_agent``), never for matching.
 
-    When the device's pack/platform cannot be resolved (pack deleted, platform
-    dropped from the release) the pack half falls back to empty so one broken pack
-    cannot wedge allocation for every other device — but the failure is logged and
-    counted (``gridfleet_grid_stereotype_lookup_error``) because such a device
-    advertises no capabilities and is silently unmatchable until repaired (#1).
+    When the device's pack/platform cannot be resolved (pack deleted, platform dropped
+    from the release) the pack half falls back to empty so one broken pack cannot wedge
+    allocation for every other device — but the failure is logged and counted
+    (``gridfleet_grid_stereotype_lookup_error``) because such a device advertises no
+    ``platformName`` and is silently unmatchable until repaired (#1).
 
     *template_cache*, when supplied, memoizes the device-independent template by
-    ``(pack_id, platform_id)`` so a fleet of same-pack devices issues one DB
-    lookup per unique pack/platform instead of one per device (#11).
+    ``(pack_id, platform_id)`` so a fleet of same-pack devices issues one DB lookup per
+    unique pack/platform instead of one per device (#11).
     """
-    stereotype: dict[str, Any] = {}
+    surface: dict[str, Any] = {}
     resolved = resolve_pack_for_device(device)
     if resolved is not None:
         pack_id, platform_id = resolved
@@ -863,7 +886,6 @@ async def pack_slot_stereotype(
                 template = await load_stereotype_template(db, pack_id=pack_id, platform_id=platform_id)
                 if template_cache is not None:
                     template_cache[resolved] = template
-            stereotype = template.interpolate(build_device_context(device))
         except LookupError as exc:
             GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL.inc()
             logger.warning(
@@ -873,9 +895,11 @@ async def pack_slot_stereotype(
                 platform_id,
                 exc,
             )
-            stereotype = {}
-    stereotype.update(build_grid_stereotype_caps(device, pack_stereotype=None))
-    return stereotype
+        else:
+            surface["platformName"] = template.platform_name
+            surface.update(_match_relevant_base(template, device))
+    surface.update(build_grid_stereotype_caps(device, pack_stereotype=None))
+    return surface
 
 
 def resolve_router_target(row: Session) -> str | None:

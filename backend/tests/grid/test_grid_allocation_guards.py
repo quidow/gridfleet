@@ -22,7 +22,6 @@ from app.devices.services.intent import IntentService
 from app.grid.allocation import (
     AllocationService,
     _legal_bulk_ticket_transition,
-    pack_slot_stereotype,
     transition_tickets_bulk,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -248,26 +247,22 @@ async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, se
 
 
 @pytest.mark.db
-async def test_pack_slot_stereotype_tolerates_missing_pack(db_session: AsyncSession) -> None:
+async def test_device_match_surface_tolerates_missing_pack(db_session: AsyncSession) -> None:
     # pack tables not seeded -> load_stereotype_template raises LookupError -> the
     # device falls back to grid caps only, but the lookup failure is counted (#1)
-    # so an operator can see why the device dropped out of the pool. The counter is
-    # the documented observable; the companion warning log is asserted via no
-    # caplog clause — CI's structured-logging config routes the record outside
-    # stdlib capture (two CI cycles proved caplog cannot see it there), and the
-    # counter alone pins the behavior deterministically in every environment.
-    from app.grid.allocation import GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL
+    # so an operator can see why the device dropped out of the pool.
+    from app.grid.allocation import GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL, device_match_surface
 
     _, device = await seed_host_and_device(db_session, identity=f"grid-guard-nopack-{uuid.uuid4().hex[:8]}")
     before = GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL._value.get()
-    stereotype = await pack_slot_stereotype(db_session, device)
-    assert stereotype.get("appium:gridfleet:deviceId") == str(device.id)
-    assert "platformName" not in stereotype
+    surface = await device_match_surface(db_session, device)
+    assert surface.get("appium:gridfleet:deviceId") == str(device.id)
+    assert "platformName" not in surface
     assert GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL._value.get() == before + 1
 
 
 @pytest.mark.db
-async def test_pack_slot_stereotype_template_cache_collapses_lookups(
+async def test_device_match_surface_template_cache_collapses_lookups(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # #11: two same-pack/platform devices share one template fetch via the
@@ -289,14 +284,55 @@ async def test_pack_slot_stereotype_template_cache_collapses_lookups(
     monkeypatch.setattr(allocation_module, "load_stereotype_template", _counting)
 
     cache: dict[tuple[str, str], StereotypeTemplate] = {}
-    caps_a = await allocation_module.pack_slot_stereotype(db_session, dev_a, template_cache=cache)
-    caps_b = await allocation_module.pack_slot_stereotype(db_session, dev_b, template_cache=cache)
+    caps_a = await allocation_module.device_match_surface(db_session, dev_a, template_cache=cache)
+    caps_b = await allocation_module.device_match_surface(db_session, dev_b, template_cache=cache)
     assert caps_a["platformName"] == "Android"
     assert caps_b["platformName"] == "Android"
     # Distinct devices -> distinct routing surface, identical pack template.
     assert caps_a["appium:gridfleet:deviceId"] == str(dev_a.id)
     assert caps_b["appium:gridfleet:deviceId"] == str(dev_b.id)
     assert len(calls) == 1
+
+
+@pytest.mark.db
+async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Report ⑤ safety net: the pack stereotype base is an open dict[str, Any], so an
+    # uploaded pack could carry a constraining key. Identity/tag keys MUST survive into
+    # the match surface (so by-tag/by-udid routing is unchanged); non-matcher base keys
+    # (platform/os_version) and appium:automationName MUST NOT — the matcher ignores them
+    # and they only bloat the surface.
+    import app.grid.allocation as allocation_module
+    from app.packs.services.capability import StereotypeTemplate
+
+    _, device = await seed_host_and_device(db_session, identity=f"grid-uploaded-{uuid.uuid4().hex[:8]}")
+
+    async def _fake_template(db: AsyncSession, *, pack_id: str, platform_id: str) -> StereotypeTemplate:
+        return StereotypeTemplate(
+            platform_name="Android",
+            automation_name="UiAutomator2",
+            stereotype_base={
+                "appium:platform": "{device.platform_id}",  # non-constraining -> dropped
+                "appium:os_version": "{device.os_version}",  # non-constraining -> dropped
+                "appium:gridfleet:tag:pool": "ci",  # constraining literal -> kept verbatim
+                "appium:udid": "{device.identity_value}",  # constraining + templated -> kept, interpolated
+            },
+        )
+
+    monkeypatch.setattr(allocation_module, "resolve_pack_for_device", lambda _d: ("p", "plat"))
+    monkeypatch.setattr(allocation_module, "load_stereotype_template", _fake_template)
+
+    surface = await allocation_module.device_match_surface(db_session, device)
+    assert surface["platformName"] == "Android"
+    assert surface["appium:gridfleet:tag:pool"] == "ci"
+    # A templated identity key must flow through the per-device interpolation path,
+    # not merely survive key selection — pins that _interpolate actually substitutes.
+    assert surface["appium:udid"] == device.identity_value
+    assert surface["appium:gridfleet:deviceId"] == str(device.id)
+    assert "appium:platform" not in surface
+    assert "appium:os_version" not in surface
+    assert "appium:automationName" not in surface
 
 
 @pytest.mark.db
