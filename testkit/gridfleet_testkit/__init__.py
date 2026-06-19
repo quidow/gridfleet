@@ -25,14 +25,14 @@ from .allocation import (
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
-from .appium import (
-    build_appium_options,
-    create_appium_driver,
-)
 from .client import (
     GridFleetClient,
 )
 from .config import api_url, grid_url, run_grid_url
+from .driver import (
+    build_appium_options,
+    create_appium_driver,
+)
 from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread, register_run_cleanup
 from .session import (

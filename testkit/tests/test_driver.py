@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from appium.webdriver.client_config import AppiumClientConfig
 
-import gridfleet_testkit.appium as appium_mod
+import gridfleet_testkit.driver as appium_mod
 from gridfleet_testkit import (
     build_appium_options,
     create_appium_driver,

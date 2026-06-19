@@ -1,4 +1,4 @@
-"""Public Appium driver helpers for GridFleet integrations."""
+"""Appium driver construction through the GridFleet WebDriver router."""
 
 from __future__ import annotations
 

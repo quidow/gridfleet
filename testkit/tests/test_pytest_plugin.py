@@ -5,7 +5,7 @@ from typing import ClassVar
 
 import pytest
 
-import gridfleet_testkit.appium as appium_mod
+import gridfleet_testkit.driver as appium_mod
 from gridfleet_testkit import pytest_plugin
 
 # Required for the pytester fixture (sub-pytest session runner).
