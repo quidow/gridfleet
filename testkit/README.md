@@ -6,12 +6,10 @@
 
 - Stable import root: `gridfleet_testkit`
 - Supported pytest plugin: `gridfleet_testkit.pytest_plugin`
-- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
+- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers:
   - `build_appium_options`
   - `create_appium_driver`
-  - `get_connection_target_from_driver`
-  - `get_device_config_for_driver`
   - `get_device_test_data_for_driver`
 - Supported public client helpers:
   - `GridFleetClient`
@@ -75,7 +73,7 @@ The package supports Python 3.10 through 3.14.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GRID_URL` | `http://localhost:4444` | WebDriver router URL used by the pytest Appium fixture |
-| `GRIDFLEET_API_URL` | `http://localhost:8000/api` | GridFleet API base used for session reporting, config lookup, run helpers, and driver-pack catalog lookup |
+| `GRIDFLEET_API_URL` | `http://localhost:8000/api` | GridFleet API base used for session reporting, run helpers, and driver-pack catalog lookup |
 | `GRIDFLEET_TESTKIT_USERNAME` | unset | Machine-auth username sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_USERNAME`. |
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
@@ -136,7 +134,6 @@ def gridfleet_client_config():
 - Injects `gridfleet:testName` with the pytest test name
 - Resolves the WebDriver endpoint from `GRIDFLEET_RUN_ID`: run-scoped URL inside a reserved run, bare grid URL otherwise. No GridFleet identity is injected into capabilities.
 - Reports final session status back to `GRIDFLEET_API_URL`
-- Exposes `device_config` for post-session config lookup using the runtime connection target
 - Exposes `device_test_data` for post-session operator-attached test data using the runtime connection target
 - Exposes `device_handle` for fetching the canonical manager device row using the runtime connection target
 - Exposes `gridfleet_worker_id` which returns the pytest-xdist worker id, or `"controller"` for non-worker processes
@@ -149,7 +146,7 @@ If Appium driver creation fails before a Grid session exists, the exception prop
 If you need to create a driver outside pytest, use the public Appium helpers:
 
 ```python
-from gridfleet_testkit import create_appium_driver, get_device_config_for_driver
+from gridfleet_testkit import create_appium_driver, get_device_test_data_for_driver
 
 driver = create_appium_driver(
     pack_id="appium-uiautomator2",
@@ -159,12 +156,12 @@ driver = create_appium_driver(
 
 try:
     assert driver.session_id is not None
-    device_config = get_device_config_for_driver(driver)
+    test_data = get_device_test_data_for_driver(driver)
 finally:
     driver.quit()
 ```
 
-`create_appium_driver(...)` reuses the same driver-pack catalog resolver as the pytest fixture. Managed nodes still get their host-scoped runtime allocations from the manager, so callers should not hard-code `systemPort`, `chromedriverPort`, `mjpegServerPort`, `wdaLocalPort`, or `derivedDataPath`. `get_device_config_for_driver(...)` is the non-pytest equivalent of the `device_config` fixture. If you only need the options object, use `build_appium_options(...)`.
+`create_appium_driver(...)` reuses the same driver-pack catalog resolver as the pytest fixture. Managed nodes still get their host-scoped runtime allocations from the manager, so callers should not hard-code `systemPort`, `chromedriverPort`, `mjpegServerPort`, `wdaLocalPort`, or `derivedDataPath`. `get_device_test_data_for_driver(...)` is the non-pytest equivalent of the `device_test_data` fixture. If you only need the options object, use `build_appium_options(...)`.
 
 To tune the HTTP transport — connection retries, timeouts, proxy, TLS — pass an `AppiumClientConfig` via `client_config`. The testkit still owns the endpoint, so any `remote_server_addr` you set is overwritten with the resolved grid URL:
 
@@ -190,7 +187,6 @@ driver = create_appium_driver(
 | --- | --- |
 | `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
 | `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
-| `GridFleetClient.get_device_config(device_id)` | Fetch the config for a device by its backend device id |
 | `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
@@ -208,7 +204,7 @@ driver = create_appium_driver(
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
 | `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
-| `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional device config and live capabilities |
+| `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional live capabilities and test data |
 | `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
@@ -339,7 +335,7 @@ assert allocated.device_id == device_handle["device_id"]
 assert allocated.platform_name in {"Android", "iOS", "tvOS", "Roku"}
 ```
 
-The helper fetches static device config by default when `connection_target` is present. It fetches live capabilities only when `fetch_capabilities=True`. Pass `fetch_test_data=True` to also populate `allocated.test_data`. The `test_data` field is also available directly from the reserve response when the manager inlines it.
+The helper fetches live capabilities only when `fetch_capabilities=True`. Pass `fetch_test_data=True` to also populate `allocated.test_data`. The `test_data` field is also available directly from the reserve response when the manager inlines it.
 
 ### Run Cleanup Policy
 
@@ -374,26 +370,9 @@ test_data = get_device_test_data_for_driver(driver)
 - `ReserveCapabilitiesUnsupportedError(ValueError)`: raised when a reserve-time `include` request contains `"capabilities"`, which is not supported at reserve time. The `ValueError` base is part of the contract.
 - `CooldownResult`: union response type from `cooldown_device`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
 
-### Reduced HTTP Round-trips on Reserve
+### Reserve `include=` Validation
 
-The manager can inline device config and live capabilities into the `reserve_devices` response, eliminating per-worker follow-up GETs.
-
-```python
-client = GridFleetClient()
-run = client.reserve_devices(
-    name="my-test-run",
-    requirements=[...],
-    include=("config",),
-)
-for device_handle in run["devices"]:
-    allocated = hydrate_allocated_device(device_handle, run_id=run["id"], client=client)
-    # no config follow-up GET; allocated.config populated inline.
-    # For capabilities, pass include= on this per-worker hydrate_allocated_device call.
-```
-
-`device_config` and inline `config` payloads are returned verbatim from the manager. The testkit does not perform client-side secret masking or reveal toggles. Protect device config with manager authentication, operator access control, and your lab's secret-handling policy.
-
-`reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound. Pass `include=` on the per-worker `hydrate_allocated_device` call instead if you need capabilities after sessions are running.
+`reserve_devices` accepts an optional `include=` sequence forwarded to the manager as a query parameter. `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound.
 
 `include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
 

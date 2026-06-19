@@ -167,10 +167,6 @@ class GridFleetClient:
         """Fetch one device detail row by backend device id."""
         return cast("JsonObject", self._send("GET", f"/devices/{device_id}").json())
 
-    def get_device_config(self, device_id: str) -> JsonObject:
-        """Fetch device config by backend device id."""
-        return cast("JsonObject", self._send("GET", f"/devices/{device_id}/config").json())
-
     def get_device_capabilities(self, device_id: str) -> JsonObject:
         """Fetch the current Appium capabilities for a specific device."""
         return cast("JsonObject", self._send("GET", f"/devices/{device_id}/capabilities").json())

@@ -21,13 +21,6 @@ def _required_str_cap(driver: WebDriver, key: str, message: str) -> str:
     return value
 
 
-def get_connection_target_from_driver(driver: WebDriver) -> str:
-    """Return the runtime connection target from a live Appium driver."""
-    return _required_str_cap(
-        driver, "appium:udid", "Could not determine device connection target from session capabilities"
-    )
-
-
 def get_device_id_from_driver(driver: WebDriver) -> str:
     """Return the GridFleet device id from a live Appium driver's session caps."""
     return _required_str_cap(
@@ -36,16 +29,6 @@ def get_device_id_from_driver(driver: WebDriver) -> str:
         "Session capabilities are missing 'appium:gridfleet:deviceId'; "
         "the GridFleet router must be new enough to inject it",
     )
-
-
-def get_device_config_for_driver(
-    driver: WebDriver,
-    *,
-    gridfleet_client: GridFleetClient | None = None,
-) -> JsonObject:
-    """Fetch device config for a live Appium driver using its GridFleet device id."""
-    client = gridfleet_client or GridFleetClient()
-    return client.get_device_config(get_device_id_from_driver(driver))
 
 
 def get_device_test_data_for_driver(

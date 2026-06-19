@@ -38,7 +38,6 @@ class AllocatedDevice:
     connection_type: str
     manufacturer: str | None
     model: str | None
-    config: JsonObject | None
     live_capabilities: JsonObject | None
     test_data: JsonObject | None = None
     unavailable_includes: tuple[UnavailableInclude, ...] = ()
@@ -61,14 +60,11 @@ class AllocatedDevice:
 
     @property
     def device_ip(self) -> str | None:
-        """Best-effort address, preferring host IP before live device/config IP fields."""
+        """Best-effort address, preferring host IP before the live device IP field."""
         if self.host_ip:
             return self.host_ip
         live_value = (self.live_capabilities or {}).get("appium:deviceIP")
-        if isinstance(live_value, str) and live_value:
-            return live_value
-        config_value = (self.config or {}).get("ip")
-        return config_value if isinstance(config_value, str) and config_value else None
+        return live_value if isinstance(live_value, str) and live_value else None
 
     @property
     def platform_name(self) -> str:
@@ -121,11 +117,10 @@ def hydrate_allocated_device(
     *,
     run_id: str,
     client: GridFleetClient,
-    fetch_config: bool = True,
     fetch_capabilities: bool = False,
     fetch_test_data: bool = False,
 ) -> AllocatedDevice:
-    """Combine a device handle with optional static config and live capabilities."""
+    """Combine a device handle with optional live capabilities and test data."""
     payload = dict(device_handle)
     device_id = _string_value(payload, "device_id")
     if _needs_device_detail(payload):
@@ -135,13 +130,6 @@ def hydrate_allocated_device(
     unavailable_set = {entry.include for entry in unavailable_includes}
 
     connection_target = _optional_string_value(payload, "connection_target")
-    inline_config = payload.get("config")
-    if isinstance(inline_config, dict):
-        config: JsonObject | None = inline_config
-    elif fetch_config and "config" not in unavailable_set:
-        config = client.get_device_config(device_id)
-    else:
-        config = None
     inline_capabilities = payload.get("live_capabilities")
     if isinstance(inline_capabilities, dict):
         live_capabilities: JsonObject | None = inline_capabilities
@@ -180,7 +168,6 @@ def hydrate_allocated_device(
         connection_type=_string_value(payload, "connection_type"),
         manufacturer=_optional_string_value(payload, "manufacturer"),
         model=_optional_string_value(payload, "model"),
-        config=config,
         live_capabilities=live_capabilities,
         test_data=test_data,
         unavailable_includes=unavailable_includes,
