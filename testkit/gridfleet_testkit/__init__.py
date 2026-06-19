@@ -18,7 +18,6 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .allocation import (
     AllocatedDevice,
-    UnavailableInclude,
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
@@ -30,7 +29,6 @@ from .driver import (
     build_appium_options,
     create_appium_driver,
 )
-from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread, register_run_cleanup
 from .session import (
     get_device_id_from_driver,
@@ -55,9 +53,6 @@ __all__ = [
     "CooldownSetResult",
     "GridFleetClient",
     "HeartbeatThread",
-    "ReserveCapabilitiesUnsupportedError",
-    "UnavailableInclude",
-    "UnknownIncludeError",
     "__version__",
     "api_url",
     "build_appium_options",

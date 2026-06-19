@@ -3,15 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import httpx2 as httpx
-import pytest
 
 import gridfleet_testkit
-from gridfleet_testkit.client import (
-    GridFleetClient,
-    ReserveCapabilitiesUnsupportedError,
-    UnknownIncludeError,
-    _raise_for_status,
-)
+from gridfleet_testkit.client import GridFleetClient
 from gridfleet_testkit.config import auth_from_env
 from gridfleet_testkit.run_lifecycle import HeartbeatThread
 
@@ -489,134 +483,6 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
     client.reserve_devices(name="run", requirements=[])
 
     assert captured["auth"] is explicit
-
-
-def test_raise_for_status_maps_unknown_include_422_to_typed_exception():
-
-    resp = DummyResponse(
-        {
-            "error": {
-                "code": "INVALID_INCLUDE",
-                "message": "Unknown include values",
-                "details": {"code": "unknown_include", "values": ["garbage"]},
-            }
-        },
-        status_code=422,
-    )
-
-    with pytest.raises(UnknownIncludeError) as exc_info:
-        _raise_for_status(resp)
-
-    assert exc_info.value.values == ["garbage"]
-
-
-def test_raise_for_status_maps_reserve_capabilities_unsupported_422_to_typed_exception():
-    resp = DummyResponse(
-        {
-            "error": {
-                "code": "INVALID_INCLUDE",
-                "message": "include=capabilities not supported on reserve",
-                "details": {"code": "reserve_capabilities_unsupported"},
-            }
-        },
-        status_code=422,
-    )
-
-    with pytest.raises(ReserveCapabilitiesUnsupportedError):
-        _raise_for_status(resp)
-
-
-def test_raise_for_status_passes_through_unrelated_422():
-    resp = DummyResponse({"detail": "validation"}, status_code=422)
-
-    with pytest.raises(httpx.HTTPStatusError):
-        _raise_for_status(resp)
-
-
-def test_reserve_devices_threads_include_query_param(monkeypatch):
-    captured: dict[str, object] = {}
-
-    def fake_request(
-        method: str,
-        url: str,
-        *,
-        json: JsonObject | None = None,
-        timeout: int = 10,
-        params: list[tuple[str, str]] | None = None,
-        auth: object = None,
-    ) -> DummyResponse:
-        captured["url"] = url
-        captured["params"] = params
-        return DummyResponse({"id": "run-1", "devices": []})
-
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
-
-    client = GridFleetClient("http://manager/api")
-    client.reserve_devices(name="r", requirements=[], include=("config",))
-
-    assert captured["params"] == [("include", "config")]
-
-
-def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypatch):
-    called: list[str] = []
-
-    def fake_request(*args: object, **kwargs: object) -> DummyResponse:
-        called.append("request")
-        return DummyResponse({})
-
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
-
-    client = GridFleetClient("http://manager/api")
-    with pytest.raises(ReserveCapabilitiesUnsupportedError):
-        client.reserve_devices(name="r", requirements=[], include=("config", "capabilities"))
-
-    assert called == []
-
-
-def test_reserve_devices_rejects_string_include_before_http_call(monkeypatch):
-    called: list[str] = []
-
-    def fake_request(*args: object, **kwargs: object) -> DummyResponse:
-        called.append("request")
-        return DummyResponse({})
-
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
-
-    client = GridFleetClient("http://manager/api")
-    with pytest.raises(TypeError, match="must be a sequence of strings"):
-        client.reserve_devices(name="r", requirements=[], include="capabilities")
-
-    assert called == []
-
-
-def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypatch):
-    def fake_request(
-        method: str,
-        url: str,
-        *,
-        json: JsonObject | None = None,
-        timeout: int = 10,
-        params: list[tuple[str, str]] | None = None,
-        auth: object = None,
-    ) -> DummyResponse:
-        return DummyResponse(
-            {
-                "error": {
-                    "code": "INVALID_INCLUDE",
-                    "message": "include=capabilities not supported on reserve",
-                    "details": {"code": "reserve_capabilities_unsupported"},
-                }
-            },
-            status_code=422,
-        )
-
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
-
-    client = GridFleetClient("http://manager/api")
-    # Use include=("config",) so the client-side guard does not fire.
-    # The 422 then exercises the defense-in-depth path through _raise_for_status.
-    with pytest.raises(ReserveCapabilitiesUnsupportedError):
-        client.reserve_devices(name="r", requirements=[], include=("config",))
 
 
 # --- Step 2: preparation-failure suppress test ---

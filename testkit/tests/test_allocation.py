@@ -6,7 +6,6 @@ import pytest
 
 from gridfleet_testkit.allocation import (
     AllocatedDevice,
-    UnavailableInclude,
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
@@ -158,109 +157,6 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.platform_name == "Android"
 
 
-def test_allocated_device_defaults_unavailable_includes() -> None:
-    allocated = AllocatedDevice(
-        run_id="run-1",
-        device_id="dev-1",
-        identity_value="SERIAL123",
-        name="Pixel 6",
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        platform_label="Android",
-        os_version="14",
-        connection_target="SERIAL123",
-        host_ip="192.168.1.10",
-        device_type="real_device",
-        connection_type="usb",
-        manufacturer="Google",
-        model="Pixel 6",
-        live_capabilities=None,
-        test_data=None,
-    )
-
-    assert allocated.unavailable_includes == ()
-    assert isinstance(allocated.unavailable_includes, tuple)
-    assert all(isinstance(u, UnavailableInclude) for u in allocated.unavailable_includes)
-
-
-def test_hydrate_allocated_device_uses_inline_live_capabilities_and_skips_get() -> None:
-    client = FakeClient()
-    payload = device_handle(live_capabilities={"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"})
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
-
-    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"}
-    assert client.capability_calls == []
-
-
-def test_hydrate_allocated_device_uses_inline_live_capabilities_even_when_fetch_capabilities_false() -> None:
-    client = FakeClient()
-    payload = device_handle(live_capabilities={"appium:udid": "INLINE-CAP"})
-
-    allocated = hydrate_allocated_device(
-        payload,
-        run_id="run-1",
-        client=client,
-        fetch_capabilities=False,
-    )
-
-    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP"}
-    assert client.capability_calls == []
-
-
-def test_hydrate_allocated_device_surfaces_unavailable_includes() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
-    )
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
-
-    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
-
-
-def test_hydrate_allocated_device_unavailable_includes_defaults_to_empty_tuple() -> None:
-    client = FakeClient()
-
-    allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client)
-
-    assert allocated.unavailable_includes == ()
-
-
-def test_hydrate_allocated_device_skips_malformed_unavailable_include_entries() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[
-            {"include": "capabilities", "reason": "device_offline"},
-            {"include": "test_data"},
-            "not-a-dict",
-            {"reason": "missing_include_key"},
-        ],
-    )
-
-    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
-
-    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
-
-
-def test_hydrate_allocated_device_skips_capabilities_fetch_when_marked_unavailable() -> None:
-    client = FakeClient()
-    payload = device_handle(
-        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
-    )
-
-    allocated = hydrate_allocated_device(
-        payload,
-        run_id="run-1",
-        client=client,
-        fetch_capabilities=True,
-    )
-
-    assert allocated.live_capabilities is None
-    assert client.capability_calls == []
-    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
-
-
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(device_handle(), run_id="run-1", client=client)
@@ -271,17 +167,6 @@ def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> N
     assert updated is not allocated
     assert updated.live_capabilities == {"appium:udid": "SERIAL123", "platformName": "Android"}
     assert allocated.live_capabilities is None
-
-
-def test_hydrate_uses_inline_test_data() -> None:
-    client = FakeClient()
-    allocated = hydrate_allocated_device(
-        device_handle(test_data={"k": "v"}),
-        run_id="run-1",
-        client=client,
-    )
-    assert allocated.test_data == {"k": "v"}
-    assert client.test_data_calls == []
 
 
 def test_hydrate_allocated_device_populates_inline_tags() -> None:

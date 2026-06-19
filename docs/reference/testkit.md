@@ -10,9 +10,8 @@
 - Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `gridfleet_client_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
-- Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
+- Supported public allocation/session helpers: `AllocatedDevice`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
 - Supported public result types: `CooldownResult`, `CooldownSetResult`, `CooldownEscalatedResult`
-- Supported public exceptions: `UnknownIncludeError`, `ReserveCapabilitiesUnsupportedError`
 - Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`, `GRIDFLEET_RUN_ID`
 - Manual hardware examples live under `testkit/examples/`
 
@@ -193,12 +192,10 @@ from gridfleet_testkit import get_device_test_data_for_driver
 test_data = get_device_test_data_for_driver(driver)
 ```
 
-Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allocated.test_data` inline when it is not already present on the supplied device handle.
+Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allocated.test_data` from the manager.
 
 ## Errors and Result Types
 
-- `UnknownIncludeError(ValueError)`: raised when the backend rejects one or more `?include=` keys. Exposes `values` with the rejected key names. The `ValueError` base is part of the contract.
-- `ReserveCapabilitiesUnsupportedError(ValueError)`: raised when a reserve-time `include` request contains `"capabilities"`, which is not supported at reserve time. The `ValueError` base is part of the contract.
 - `CooldownResult`: union response type from `cooldown_device`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
 
 ## Example Reservation Flow
@@ -283,10 +280,6 @@ client = GridFleetClient()
 device_handle = resolve_device_handle_from_driver(driver, client=client)
 allocated = hydrate_allocated_device(device_handle, run_id=run_id, client=client)
 ```
-
-`reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound.
-
-`include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
 
 `hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries or rows returned by `get_device`.
 

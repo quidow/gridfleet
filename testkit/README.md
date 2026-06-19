@@ -17,7 +17,6 @@
   - `register_run_cleanup`
 - Supported public allocation/session helpers:
   - `AllocatedDevice`
-  - `UnavailableInclude`
   - `hydrate_allocated_device`
   - `hydrate_allocated_device_from_driver`
   - `resolve_device_handle_from_driver`
@@ -25,9 +24,6 @@
   - `CooldownResult`
   - `CooldownSetResult`
   - `CooldownEscalatedResult`
-- Supported public exceptions:
-  - `UnknownIncludeError`
-  - `ReserveCapabilitiesUnsupportedError`
 - Manual hardware examples under `testkit/examples/`
 
 ## What It Does Not Own
@@ -366,15 +362,7 @@ test_data = get_device_test_data_for_driver(driver)
 
 ### Errors and Result Types
 
-- `UnknownIncludeError(ValueError)`: raised when the backend rejects one or more `?include=` keys. Exposes `values` with the rejected key names. The `ValueError` base is part of the contract.
-- `ReserveCapabilitiesUnsupportedError(ValueError)`: raised when a reserve-time `include` request contains `"capabilities"`, which is not supported at reserve time. The `ValueError` base is part of the contract.
 - `CooldownResult`: union response type from `cooldown_device`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
-
-### Reserve `include=` Validation
-
-`reserve_devices` accepts an optional `include=` sequence forwarded to the manager as a query parameter. `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound.
-
-`include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
 
 `hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries, which carry a top-level `device_id`.
 

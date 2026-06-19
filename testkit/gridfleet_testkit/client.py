@@ -8,11 +8,10 @@ from typing import TYPE_CHECKING, cast
 import httpx2 as httpx
 
 from . import config
-from .errors import ReserveCapabilitiesUnsupportedError, UnknownIncludeError
 from .run_lifecycle import HeartbeatThread
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from .types import (
         CooldownResult,
@@ -29,25 +28,6 @@ def _raise_plain(resp: httpx.Response) -> None:
     resp.raise_for_status()
 
 
-def _raise_for_status(resp: httpx.Response) -> None:
-    if resp.status_code == 422:
-        try:
-            payload = resp.json()
-        except Exception:
-            payload = None
-        error = payload.get("error") if isinstance(payload, dict) else None
-        if isinstance(error, dict):
-            details = error.get("details")
-            if isinstance(details, dict):
-                code = details.get("code")
-                if code == "unknown_include":
-                    values = details.get("values")
-                    raise UnknownIncludeError(values if isinstance(values, list) else [])
-                if code == "reserve_capabilities_unsupported":
-                    raise ReserveCapabilitiesUnsupportedError(str(error.get("message") or ""))
-    resp.raise_for_status()
-
-
 def _query_params(values: dict[str, QueryParamValue]) -> list[tuple[str, QueryParamValue]]:
     params: list[tuple[str, QueryParamValue]] = []
     for key, value in values.items():
@@ -58,26 +38,6 @@ def _query_params(values: dict[str, QueryParamValue]) -> list[tuple[str, QueryPa
         else:
             params.append((key, str(value)))
     return params
-
-
-def _normalize_include(include: Sequence[str] | None) -> tuple[str, ...] | None:
-    if include is None:
-        return None
-    if isinstance(include, (str, bytes)):
-        raise TypeError(
-            "include must be a sequence of strings, not a string itself "
-            "(e.g. include=('config',), not include='config')"
-        )
-    return tuple(include)
-
-
-def _include_param(include: tuple[str, ...] | None) -> list[tuple[str, QueryParamValue]] | None:
-    if include is None:
-        return None
-    values = [v for v in include if v]
-    if not values:
-        return None
-    return [("include", ",".join(values))]
 
 
 def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> None:
@@ -198,13 +158,8 @@ class GridFleetClient:
         ttl_minutes: int = 60,
         heartbeat_timeout_sec: int = 120,
         created_by: str | None = None,
-        *,
-        include: Sequence[str] | None = None,
     ) -> JsonObject:
         """Reserve devices for a test run and return the manager response."""
-        include_tuple = _normalize_include(include)
-        if include_tuple is not None and "capabilities" in include_tuple:
-            raise ReserveCapabilitiesUnsupportedError("include='capabilities' is not supported on reserve")
         resp = self._send(
             "POST",
             "/runs",
@@ -215,9 +170,7 @@ class GridFleetClient:
                 "heartbeat_timeout_sec": heartbeat_timeout_sec,
                 "created_by": created_by,
             },
-            params=_include_param(include_tuple),
             timeout=30,
-            check=_raise_for_status,
         )
         return cast("JsonObject", resp.json())
 
