@@ -13,6 +13,9 @@ Environment variables read by the client:
 - GRIDFLEET_TESTKIT_USERNAME: optional Basic auth username.
 - GRIDFLEET_TESTKIT_PASSWORD: optional Basic auth password.
 
+The resolved URLs are also available programmatically via ``grid_url()`` and
+``api_url()`` exported from this package.
+
 Recipe-local run-state sharing variables are intentionally not exported from
 this package because run-state sharing is consumer policy.
 """
