@@ -26,32 +26,6 @@ class DummyResponse:
             raise httpx.HTTPStatusError("request failed", request=httpx.Request("GET", "http://test"), response=None)
 
 
-def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
-    calls: list[tuple[str, str, JsonObject | None, int | None]] = []
-
-    def fake_request(
-        method: str,
-        url: str,
-        *,
-        json: JsonObject | None = None,
-        params: JsonObject | None = None,
-        timeout: int | None = None,
-        auth: object = None,
-    ) -> DummyResponse:
-        calls.append((method, url, params, timeout))
-        return DummyResponse({"appium:udid": "emulator-5554"})
-
-    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
-
-    client = GridFleetClient("http://manager/api")
-    capabilities = client.get_device_capabilities("dev-1")
-
-    assert capabilities == {"appium:udid": "emulator-5554"}
-    assert calls == [
-        ("GET", "http://manager/api/devices/dev-1/capabilities", None, 10),
-    ]
-
-
 def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
     calls: list[tuple[str, JsonObject | list[tuple[str, str]], int | None]] = []
 

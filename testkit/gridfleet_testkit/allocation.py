@@ -28,7 +28,6 @@ class AllocatedDevice:
     connection_type: str
     manufacturer: str | None
     model: str | None
-    live_capabilities: JsonObject | None
     test_data: JsonObject | None = None
     tags: dict[str, str] | None = None
 
@@ -42,18 +41,12 @@ class AllocatedDevice:
 
     @property
     def udid(self) -> str | None:
-        if self.connection_target:
-            return self.connection_target
-        value = (self.live_capabilities or {}).get("appium:udid")
-        return value if isinstance(value, str) and value else None
+        return self.connection_target
 
     @property
     def device_ip(self) -> str | None:
-        """Best-effort address, preferring host IP before the live device IP field."""
-        if self.host_ip:
-            return self.host_ip
-        live_value = (self.live_capabilities or {}).get("appium:deviceIP")
-        return live_value if isinstance(live_value, str) and live_value else None
+        """Best-effort address from the device's host IP."""
+        return self.host_ip
 
     @property
     def platform_name(self) -> str:
@@ -91,17 +84,15 @@ def hydrate_allocated_device(
     *,
     run_id: str,
     client: GridFleetClient,
-    fetch_capabilities: bool = False,
     fetch_test_data: bool = False,
 ) -> AllocatedDevice:
-    """Combine a device handle with optional live capabilities and test data."""
+    """Combine a device handle with optional test data."""
     payload = dict(device_handle)
     device_id = _string_value(payload, "device_id")
     if _needs_device_detail(payload):
         payload = _merge_device_detail(payload, client.get_device(device_id))
 
     connection_target = _optional_string_value(payload, "connection_target")
-    live_capabilities: JsonObject | None = client.get_device_capabilities(device_id) if fetch_capabilities else None
     test_data: JsonObject | None = client.get_device_test_data(device_id) if fetch_test_data else None
 
     inline_tags = payload.get("tags")
@@ -127,7 +118,6 @@ def hydrate_allocated_device(
         connection_type=_string_value(payload, "connection_type"),
         manufacturer=_optional_string_value(payload, "manufacturer"),
         model=_optional_string_value(payload, "model"),
-        live_capabilities=live_capabilities,
         test_data=test_data,
         tags=tags,
     )

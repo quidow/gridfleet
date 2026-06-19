@@ -182,7 +182,6 @@ driver = create_appium_driver(
 | --- | --- |
 | `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
 | `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
-| `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
@@ -329,7 +328,7 @@ assert allocated.device_id == device_handle["device_id"]
 assert allocated.platform_name in {"Android", "iOS", "tvOS", "Roku"}
 ```
 
-The helper fetches live capabilities only when `fetch_capabilities=True`. Pass `fetch_test_data=True` to populate `allocated.test_data`.
+Pass `fetch_test_data=True` to populate `allocated.test_data`.
 
 ### Run Cleanup Policy
 

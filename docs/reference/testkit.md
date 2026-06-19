@@ -135,7 +135,6 @@ The resolved URLs are also available programmatically via `gridfleet_testkit.gri
 | --- | --- |
 | `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
 | `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
-| `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
 | `GridFleetClient.merge_device_test_data(device_id, body)` | Deep-merge into device test_data |

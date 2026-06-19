@@ -15,13 +15,8 @@ if TYPE_CHECKING:
 
 class FakeClient:
     def __init__(self) -> None:
-        self.capability_calls: list[str] = []
         self.device_calls: list[str] = []
         self.test_data_calls: list[str] = []
-
-    def get_device_capabilities(self, device_id: str) -> JsonObject:
-        self.capability_calls.append(device_id)
-        return {"appium:udid": "SERIAL123", "appium:deviceIP": "10.0.0.9"}
 
     def get_device(self, device_id: str) -> JsonObject:
         self.device_calls.append(device_id)
@@ -80,10 +75,8 @@ def test_hydrate_allocated_device_uses_device_handle() -> None:
         connection_type="usb",
         manufacturer="Google",
         model="Pixel 6",
-        live_capabilities=None,
         test_data=None,
     )
-    assert client.capability_calls == []
     assert client.device_calls == []
 
 
@@ -115,21 +108,7 @@ def test_hydrate_allocated_device_requires_device_id() -> None:
         hydrate_allocated_device(payload, run_id="run-1", client=client)
 
 
-def test_hydrate_allocated_device_fetches_capabilities_when_requested() -> None:
-    client = FakeClient()
-
-    allocated = hydrate_allocated_device(
-        device_handle(),
-        run_id="run-1",
-        client=client,
-        fetch_capabilities=True,
-    )
-
-    assert allocated.live_capabilities == {"appium:udid": "SERIAL123", "appium:deviceIP": "10.0.0.9"}
-    assert client.capability_calls == ["dev-1"]
-
-
-def test_allocated_device_properties_prefer_stable_sources() -> None:
+def test_allocated_device_properties_read_stable_sources() -> None:
     allocated = AllocatedDevice(
         run_id="run-1",
         device_id="dev-1",
@@ -139,13 +118,12 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
         platform_id="android_mobile",
         platform_label="Android",
         os_version="14",
-        connection_target=None,
-        host_ip=None,
+        connection_target="emulator-5554",
+        host_ip="10.0.0.9",
         device_type="emulator",
         connection_type="virtual",
         manufacturer=None,
         model=None,
-        live_capabilities={"appium:udid": "emulator-5554", "appium:deviceIP": "10.0.0.9"},
         test_data=None,
     )
 
@@ -154,6 +132,30 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.udid == "emulator-5554"
     assert allocated.device_ip == "10.0.0.9"
     assert allocated.platform_name == "Android"
+
+
+def test_allocated_device_properties_are_none_when_sources_absent() -> None:
+    allocated = AllocatedDevice(
+        run_id="run-1",
+        device_id="dev-1",
+        identity_value="SERIAL123",
+        name="Pixel 6",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        platform_label=None,
+        os_version="14",
+        connection_target=None,
+        host_ip=None,
+        device_type="real_device",
+        connection_type="usb",
+        manufacturer=None,
+        model=None,
+        test_data=None,
+    )
+
+    assert allocated.udid is None
+    assert allocated.device_ip is None
+    assert allocated.platform_name == "android_mobile"
 
 
 def test_hydrate_allocated_device_populates_inline_tags() -> None:
