@@ -810,11 +810,11 @@ class ReconcilerService:
                     reset_start_failure=reset_start_failure,
                 )
             except (NodeAlreadyRunningError, NodeStopNotAcknowledgedError):
-                # Expected, self-healing transients during the relay
-                # re-register / sidecar-respawn window: a node already runs for
-                # the target, or the agent hasn't acknowledged a stop yet. The
-                # next reconciler tick converges; the APPIUM_RECONCILER_*
-                # metrics are the durable signal, so log at debug, not warning.
+                # Expected, self-healing transients during the Appium process
+                # restart / sidecar-respawn window: a node already runs for the
+                # target, or the agent hasn't acknowledged a stop yet. The next
+                # reconciler tick converges; the APPIUM_RECONCILER_* metrics are
+                # the durable signal, so log at debug, not warning.
                 logger.debug(
                     "appium_reconciler_convergence_action_transient",
                     exc_info=True,

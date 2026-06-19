@@ -837,12 +837,11 @@ async def pack_slot_stereotype(
     *,
     template_cache: StereotypeTemplateCache | None = None,
 ) -> dict[str, Any]:
-    """Compose the slot stereotype the relay advertises for *device*.
+    """Compose the capability set used to match a W3C request to *device*.
 
-    Mirrors what ``start_remote_node`` sends to the agent: pack-rendered
-    stereotype (platformName, automationName, manifest filters, ``appium:udid``
-    via device context) merged with the manager-owned routing surface
-    (deviceId + tag fanout) from ``build_grid_stereotype_caps``.
+    Merges the pack-rendered stereotype (platformName, automationName, manifest
+    filters, ``appium:udid`` via device context) with the manager-owned routing
+    surface (deviceId + tag fanout) from ``build_grid_stereotype_caps``.
 
     When the device's pack/platform cannot be resolved (pack deleted, platform
     dropped from the release) the pack half falls back to empty so one broken pack

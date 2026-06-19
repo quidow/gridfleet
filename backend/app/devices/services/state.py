@@ -87,16 +87,15 @@ async def set_operational_state(
 
 def appium_node_stop_in_flight(device: Device) -> bool:
     """Return True when a stop intent has been written to the device's Appium
-    node row but the agent has not yet finished tearing the relay down.
+    node row but the agent has not yet finished tearing the Appium process down.
 
     The reconciler may write ``desired_state=stopped`` or ``stop_pending=True``
-    well before the agent observes the change and disconnects the relay from
-    the Selenium hub. During that window the node row still looks
-    operational (``pid``, ``active_connection_target`` populated), so any
-    caller that gates on ``operational_state == available`` alone could hand
-    the device to a new run only to have the session removed as soon as the
-    relay deregisters. Callers must consult this predicate alongside the
-    operational axis.
+    well before the agent observes the change and stops the Appium process.
+    During that window the node row still looks operational (``pid``,
+    ``active_connection_target`` populated), so any caller that gates on
+    ``operational_state == available`` alone could hand the device to a new run
+    only to have the session removed as soon as the process exits. Callers must
+    consult this predicate alongside the operational axis.
 
     Lazy-load safety: if ``appium_node`` is not eager-loaded, return False
     rather than trigger a sync IO under an AsyncSession (which raises

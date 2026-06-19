@@ -197,8 +197,8 @@ class SessionSyncService:
     async def sync(self, db: AsyncSession) -> None:
         """Observation sweep: reconcile DB-truth sessions against live Appium nodes.
 
-        The Selenium hub is gone. This loop polls each device's Appium server
-        directly (``app.grid.appium_direct``):
+        This loop polls each device's Appium server directly
+        (``app.grid.appium_direct``):
 
         1. Liveness — every running DB session is probed; a definitively dead
            one is closed through the same ended path the allocator uses. An
