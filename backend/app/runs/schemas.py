@@ -149,7 +149,7 @@ class RunCooldownResponse(BaseModel):
 
 
 class RunCooldownEscalatedResponse(BaseModel):
-    status: Literal["maintenance_escalated"]
+    status: Literal["maintenance_escalated", "released"]
     cooldown_count: int
     threshold: int
 

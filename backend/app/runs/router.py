@@ -188,7 +188,13 @@ async def cooldown_device_endpoint(
     run_services: RunServicesDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
-        excluded_until, cooldown_count, escalated, threshold = await run_services.failure.cooldown_device(
+        (
+            excluded_until,
+            cooldown_count,
+            escalated,
+            threshold,
+            entered_maintenance,
+        ) = await run_services.failure.cooldown_device(
             db,
             run_id,
             device_id,
@@ -218,7 +224,7 @@ async def cooldown_device_endpoint(
 
     if escalated:
         return RunCooldownEscalatedResponse(
-            status="maintenance_escalated",
+            status="maintenance_escalated" if entered_maintenance else "released",
             cooldown_count=cooldown_count,
             threshold=threshold,
         )

@@ -184,10 +184,10 @@ class RunFailureService:
         *,
         reason: str,
         ttl_seconds: int,
-    ) -> tuple[datetime | None, int, bool, int]:
+    ) -> tuple[datetime | None, int, bool, int, bool]:
         """Apply a run-scoped cooldown to a reserved device.
 
-        Returns (excluded_until, cooldown_count, escalated, threshold).
+        Returns (excluded_until, cooldown_count, escalated, threshold, entered_maintenance).
         """
         max_ttl = self._settings.get_int("general.device_cooldown_max_sec")
         if ttl_seconds > max_ttl:
@@ -263,7 +263,7 @@ class RunFailureService:
                 circuit_breaker=self._circuit_breaker,
                 publisher=self._publisher,
             )
-            return None, cooldown_count_after, True, threshold
+            return None, cooldown_count_after, True, threshold, entered_maintenance
 
         excluded_at = datetime.now(UTC)
         excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
@@ -309,7 +309,7 @@ class RunFailureService:
             pool=self._pool,
             publisher=self._publisher,
         )
-        return excluded_until, cooldown_count_after, False, threshold
+        return excluded_until, cooldown_count_after, False, threshold, False
 
     async def _release_and_maybe_maintain(
         self,

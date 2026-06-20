@@ -65,7 +65,7 @@ class RunFailureProtocol(Protocol):
         *,
         reason: str,
         ttl_seconds: int,
-    ) -> tuple[datetime | None, int, bool, int]: ...
+    ) -> tuple[datetime | None, int, bool, int, bool]: ...
 
 
 @runtime_checkable

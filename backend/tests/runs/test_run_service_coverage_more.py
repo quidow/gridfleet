@@ -394,12 +394,12 @@ async def test_cooldown_device_guard_paths(
         await failure_svc.cooldown_device(db_session, run.id, other_device.id, reason="flaky", ttl_seconds=5)
 
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=device))
-    excluded_until, count, escalated, threshold = await failure_svc.cooldown_device(
+    excluded_until, count, escalated, threshold, entered_maintenance = await failure_svc.cooldown_device(
         db_session, run.id, device.id, reason="flaky", ttl_seconds=5
     )
 
     assert excluded_until is not None
-    assert (count, escalated, threshold) == (1, False, 3)
+    assert (count, escalated, threshold, entered_maintenance) == (1, False, 3, False)
 
 
 async def test_release_devices_branches_and_session_counts(
@@ -890,11 +890,11 @@ async def test_cooldown_escalation_releases_device(
         incidents=AsyncMock(),
     )
 
-    excluded_until, count, escalated, threshold = await svc.cooldown_device(
+    excluded_until, count, escalated, threshold, entered_maintenance = await svc.cooldown_device(
         db_session, run.id, device.id, reason="still flaky", ttl_seconds=5
     )
 
-    assert (excluded_until, count, escalated, threshold) == (None, 1, True, 1)
+    assert (excluded_until, count, escalated, threshold, entered_maintenance) == (None, 1, True, 1, False)
     # Released; maintenance toggle off -> stays available, not maintenance.
     maintenance.enter_maintenance.assert_not_awaited()
     active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
@@ -935,11 +935,11 @@ async def test_cooldown_escalation_enters_maintenance_when_enabled(
         incidents=AsyncMock(),
     )
 
-    excluded_until, count, escalated, threshold = await svc.cooldown_device(
+    excluded_until, count, escalated, threshold, entered_maintenance = await svc.cooldown_device(
         db_session, run.id, device.id, reason="still flaky", ttl_seconds=5
     )
 
-    assert (excluded_until, count, escalated, threshold) == (None, 1, True, 1)
+    assert (excluded_until, count, escalated, threshold, entered_maintenance) == (None, 1, True, 1, True)
     # Escalation entered maintenance because the toggle is on.
     maintenance.enter_maintenance.assert_awaited_once()
     # Released from the run regardless of toggle.

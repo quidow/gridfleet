@@ -21,7 +21,7 @@ from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.runs.service_allocator import RunAllocatorService, _find_matching_devices, _readiness_for_match
 from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
-from tests.conftest import test_circuit_breaker
+from tests.conftest import settings_service, test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -1247,3 +1247,44 @@ async def test_allocator_does_not_write_hold(
 
     await db_session.refresh(device)
     assert await device_is_reserved(db_session, device.id), "reservation row must drive reserved state"
+
+
+async def test_cooldown_escalation_status_is_released_when_toggle_off(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the maintenance toggle is off, the cooldown escalation response must report
+    status='released' rather than 'maintenance_escalated'."""
+    monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
+    monkeypatch.setitem(settings_service._cache, "general.run_failure_escalates_to_maintenance", False)
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(return_value={"port": 4723}),
+    )
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-released-status-001",
+        connection_target="cooldown-released-status-001",
+        name="Cooldown Released Status",
+        operational_state="available",
+    )
+    run_resp = await client.post(
+        "/api/runs",
+        json={
+            "name": "Released Status Run",
+            "requirements": [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
+        },
+    )
+    assert run_resp.status_code == 201
+    run_id = run_resp.json()["id"]
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky test", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "released"
+    assert data["cooldown_count"] == 1
+    assert data["threshold"] == 1

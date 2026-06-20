@@ -86,7 +86,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     run = await create_reserved_run(db_session, name="counter-persists-run", devices=[device])
 
     # First cooldown.
-    excluded_until_1, count_1, escalated_1, threshold = await _failure_svc.cooldown_device(
+    excluded_until_1, count_1, escalated_1, threshold, _entered_maintenance_1 = await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,
@@ -138,7 +138,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     assert reservation.cooldown_count == 1, "counter must persist across exclusion clear"
 
     # Second cooldown lands after the first TTL elapsed. Counter accumulates.
-    _, count_2, escalated_2, _ = await _failure_svc.cooldown_device(
+    _, count_2, escalated_2, _, _entered_maintenance_2 = await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,

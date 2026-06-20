@@ -4760,9 +4760,9 @@ export interface components {
             cooldown_count: number;
             /**
              * Status
-             * @constant
+             * @enum {string}
              */
-            status: "maintenance_escalated";
+            status: "maintenance_escalated" | "released";
             /** Threshold */
             threshold: number;
         };
