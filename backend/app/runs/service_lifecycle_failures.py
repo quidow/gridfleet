@@ -146,28 +146,21 @@ class RunFailureService:
         except NoResultFound:
             raise ValueError("Device not found") from None
 
-        run = await self._reservation.exclude_device_from_run(
-            db, device.id, reason=reason, revoke_run_intents=True, commit=False, publisher=self._publisher
+        entered_maintenance = await self._release_and_maybe_maintain(
+            db,
+            device,
+            reason=reason,
+            source=source,
+            escalation_action="ci_preparation_failed",
+            maintenance_reason="CI preparation failure",
         )
-        assert run is not None
 
-        escalate = self._settings.get_bool("general.preparation_failure_escalates_to_maintenance")
-
-        if escalate:
-            await self._lifecycle_actions.record_run_escalation_failure(
-                db,
-                device,
-                reason=reason,
-                source=source,
-                action="ci_preparation_failed",
-            )
-            await self._enter_maintenance(db, device, maintenance_reason="CI preparation failure")
-            await self._health.update_device_checks(db, device, healthy=False, summary=reason)
+        if entered_maintenance:
             incident_detail = (
-                f"CI preparation failed, excluded the device from {run.name}, and placed it into maintenance"
+                f"CI preparation failed, released the device from {run.name}, and placed it into maintenance"
             )
         else:
-            incident_detail = f"CI preparation failed and excluded the device from {run.name}"
+            incident_detail = f"CI preparation failed and released the device from {run.name}"
 
         await self._incidents.record_lifecycle_incident(
             db,
@@ -331,6 +324,31 @@ class RunFailureService:
             publisher=self._publisher,
         )
         return None, cooldown_count_after, True, threshold
+
+    async def _release_and_maybe_maintain(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reason: str,
+        source: str,
+        escalation_action: str,
+        maintenance_reason: str,
+    ) -> bool:
+        """Release ``device`` from its run; if the escalation toggle is on, park it in
+        maintenance. Returns whether maintenance was entered. The caller records the
+        trigger-specific incident and commits."""
+        await self._reservation.release_device_from_run(
+            db, device.id, reason=reason, publisher=self._publisher, commit=False
+        )
+        escalate = self._settings.get_bool("general.run_failure_escalates_to_maintenance")
+        if escalate:
+            await self._lifecycle_actions.record_run_escalation_failure(
+                db, device, reason=reason, source=source, action=escalation_action
+            )
+            await self._enter_maintenance(db, device, maintenance_reason=maintenance_reason)
+            await self._health.update_device_checks(db, device, healthy=False, summary=reason)
+        return escalate
 
     async def _enter_maintenance(
         self,

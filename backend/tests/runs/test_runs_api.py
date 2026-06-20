@@ -803,11 +803,13 @@ async def test_force_release_restores_busy_run_devices(
     assert session.error_message == "Force released by admin"
 
 
-async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
+async def test_report_preparation_failure_releases_device_and_marks_unhealthy(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
+    # Exercises the escalate=True (default) path: device is released from the run and
+    # placed into maintenance; general.run_failure_escalates_to_maintenance defaults to True.
     device_a = await _create_available_device(db_session, default_host_id, "run-prep-1", "Prep Device A")
     device_b = await _create_available_device(db_session, default_host_id, "run-prep-2", "Prep Device B")
     run = await _create_run(
@@ -820,19 +822,27 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
         json={"message": "ADB authorization failed on device during CI setup"},
     )
     assert resp.status_code == 200
-    data = resp.json()
-    excluded = {entry["device_id"]: entry for entry in data["reserved_devices"]}
-    assert excluded[device_a["id"]]["excluded"] is True
-    assert excluded[device_a["id"]]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
-    assert excluded[device_b["id"]]["excluded"] is False
+
+    # Device is released (not a sticky exclusion): released_at is set on the reservation row.
+    reservation_result = await db_session.execute(
+        select(DeviceReservation).where(DeviceReservation.device_id == uuid.UUID(device_a["id"]))
+    )
+    reservation = reservation_result.scalar_one()
+    assert reservation.released_at is not None
+    assert reservation.exclusion_reason == "ADB authorization failed on device during CI setup"
+
+    # Device B is unaffected.
+    device_b_resp = await db_session.execute(
+        select(DeviceReservation).where(DeviceReservation.device_id == uuid.UUID(device_b["id"]))
+    )
+    device_b_reservation = device_b_resp.scalar_one()
+    assert device_b_reservation.released_at is None
 
     device_resp = await client.get(f"/api/devices/{device_a['id']}")
     assert device_resp.status_code == 200
     device_data = device_resp.json()
-    # hold is now derived by the reconciler (Task 7+8); preparation failure triggers
-    # enter_maintenance which sets maintenance_reason — hold derivation is deferred
-    assert device_data["reservation"]["excluded"] is True
-    assert device_data["reservation"]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
+    # Device has no active reservation after release (released_at is set).
+    assert device_data["reservation"] is None
     assert device_data["health_summary"]["overall"] == "failed"
     assert device_data["health_summary"]["device"]["detail"] == "ADB authorization failed on device during CI setup"
 
