@@ -893,8 +893,55 @@ async def test_cooldown_escalation_releases_device(
     )
 
     assert (excluded_until, count, escalated, threshold) == (None, 1, True, 1)
-    # Released (escalate=false -> stays available, not maintenance).
+    # Released; maintenance toggle off -> stays available, not maintenance.
     maintenance.enter_maintenance.assert_not_awaited()
+    active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
+    assert active_run is None
+
+
+async def test_cooldown_escalation_enters_maintenance_when_enabled(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Cooldown Escalate Maint Device",
+        identity_value="run-cooldown-esc-maint-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="cooldown-esc-maint-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.deliver_agent_reconfigures", AsyncMock())
+
+    maintenance = AsyncMock()
+    svc = RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader(
+            {
+                "general.device_cooldown_max_sec": 60,
+                "general.device_cooldown_escalation_threshold": 1,
+                "general.run_failure_escalates_to_maintenance": True,
+            }
+        ),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(review=build_review_service()),
+        health=AsyncMock(),
+        incidents=AsyncMock(),
+    )
+
+    excluded_until, count, escalated, threshold = await svc.cooldown_device(
+        db_session, run.id, device.id, reason="still flaky", ttl_seconds=5
+    )
+
+    assert (excluded_until, count, escalated, threshold) == (None, 1, True, 1)
+    # Escalation entered maintenance because the toggle is on.
+    maintenance.enter_maintenance.assert_awaited_once()
+    # Released from the run regardless of toggle.
     active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
     assert active_run is None
 
