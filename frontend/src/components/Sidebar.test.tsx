@@ -58,6 +58,7 @@ describe('Sidebar', () => {
       'Devices0',
       'Device Groups',
       'Hosts0',
+      'Router',
       'Drivers',
       'Test Runs',
       'Sessions',

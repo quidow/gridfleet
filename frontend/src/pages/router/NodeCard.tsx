@@ -7,11 +7,11 @@ import type { GridRouterNodeRead } from '../../types/gridRouter';
 type OpState = GridRouterNodeRead['operational_state'];
 
 const COLOR: Record<OpState, string> = {
-  available: 'bg-emerald-500',
-  busy: 'bg-amber-500',
-  verifying: 'bg-indigo-500',
-  offline: 'bg-red-500',
-  maintenance: 'bg-slate-400',
+  available: 'bg-success-strong',
+  busy: 'bg-warning-strong',
+  verifying: 'bg-warning-strong',
+  offline: 'bg-danger-strong',
+  maintenance: 'bg-neutral-strong',
 };
 
 export function NodeCard({ node }: { node: GridRouterNodeRead }) {
