@@ -1,5 +1,6 @@
 import api from './client';
 import type { GridQueueRead, GridStatus, HealthStatus } from '../types';
+import type { GridRouterRead } from '../types/gridRouter';
 
 export async function fetchGridStatus(): Promise<GridStatus> {
   const { data } = await api.get('/grid/status');
@@ -8,6 +9,11 @@ export async function fetchGridStatus(): Promise<GridStatus> {
 
 export async function fetchGridQueue(): Promise<GridQueueRead> {
   const { data } = await api.get('/grid/queue');
+  return data;
+}
+
+export async function fetchGridRouter(): Promise<GridRouterRead> {
+  const { data } = await api.get('/grid/router');
   return data;
 }
 
