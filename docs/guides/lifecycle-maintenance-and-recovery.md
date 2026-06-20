@@ -123,7 +123,7 @@ The manager can move into `Stopping Soon` instead of killing the session immedia
 
 The device can be excluded from the run so the run can continue safely while the unhealthy member is taken out of service.
 
-This also applies when CI reports a preparation-time failure for one reserved device. In that case the manager excludes the device from the run, places it into maintenance (operational state `maintenance`) with reason "CI preparation failure", records the exact CI-supplied reason, and keeps healthy reserved siblings attached to the same run.
+This also applies when CI reports a preparation-time failure for one reserved device. In that case the manager releases the device from the run; it is placed into maintenance when `general.run_failure_escalates_to_maintenance` is enabled, otherwise left available for other runs. The exact CI-supplied reason is recorded, and healthy reserved siblings stay attached to the same run.
 
 ### Maintenance Is Active
 
@@ -179,10 +179,10 @@ Check whether:
 
 ### Device went into maintenance immediately after CI setup failed
 
-That is expected for the current shipped contract. When CI calls the run-scoped preparation-failure endpoint for a reserved device, the manager:
+That is expected when `general.run_failure_escalates_to_maintenance` is enabled (the default). When CI calls the run-scoped preparation-failure endpoint for a reserved device, the manager:
 
-- excludes the device from the run
+- releases the device from the run
 - records the exact CI failure reason
-- marks the device unhealthy and places it into maintenance (operational state `maintenance`) with a CI preparation-failure reason
+- places it into maintenance (operational state `maintenance`) with a CI preparation-failure reason when `general.run_failure_escalates_to_maintenance` is enabled, otherwise leaves it available; healthy reserved siblings stay attached to the same run
 
 This keeps operator-visible device state aligned with reservation truth instead of leaving the device silently reserved.

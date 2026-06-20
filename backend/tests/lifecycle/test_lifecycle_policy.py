@@ -2425,6 +2425,33 @@ async def test_restore_run_after_self_heal_leaves_cooldown_exclusion(db_session:
     assert res.excluded is True
 
 
+async def test_restore_run_after_self_heal_ignores_released_device(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(
+        db_session, host_id=db_host.id, name="self-heal-released", operational_state=DeviceOperationalState.available
+    )
+    await create_reserved_run(db_session, name="self-heal-released-run", devices=[device])
+    # Release the device from the run (the escalation mechanism) — real services, real reconcile.
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    )
+
+    # The self-heal loop must NOT rejoin a released device.
+    restored = await _make_svc(publisher=event_bus).restore_run_after_self_heal(
+        db_session, device, reason="Device healthy after self-heal"
+    )
+
+    assert restored is False
+    active = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    assert active is None
+
+
 async def test_restore_run_after_self_heal_skips_non_available_device(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(
         db_session, host_id=db_host.id, name="self-heal-offline", operational_state=DeviceOperationalState.offline
