@@ -56,6 +56,7 @@ export function RouterPage() {
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Search device…"
+                    aria-label="Search device"
                     className="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-sm"
                   />
                   <Select
