@@ -6,7 +6,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
-| `general` | General | 30 |
+| `general` | General | 31 |
 | `grid` | Appium & Grid | 13 |
 | `notifications` | Notifications | 3 |
 | `agent` | Agent | 10 |
