@@ -9,7 +9,7 @@ type OpState = GridRouterNodeRead['operational_state'];
 const COLOR: Record<OpState, string> = {
   available: 'bg-success-strong',
   busy: 'bg-warning-strong',
-  verifying: 'bg-warning-strong',
+  verifying: 'bg-info-strong',
   offline: 'bg-danger-strong',
   maintenance: 'bg-neutral-strong',
 };
