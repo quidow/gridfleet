@@ -151,15 +151,22 @@ class RunFailureService:
         )
         assert run is not None
 
-        await self._lifecycle_actions.record_ci_preparation_failed(
-            db,
-            device,
-            reason=reason,
-            source=source,
-        )
+        escalate = self._settings.get_bool("general.preparation_failure_escalates_to_maintenance")
 
-        await self._enter_maintenance(db, device, maintenance_reason="CI preparation failure")
-        await self._health.update_device_checks(db, device, healthy=False, summary=reason)
+        if escalate:
+            await self._lifecycle_actions.record_ci_preparation_failed(
+                db,
+                device,
+                reason=reason,
+                source=source,
+            )
+            await self._enter_maintenance(db, device, maintenance_reason="CI preparation failure")
+            await self._health.update_device_checks(db, device, healthy=False, summary=reason)
+            incident_detail = (
+                f"CI preparation failed, excluded the device from {run.name}, and placed it into maintenance"
+            )
+        else:
+            incident_detail = f"CI preparation failed and excluded the device from {run.name}"
 
         await self._incidents.record_lifecycle_incident(
             db,
@@ -167,7 +174,7 @@ class RunFailureService:
             event_type=DeviceEventType.lifecycle_run_excluded,
             summary_state=DeviceLifecyclePolicySummaryState.excluded,
             reason=reason,
-            detail=f"CI preparation failed, excluded the device from {run.name}, and placed it into maintenance",
+            detail=incident_detail,
             source=source,
             run_id=run.id,
             run_name=run.name,

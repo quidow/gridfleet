@@ -1182,3 +1182,88 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
     # The reservation row drives the branch: the device is queued for lifecycle cleanup
     # and its operational state is restored, with no hold write.
     assert reserved_device.id in pending
+
+
+async def test_report_preparation_failure_stays_available_when_escalation_disabled(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep No-Escalate Device",
+        identity_value="run-prep-noesc-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-noesc-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+
+    maintenance = AsyncMock()
+    lifecycle_actions = AsyncMock()
+    health = AsyncMock()
+    incidents = AsyncMock()
+    svc = RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.preparation_failure_escalates_to_maintenance": False}),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=lifecycle_actions,
+        reservation=RunReservationService(review=build_review_service()),
+        health=health,
+        incidents=incidents,
+    )
+
+    refreshed = await svc.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
+
+    # Run-exclusion always happens.
+    assert refreshed.device_reservations[0].excluded is True
+    assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
+    # No maintenance, no unhealthy marking, no maintenance-coupled lifecycle write.
+    maintenance.enter_maintenance.assert_not_awaited()
+    health.update_device_checks.assert_not_awaited()
+    lifecycle_actions.record_ci_preparation_failed.assert_not_awaited()
+    # The failure is still recorded as an incident for visibility.
+    incidents.record_lifecycle_incident.assert_awaited_once()
+    # Device stays available.
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available
+
+
+async def test_report_preparation_failure_escalates_to_maintenance_when_enabled(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Escalate Device",
+        identity_value="run-prep-esc-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-esc-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+
+    maintenance = AsyncMock()
+    lifecycle_actions = AsyncMock()
+    health = AsyncMock()
+    incidents = AsyncMock()
+    svc = RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.preparation_failure_escalates_to_maintenance": True}),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=lifecycle_actions,
+        reservation=RunReservationService(review=build_review_service()),
+        health=health,
+        incidents=incidents,
+    )
+
+    refreshed = await svc.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
+
+    assert refreshed.device_reservations[0].excluded is True
+    maintenance.enter_maintenance.assert_awaited_once()
+    health.update_device_checks.assert_awaited_once()
+    lifecycle_actions.record_ci_preparation_failed.assert_awaited_once()
+    incidents.record_lifecycle_incident.assert_awaited_once()
