@@ -33,4 +33,17 @@ describe('QueueTile', () => {
     expect(screen.getByText(/platformName/)).toBeInTheDocument();
     expect(screen.getByText('free')).toBeInTheDocument();
   });
+
+  it('links to the run when a request is bound to one', () => {
+    renderTile([
+      {
+        requestId: 'q2',
+        capabilities: { platformName: 'iOS' },
+        requestTimestamp: new Date().toISOString(),
+        runId: 'r1',
+      },
+    ]);
+    const link = screen.getByRole('link', { name: 'run' });
+    expect(link).toHaveAttribute('href', '/runs/r1');
+  });
 });
