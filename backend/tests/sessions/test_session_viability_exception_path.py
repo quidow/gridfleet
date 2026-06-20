@@ -128,3 +128,54 @@ async def test_exception_path_from_offline_calls_mark_dirty(
         )
 
     mark_dirty.assert_awaited()
+
+
+async def test_gating_failure_after_claim_still_releases_lock(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure between claiming the probe lock and the probe body must still
+    release the lock.
+
+    The lock has no TTL, so a leak parks the device's viability checks until the
+    5-minute stale-reclaim window and surfaces to operators as a spurious 409
+    "probe already in progress" on a device running no probe. This models a
+    transient failure / client-disconnect cancellation in the post-claim gating
+    stage (readiness check), which previously ran outside the try/finally.
+    """
+    device_id = uuid.uuid4()
+    available_device = MagicMock(
+        id=device_id,
+        operational_state=DeviceOperationalState.available,
+        hold=None,
+    )
+    available_device.appium_node = MagicMock(observed_running=True)
+
+    monkeypatch.setattr(service_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
+    delete_value = AsyncMock()
+    monkeypatch.setattr(service_viability.control_plane_state_store, "delete_value", delete_value)
+    # The readiness gate runs after the lock is claimed but before the probe body.
+    # Blowing it up models a disconnect/transient failure in that window.
+    monkeypatch.setattr(
+        service_viability,
+        "is_ready_for_use_async",
+        AsyncMock(side_effect=RuntimeError("disconnect-in-gap")),
+    )
+
+    svc = SessionViabilityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
+        session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    with pytest.raises(RuntimeError, match="disconnect-in-gap"):
+        await svc.run_session_viability_probe(
+            db_session,
+            available_device,
+            checked_by=service_viability.SessionViabilityCheckedBy.manual,
+        )
+
+    # The no-TTL lock MUST be released despite the gap failure.
+    delete_value.assert_awaited()

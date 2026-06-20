@@ -229,27 +229,31 @@ class SessionViabilityService:
         if not acquired:
             raise SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
         await db.commit()
-        device_reserved = await device_is_reserved(db, device.id)
-        # A recovery probe deliberately ignores reservation: a device that goes ``offline``
-        # mid-run keeps its reservation row, and the recovery probe is the only path that can
-        # re-validate it. The device is ``offline``/``verifying`` here, so it serves no client
-        # session — probing cannot steal an in-use Grid slot. Scheduled/manual probes still
-        # require no active reservation.
-        can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (
-            checked_by == SessionViabilityCheckedBy.recovery
-            and device.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
-        )
-        if not can_probe:
-            await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-            await db.commit()
-            raise SessionViabilityProbeNotPermittedError("Session viability checks only run for available devices")
-        if not await is_ready_for_use_async(db, device):
-            await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-            await db.commit()
-            raise ValueError(await readiness_error_detail_async(db, device, action="run a session viability check"))
-
-        attempted_at = _now_iso()
+        # Once the lock is claimed, EVERY exit path — gate rejection, readiness
+        # failure, probe exception, success, or task cancellation (a client
+        # disconnect cancels the request task) — must reach the ``finally`` that
+        # releases it. The lock has no TTL, so a leak parks the device's viability
+        # checks until the 5-minute stale-reclaim window and surfaces to operators
+        # as a 409 "probe already in progress" on a device running no probe. The
+        # gate checks below stay inside this ``try`` so a failure between the claim
+        # and the probe body still releases the lock.
         try:
+            device_reserved = await device_is_reserved(db, device.id)
+            # A recovery probe deliberately ignores reservation: a device that goes ``offline``
+            # mid-run keeps its reservation row, and the recovery probe is the only path that can
+            # re-validate it. The device is ``offline``/``verifying`` here, so it serves no client
+            # session — probing cannot steal an in-use Grid slot. Scheduled/manual probes still
+            # require no active reservation.
+            can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (
+                checked_by == SessionViabilityCheckedBy.recovery
+                and device.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+            )
+            if not can_probe:
+                raise SessionViabilityProbeNotPermittedError("Session viability checks only run for available devices")
+            if not await is_ready_for_use_async(db, device):
+                raise ValueError(await readiness_error_detail_async(db, device, action="run a session viability check"))
+
+            attempted_at = _now_iso()
             config_changed = _clear_session_viability_from_config(device)
             timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
             node = device.appium_node
