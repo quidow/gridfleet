@@ -296,6 +296,17 @@ export function useRunDeviceSessionTest() {
       qc.invalidateQueries({ queryKey: qk.deviceHealth.byDevice(id) });
       qc.invalidateQueries({ queryKey: qk.device.detail(id) });
     },
+    onError: (error) => {
+      // A 409 means a viability probe is already in flight for this device — a
+      // scheduled sweep, another operator, or a lock still clearing. That is not a
+      // failure of this device, so surface it as an informational notice instead of
+      // letting the rejected request bubble up as a raw console error.
+      if ((error as { status?: number }).status === 409) {
+        toast.message('A session probe is already running for this device — try again in a moment.');
+        return;
+      }
+      toast.error(getErrorMessage(error, 'Session test failed'));
+    },
   });
 }
 
