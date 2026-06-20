@@ -40,7 +40,7 @@ from .types import (
 try:
     __version__ = version("gridfleet-testkit")
 except PackageNotFoundError:
-    __version__ = "0.12.0"
+    __version__ = "0.13.0"
 
 __all__ = [
     "CooldownEscalatedResult",
