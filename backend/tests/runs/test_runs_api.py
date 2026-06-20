@@ -1288,3 +1288,13 @@ async def test_cooldown_escalation_status_is_released_when_toggle_off(
     assert data["status"] == "released"
     assert data["cooldown_count"] == 1
     assert data["threshold"] == 1
+
+    active = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    assert active is None
