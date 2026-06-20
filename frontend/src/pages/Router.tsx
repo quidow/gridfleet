@@ -22,10 +22,11 @@ export function RouterPage() {
 
   const filtered = useMemo(() => {
     if (!data) return [];
+    const q = search.trim().toLowerCase();
     return data.nodes.filter(
       (node) =>
         (state === 'all' || node.operational_state === state) &&
-        node.device_name.toLowerCase().includes(search.toLowerCase()),
+        node.device_name.toLowerCase().includes(q),
     );
   }, [data, state, search]);
 
@@ -38,7 +39,7 @@ export function RouterPage() {
       />
 
       {isLoading ? <LoadingSpinner /> : null}
-      {isError ? <FetchError onRetry={() => refetch()} /> : null}
+      {isError && !data ? <FetchError onRetry={() => refetch()} /> : null}
 
       {data ? (
         <>
@@ -71,8 +72,12 @@ export function RouterPage() {
                 {filtered.length === 0 ? (
                   <EmptyState
                     icon={Network}
-                    title="No nodes"
-                    description="No devices match the current filters."
+                    title={data.nodes.length === 0 ? 'No devices' : 'No matches'}
+                    description={
+                      data.nodes.length === 0
+                        ? 'No devices are registered in the grid.'
+                        : 'No devices match the current filters.'
+                    }
                     className="mt-3"
                   />
                 ) : (

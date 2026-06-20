@@ -1,13 +1,7 @@
 import { Link } from 'react-router-dom';
 
+import { formatWaitTime } from '../../utils/dateFormatting';
 import type { GridRouterRead } from '../../types/gridRouter';
-
-function age(iso: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${Math.round(seconds / 3600)}h`;
-}
 
 export function QueueTile({ queue }: { queue: GridRouterRead['queue'] }) {
   return (
@@ -21,7 +15,7 @@ export function QueueTile({ queue }: { queue: GridRouterRead['queue'] }) {
             <li key={entry.requestId} className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs">
               <div className="break-all font-mono text-text-2">{JSON.stringify(entry.capabilities)}</div>
               <div className="mt-1 flex items-center gap-2 text-text-3">
-                <span>{age(entry.requestTimestamp)}</span>
+                <span>{formatWaitTime(entry.requestTimestamp)}</span>
                 <span>·</span>
                 {entry.runId ? (
                   <Link to={`/runs/${entry.runId}`} className="hover:underline">

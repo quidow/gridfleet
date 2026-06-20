@@ -1,34 +1,57 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Copy } from 'lucide-react';
 
+import { Badge, type BadgeTone } from '../../components/ui/Badge';
 import type { GridRouterNodeRead } from '../../types/gridRouter';
 
 type OpState = GridRouterNodeRead['operational_state'];
 
-const COLOR: Record<OpState, string> = {
-  available: 'bg-success-strong',
-  busy: 'bg-warning-strong',
-  verifying: 'bg-info-strong',
-  offline: 'bg-danger-strong',
-  maintenance: 'bg-neutral-strong',
+// Single source of operational-state colour: the Badge (status pill + dot) and the
+// card spine both derive from this tone, so a colour change lands in one place.
+const TONE: Record<OpState, BadgeTone> = {
+  available: 'success',
+  busy: 'warning',
+  verifying: 'info',
+  offline: 'critical',
+  maintenance: 'neutral',
+};
+
+const SPINE: Record<BadgeTone, string> = {
+  success: 'bg-success-strong',
+  warning: 'bg-warning-strong',
+  info: 'bg-info-strong',
+  critical: 'bg-danger-strong',
+  neutral: 'bg-neutral-strong',
 };
 
 export function NodeCard({ node }: { node: GridRouterNodeRead }) {
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   const copyKeys = async () => {
-    await navigator.clipboard.writeText(JSON.stringify(node.stereotype, null, 2));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    // navigator.clipboard is undefined on non-secure (plain-HTTP) origins; guard so
+    // the button degrades quietly instead of throwing an unhandled rejection.
+    if (!navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(node.stereotype, null, 2));
+      setCopied(true);
+      timerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // write rejected (permissions / secure-context) — keep prior state
+    }
   };
+
+  const tone = TONE[node.operational_state];
 
   return (
     <div className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-surface-1 py-3 pl-4 pr-3 shadow-sm">
-      <span className={`absolute inset-y-0 left-0 w-1.5 ${COLOR[node.operational_state]}`} />
+      <span className={`absolute inset-y-0 left-0 w-1.5 ${SPINE[tone]}`} />
       <div className="flex items-center gap-2">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${COLOR[node.operational_state]}`} />
-        <span className="text-xs font-bold uppercase tracking-wide">{node.operational_state}</span>
+        <Badge tone={tone} dot>
+          {node.operational_state}
+        </Badge>
         {node.node_effective_state ? (
           <span className="text-xs font-semibold text-text-3">{node.node_effective_state}</span>
         ) : null}

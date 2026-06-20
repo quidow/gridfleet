@@ -14,8 +14,6 @@ const node: GridRouterNodeRead = {
   host_name: 'host-b',
   operational_state: 'busy',
   node_effective_state: 'running',
-  node_port: 8100,
-  connection_target: '00008030',
   session_id: 's_4821',
   session_target: 'http://host-b:8100',
   stereotype: { platformName: 'iOS', 'appium:gridfleet:deviceId': '2b9c41' },
