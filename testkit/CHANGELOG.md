@@ -2,6 +2,67 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.13.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.12.0...gridfleet-testkit-v0.13.0) (2026-06-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** remove AllocatedDevice and hydrate_allocated_device
+* **testkit:** type resolve_device_handle_from_driver and device_handle as Device
+* **testkit:** return typed Device from get_device and list_devices
+* **testkit:** add typed Device dataclass for device reads
+* **testkit:** removed AllocatedDevice.live_capabilities, the fetch_capabilities argument of hydrate_allocated_device, and GridFleetClient.get_device_capabilities. Read live session capabilities from the Appium driver's .capabilities instead.
+* **testkit:** removed the public testkit symbol hydrate_allocated_device_from_driver. Use hydrate_allocated_device(fetch_capabilities=True), or fold capabilities onto a frozen AllocatedDevice with dataclasses.replace, instead.
+* **testkit:** removed public testkit symbols UnavailableInclude, UnknownIncludeError, ReserveCapabilitiesUnsupportedError, the include= keyword argument of reserve_devices, and AllocatedDevice.unavailable_includes.
+* **testkit:** removed public testkit symbols get_connection_target_from_driver, GridFleetClient.get_device_config, get_device_config_for_driver, the device_config pytest fixture, and AllocatedDevice.config (plus the fetch_config argument of hydrate_allocated_device). Use driver.capabilities["appium:udid"] and the test_data helpers instead.
+* **testkit:** gridfleet_testkit.GRID_URL and gridfleet_testkit.GRIDFLEET_API_URL module attributes are removed. Use gridfleet_testkit.grid_url() and gridfleet_testkit.api_url() functions instead. The GRID_URL/GRIDFLEET_API_URL environment variables are unchanged.
+* **testkit:** resolve device id from gridfleet:deviceId cap, drop connection-target lookup
+
+### Features
+
+* **backend:** make preparation-failure maintenance escalation configurable ([3aeccc8](https://github.com/quidow/gridfleet/commit/3aeccc8bc3ee93360219b96f4ecbb776f85a3e45))
+* **testkit:** add typed Device dataclass for device reads ([1fcc89e](https://github.com/quidow/gridfleet/commit/1fcc89ea360ca028c09df02bc04e7761db7d9687))
+* **testkit:** drop live_capabilities and get_device_capabilities ([b12a25f](https://github.com/quidow/gridfleet/commit/b12a25f5e3e67dfa95fa839c6dcc141571d21915))
+* **testkit:** drop reserve include= param and include error types ([14b7965](https://github.com/quidow/gridfleet/commit/14b79659f82a4130052f2cc36f8fee6c200203f8))
+* **testkit:** remove AllocatedDevice and hydrate_allocated_device ([dfcf979](https://github.com/quidow/gridfleet/commit/dfcf9790e57526db16428527ce2ad3789ff480fa))
+* **testkit:** remove hydrate_allocated_device_from_driver ([e8633fa](https://github.com/quidow/gridfleet/commit/e8633fa4279c57ea976f4be502ce19e2e00d4057))
+* **testkit:** remove redundant connection-target and device-config read helpers ([c71c08f](https://github.com/quidow/gridfleet/commit/c71c08f54bb682d24716e40290f6e3138ae890af))
+* **testkit:** resolve device id from gridfleet:deviceId cap, drop connection-target lookup ([c778084](https://github.com/quidow/gridfleet/commit/c778084063f058eeaa881af2412248dcf174c10a))
+* **testkit:** return typed Device from get_device and list_devices ([09fcb0f](https://github.com/quidow/gridfleet/commit/09fcb0fc03efa34bce8c42d66a347f98b3bc3b79))
+* **testkit:** support client_config for Appium driver creation ([4a45541](https://github.com/quidow/gridfleet/commit/4a45541a7b5c98f146ac9f81c6b40b3dc63ac5a5))
+* **testkit:** support client_config for Appium driver creation ([2000acf](https://github.com/quidow/gridfleet/commit/2000acfc3b2b885dd0539aa17977524dfedd6a06))
+* **testkit:** type resolve_device_handle_from_driver and device_handle as Device ([575879e](https://github.com/quidow/gridfleet/commit/575879e98b1601b8a1e68dde6e5a6e1f7ec0e753))
+* thread gridfleet device id into session caps; retire by-connection-target lookup ([0fe77ce](https://github.com/quidow/gridfleet/commit/0fe77ced0475597213d4bbf1eadc694d78856680))
+
+
+### Bug Fixes
+
+* **backend:** update grid cooldown mocks and testkit type for 5-tuple/released status ([3a51fd8](https://github.com/quidow/gridfleet/commit/3a51fd898c62826d8428631f20d245e78a3bb7ba))
+* **testkit:** align pytest fixtures with deviceId cap resolution ([5a86f07](https://github.com/quidow/gridfleet/commit/5a86f079f678d33c27d476342a95dc82eaef9434))
+* **testkit:** fetch hydrate config by device id regardless of connection target ([53a6e8c](https://github.com/quidow/gridfleet/commit/53a6e8c9236b7b959743f287140f41af5b02cbad))
+* **testkit:** hydrate device config by device id, not connection target ([7bb9ee4](https://github.com/quidow/gridfleet/commit/7bb9ee47807387d23477816224e29af06120a767))
+* **testkit:** repair stale GRID_URL doc, preserve tags, re-home dropped fixture tests ([d6303b7](https://github.com/quidow/gridfleet/commit/d6303b70b941edde0c102c8ff7751903ccf04297))
+* **testkit:** require appium-python-client &gt;=5.0 for client_config ([8a58ea1](https://github.com/quidow/gridfleet/commit/8a58ea1decccc9dc8e08a999535aec99f441c671))
+
+
+### Dependencies
+
+* **deps:** bump ruff in /testkit in the python-dependencies group ([#628](https://github.com/quidow/gridfleet/issues/628)) ([54fa5c8](https://github.com/quidow/gridfleet/commit/54fa5c81f1f4fb50219be19147f269b28cd35937))
+* **testkit:** migrate from httpx to httpx2 ([a51bde5](https://github.com/quidow/gridfleet/commit/a51bde538405696cb1938df13ecc3448ab01c400))
+
+
+### Documentation
+
+* **docs:** replace by-connection-target lookup with gridfleet:deviceId cap ([73740de](https://github.com/quidow/gridfleet/commit/73740de952ff2c8aa7e81ea9ab118fd527033847))
+* **testkit:** document typed Device, drop AllocatedDevice/hydration ([db8290a](https://github.com/quidow/gridfleet/commit/db8290abcc002b3e18bbc4d3a908a4b6d2aba794))
+* **testkit:** drop stale reserve-inline test_data note ([ed1d6df](https://github.com/quidow/gridfleet/commit/ed1d6df99fb3999e4e0b3143b60826cb2f910e9d))
+* **testkit:** restore tags-cast rationale in Device.from_payload ([0ff4b3f](https://github.com/quidow/gridfleet/commit/0ff4b3f9721b3682fd68a1ac401f1f84d2fd43ac))
+
+
+### Code Refactoring
+
+* **testkit:** move env/url resolution to config, drop GRID_URL module attrs ([a26912e](https://github.com/quidow/gridfleet/commit/a26912e9747f172e6ef46e3e737a937507c0ae3e))
+
 ## [0.12.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.11.0...gridfleet-testkit-v0.12.0) (2026-06-18)
 
 
