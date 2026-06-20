@@ -853,7 +853,7 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     assert device.id in reconciled
 
 
-async def test_report_preparation_failure_and_cooldown_escalation_paths(
+async def test_cooldown_escalation_releases_device(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -861,60 +861,42 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     device = await create_device(
         db_session,
         host_id=db_host.id,
-        name="Preparation Failure Device",
-        identity_value="run-prep-failure-001",
+        name="Cooldown Escalate Device",
+        identity_value="run-cooldown-esc-001",
         operational_state=DeviceOperationalState.available,
     )
-    run = await create_reserved_run(db_session, name="prep-failure-run", devices=[device], state=RunState.active)
-    other_device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="Other Device",
-        identity_value="run-prep-failure-002",
-        operational_state=DeviceOperationalState.available,
-    )
-
+    run = await create_reserved_run(db_session, name="cooldown-esc-run", devices=[device], state=RunState.active)
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(RunFailureService, "_enter_maintenance", AsyncMock())
-    # health.update_device_checks is already AsyncMock via _failure_svc health stub
-    _failure_svc._incidents = AsyncMock()  # type: ignore[assignment]
-
-    with pytest.raises(ValueError, match="message is required"):
-        await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="  ")
-    with pytest.raises(ValueError, match="not actively reserved"):
-        await _failure_svc.report_preparation_failure(db_session, run.id, other_device.id, message="bad")
-
-    refreshed = await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
-    assert refreshed.id == run.id
-    # Device is released (not just excluded): released_at is set on the reservation row.
-    entry = refreshed.device_reservations[0]
-    assert entry.released_at is not None
-    assert entry.exclusion_reason == "bad setup"
-
-    # Cooldown escalation path: use a fresh device + run (device is released from its run after prep failure).
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
-    cooldown_run = await create_reserved_run(
-        db_session, name="cooldown-esc-run", devices=[other_device], state=RunState.active
-    )
-    escalate_failure_svc = RunFailureService(
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.deliver_agent_reconfigures", AsyncMock())
+
+    maintenance = AsyncMock()
+    svc = RunFailureService(
         publisher=event_bus,
         settings=FakeSettingsReader(
-            {"general.device_cooldown_max_sec": 60, "general.device_cooldown_escalation_threshold": 1}
+            {
+                "general.device_cooldown_max_sec": 60,
+                "general.device_cooldown_escalation_threshold": 1,
+                "general.run_failure_escalates_to_maintenance": False,
+            }
         ),
         circuit_breaker=_circuit_breaker,
-        maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ),
+        maintenance=maintenance,
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
         health=AsyncMock(),
-        incidents=LifecycleIncidentService(),
+        incidents=AsyncMock(),
     )
-    escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
-        db_session, cooldown_run.id, other_device.id, reason="still flaky", ttl_seconds=5
+
+    excluded_until, count, escalated, threshold = await svc.cooldown_device(
+        db_session, run.id, device.id, reason="still flaky", ttl_seconds=5
     )
-    assert escalated_until is None
-    assert (count, escalated, threshold) == (1, True, 1)
+
+    assert (excluded_until, count, escalated, threshold) == (None, 1, True, 1)
+    # Released (escalate=false -> stays available, not maintenance).
+    maintenance.enter_maintenance.assert_not_awaited()
+    active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
+    assert active_run is None
 
 
 async def test_report_preparation_failure_missing_device_path(

@@ -231,49 +231,32 @@ class RunFailureService:
         escalate = threshold > 0 and cooldown_count_after >= threshold
 
         if escalate:
-            entry.excluded = True
-            entry.excluded_at = datetime.now(UTC)
-            entry.excluded_until = None
-            entry.exclusion_reason = (
+            escalation_reason = (
                 f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
             )
-        else:
-            excluded_at = datetime.now(UTC)
-            excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
-            entry.excluded = True
-            entry.exclusion_reason = clean_reason
-            entry.excluded_at = excluded_at
-            entry.excluded_until = excluded_until
-
+            entered_maintenance = await self._release_and_maybe_maintain(
+                db,
+                device,
+                reason=escalation_reason,
+                source="testkit",
+                escalation_action="cooldown_escalated",
+                maintenance_reason="Cooldown escalation",
+            )
+            detail = f"Cooldown threshold reached ({cooldown_count_after}/{threshold}); released from {run.name}"
+            if entered_maintenance:
+                detail += " and placed into maintenance"
             await self._incidents.record_lifecycle_incident(
                 db,
                 device,
-                event_type=DeviceEventType.lifecycle_run_cooldown_set,
+                event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
                 summary_state=DeviceLifecyclePolicySummaryState.excluded,
                 reason=clean_reason,
-                detail=f"Cooldown set for {ttl_seconds}s",
+                detail=detail,
                 source="testkit",
                 run_id=run.id,
                 run_name=run.name,
-                ttl_seconds=ttl_seconds,
-                expires_at=excluded_until,
             )
-
-            await IntentService(db).register_intents_and_reconcile(
-                device_id=device.id,
-                intents=_cooldown_intents(
-                    run_id=run.id,
-                    reason=clean_reason,
-                    count=cooldown_count_after,
-                    expires_at=excluded_until,
-                ),
-                reason=f"Cooldown: {clean_reason}",
-                publisher=self._publisher,
-            )
-
-        await db.commit()
-
-        if not escalate:
+            await db.commit()
             await deliver_agent_reconfigures(
                 db,
                 device.id,
@@ -281,38 +264,43 @@ class RunFailureService:
                 raise_on_failure=True,
                 settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
-                pool=self._pool,
                 publisher=self._publisher,
             )
-            return excluded_until, cooldown_count_after, False, threshold
+            return None, cooldown_count_after, True, threshold
 
-        # Escalation path
-        device = await device_locking.lock_device(db, device_id, load_sessions=True)
-        run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
-        run_obj = run_for_event.scalar_one()
+        excluded_at = datetime.now(UTC)
+        excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
+        entry.excluded = True
+        entry.exclusion_reason = clean_reason
+        entry.excluded_at = excluded_at
+        entry.excluded_until = excluded_until
 
-        await self._lifecycle_actions.exclude_run_if_needed(
-            db,
-            device,
-            reason=(
-                entry.exclusion_reason
-                or f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
-            ),
-            source="testkit",
-        )
-
-        await self._enter_maintenance(db, device, maintenance_reason="Cooldown escalation")
         await self._incidents.record_lifecycle_incident(
             db,
             device,
-            event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
+            event_type=DeviceEventType.lifecycle_run_cooldown_set,
             summary_state=DeviceLifecyclePolicySummaryState.excluded,
             reason=clean_reason,
-            detail=f"Cooldown threshold reached ({cooldown_count_after}/{threshold})",
+            detail=f"Cooldown set for {ttl_seconds}s",
             source="testkit",
-            run_id=run_obj.id,
-            run_name=run_obj.name,
+            run_id=run.id,
+            run_name=run.name,
+            ttl_seconds=ttl_seconds,
+            expires_at=excluded_until,
         )
+
+        await IntentService(db).register_intents_and_reconcile(
+            device_id=device.id,
+            intents=_cooldown_intents(
+                run_id=run.id,
+                reason=clean_reason,
+                count=cooldown_count_after,
+                expires_at=excluded_until,
+            ),
+            reason=f"Cooldown: {clean_reason}",
+            publisher=self._publisher,
+        )
+
         await db.commit()
         await deliver_agent_reconfigures(
             db,
@@ -321,9 +309,10 @@ class RunFailureService:
             raise_on_failure=True,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
+            pool=self._pool,
             publisher=self._publisher,
         )
-        return None, cooldown_count_after, True, threshold
+        return excluded_until, cooldown_count_after, False, threshold
 
     async def _release_and_maybe_maintain(
         self,
