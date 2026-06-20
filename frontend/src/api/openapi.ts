@@ -3610,8 +3610,6 @@ export interface components {
         };
         /** GridRouterNodeRead */
         GridRouterNodeRead: {
-            /** Connection Target */
-            connection_target?: string | null;
             /** Device Id */
             device_id: string;
             /** Device Name */
@@ -3622,8 +3620,6 @@ export interface components {
             host_name?: string | null;
             /** Node Effective State */
             node_effective_state?: ("starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error") | null;
-            /** Node Port */
-            node_port?: number | null;
             operational_state: components["schemas"]["DeviceOperationalState"];
             /** Platform Id */
             platform_id: string;

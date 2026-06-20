@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.appium_nodes.services.effective_state import compute_effective_state
 from app.core.dependencies import DbDep
 from app.devices.dependencies import DeviceServicesDep
+from app.devices.models import DeviceOperationalState
 from app.grid.allocation import StereotypeTemplateCache, device_match_surface
 from app.grid.matching import CapabilityMergeError, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -30,11 +31,28 @@ def _ticket_capabilities(ticket: GridSessionQueueTicket) -> dict[str, Any]:
     return candidates[0] if candidates else {}
 
 
+def _queue_entry(ticket: GridSessionQueueTicket) -> dict[str, Any]:
+    """Selenium-queue-shaped (camelCase) view of one waiting ticket. Shared by the
+    ``/queue`` and ``/router`` endpoints so their queue payloads cannot drift."""
+    return {
+        "requestId": str(ticket.id),
+        "capabilities": _ticket_capabilities(ticket),
+        "requestTimestamp": ticket.created_at.isoformat(),
+        "runId": str(ticket.run_id) if ticket.run_id is not None else None,
+    }
+
+
 async def _live_sessions_by_device(db: DbDep) -> dict[Any, list[str]]:
     # running|pending via the shared chokepoint: a pending allocation
     # (allocate->confirm window) already claims its device, so the public status
     # must count it rather than report the device free (wave-5 re-review B2).
-    stmt = select(Session.device_id, Session.session_id).where(live_session_predicate())
+    # Deterministic order (newest first) so a device with >1 live session surfaces a
+    # stable session each poll instead of flickering on Postgres row order.
+    stmt = (
+        select(Session.device_id, Session.session_id)
+        .where(live_session_predicate())
+        .order_by(Session.started_at.desc())
+    )
     rows = (await db.execute(stmt)).all()
     by_device: dict[Any, list[str]] = {}
     for device_id, session_id in rows:
@@ -93,18 +111,9 @@ async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str
 @router.get("/queue", response_model=GridQueueRead)
 async def grid_queue(db: DbDep) -> dict[str, Any]:
     waiting = await _waiting_tickets(db)
-    requests = [
-        {
-            "requestId": str(ticket.id),
-            "capabilities": _ticket_capabilities(ticket),
-            "requestTimestamp": ticket.created_at.isoformat(),
-            "runId": str(ticket.run_id) if ticket.run_id is not None else None,
-        }
-        for ticket in waiting
-    ]
     return {
         "queue_size": len(waiting),
-        "requests": requests,
+        "requests": [_queue_entry(ticket) for ticket in waiting],
     }
 
 
@@ -120,17 +129,11 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
     template_cache: StereotypeTemplateCache = {}
     now = datetime.now(UTC)
 
-    counts = {
-        "registered": len(devices),
-        "running": 0,
-        "available": 0,
-        "busy": 0,
-        "verifying": 0,
-        "offline": 0,
-        "maintenance": 0,
-        "active_sessions": 0,
-        "queue_depth": len(waiting),
-    }
+    # Seed the per-operational-state buckets from the enum itself so that adding a 6th
+    # DeviceOperationalState cannot turn the `counts[...] += 1` below into a fleet-wide
+    # KeyError/500 — an unmodelled state is simply dropped by response_model validation.
+    counts: dict[str, int] = {state.value: 0 for state in DeviceOperationalState}
+    counts.update({"registered": len(devices), "running": 0, "active_sessions": 0, "queue_depth": len(waiting)})
 
     nodes: list[dict[str, Any]] = []
     for device in devices:
@@ -171,12 +174,10 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 "device_id": str(device.id),
                 "device_name": device.name,
                 "platform_id": device.platform_id,
-                "host_id": str(device.host_id) if device.host_id else None,
+                "host_id": str(device.host_id),
                 "host_name": host.hostname if host is not None else None,
                 "operational_state": device.operational_state.value,
                 "node_effective_state": effective_state,
-                "node_port": node_port,
-                "connection_target": device.connection_target,
                 "session_id": session_id,
                 "session_target": target if session_id else None,
                 "stereotype": stereotype,
@@ -185,14 +186,8 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
 
     counts["active_sessions"] = sum(len(sids) for sids in sessions_by_device.values())
 
-    queue = [
-        {
-            "requestId": str(ticket.id),
-            "capabilities": _ticket_capabilities(ticket),
-            "requestTimestamp": ticket.created_at.isoformat(),
-            "runId": str(ticket.run_id) if ticket.run_id is not None else None,
-        }
-        for ticket in waiting
-    ]
-
-    return {"counts": counts, "nodes": nodes, "queue": queue}
+    return {
+        "counts": counts,
+        "nodes": nodes,
+        "queue": [_queue_entry(ticket) for ticket in waiting],
+    }

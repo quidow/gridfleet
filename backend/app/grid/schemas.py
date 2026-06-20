@@ -72,8 +72,6 @@ class GridRouterNodeRead(BaseModel):
     host_name: str | None = None
     operational_state: DeviceOperationalState
     node_effective_state: EffectiveNodeStateValue | None = None
-    node_port: int | None = None
-    connection_target: str | None = None
     session_id: str | None = None
     session_target: str | None = None
     stereotype: dict[str, Any]
