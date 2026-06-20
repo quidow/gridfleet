@@ -21,7 +21,7 @@ from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.runs.service_allocator import RunAllocatorService, _find_matching_devices, _readiness_for_match
 from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
-from tests.conftest import test_circuit_breaker
+from tests.conftest import settings_service, test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -803,11 +803,13 @@ async def test_force_release_restores_busy_run_devices(
     assert session.error_message == "Force released by admin"
 
 
-async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
+async def test_report_preparation_failure_releases_device_and_enters_maintenance(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
+    # Exercises the escalate=True (default) path: device is released from the run and
+    # placed into maintenance; general.run_failure_escalates_to_maintenance defaults to True.
     device_a = await _create_available_device(db_session, default_host_id, "run-prep-1", "Prep Device A")
     device_b = await _create_available_device(db_session, default_host_id, "run-prep-2", "Prep Device B")
     run = await _create_run(
@@ -820,21 +822,29 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
         json={"message": "ADB authorization failed on device during CI setup"},
     )
     assert resp.status_code == 200
-    data = resp.json()
-    excluded = {entry["device_id"]: entry for entry in data["reserved_devices"]}
-    assert excluded[device_a["id"]]["excluded"] is True
-    assert excluded[device_a["id"]]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
-    assert excluded[device_b["id"]]["excluded"] is False
+
+    # Device is released (not a sticky exclusion): released_at is set on the reservation row.
+    reservation_result = await db_session.execute(
+        select(DeviceReservation).where(DeviceReservation.device_id == uuid.UUID(device_a["id"]))
+    )
+    reservation = reservation_result.scalar_one()
+    assert reservation.released_at is not None
+    assert reservation.exclusion_reason == "ADB authorization failed on device during CI setup"
+
+    # Device B is unaffected.
+    device_b_resp = await db_session.execute(
+        select(DeviceReservation).where(DeviceReservation.device_id == uuid.UUID(device_b["id"]))
+    )
+    device_b_reservation = device_b_resp.scalar_one()
+    assert device_b_reservation.released_at is None
 
     device_resp = await client.get(f"/api/devices/{device_a['id']}")
     assert device_resp.status_code == 200
     device_data = device_resp.json()
-    # hold is now derived by the reconciler (Task 7+8); preparation failure triggers
-    # enter_maintenance which sets maintenance_reason — hold derivation is deferred
-    assert device_data["reservation"]["excluded"] is True
-    assert device_data["reservation"]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
-    assert device_data["health_summary"]["overall"] == "failed"
-    assert device_data["health_summary"]["device"]["detail"] == "ADB authorization failed on device during CI setup"
+    # Device has no active reservation after release (released_at is set).
+    assert device_data["reservation"] is None
+    # Device is in maintenance after escalation.
+    assert device_data["operational_state"] == "maintenance"
 
 
 async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
@@ -1237,3 +1247,54 @@ async def test_allocator_does_not_write_hold(
 
     await db_session.refresh(device)
     assert await device_is_reserved(db_session, device.id), "reservation row must drive reserved state"
+
+
+async def test_cooldown_escalation_status_is_released_when_toggle_off(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the maintenance toggle is off, the cooldown escalation response must report
+    status='released' rather than 'maintenance_escalated'."""
+    monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
+    monkeypatch.setitem(settings_service._cache, "general.run_failure_escalates_to_maintenance", False)
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(return_value={"port": 4723}),
+    )
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-released-status-001",
+        connection_target="cooldown-released-status-001",
+        name="Cooldown Released Status",
+        operational_state="available",
+    )
+    run_resp = await client.post(
+        "/api/runs",
+        json={
+            "name": "Released Status Run",
+            "requirements": [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
+        },
+    )
+    assert run_resp.status_code == 201
+    run_id = run_resp.json()["id"]
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky test", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "released"
+    assert data["cooldown_count"] == 1
+    assert data["threshold"] == 1
+
+    active = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    assert active is None

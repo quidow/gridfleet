@@ -168,7 +168,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 ),
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(review=build_review_service()),
-                health=AsyncMock(),
                 incidents=LifecycleIncidentService(),
             )
             run_query = RunQueryService()

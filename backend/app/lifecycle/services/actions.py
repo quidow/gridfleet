@@ -172,11 +172,12 @@ class LifecyclePolicyActionsService:
         transient blip leaves the reservation entry intact (see D1).
 
         Does NOT escalate the device into maintenance. Auto-escalation to
-        maintenance from health failures is intentionally absent — only three
-        paths flip ``hold`` to ``maintenance``: operator-driven UI actions,
-        ``report_preparation_failure`` (testkit pre-run signal). Callers that
-        need the device parked in maintenance must call
-        ``maintenance_service.enter_maintenance`` themselves.
+        maintenance from health failures is intentionally absent. Maintenance is
+        entered only by operator-driven UI actions and by run-failure escalation
+        (CI preparation failure or cooldown threshold) when escalation-to-
+        maintenance is enabled — those paths call
+        ``maintenance_service.enter_maintenance`` explicitly. Callers here that
+        need the device parked in maintenance must do the same.
         """
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         if run is None:
@@ -400,13 +401,16 @@ class LifecyclePolicyActionsService:
             run_name=run.name if run is not None else None,
         )
 
-    async def record_ci_preparation_failed(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> None:
-        """Persist the CI preparation failure onto the lifecycle_policy_state JSON.
+    async def record_run_escalation_failure(
+        self, db: AsyncSession, device: Device, *, reason: str, source: str, action: str
+    ) -> None:
+        """Persist run-escalation failure context onto ``lifecycle_policy_state``.
 
-        The caller is responsible for holding the device row lock and for the
-        surrounding maintenance / event / commit work; this helper only owns the
-        JSON column write so ``run_service`` does not need to import
-        ``write_state`` or other low-level lifecycle_policy_state primitives.
+        Records the failure source/reason and the triggering ``action`` label
+        (``ci_preparation_failed`` or ``cooldown_escalated``) and sets the
+        maintenance-hold recovery suppression. Called only when the escalation
+        enters maintenance — the suppression is correct only for a device heading
+        into maintenance.
         """
         device = await _lock_for_state_write(db, device)
         fresh = policy_state(device)
@@ -415,7 +419,7 @@ class LifecyclePolicyActionsService:
         clear_deferred_stop(fresh)
         fresh["recovery_suppressed_reason"] = MAINTENANCE_HOLD_SUPPRESSION_REASON
         clear_backoff(fresh)
-        set_action(fresh, "ci_preparation_failed")
+        set_action(fresh, action)
         write_state(device, fresh)
 
     async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:

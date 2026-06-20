@@ -193,11 +193,10 @@ async def test_cooldown_intent_payload_shape(
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
         incidents=AsyncMock(),
     )
     cooldown_reason = "flaky connection detected"
-    _excluded_until, count, escalated, _ = await _failure_svc.cooldown_device(
+    _excluded_until, count, escalated, _, _entered_maintenance = await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,

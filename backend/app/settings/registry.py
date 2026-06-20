@@ -186,6 +186,17 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=100,
     ),
     SettingDefinition(
+        key="general.run_failure_escalates_to_maintenance",
+        category="general",
+        setting_type="bool",
+        default=True,
+        description=(
+            "When a device is escalated out of a run (CI preparation failure, or cooldown threshold exceeded), "
+            "true places it into maintenance (manual recovery); false leaves it available. The device is released "
+            "from the run regardless of this setting."
+        ),
+    ),
+    SettingDefinition(
         key="general.property_refresh_interval_sec",
         category="general",
         setting_type="int",

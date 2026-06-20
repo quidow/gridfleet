@@ -610,7 +610,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 incidents=LifecycleIncidentService(),
             ),
             reservation=RunReservationService(review=build_review_service()),
-            health=DeviceHealthService(publisher=test_event_bus),
             incidents=LifecycleIncidentService(),
         )
         run_query = RunQueryService()

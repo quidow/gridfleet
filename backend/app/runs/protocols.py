@@ -65,7 +65,7 @@ class RunFailureProtocol(Protocol):
         *,
         reason: str,
         ttl_seconds: int,
-    ) -> tuple[datetime | None, int, bool, int]: ...
+    ) -> tuple[datetime | None, int, bool, int, bool]: ...
 
 
 @runtime_checkable
@@ -125,13 +125,8 @@ class DeviceLifecycleFailureWriter(Protocol):
         source: str,
     ) -> tuple[TestRun | None, DeviceReservation | None]: ...
 
-    async def record_ci_preparation_failed(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        reason: str,
-        source: str,
+    async def record_run_escalation_failure(
+        self, db: AsyncSession, device: Device, *, reason: str, source: str, action: str
     ) -> None: ...
 
 
@@ -144,11 +139,19 @@ class RunReservationProtocol(Protocol):
         *,
         reason: str,
         publisher: EventPublisher,
-        revoke_run_intents: bool = ...,
         commit: bool = ...,
     ) -> TestRun | None: ...
     async def restore_device_to_run(
         self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
+    ) -> TestRun | None: ...
+    async def release_device_from_run(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        *,
+        reason: str,
+        publisher: EventPublisher,
+        commit: bool = ...,
     ) -> TestRun | None: ...
 
 

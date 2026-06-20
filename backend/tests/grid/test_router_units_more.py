@@ -2548,7 +2548,9 @@ async def test_runs_router_state_transition_endpoints() -> None:
 
     # cooldown_device success
     mock_rs = _mock_rs()
-    mock_rs.failure.cooldown_device = AsyncMock(return_value=(datetime.now(UTC) + timedelta(seconds=30), 1, False, 3))
+    mock_rs.failure.cooldown_device = AsyncMock(
+        return_value=(datetime.now(UTC) + timedelta(seconds=30), 1, False, 3, False)
+    )
     cooldown = await runs.cooldown_device_endpoint(
         run_id,
         device_id,

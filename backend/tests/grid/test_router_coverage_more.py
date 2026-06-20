@@ -229,13 +229,13 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         )
     assert invalid_ttl.value.status_code == 422
 
-    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 2, True, 2))
+    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 2, True, 2, True))
     escalated = await runs.cooldown_device_endpoint(
         run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
     )
     assert escalated.status == "maintenance_escalated"
 
-    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 1, False, 2))
+    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 1, False, 2, False))
     with pytest.raises(HTTPException) as no_expiry:
         await runs.cooldown_device_endpoint(
             run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs

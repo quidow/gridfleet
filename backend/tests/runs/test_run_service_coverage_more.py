@@ -12,9 +12,10 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -34,7 +35,11 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService, _resolve_session_target
 from app.runs.service_query import RunQueryService
-from app.runs.service_reservation import RunReservationService
+from app.runs.service_reservation import (
+    RunReservationService,
+    get_device_reservation_with_entry,
+    run_release_intent_sources,
+)
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, create_reserved_run
@@ -60,7 +65,6 @@ _failure_svc = RunFailureService(
     maintenance=MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(review=build_review_service()),
-    health=AsyncMock(),
     incidents=LifecycleIncidentService(),
 )
 
@@ -354,7 +358,6 @@ async def test_cooldown_device_guard_paths(
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
         incidents=LifecycleIncidentService(),
     )
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
@@ -391,12 +394,12 @@ async def test_cooldown_device_guard_paths(
         await failure_svc.cooldown_device(db_session, run.id, other_device.id, reason="flaky", ttl_seconds=5)
 
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=device))
-    excluded_until, count, escalated, threshold = await failure_svc.cooldown_device(
+    excluded_until, count, escalated, threshold, entered_maintenance = await failure_svc.cooldown_device(
         db_session, run.id, device.id, reason="flaky", ttl_seconds=5
     )
 
     assert excluded_until is not None
-    assert (count, escalated, threshold) == (1, False, 3)
+    assert (count, escalated, threshold, entered_maintenance) == (1, False, 3, False)
 
 
 async def test_release_devices_branches_and_session_counts(
@@ -853,7 +856,7 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     assert device.id in reconciled
 
 
-async def test_report_preparation_failure_and_cooldown_escalation_paths(
+async def test_cooldown_escalation_releases_device(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -861,54 +864,87 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     device = await create_device(
         db_session,
         host_id=db_host.id,
-        name="Preparation Failure Device",
-        identity_value="run-prep-failure-001",
+        name="Cooldown Escalate Device",
+        identity_value="run-cooldown-esc-001",
         operational_state=DeviceOperationalState.available,
     )
-    run = await create_reserved_run(db_session, name="prep-failure-run", devices=[device], state=RunState.active)
-    other_device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="Other Device",
-        identity_value="run-prep-failure-002",
-        operational_state=DeviceOperationalState.available,
-    )
-
+    run = await create_reserved_run(db_session, name="cooldown-esc-run", devices=[device], state=RunState.active)
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(RunFailureService, "_enter_maintenance", AsyncMock())
-    # health.update_device_checks is already AsyncMock via _failure_svc health stub
-    _failure_svc._incidents = AsyncMock()  # type: ignore[assignment]
-
-    with pytest.raises(ValueError, match="message is required"):
-        await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="  ")
-    with pytest.raises(ValueError, match="not actively reserved"):
-        await _failure_svc.report_preparation_failure(db_session, run.id, other_device.id, message="bad")
-
-    refreshed = await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
-    assert refreshed.id == run.id
-    assert refreshed.device_reservations[0].excluded is True
-    assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
-
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
-    escalate_failure_svc = RunFailureService(
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.deliver_agent_reconfigures", AsyncMock())
+
+    maintenance = AsyncMock()
+    svc = RunFailureService(
         publisher=event_bus,
         settings=FakeSettingsReader(
-            {"general.device_cooldown_max_sec": 60, "general.device_cooldown_escalation_threshold": 1}
+            {
+                "general.device_cooldown_max_sec": 60,
+                "general.device_cooldown_escalation_threshold": 1,
+                "general.run_failure_escalates_to_maintenance": False,
+            }
         ),
         circuit_breaker=_circuit_breaker,
-        maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ),
+        maintenance=maintenance,
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
-        incidents=LifecycleIncidentService(),
+        incidents=AsyncMock(),
     )
-    escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
-        db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5
+
+    excluded_until, count, escalated, threshold, entered_maintenance = await svc.cooldown_device(
+        db_session, run.id, device.id, reason="still flaky", ttl_seconds=5
     )
-    assert escalated_until is None
-    assert (count, escalated, threshold) == (1, True, 1)
+
+    assert (excluded_until, count, escalated, threshold, entered_maintenance) == (None, 1, True, 1, False)
+    # Released; maintenance toggle off -> stays available, not maintenance.
+    maintenance.enter_maintenance.assert_not_awaited()
+    active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
+    assert active_run is None
+
+
+async def test_cooldown_escalation_enters_maintenance_when_enabled(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Cooldown Escalate Maint Device",
+        identity_value="run-cooldown-esc-maint-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="cooldown-esc-maint-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.deliver_agent_reconfigures", AsyncMock())
+
+    maintenance = AsyncMock()
+    svc = RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader(
+            {
+                "general.device_cooldown_max_sec": 60,
+                "general.device_cooldown_escalation_threshold": 1,
+                "general.run_failure_escalates_to_maintenance": True,
+            }
+        ),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=AsyncMock(),
+    )
+
+    excluded_until, count, escalated, threshold, entered_maintenance = await svc.cooldown_device(
+        db_session, run.id, device.id, reason="still flaky", ttl_seconds=5
+    )
+
+    assert (excluded_until, count, escalated, threshold, entered_maintenance) == (None, 1, True, 1, True)
+    # Escalation entered maintenance because the toggle is on.
+    maintenance.enter_maintenance.assert_awaited_once()
+    # Released from the run regardless of toggle.
+    active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
+    assert active_run is None
 
 
 async def test_report_preparation_failure_missing_device_path(
@@ -1182,3 +1218,301 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
     # The reservation row drives the branch: the device is queued for lifecycle cleanup
     # and its operational state is restored, with no hold write.
     assert reserved_device.id in pending
+
+
+async def test_report_preparation_failure_releases_device_when_escalation_disabled(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Release Device",
+        identity_value="run-prep-release-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-release-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+
+    maintenance = AsyncMock()
+    lifecycle_actions = AsyncMock()
+    incidents = AsyncMock()
+    svc = RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.run_failure_escalates_to_maintenance": False}),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=lifecycle_actions,
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=incidents,
+    )
+
+    refreshed = await svc.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
+
+    # Released from the run (not a sticky exclusion): released_at set, reason recorded, no active reservation.
+    entry = next(r for r in refreshed.device_reservations if r.device_id == device.id)
+    assert entry.released_at is not None
+    assert entry.exclusion_reason == "bad setup"
+    active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
+    assert active_run is None
+    # No maintenance / no maintenance-coupled failure-context write.
+    maintenance.enter_maintenance.assert_not_awaited()
+    lifecycle_actions.record_run_escalation_failure.assert_not_awaited()
+    # Incident still recorded.
+    incidents.record_lifecycle_incident.assert_awaited_once()
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available
+
+
+async def test_report_preparation_failure_releases_and_maintains_when_enabled(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Release Maint Device",
+        identity_value="run-prep-release-maint-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-release-maint-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+
+    maintenance = AsyncMock()
+    lifecycle_actions = AsyncMock()
+    incidents = AsyncMock()
+    svc = RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.run_failure_escalates_to_maintenance": True}),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=lifecycle_actions,
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=incidents,
+    )
+
+    refreshed = await svc.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
+
+    entry = next(r for r in refreshed.device_reservations if r.device_id == device.id)
+    assert entry.released_at is not None
+    maintenance.enter_maintenance.assert_awaited_once()
+    lifecycle_actions.record_run_escalation_failure.assert_awaited_once()
+    incidents.record_lifecycle_incident.assert_awaited_once()
+
+
+@pytest.mark.db
+async def test_report_preparation_failure_rejects_empty_message(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Empty Msg Device",
+        identity_value="run-prep-empty-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-empty-run", devices=[device], state=RunState.active)
+    with pytest.raises(ValueError, match="message is required"):
+        await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="  ")
+
+
+@pytest.mark.db
+async def test_release_device_from_run_releases_and_frees_device(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Release Primitive Device",
+        identity_value="run-release-prim-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="release-prim-run", devices=[device], state=RunState.active)
+
+    returned = await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    )
+
+    assert returned is not None and returned.id == run.id
+    # The reservation is released, with the reason recorded for run history.
+    entry = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert entry.released_at is not None
+    assert entry.exclusion_reason == "CI preparation failed"
+    # No active reservation remains -> device is free for other runs and invisible to the self-heal loop.
+    active_run, active_entry = await get_device_reservation_with_entry(db_session, device.id)
+    assert active_run is None and active_entry is None
+
+
+@pytest.mark.db
+async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Release Full Revoke Device",
+        identity_value="run-release-full-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
+    # Seed all six intent sources that release_device_from_run must revoke.
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="seed full intent set",
+        intents=[
+            IntentRegistration(
+                source=f"run:{run.id}",
+                axis=GRID_ROUTING,
+                run_id=run.id,
+                payload={"accepting_new_sessions": True, "priority": 10},
+            ),
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                payload={"action": "stop", "priority": 50},
+            ),
+            IntentRegistration(
+                source=f"cooldown:grid:{run.id}",
+                axis=GRID_ROUTING,
+                run_id=run.id,
+                payload={"accepting_new_sessions": False, "priority": 50},
+            ),
+            IntentRegistration(
+                source=f"cooldown:reservation:{run.id}",
+                axis=RESERVATION,
+                run_id=run.id,
+                payload={"excluded": True, "priority": 50, "exclusion_reason": "flaky"},
+            ),
+            IntentRegistration(
+                source=f"cooldown:recovery:{run.id}",
+                axis=RECOVERY,
+                run_id=run.id,
+                payload={"allowed": False, "priority": 50, "reason": "flaky"},
+            ),
+            IntentRegistration(
+                source=f"health_failure:reservation:{device.id}",
+                axis=RESERVATION,
+                run_id=run.id,
+                payload={"excluded": True, "priority": 60, "exclusion_reason": "bad checks"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    )
+
+    # #11: released row must NOT be excluded (invariant: not (released_at and excluded)).
+    entry = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert entry.released_at is not None
+    assert entry.excluded is False
+    assert entry.exclusion_reason == "CI preparation failed"
+    # #2/#7: the full intent set is gone (no cooldown:* or health_failure:reservation lingering).
+    remaining = (
+        (await db_session.execute(select(DeviceIntent.source).where(DeviceIntent.device_id == device.id)))
+        .scalars()
+        .all()
+    )
+    assert not any(
+        s.startswith("cooldown:") or s.startswith("health_failure:") or s.startswith("run:") for s in remaining
+    )
+
+
+@pytest.mark.db
+async def test_reserved_device_info_exposes_released_at(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="DTO Released Device",
+        identity_value="run-dto-released-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reserved_run(db_session, name="dto-released-run", devices=[device], state=RunState.active)
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    )
+
+    entry = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    info = entry.to_reserved_device_info()
+    assert info["released_at"] is not None  # released device is distinguishable
+    assert info["excluded"] is False  # not a restorable exclusion (depends on Task 1)
+    assert info["exclusion_reason"] == "CI preparation failed"
+
+
+def test_run_release_intent_sources_lists_the_full_set() -> None:
+    import uuid as _uuid
+
+    run_id = _uuid.UUID("11111111-1111-1111-1111-111111111111")
+    device_id = _uuid.UUID("22222222-2222-2222-2222-222222222222")
+    assert run_release_intent_sources(run_id, device_id) == [
+        f"run:{run_id}",
+        f"cooldown:node:{run_id}",
+        f"cooldown:grid:{run_id}",
+        f"cooldown:reservation:{run_id}",
+        f"cooldown:recovery:{run_id}",
+        f"health_failure:reservation:{device_id}",
+    ]
+
+
+@pytest.mark.db
+async def test_release_device_from_run_clears_prior_exclusion(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression: release_device_from_run must clear a pre-existing exclusion.
+
+    When a sub-threshold cooldown sets excluded=True + a future excluded_until window
+    and the escalation threshold is then crossed, release_device_from_run is called.
+    The released row must not carry excluded=True or a live excluded_window — otherwise
+    the GiST ExcludeConstraint collides on the next reservation for this device.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prior Exclusion Device",
+        identity_value="run-release-prior-excl-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reserved_run(db_session, name="release-prior-excl-run", devices=[device], state=RunState.active)
+
+    # Seed the reservation as already-excluded (mirrors the sub-threshold cooldown path).
+    entry = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one()
+    entry.excluded = True
+    entry.excluded_at = datetime.now(UTC)
+    entry.excluded_until = datetime.now(UTC) + timedelta(hours=1)
+    await db_session.commit()
+
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="threshold crossed", publisher=event_bus, commit=True
+    )
+
+    released = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert released.released_at is not None
+    assert released.excluded is False
+    assert released.excluded_at is None
+    assert released.excluded_until is None
