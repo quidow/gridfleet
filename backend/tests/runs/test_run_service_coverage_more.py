@@ -65,7 +65,6 @@ _failure_svc = RunFailureService(
     maintenance=MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(review=build_review_service()),
-    health=AsyncMock(),
     incidents=LifecycleIncidentService(),
 )
 
@@ -359,7 +358,6 @@ async def test_cooldown_device_guard_paths(
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
         incidents=LifecycleIncidentService(),
     )
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
@@ -889,7 +887,6 @@ async def test_cooldown_escalation_releases_device(
         maintenance=maintenance,
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
         incidents=AsyncMock(),
     )
 
@@ -935,7 +932,6 @@ async def test_cooldown_escalation_enters_maintenance_when_enabled(
         maintenance=maintenance,
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
         incidents=AsyncMock(),
     )
 
@@ -1241,7 +1237,6 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
 
     maintenance = AsyncMock()
     lifecycle_actions = AsyncMock()
-    health = AsyncMock()
     incidents = AsyncMock()
     svc = RunFailureService(
         publisher=event_bus,
@@ -1250,7 +1245,6 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
         maintenance=maintenance,
         lifecycle_actions=lifecycle_actions,
         reservation=RunReservationService(review=build_review_service()),
-        health=health,
         incidents=incidents,
     )
 
@@ -1262,9 +1256,8 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
     assert entry.exclusion_reason == "bad setup"
     active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
     assert active_run is None
-    # No maintenance / no unhealthy / no maintenance-coupled failure-context write.
+    # No maintenance / no maintenance-coupled failure-context write.
     maintenance.enter_maintenance.assert_not_awaited()
-    health.update_device_checks.assert_not_awaited()
     lifecycle_actions.record_run_escalation_failure.assert_not_awaited()
     # Incident still recorded.
     incidents.record_lifecycle_incident.assert_awaited_once()
@@ -1289,7 +1282,6 @@ async def test_report_preparation_failure_releases_and_maintains_when_enabled(
 
     maintenance = AsyncMock()
     lifecycle_actions = AsyncMock()
-    health = AsyncMock()
     incidents = AsyncMock()
     svc = RunFailureService(
         publisher=event_bus,
@@ -1298,7 +1290,6 @@ async def test_report_preparation_failure_releases_and_maintains_when_enabled(
         maintenance=maintenance,
         lifecycle_actions=lifecycle_actions,
         reservation=RunReservationService(review=build_review_service()),
-        health=health,
         incidents=incidents,
     )
 
@@ -1307,7 +1298,6 @@ async def test_report_preparation_failure_releases_and_maintains_when_enabled(
     entry = next(r for r in refreshed.device_reservations if r.device_id == device.id)
     assert entry.released_at is not None
     maintenance.enter_maintenance.assert_awaited_once()
-    health.update_device_checks.assert_awaited_once()
     lifecycle_actions.record_run_escalation_failure.assert_awaited_once()
     incidents.record_lifecycle_incident.assert_awaited_once()
 

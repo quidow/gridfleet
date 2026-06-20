@@ -803,7 +803,7 @@ async def test_force_release_restores_busy_run_devices(
     assert session.error_message == "Force released by admin"
 
 
-async def test_report_preparation_failure_releases_device_and_marks_unhealthy(
+async def test_report_preparation_failure_releases_device_and_enters_maintenance(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
@@ -843,8 +843,8 @@ async def test_report_preparation_failure_releases_device_and_marks_unhealthy(
     device_data = device_resp.json()
     # Device has no active reservation after release (released_at is set).
     assert device_data["reservation"] is None
-    assert device_data["health_summary"]["overall"] == "failed"
-    assert device_data["health_summary"]["device"]["detail"] == "ADB authorization failed on device during CI setup"
+    # Device is in maintenance after escalation.
+    assert device_data["operational_state"] == "maintenance"
 
 
 async def test_report_preparation_failure_rejects_device_not_reserved_by_run(

@@ -193,7 +193,6 @@ async def test_cooldown_intent_payload_shape(
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
-        health=AsyncMock(),
         incidents=AsyncMock(),
     )
     cooldown_reason = "flaky connection detected"

@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
     from app.runs.protocols import (
-        DeviceHealthCheckWriter,
         DeviceLifecycleFailureWriter,
         LifecycleIncidentRecorder,
         MaintenanceWriter,
@@ -104,7 +103,6 @@ class RunFailureService:
         maintenance: MaintenanceWriter,
         lifecycle_actions: DeviceLifecycleFailureWriter,
         reservation: RunReservationProtocol,
-        health: DeviceHealthCheckWriter,
         incidents: LifecycleIncidentRecorder,
         pool: AgentHttpPool | None = None,
     ) -> None:
@@ -115,7 +113,6 @@ class RunFailureService:
         self._maintenance = maintenance
         self._lifecycle_actions = lifecycle_actions
         self._reservation = reservation
-        self._health = health
         self._incidents = incidents
 
     async def report_preparation_failure(
@@ -336,7 +333,6 @@ class RunFailureService:
                 db, device, reason=reason, source=source, action=escalation_action
             )
             await self._enter_maintenance(db, device, maintenance_reason=maintenance_reason)
-            await self._health.update_device_checks(db, device, healthy=False, summary=reason)
         return escalate
 
     async def _enter_maintenance(

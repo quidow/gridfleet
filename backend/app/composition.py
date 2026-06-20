@@ -239,7 +239,6 @@ def compose_app(
         maintenance=maintenance_svc,
         lifecycle_actions=lifecycle_actions_svc,
         reservation=reservation_svc,
-        health=device_health_svc,
         incidents=incidents_svc,
         pool=http_pool,
     )
