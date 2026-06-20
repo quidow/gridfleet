@@ -150,6 +150,15 @@ class RunReservationProtocol(Protocol):
     async def restore_device_to_run(
         self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
     ) -> TestRun | None: ...
+    async def release_device_from_run(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        *,
+        reason: str,
+        publisher: EventPublisher,
+        commit: bool = ...,
+    ) -> TestRun | None: ...
 
 
 @runtime_checkable

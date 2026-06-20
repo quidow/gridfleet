@@ -245,6 +245,56 @@ class RunReservationService:
             run = await get_run(db, run.id)
         return run
 
+    async def release_device_from_run(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        *,
+        reason: str,
+        publisher: EventPublisher,
+        commit: bool = True,
+    ) -> TestRun | None:
+        """Permanently remove a device from its active run.
+
+        Unlike ``exclude_device_from_run`` (a restorable hold), this releases the
+        reservation (``released_at``) so the device can never rejoin the run — runs
+        never re-allocate, and the self-heal restore loop only sees active
+        reservations — and frees it for other runs to allocate. Revoking the
+        ``run:{id}`` intents and reconciling tears down the device's Appium node /
+        grid routing. The reason and ``excluded_at`` are recorded on the released
+        entry for run history; ``excluded_until`` stays ``None`` so the computed
+        ``excluded_window`` is NULL and the gist exclusion constraint does not apply.
+        """
+        run, entry = await get_device_reservation_with_entry(db, device_id)
+        if run is None or entry is None:
+            return None
+        locked_entry = await _lock_active_reservation_entry(db, entry)
+        if locked_entry is None:
+            if commit:
+                await db.commit()
+            return run
+        released_at = _now_utc()
+        locked_entry.excluded = True
+        locked_entry.exclusion_reason = reason
+        locked_entry.excluded_at = released_at
+        locked_entry.excluded_until = None
+        locked_entry.released_at = released_at
+        try:
+            device = await device_locking.lock_device(db, device_id, load_sessions=False)
+        except NoResultFound:
+            device = None
+        if device is not None:
+            await IntentService(db).revoke_intents_and_reconcile(
+                device_id=device.id,
+                sources=[f"run:{run.id}"],
+                reason=reason,
+                publisher=publisher,
+            )
+        if commit:
+            await db.commit()
+            run = await get_run(db, run.id)
+        return run
+
 
 def reservation_entry_is_excluded(entry: DeviceReservation | None) -> bool:
     return bool(entry and _reservation_entry_is_excluded(entry))
