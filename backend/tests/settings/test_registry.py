@@ -207,3 +207,11 @@ def test_unbounded_table_retention_settings_are_registered() -> None:
         assert definition.default == 30
         assert definition.min_value == 1
         assert definition.max_value == 3650
+
+
+def test_preparation_failure_escalation_setting_is_registered() -> None:
+    definition = SETTINGS_REGISTRY["general.preparation_failure_escalates_to_maintenance"]
+    assert definition.category == "general"
+    assert definition.setting_type == "bool"
+    assert definition.default is True
+    assert definition.env_var is None

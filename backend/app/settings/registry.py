@@ -186,6 +186,17 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=100,
     ),
     SettingDefinition(
+        key="general.preparation_failure_escalates_to_maintenance",
+        category="general",
+        setting_type="bool",
+        default=True,
+        description=(
+            "When true, a CI-reported preparation failure for a reserved device places that device into "
+            "maintenance (manual recovery required). When false, the device is excluded from the failing "
+            "run but remains available for other runs. The run-exclusion happens regardless of this setting."
+        ),
+    ),
+    SettingDefinition(
         key="general.property_refresh_interval_sec",
         category="general",
         setting_type="int",

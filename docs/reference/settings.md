@@ -6,7 +6,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
-| `general` | General | 29 |
+| `general` | General | 30 |
 | `grid` | Appium & Grid | 13 |
 | `notifications` | Notifications | 3 |
 | `agent` | Agent | 10 |
@@ -32,6 +32,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.session_queue_timeout_sec` | `general` | `int` | `300` | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `30..3600` | Timeout budget for session queueing |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated to maintenance and excluded from the run; `0` disables escalation |
+| `general.preparation_failure_escalates_to_maintenance` | `general` | `bool` | `true` | none | boolean | When true, a CI-reported preparation failure for a reserved device places it into maintenance (manual recovery). When false, the device is excluded from the failing run but stays available for other runs; run-exclusion happens regardless |
 | `general.property_refresh_interval_sec` | `general` | `int` | `600` | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `60..7200` | Interval for background property refresh |
 | `general.hardware_telemetry_interval_sec` | `general` | `int` | `300` | none | `30..7200` | How often hardware telemetry is refreshed |
 | `general.hardware_telemetry_stale_timeout_sec` | `general` | `int` | `900` | none | `60..86400` | How old hardware telemetry can get before the UI marks it stale |
