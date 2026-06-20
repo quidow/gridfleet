@@ -260,10 +260,14 @@ class RunReservationService:
             if commit:
                 await db.commit()
             return run
-        # Set only released_at + reason: a released row must not be `excluded`
-        # (invariant `not (released_at and excluded)`; see test_bug_audit_exclude_after_release).
+        # Set released_at + reason, and clear any pre-existing exclusion so a released
+        # row is never `excluded` (invariant `not (released_at and excluded)`) and carries
+        # no live excluded_window for the GiST exclusion constraint.
         locked_entry.released_at = _now_utc()
         locked_entry.exclusion_reason = reason
+        locked_entry.excluded = False
+        locked_entry.excluded_at = None
+        locked_entry.excluded_until = None
         try:
             device = await device_locking.lock_device(db, device_id, load_sessions=False)
         except NoResultFound:

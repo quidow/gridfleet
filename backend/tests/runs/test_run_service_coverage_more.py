@@ -1468,3 +1468,51 @@ def test_run_release_intent_sources_lists_the_full_set() -> None:
         f"cooldown:recovery:{run_id}",
         f"health_failure:reservation:{device_id}",
     ]
+
+
+@pytest.mark.db
+async def test_release_device_from_run_clears_prior_exclusion(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression: release_device_from_run must clear a pre-existing exclusion.
+
+    When a sub-threshold cooldown sets excluded=True + a future excluded_until window
+    and the escalation threshold is then crossed, release_device_from_run is called.
+    The released row must not carry excluded=True or a live excluded_window — otherwise
+    the GiST ExcludeConstraint collides on the next reservation for this device.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prior Exclusion Device",
+        identity_value="run-release-prior-excl-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reserved_run(db_session, name="release-prior-excl-run", devices=[device], state=RunState.active)
+
+    # Seed the reservation as already-excluded (mirrors the sub-threshold cooldown path).
+    entry = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one()
+    entry.excluded = True
+    entry.excluded_at = datetime.now(UTC)
+    entry.excluded_until = datetime.now(UTC) + timedelta(hours=1)
+    await db_session.commit()
+
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="threshold crossed", publisher=event_bus, commit=True
+    )
+
+    released = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert released.released_at is not None
+    assert released.excluded is False
+    assert released.excluded_at is None
+    assert released.excluded_until is None
