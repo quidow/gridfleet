@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Smartphone, Server, Clock, FolderOpen, Package, Bell, Play, BarChart3, Settings2, PanelLeftClose, PanelLeftOpen, LogOut, Moon, Sun } from 'lucide-react';
+import { LayoutDashboard, Smartphone, Server, Clock, FolderOpen, Network, Package, Bell, Play, BarChart3, Settings2, PanelLeftClose, PanelLeftOpen, LogOut, Moon, Sun } from 'lucide-react';
 import { type ElementType } from 'react';
 import { useAuth } from '../context/auth';
 import { useSidebar } from '../context/SidebarContext';
@@ -131,6 +131,7 @@ export function Sidebar() {
         { to: '/devices', label: 'Devices', icon: Smartphone, count: deviceCount },
         { to: '/groups', label: 'Device Groups', icon: FolderOpen },
         { to: '/hosts', label: 'Hosts', icon: Server, count: hostCount },
+        { to: '/router', label: 'Router', icon: Network },
         { to: '/drivers', label: 'Drivers', icon: Package },
       ],
     },

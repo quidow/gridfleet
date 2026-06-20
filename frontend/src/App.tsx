@@ -17,6 +17,7 @@ const DriverDetail = lazy(() => import('./pages/DriverDetail').then((m) => ({ de
 const Drivers = lazy(() => import('./pages/Drivers').then((m) => ({ default: m.Drivers })));
 const HostDetail = lazy(() => import('./pages/HostDetail').then((m) => ({ default: m.HostDetail })));
 const Hosts = lazy(() => import('./pages/Hosts').then((m) => ({ default: m.Hosts })));
+const RouterPage = lazy(() => import('./pages/Router').then((m) => ({ default: m.RouterPage })));
 const NotFound = lazy(() => import('./pages/NotFound').then((m) => ({ default: m.NotFound })));
 const Notifications = lazy(() => import('./pages/Notifications').then((m) => ({ default: m.Notifications })));
 const RunDetail = lazy(() => import('./pages/RunDetail').then((m) => ({ default: m.RunDetail })));
@@ -41,6 +42,7 @@ export const routes: RouteObject[] = [
               { path: 'devices/:id', element: <DeviceDetail /> },
               { path: 'hosts', element: <Hosts /> },
               { path: 'hosts/:id', element: <HostDetail /> },
+              { path: 'router', element: <RouterPage /> },
               { path: 'sessions', element: <Sessions /> },
               { path: 'runs', element: <Runs /> },
               { path: 'runs/:id', element: <RunDetail /> },
