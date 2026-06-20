@@ -11,7 +11,7 @@ def test_actions_service_has_methods() -> None:
         "record_recovery_suppressed",
         "record_recovery_skipped",
         "record_auto_stopped_incident",
-        "record_ci_preparation_failed",
+        "record_run_escalation_failure",
         "has_running_client_session",
     ):
         assert callable(getattr(svc, name))

@@ -154,11 +154,12 @@ class RunFailureService:
         escalate = self._settings.get_bool("general.preparation_failure_escalates_to_maintenance")
 
         if escalate:
-            await self._lifecycle_actions.record_ci_preparation_failed(
+            await self._lifecycle_actions.record_run_escalation_failure(
                 db,
                 device,
                 reason=reason,
                 source=source,
+                action="ci_preparation_failed",
             )
             await self._enter_maintenance(db, device, maintenance_reason="CI preparation failure")
             await self._health.update_device_checks(db, device, healthy=False, summary=reason)

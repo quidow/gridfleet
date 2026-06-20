@@ -1222,7 +1222,7 @@ async def test_report_preparation_failure_stays_available_when_escalation_disabl
     # No maintenance, no unhealthy marking, no maintenance-coupled lifecycle write.
     maintenance.enter_maintenance.assert_not_awaited()
     health.update_device_checks.assert_not_awaited()
-    lifecycle_actions.record_ci_preparation_failed.assert_not_awaited()
+    lifecycle_actions.record_run_escalation_failure.assert_not_awaited()
     # The failure is still recorded as an incident for visibility.
     incidents.record_lifecycle_incident.assert_awaited_once()
     # Device stays available.
@@ -1265,7 +1265,7 @@ async def test_report_preparation_failure_escalates_to_maintenance_when_enabled(
     assert refreshed.device_reservations[0].excluded is True
     maintenance.enter_maintenance.assert_awaited_once()
     health.update_device_checks.assert_awaited_once()
-    lifecycle_actions.record_ci_preparation_failed.assert_awaited_once()
+    lifecycle_actions.record_run_escalation_failure.assert_awaited_once()
     incidents.record_lifecycle_incident.assert_awaited_once()
 
 

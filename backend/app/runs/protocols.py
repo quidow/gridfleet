@@ -125,13 +125,8 @@ class DeviceLifecycleFailureWriter(Protocol):
         source: str,
     ) -> tuple[TestRun | None, DeviceReservation | None]: ...
 
-    async def record_ci_preparation_failed(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        reason: str,
-        source: str,
+    async def record_run_escalation_failure(
+        self, db: AsyncSession, device: Device, *, reason: str, source: str, action: str
     ) -> None: ...
 
 
