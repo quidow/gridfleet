@@ -15,7 +15,7 @@ from app.core.pagination import encode_cursor
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import RESERVATION, IntentRegistration
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -1372,16 +1372,40 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
-    # Seed a prior sub-threshold cooldown intent and a device-keyed health-failure intent.
+    # Seed all six intent sources that release_device_from_run must revoke.
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="seed cooldown + health failure",
+        reason="seed full intent set",
         intents=[
+            IntentRegistration(
+                source=f"run:{run.id}",
+                axis=GRID_ROUTING,
+                run_id=run.id,
+                payload={"accepting_new_sessions": True, "priority": 10},
+            ),
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                payload={"action": "stop", "priority": 50},
+            ),
+            IntentRegistration(
+                source=f"cooldown:grid:{run.id}",
+                axis=GRID_ROUTING,
+                run_id=run.id,
+                payload={"accepting_new_sessions": False, "priority": 50},
+            ),
             IntentRegistration(
                 source=f"cooldown:reservation:{run.id}",
                 axis=RESERVATION,
                 run_id=run.id,
                 payload={"excluded": True, "priority": 50, "exclusion_reason": "flaky"},
+            ),
+            IntentRegistration(
+                source=f"cooldown:recovery:{run.id}",
+                axis=RECOVERY,
+                run_id=run.id,
+                payload={"allowed": False, "priority": 50, "reason": "flaky"},
             ),
             IntentRegistration(
                 source=f"health_failure:reservation:{device.id}",
