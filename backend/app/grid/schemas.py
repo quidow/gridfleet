@@ -80,6 +80,8 @@ class GridRouterNodeRead(BaseModel):
 
 
 class GridRouterRead(BaseModel):
+    # nodes/queue are always populated by the handler, so they are required (not
+    # defaulted) — this keeps the generated TS types non-optional for the frontend.
     counts: GridRouterCounts
-    nodes: list[GridRouterNodeRead] = Field(default_factory=list)
-    queue: list[GridQueueRequestRead] = Field(default_factory=list)
+    nodes: list[GridRouterNodeRead]
+    queue: list[GridQueueRequestRead]

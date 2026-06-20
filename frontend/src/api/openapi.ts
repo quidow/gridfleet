@@ -3640,9 +3640,9 @@ export interface components {
         GridRouterRead: {
             counts: components["schemas"]["GridRouterCounts"];
             /** Nodes */
-            nodes?: components["schemas"]["GridRouterNodeRead"][];
+            nodes: components["schemas"]["GridRouterNodeRead"][];
             /** Queue */
-            queue?: components["schemas"]["GridQueueRequestRead"][];
+            queue: components["schemas"]["GridQueueRequestRead"][];
         };
         /** GridStatusRead */
         GridStatusRead: {
