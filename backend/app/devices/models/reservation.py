@@ -103,6 +103,7 @@ class DeviceReservation(Base):
             "exclusion_reason": self.exclusion_reason,
             "excluded_at": self.excluded_at.isoformat() if self.excluded_at is not None else None,
             "excluded_until": self.excluded_until.isoformat() if self.excluded_until is not None else None,
+            "released_at": self.released_at.isoformat() if self.released_at is not None else None,
             "cooldown_remaining_sec": _cooldown_remaining_sec(self.excluded_until),
             "cooldown_count": self.cooldown_count,
             "cooldown_escalated": bool(

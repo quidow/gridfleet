@@ -1429,6 +1429,32 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
     )
 
 
+@pytest.mark.db
+async def test_reserved_device_info_exposes_released_at(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="DTO Released Device",
+        identity_value="run-dto-released-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reserved_run(db_session, name="dto-released-run", devices=[device], state=RunState.active)
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    )
+
+    entry = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    info = entry.to_reserved_device_info()
+    assert info["released_at"] is not None  # released device is distinguishable
+    assert info["excluded"] is False  # not a restorable exclusion (depends on Task 1)
+    assert info["exclusion_reason"] == "CI preparation failed"
+
+
 def test_run_release_intent_sources_lists_the_full_set() -> None:
     import uuid as _uuid
 
