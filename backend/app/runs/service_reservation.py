@@ -168,7 +168,6 @@ class RunReservationService:
         *,
         reason: str,
         publisher: EventPublisher,
-        revoke_run_intents: bool = False,
         commit: bool = True,
     ) -> TestRun | None:
         run, entry = await get_device_reservation_with_entry(db, device_id)
@@ -185,18 +184,6 @@ class RunReservationService:
         locked_entry.exclusion_reason = reason
         locked_entry.excluded_at = _now_utc()
         locked_entry.excluded_until = None
-        if revoke_run_intents:
-            try:
-                device = await device_locking.lock_device(db, device_id, load_sessions=False)
-            except NoResultFound:
-                device = None
-            if device is not None:
-                await IntentService(db).revoke_intents_and_reconcile(
-                    device_id=device.id,
-                    sources=[f"run:{run.id}"],
-                    reason=reason,
-                    publisher=publisher,
-                )
         if commit:
             await db.commit()
             run = await get_run(db, run.id)
@@ -259,11 +246,11 @@ class RunReservationService:
         Unlike ``exclude_device_from_run`` (a restorable hold), this releases the
         reservation (``released_at``) so the device can never rejoin the run — runs
         never re-allocate, and the self-heal restore loop only sees active
-        reservations — and frees it for other runs to allocate. Revoking the
-        ``run:{id}`` intents and reconciling tears down the device's Appium node /
-        grid routing. The reason and ``excluded_at`` are recorded on the released
-        entry for run history; ``excluded_until`` stays ``None`` so the computed
-        ``excluded_window`` is NULL and the gist exclusion constraint does not apply.
+        reservations — and frees it for other runs to allocate. Revoking the full
+        intent set (run-scoped intents, sub-threshold cooldowns, device-keyed
+        health-failure) and reconciling tears down the device's Appium node / grid
+        routing. The reason is recorded on the released entry for run history; the
+        row is left not-excluded so the released⇒not-excluded invariant holds.
         """
         run, entry = await get_device_reservation_with_entry(db, device_id)
         if run is None or entry is None:
@@ -273,12 +260,10 @@ class RunReservationService:
             if commit:
                 await db.commit()
             return run
-        released_at = _now_utc()
-        locked_entry.excluded = True
+        # Set only released_at + reason: a released row must not be `excluded`
+        # (invariant `not (released_at and excluded)`; see test_bug_audit_exclude_after_release).
+        locked_entry.released_at = _now_utc()
         locked_entry.exclusion_reason = reason
-        locked_entry.excluded_at = released_at
-        locked_entry.excluded_until = None
-        locked_entry.released_at = released_at
         try:
             device = await device_locking.lock_device(db, device_id, load_sessions=False)
         except NoResultFound:
@@ -286,7 +271,7 @@ class RunReservationService:
         if device is not None:
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
-                sources=[f"run:{run.id}"],
+                sources=run_release_intent_sources(run.id, device.id),
                 reason=reason,
                 publisher=publisher,
             )
@@ -294,6 +279,24 @@ class RunReservationService:
             await db.commit()
             run = await get_run(db, run.id)
         return run
+
+
+def run_release_intent_sources(run_id: uuid.UUID, device_id: uuid.UUID) -> list[str]:
+    """Every intent source a permanent run-release must revoke.
+
+    The run-scoped routing/node intents, any sub-threshold cooldown intents (whose
+    ``run_active`` precondition still holds after release because the *run* is still
+    active), and the device-keyed health-failure exclusion (dropped so the next run
+    to allocate this device does not inherit a stale exclusion verdict).
+    """
+    return [
+        f"run:{run_id}",
+        f"cooldown:node:{run_id}",
+        f"cooldown:grid:{run_id}",
+        f"cooldown:reservation:{run_id}",
+        f"cooldown:recovery:{run_id}",
+        f"health_failure:reservation:{device_id}",
+    ]
 
 
 def reservation_entry_is_excluded(entry: DeviceReservation | None) -> bool:

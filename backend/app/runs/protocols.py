@@ -139,7 +139,6 @@ class RunReservationProtocol(Protocol):
         *,
         reason: str,
         publisher: EventPublisher,
-        revoke_run_intents: bool = ...,
         commit: bool = ...,
     ) -> TestRun | None: ...
     async def restore_device_to_run(

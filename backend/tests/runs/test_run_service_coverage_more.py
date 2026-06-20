@@ -12,9 +12,10 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import RESERVATION, IntentRegistration
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -34,7 +35,11 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService, _resolve_session_target
 from app.runs.service_query import RunQueryService
-from app.runs.service_reservation import RunReservationService, get_device_reservation_with_entry
+from app.runs.service_reservation import (
+    RunReservationService,
+    get_device_reservation_with_entry,
+    run_release_intent_sources,
+)
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, create_reserved_run
@@ -1352,3 +1357,74 @@ async def test_release_device_from_run_releases_and_frees_device(
     # No active reservation remains -> device is free for other runs and invisible to the self-heal loop.
     active_run, active_entry = await get_device_reservation_with_entry(db_session, device.id)
     assert active_run is None and active_entry is None
+
+
+@pytest.mark.db
+async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Release Full Revoke Device",
+        identity_value="run-release-full-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
+    # Seed a prior sub-threshold cooldown intent and a device-keyed health-failure intent.
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="seed cooldown + health failure",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:reservation:{run.id}",
+                axis=RESERVATION,
+                run_id=run.id,
+                payload={"excluded": True, "priority": 50, "exclusion_reason": "flaky"},
+            ),
+            IntentRegistration(
+                source=f"health_failure:reservation:{device.id}",
+                axis=RESERVATION,
+                run_id=run.id,
+                payload={"excluded": True, "priority": 60, "exclusion_reason": "bad checks"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    await RunReservationService(review=build_review_service()).release_device_from_run(
+        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    )
+
+    # #11: released row must NOT be excluded (invariant: not (released_at and excluded)).
+    entry = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert entry.released_at is not None
+    assert entry.excluded is False
+    assert entry.exclusion_reason == "CI preparation failed"
+    # #2/#7: the full intent set is gone (no cooldown:* or health_failure:reservation lingering).
+    remaining = (
+        (await db_session.execute(select(DeviceIntent.source).where(DeviceIntent.device_id == device.id)))
+        .scalars()
+        .all()
+    )
+    assert not any(
+        s.startswith("cooldown:") or s.startswith("health_failure:") or s.startswith("run:") for s in remaining
+    )
+
+
+def test_run_release_intent_sources_lists_the_full_set() -> None:
+    import uuid as _uuid
+
+    run_id = _uuid.UUID("11111111-1111-1111-1111-111111111111")
+    device_id = _uuid.UUID("22222222-2222-2222-2222-222222222222")
+    assert run_release_intent_sources(run_id, device_id) == [
+        f"run:{run_id}",
+        f"cooldown:node:{run_id}",
+        f"cooldown:grid:{run_id}",
+        f"cooldown:reservation:{run_id}",
+        f"cooldown:recovery:{run_id}",
+        f"health_failure:reservation:{device_id}",
+    ]

@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.concurrency import per_key_semaphores
+from app.runs.service_reservation import run_release_intent_sources
 
 if TYPE_CHECKING:
     import uuid
@@ -162,17 +163,7 @@ class RunReleaseService:
                 device = await device_locking.lock_device(db, reservation.device_id, load_sessions=False)
             except NoResultFound:
                 continue
-            sources = [
-                f"run:{run.id}",
-                f"cooldown:node:{run.id}",
-                f"cooldown:grid:{run.id}",
-                f"cooldown:reservation:{run.id}",
-                f"cooldown:recovery:{run.id}",
-                # Health-failure exclusion is keyed by device_id so it can survive
-                # successive reservations of the same device. Drop it on release so
-                # the next run does not inherit the exclusion verdict.
-                f"health_failure:reservation:{device.id}",
-            ]
+            sources = run_release_intent_sources(run.id, device.id)
             if caller == "run_force_release":
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
