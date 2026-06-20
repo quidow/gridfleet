@@ -1308,6 +1308,23 @@ async def test_report_preparation_failure_releases_and_maintains_when_enabled(
 
 
 @pytest.mark.db
+async def test_report_preparation_failure_rejects_empty_message(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Empty Msg Device",
+        identity_value="run-prep-empty-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-empty-run", devices=[device], state=RunState.active)
+    with pytest.raises(ValueError, match="message is required"):
+        await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="  ")
+
+
+@pytest.mark.db
 async def test_release_device_from_run_releases_and_frees_device(
     db_session: AsyncSession,
     db_host: Host,
