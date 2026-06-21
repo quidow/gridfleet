@@ -405,6 +405,11 @@ async def test_force_release_keeps_node_warm_when_session_cleanly_gone(
     assert node.desired_state == AppiumDesiredState.running  # never stopped -> no cold restart
     assert metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL._value.get() == before
 
+    from sqlalchemy import select as _select
+
+    sess_row = (await db_session.execute(_select(Session).where(Session.session_id == "sess-fr-warm"))).scalar_one()
+    assert sess_row.status == SessionStatus.error  # force-released sessions must be error, not passed
+
 
 async def test_force_release_hard_stops_when_session_survives(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch

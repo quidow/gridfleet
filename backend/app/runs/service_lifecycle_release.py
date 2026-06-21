@@ -216,6 +216,7 @@ class RunReleaseService:
         *,
         terminate_grid_sessions: bool,
         probe_survivors: bool = False,
+        close_rows: bool = True,
     ) -> set[uuid.UUID]:
         del released_at  # close_running_session stamps ended_at itself
         if not terminate_grid_sessions:
@@ -297,33 +298,34 @@ class RunReleaseService:
         if probe_survivors:
             survivors = await self._probe_session_survivors(running_with_target, host_semaphores)
 
-        for session in sessions:
-            if session.status == SessionStatus.running:
-                if targets.get(session.id) is None:
-                    logger.warning(
-                        "Leaving session %s running because no Appium node target was resolvable during run %s release",
-                        session.session_id,
-                        run.id,
-                    )
-                    continue
-                if not terminated_ok[session.id]:
-                    logger.warning(
-                        "Leaving session %s running because Appium deletion failed during run %s release",
-                        session.session_id,
-                        run.id,
-                    )
-                    continue
-            # pending rows carry a placeholder session_id (no real Appium session yet),
-            # so they skip the DELETE and are closed directly.
-            #
-            # Route through close_running_session so the run-terminal close emits
-            # session.ended + reconciles the device (#12) instead of stamping status
-            # inline. The run reached a non-completed terminal state here, so
-            # close_running_session stamps error/run_released and expires the
-            # allocation ticket — unifying with the session_sync + router close paths.
-            await session_service.close_running_session(
-                db, session, attached_run=session.run, publisher=self._publisher
-            )
+        if close_rows:
+            for session in sessions:
+                if session.status == SessionStatus.running:
+                    if targets.get(session.id) is None:
+                        logger.warning(
+                            "Leaving session %s running: no Appium target resolvable during run %s release",
+                            session.session_id,
+                            run.id,
+                        )
+                        continue
+                    if not terminated_ok[session.id]:
+                        logger.warning(
+                            "Leaving session %s running: Appium deletion failed during run %s release",
+                            session.session_id,
+                            run.id,
+                        )
+                        continue
+                # pending rows carry a placeholder session_id (no real Appium session yet),
+                # so they skip the DELETE and are closed directly.
+                #
+                # Route through close_running_session so the run-terminal close emits
+                # session.ended + reconciles the device (#12) instead of stamping status
+                # inline. The run reached a non-completed terminal state here, so
+                # close_running_session stamps error/run_released and expires the
+                # allocation ticket — unifying with the session_sync + router close paths.
+                await session_service.close_running_session(
+                    db, session, attached_run=session.run, publisher=self._publisher
+                )
         return survivors
 
     async def _probe_session_survivors(
@@ -362,11 +364,15 @@ class RunReleaseService:
         session is still alive (or indeterminate) — the only devices the force
         release should hard-stop; a confirmed-gone session leaves the node warm.
 
-        Closes the session rows itself, so the later ``release_devices`` DELETE
-        pass is a no-op for the rows handled here. Touches no ``DeviceReservation``
-        rows, so it is safe to run before ``clear_desired_grid_run_id_for_run``
-        (which needs reservations still active).
+        Does NOT close the session rows. ``release_devices`` closes them AFTER
+        ``run.state = cancelled`` so they stamp ``error`` (not ``passed``) — avoiding
+        the TR12 outcome-masking lost-update that occurs when rows are closed while
+        the run is still ``active``. The pre-step's DELETE means ``release_devices``'
+        re-DELETE of an already-gone session is a 404 no-op.
+
+        Touches no ``DeviceReservation`` rows, so it is safe to run before
+        ``clear_desired_grid_run_id_for_run`` (which needs reservations still active).
         """
         return await self._mark_running_sessions_released(
-            db, run, now_utc(), terminate_grid_sessions=True, probe_survivors=True
+            db, run, now_utc(), terminate_grid_sessions=True, probe_survivors=True, close_rows=False
         )

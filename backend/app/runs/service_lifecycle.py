@@ -194,7 +194,10 @@ class RunLifecycleService:
         # which genuinely survived BEFORE deciding hard-stops. This runs while the
         # run is still active (so the forced_release intent's run_active precondition
         # holds) and touches no reservations (so clear_... still sees them active).
-        # It closes the session rows, so release_devices' DELETE pass below no-ops.
+        # Does NOT close the session rows (close_rows=False). release_devices closes
+        # them AFTER run.state=cancelled so they stamp error — not passed — avoiding
+        # the TR12 outcome-masking trap. The pre-step's DELETE means release_devices'
+        # re-DELETE of an already-gone Appium session is a 404 no-op.
         survivors = await self._release.terminate_run_sessions_and_probe_survivors(db, run)
         await self._release.clear_desired_grid_run_id_for_run(
             db, run=run, caller="run_force_release", stop_device_ids=survivors
