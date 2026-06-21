@@ -277,6 +277,9 @@ class UnavailableReason(enum.StrEnum):
     maintenance = "maintenance"
     offline = "offline"
     reserved = "reserved"
+    # Warm soft-gate park (Stage 2): node is up but not accepting new sessions
+    # (cooldown). Distinct from ``offline`` (node down / crashed).
+    cooldown = "cooldown"
 
 
 class DeviceRead(BaseModel):

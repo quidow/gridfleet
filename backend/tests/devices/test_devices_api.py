@@ -2378,3 +2378,38 @@ async def test_busy_device_reports_busy_unavailable_reason(
     body = got.json()
     assert body["allocatable"] is False
     assert body["unavailable_reason"] == "busy"
+
+
+async def test_not_accepting_available_device_reports_cooldown(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import state_write_guard
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-cooldown-1",
+        connection_target="alloc-cooldown-1",
+        name="Alloc Cooldown Device",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        # bypass only for the guarded node observation columns (pid/active_connection_target);
+        # accepting_new_sessions itself is not guarded.
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+        )
+    node.accepting_new_sessions = False
+    db_session.add(node)
+    await db_session.commit()
+
+    got = await client.get(f"/api/devices/{device.id}")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["allocatable"] is False
+    assert body["unavailable_reason"] == "cooldown"

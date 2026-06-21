@@ -84,7 +84,15 @@ class DevicePresenterService:
         # run actually blocks an arbitrary ticket (the same predicate the allocator uses).
         # Distinct from the broad ``is_reserved`` display flag above.
         reservation_blocks_allocation = run_service.reservation_gating_run_id(reservation, device.id) is not None
-        allocatability_reason = unavailable_reason(device.operational_state, reserved=reservation_blocks_allocation)
+        # Load the node before the projection: the warm soft-gate reads
+        # AppiumNode.accepting_new_sessions (the same flag _eligible_devices gates on).
+        await _ensure_appium_node_loaded(db, device)
+        node_accepting = device.appium_node is None or device.appium_node.accepting_new_sessions
+        allocatability_reason = unavailable_reason(
+            device.operational_state,
+            reserved=reservation_blocks_allocation,
+            accepting_new_sessions=node_accepting,
+        )
         readiness = (
             precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
         )
@@ -92,7 +100,6 @@ class DevicePresenterService:
             db, device, reservation_context=reservation_context
         )
         lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
-        await _ensure_appium_node_loaded(db, device)
         if health_summary is None:
             health_summary = device_health.build_public_summary(device)
         hardware_status = hardware_telemetry.current_hardware_health_status(device)

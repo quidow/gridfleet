@@ -15,8 +15,7 @@ transition window the gate also enforces via ``node_viability``
 ``available`` device can briefly read allocatable though the gate would refuse it;
 folding that in cleanly needs operational_state to model node transitions first.
 
-Pure — no IO. Later stages extend the enum (``cooldown`` / ``draining`` /
-``paused``).
+Pure — no IO. Later stages extend the enum (``draining`` / ``paused``).
 """
 
 from __future__ import annotations
@@ -27,13 +26,20 @@ from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import UnavailableReason
 
 
-def unavailable_reason(operational_state: DeviceOperationalState, *, reserved: bool) -> UnavailableReason | None:
+def unavailable_reason(
+    operational_state: DeviceOperationalState,
+    *,
+    reserved: bool,
+    accepting_new_sessions: bool,
+) -> UnavailableReason | None:
     """Why the device cannot take an arbitrary new session now, or ``None`` if allocatable.
 
-    Operational state dominates; an ``available`` device is gated only by a
-    gate-honest reservation. ``match`` + ``assert_never`` make this exhaustive: a
-    new ``DeviceOperationalState`` member fails type-checking until it is mapped,
-    so a non-available state can never silently fall through to allocatable.
+    Operational state dominates. An ``available`` device is gated by the warm
+    soft-gate first (``accepting_new_sessions``, the same flag the allocator's
+    ``_eligible_devices`` reads — gate-honest), then by a gate-honest reservation.
+    ``match`` + ``assert_never`` make this exhaustive: a new
+    ``DeviceOperationalState`` member fails type-checking until it is mapped, so a
+    non-available state can never silently fall through to allocatable.
     """
     match operational_state:
         case DeviceOperationalState.busy:
@@ -45,5 +51,11 @@ def unavailable_reason(operational_state: DeviceOperationalState, *, reserved: b
         case DeviceOperationalState.offline:
             return UnavailableReason.offline
         case DeviceOperationalState.available:
+            # Warm park: a running node that stopped accepting new sessions is
+            # soft-gated. Stage 2's only producer is cooldown; later stages that
+            # add other warm-park reasons (operator pause, drain-to-park) will
+            # distinguish them here.
+            if not accepting_new_sessions:
+                return UnavailableReason.cooldown
             return UnavailableReason.reserved if reserved else None
     assert_never(operational_state)
