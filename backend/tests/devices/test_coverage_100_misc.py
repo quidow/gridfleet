@@ -269,7 +269,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     pack_stereotype = {"browserName": "Chrome"}
     caps = node_service_common.build_grid_stereotype_caps(device_for_caps, pack_stereotype=pack_stereotype)
     assert caps["browserName"] == "Chrome"
-    assert "appium:gridfleet:deviceId" in caps
+    assert "gridfleet:deviceId" in caps
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     with pytest.raises(pack_storage_service.PackStorageError):

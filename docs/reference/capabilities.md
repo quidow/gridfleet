@@ -21,7 +21,7 @@ When GridFleet builds Appium capabilities, later sources override earlier ones:
 manifest default capabilities, manifest `device_fields_schema` capabilities from
 `device_config`, user `device_config.appium_caps`, live parallel-resource allocations,
 and finally the manager-owned base capabilities (`platformName`, `appium:udid`,
-`appium:deviceName`, `appium:gridfleet:deviceId`, `appium:gridfleet:deviceName`), which take
+`appium:deviceName`, `gridfleet:deviceId`, `gridfleet:deviceName`), which take
 the highest precedence (`appium:automationName` is likewise written last by the builder
 when the pack resolves one). Existing stored `appium_caps` are treated as user overrides.
 
@@ -216,9 +216,9 @@ Manual request routing notes:
 Each device's stereotype is the **routing surface**. The backend allocation API (`/internal/grid/*`, called by the router) matches an incoming new-session request's capabilities against device stereotypes. The stereotype carries only the keys needed to match a client request to a device:
 
 - `platformName`, `appium:automationName` — derived from the active pack/platform manifest.
-- `appium:gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity.
+- `gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity.
 - Run routing — sessions bound to a run are created through the run-scoped router endpoint (`/run/{run_id}`); the router extracts the run id from the URL path. Reserved devices admit only sessions from their run; unreserved devices admit only free (non-run) sessions. The legacy `gridfleet:run_id` capability is no longer supported and is rejected with an explicit error.
-- `appium:gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
+- `gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
 - Any other keys the pack manifest declares in its `capabilities.stereotype` block. String values support `{device.<attr>}` placeholders, evaluated per device against the live row (e.g. `appium:os_version: "{device.os_version}"`).
 
 Keys that describe the device for Appium's benefit (`appium:ip` and sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` covers the routing-suppression cases.

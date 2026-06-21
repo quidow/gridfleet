@@ -335,7 +335,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     assert probe_mock.await_args is not None
     capabilities = probe_mock.await_args.args[0]
     assert capabilities["appium:udid"] == "emulator-5554"
-    assert capabilities["appium:gridfleet:deviceId"] == str(device.id)
+    assert capabilities["gridfleet:deviceId"] == str(device.id)
     assert capabilities["gridfleet:probeSession"] is True
     assert probe_mock.await_args.kwargs["target"] == f"http://{db_host.ip}:{loaded_node.port}"
 
@@ -1420,7 +1420,7 @@ def test_probe_always_match_routes_on_device_id_not_udid() -> None:
         "appium:automationName": "UiAutomator2",
         "appium:udid": "emulator-5554",
         "appium:deviceName": "Pixel",
-        "appium:gridfleet:deviceId": "abc-123",
+        "gridfleet:deviceId": "abc-123",
         "gridfleet:probeSession": True,
         "gridfleet:testName": "gridfleet-probe",
     }
@@ -1429,7 +1429,7 @@ def test_probe_always_match_routes_on_device_id_not_udid() -> None:
 
     assert "appium:udid" not in filtered
     assert "appium:deviceName" not in filtered
-    assert filtered["appium:gridfleet:deviceId"] == "abc-123"
+    assert filtered["gridfleet:deviceId"] == "abc-123"
     assert filtered["platformName"] == "Android"
     assert filtered["gridfleet:probeSession"] is True
     assert "appium:udid" not in _PROBE_ALWAYS_MATCH_KEYS

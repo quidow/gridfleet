@@ -50,7 +50,7 @@ def test_build_capabilities_includes_platform_specific_fields() -> None:
     assert caps["appium:udid"] == "serial-1"
     assert caps["appium:deviceName"] == "Demo Device"
     assert caps["appium:automationName"] == "XCUITest"
-    assert caps["appium:gridfleet:deviceId"] == str(device.id)
+    assert caps["gridfleet:deviceId"] == str(device.id)
     assert caps["appium:noReset"] is True
     assert caps["custom"] == "value"
 
@@ -72,8 +72,8 @@ def test_config_appium_caps_cannot_override_manager_owned_routing_caps() -> None
             "platformName": "iOS",
             "appium:udid": "wrong-serial",
             "appium:deviceName": "Wrong Name",
-            "appium:gridfleet:deviceId": "wrong-id",
-            "appium:gridfleet:deviceName": "Wrong Grid Name",
+            "gridfleet:deviceId": "wrong-id",
+            "gridfleet:deviceName": "Wrong Grid Name",
             "appium:noReset": True,
         },
     )
@@ -81,11 +81,11 @@ def test_config_appium_caps_cannot_override_manager_owned_routing_caps() -> None
     assert caps["platformName"] == "Android"
     assert caps["appium:udid"] == "serial-1"
     assert caps["appium:deviceName"] == "Trusted Device"
-    assert caps["appium:gridfleet:deviceId"] == str(device.id)
+    assert caps["gridfleet:deviceId"] == str(device.id)
     assert caps["appium:noReset"] is True
 
     stereotype_caps = node_service_common.build_grid_stereotype_caps(device)
-    assert stereotype_caps["appium:gridfleet:deviceId"] == str(device.id)
+    assert stereotype_caps["gridfleet:deviceId"] == str(device.id)
     assert "appium:udid" not in stereotype_caps
 
 

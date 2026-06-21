@@ -22,7 +22,7 @@ Large CI jobs often create one run and then fan out to multiple pytest-xdist wor
 
 Admission is strictly symmetric: a run-bound session is admitted only to devices reserved for that run, and a reserved device admits only sessions from its run (no spillover in either direction). The reservation is honoured from run creation (`preparing`) onward, so this gate also protects reserved devices during preparation. Two additional failure modes apply: a session request naming a missing or already-terminal run is rejected immediately (HTTP 400, "sessions can only be created for a live (non-terminal) run"); any queued allocation tickets are cancelled when their run ends mid-queue.
 
-The reserved device list from `POST /api/runs` remains the run's fleet slice and should be used to size the worker pool. Once a WebDriver session starts, clients can read the device id from the `appium:gridfleet:deviceId` session capability and fetch it with:
+The reserved device list from `POST /api/runs` remains the run's fleet slice and should be used to size the worker pool. Once a WebDriver session starts, clients can read the device id from the `gridfleet:deviceId` session capability and fetch it with:
 
 ```bash
 curl -sf \

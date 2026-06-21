@@ -64,8 +64,8 @@ class TestCandidateMatchesStereotype:
     STEREO: ClassVar[dict[str, Any]] = {
         "platformName": "Android",
         "appium:udid": "emulator-5554",
-        "appium:gridfleet:deviceId": "11111111-1111-1111-1111-111111111111",
-        "appium:gridfleet:tag:pool": "ci",
+        "gridfleet:deviceId": "11111111-1111-1111-1111-111111111111",
+        "gridfleet:tag:pool": "ci",
     }
 
     @pytest.mark.parametrize(
@@ -76,11 +76,11 @@ class TestCandidateMatchesStereotype:
             ({"platformName": "iOS"}, False),
             ({"appium:udid": "emulator-5554"}, True),
             ({"appium:udid": "other"}, False),
-            ({"appium:gridfleet:deviceId": "11111111-1111-1111-1111-111111111111"}, True),
-            ({"appium:gridfleet:deviceId": "22222222-2222-2222-2222-222222222222"}, False),
-            ({"appium:gridfleet:tag:pool": "ci"}, True),
-            ({"appium:gridfleet:tag:pool": "dev"}, False),
-            ({"appium:gridfleet:tag:missing": "x"}, False),  # requested tag absent from stereotype
+            ({"gridfleet:deviceId": "11111111-1111-1111-1111-111111111111"}, True),
+            ({"gridfleet:deviceId": "22222222-2222-2222-2222-222222222222"}, False),
+            ({"gridfleet:tag:pool": "ci"}, True),
+            ({"gridfleet:tag:pool": "dev"}, False),
+            ({"gridfleet:tag:missing": "x"}, False),  # requested tag absent from stereotype
             ({"appium:newCommandTimeout": 120}, True),  # non-identity appium caps are Appium's problem
             ({"gridfleet:somethingCustom": "x"}, True),  # unknown vendor keys do not constrain slot identity
             ({"appium:deviceName": "whatever"}, False),  # identity key absent from stereotype -> no match

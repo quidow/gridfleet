@@ -47,7 +47,7 @@ def test_minimal_stereotype_carries_pack_keys_and_device_id() -> None:
     assert caps["appium:platform"] == "firetv_real"
     assert caps["appium:os_version"] == "6"
     assert caps["appium:device_type"] == "real_device"
-    assert caps["appium:gridfleet:deviceId"] == str(device.id)
+    assert caps["gridfleet:deviceId"] == str(device.id)
 
 
 def test_minimal_stereotype_drops_extra_caps_dump() -> None:
@@ -58,7 +58,7 @@ def test_minimal_stereotype_drops_extra_caps_dump() -> None:
     for forbidden in (
         "appium:manufacturer",
         "appium:model",
-        "appium:gridfleet:deviceName",
+        "gridfleet:deviceName",
         "appium:ip",
     ):
         assert forbidden not in caps, f"{forbidden} should not be in routing stereotype"
@@ -85,8 +85,8 @@ def test_minimal_stereotype_emits_tag_fanout() -> None:
 
     caps = build_grid_stereotype_caps(device, pack_stereotype={})
 
-    assert caps["appium:gridfleet:tag:rack"] == "A1"
-    assert caps["appium:gridfleet:tag:screen_type"] == "4k"
+    assert caps["gridfleet:tag:rack"] == "A1"
+    assert caps["gridfleet:tag:screen_type"] == "4k"
 
 
 def test_minimal_stereotype_handles_none_tags() -> None:
@@ -94,7 +94,7 @@ def test_minimal_stereotype_handles_none_tags() -> None:
 
     caps = build_grid_stereotype_caps(device, pack_stereotype={})
 
-    assert not any(k.startswith("appium:gridfleet:tag:") for k in caps)
+    assert not any(k.startswith("gridfleet:tag:") for k in caps)
 
 
 def test_minimal_stereotype_device_id_wins_over_pack_collision() -> None:
@@ -102,12 +102,12 @@ def test_minimal_stereotype_device_id_wins_over_pack_collision() -> None:
     device = _device()
     pack_stereotype = {
         "platformName": "Android",
-        "appium:gridfleet:deviceId": "wrong-id",
+        "gridfleet:deviceId": "wrong-id",
     }
 
     caps = build_grid_stereotype_caps(device, pack_stereotype=pack_stereotype)
 
-    assert caps["appium:gridfleet:deviceId"] == str(device.id)
+    assert caps["gridfleet:deviceId"] == str(device.id)
 
 
 def test_minimal_stereotype_skips_device_id_when_unset() -> None:
@@ -122,5 +122,5 @@ def test_minimal_stereotype_skips_device_id_when_unset() -> None:
 
     caps = build_grid_stereotype_caps(device, pack_stereotype={"platformName": "Android"})
 
-    assert "appium:gridfleet:deviceId" not in caps
+    assert "gridfleet:deviceId" not in caps
     assert caps["platformName"] == "Android"

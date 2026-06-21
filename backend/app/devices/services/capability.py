@@ -60,7 +60,7 @@ def build_capabilities(
     caps["appium:udid"] = _appium_udid_for_capabilities(device, active_connection_target)
     caps["appium:deviceName"] = device.name
     if device.id:
-        caps["appium:gridfleet:deviceId"] = str(device.id)
+        caps["gridfleet:deviceId"] = str(device.id)
 
     if automation_name:
         caps["appium:automationName"] = automation_name

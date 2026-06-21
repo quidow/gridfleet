@@ -139,7 +139,7 @@ async def test_capabilities_endpoint_uses_active_target_for_running_avd(
     assert resp.status_code == 200
     data = resp.json()
     assert data["appium:udid"] == "emulator-5554"
-    assert data["appium:gridfleet:deviceId"] == str(device.id)
+    assert data["gridfleet:deviceId"] == str(device.id)
 
 
 async def test_capabilities_endpoint_returns_live_xcuitest_allocations_for_running_node(

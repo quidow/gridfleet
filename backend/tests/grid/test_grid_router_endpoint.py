@@ -73,7 +73,7 @@ async def test_grid_router_shape_and_counts(
     nodes = {n["device_name"]: n for n in body["nodes"]}
     assert set(nodes) == {"Pixel 7", "iPhone 15"}
     assert nodes["Pixel 7"]["node_effective_state"] == "running"
-    assert "appium:gridfleet:deviceId" in nodes["Pixel 7"]["stereotype"]
+    assert "gridfleet:deviceId" in nodes["Pixel 7"]["stereotype"]
     assert nodes["Pixel 7"]["session_id"] is None
     assert nodes["iPhone 15"]["session_id"] == "sess-busy"
     assert nodes["iPhone 15"]["session_target"].startswith("http://")
@@ -90,7 +90,7 @@ async def test_grid_router_degrades_when_pack_unresolved(
     resp = await client.get("/api/grid/router")
     assert resp.status_code == 200
     node = next(n for n in resp.json()["nodes"] if n["device_name"] == "Mystery")
-    assert "appium:gridfleet:deviceId" in node["stereotype"]  # sparse but never empty
+    assert "gridfleet:deviceId" in node["stereotype"]  # sparse but never empty
 
 
 async def test_grid_router_many_same_pack_devices(
@@ -102,4 +102,4 @@ async def test_grid_router_many_same_pack_devices(
 
     resp = await client.get("/api/grid/router")
     assert resp.status_code == 200
-    assert all("appium:gridfleet:deviceId" in n["stereotype"] for n in resp.json()["nodes"])
+    assert all("gridfleet:deviceId" in n["stereotype"] for n in resp.json()["nodes"])
