@@ -2,6 +2,17 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.14.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.13.0...gridfleet-testkit-v0.14.0) (2026-06-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** test capabilities must use gridfleet:tag:* (not
+
+### Features
+
+* **testkit:** resolve device id and tags via the gridfleet cap prefix ([20dcf5a](https://github.com/quidow/gridfleet/commit/20dcf5a3e19ca2cc0d58fb352cc9191f50dd2873))
+
 ## [0.13.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.12.0...gridfleet-testkit-v0.13.0) (2026-06-20)
 
 
