@@ -211,3 +211,103 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     assert "release_done" in call_log
     assert "helper" in call_log
     assert call_log.index("release_done") < call_log.index("helper"), call_log
+
+
+async def test_terminate_and_probe_survivors_classifies_alive_vs_gone(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe pass returns ONLY the device whose session is still alive after
+    the DELETE. A 404/gone session (session_alive -> False) is not a survivor."""
+    survivor_dev, gone_dev = None, None
+    with state_write_guard.bypass():
+        survivor_dev = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="probe-survivor",
+            connection_target="probe-survivor",
+            name="Probe Survivor",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+        gone_dev = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="probe-gone",
+            connection_target="probe-gone",
+            name="Probe Gone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add_all([survivor_dev, gone_dev])
+    run = TestRun(
+        id=uuid4(),
+        name="probe-run",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    for dev in (survivor_dev, gone_dev):
+        db_session.add(
+            DeviceReservation(
+                run_id=run.id,
+                device_id=dev.id,
+                identity_value=dev.identity_value,
+                connection_target=dev.connection_target,
+                pack_id=dev.pack_id,
+                platform_id=dev.platform_id,
+                os_version=dev.os_version,
+            )
+        )
+        with state_write_guard.bypass():
+            db_session.add(
+                AppiumNode(
+                    device_id=dev.id,
+                    port=4723,
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4723,
+                    pid=1,
+                    active_connection_target="http://10.0.0.1:4723",
+                )
+            )
+        db_session.add(
+            Session(
+                session_id=f"sess-{dev.identity_value}",
+                device_id=dev.id,
+                run_id=run.id,
+                status=SessionStatus.running,
+            )
+        )
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session",
+        AsyncMock(return_value=True),
+    )
+
+    async def fake_alive(target: str, session_id: str, **_: object) -> bool:
+        return session_id == "sess-probe-survivor"  # alive for survivor, gone for the other
+
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.session_alive", fake_alive)
+
+    release_svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    refreshed = await db_session.get(TestRun, run.id)
+    assert refreshed is not None
+    survivors = await release_svc.terminate_run_sessions_and_probe_survivors(db_session, refreshed)
+
+    assert survivors == {survivor_dev.id}
