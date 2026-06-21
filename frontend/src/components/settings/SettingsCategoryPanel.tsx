@@ -6,7 +6,7 @@ import { SettingsPanelLayout } from './SettingsPanelLayout';
 
 const CATEGORY_LABELS: Record<string, { title: string; description?: string }> = {
   general: { title: 'General', description: 'Core health-check, session, and recovery timing.' },
-  grid: { title: 'Appium & Grid', description: 'Grid routing and Appium node configuration.' },
+  grid: { title: 'Appium & Allocation', description: 'Grid routing and Appium node configuration.' },
   notifications: { title: 'Notifications', description: 'Toast events and delivery settings.' },
   devices: { title: 'Device Defaults', description: 'Default values applied when registering devices.' },
   agent: { title: 'Agent', description: 'Agent enrollment and heartbeat behavior.' },

@@ -21,7 +21,7 @@ interface MockSetting {
 
 const displayNames: Record<string, string> = {
   general: 'General',
-  grid: 'Appium & Grid',
+  grid: 'Appium & Allocation',
   notifications: 'Notifications',
   devices: 'Device Defaults',
   agent: 'Agent',
@@ -410,7 +410,7 @@ test.describe('Settings Page', () => {
 
     for (const label of [
       'General',
-      'Appium & Grid',
+      'Appium & Allocation',
       'Agent',
       'Device Defaults',
       'Reservations',
@@ -447,7 +447,7 @@ test.describe('Settings Page', () => {
 
     await expect(page.locator('input[name="general.heartbeat_interval_sec"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Appium & Grid' }).click();
+    await page.getByRole('button', { name: 'Appium & Allocation' }).click();
     await expect(page.locator('input[name="grid.session_poll_interval_sec"]')).toBeVisible();
 
     await page.getByRole('button', { name: 'Notifications' }).click();
@@ -496,7 +496,7 @@ test.describe('Settings Page', () => {
 
     await expect(page.getByRole('heading', { name: 'Heartbeat & Host Health' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Appium & Grid' }).click();
+    await page.getByRole('button', { name: 'Appium & Allocation' }).click();
     await expect(page.getByRole('heading', { name: 'Grid Routing' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Notifications' }).click();

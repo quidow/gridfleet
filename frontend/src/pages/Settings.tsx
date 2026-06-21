@@ -10,7 +10,7 @@ import { usePageTitle } from '../hooks/usePageTitle';
 
 const TABS = [
   { id: 'general', label: 'General', section: 'System' },
-  { id: 'grid', label: 'Appium & Grid', section: 'System' },
+  { id: 'grid', label: 'Appium & Allocation', section: 'System' },
   { id: 'agent', label: 'Agent', section: 'System' },
   { id: 'devices', label: 'Device Defaults', section: 'System' },
   { id: 'reservations', label: 'Reservations', section: 'System' },
