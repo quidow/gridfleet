@@ -122,6 +122,25 @@ async def test_create_session_returns_session_id_or_error(monkeypatch: pytest.Mo
     assert transport_error is False
 
 
+async def test_terminate_session_transport_error_increments_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core import metrics_recorders
+    from app.grid import appium_direct
+
+    class _FailingClient:
+        is_closed = False
+
+        async def delete(self, *args: object, **kwargs: object) -> object:
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(appium_direct, "_get_client", lambda: _FailingClient())
+    before = metrics_recorders.APPIUM_TERMINATE_FAILED_TOTAL._value.get()
+
+    ok = await appium_direct.terminate_session("http://10.0.0.1:4723", "sess-transport-1")
+
+    assert ok is False
+    assert metrics_recorders.APPIUM_TERMINATE_FAILED_TOTAL._value.get() == before + 1
+
+
 async def test_get_client_pools_and_aclose_resets() -> None:
     """Repeated calls reuse one pooled client; aclose() closes and clears it."""
     await appium_direct.aclose()  # start clean

@@ -6,6 +6,8 @@ from urllib.parse import quote
 
 import httpx2 as httpx
 
+from app.core import metrics_recorders
+
 logger = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
@@ -48,6 +50,7 @@ async def terminate_session(target: str, session_id: str, *, timeout: float = 10
         resp = await _get_client().delete(f"{target}/session/{sid}", timeout=timeout)
         return resp.status_code == 404 or resp.is_success
     except httpx.HTTPError as exc:
+        metrics_recorders.APPIUM_TERMINATE_FAILED_TOTAL.inc()
         logger.warning("appium_terminate_failed target=%s session=%s err=%s", target, sid, exc)
         return False
 

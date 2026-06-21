@@ -123,6 +123,16 @@ APPIUM_RECONCILER_STOP_FAILURES = Counter(
     "Agent-stop failures observed by the Appium reconciler, labeled by reason.",
     labelnames=("reason",),
 )
+APPIUM_TERMINATE_FAILED_TOTAL = Counter(
+    "appium_terminate_failed",
+    "W3C session DELETE requests that failed at the transport layer (connect refused / timeout). "
+    "A non-404 HTTP refusal is not counted here — it returns a response, not a transport error.",
+)
+FORCED_RELEASE_NODE_STOP_TOTAL = Counter(
+    "gridfleet_forced_release_node_stop",
+    "Force-release hard node-stops actually fired — i.e. the session survived (or stayed "
+    "indeterminate after a retry) the W3C DELETE. Steady-state low: most force-releases DELETE cleanly.",
+)
 WEBHOOK_DELIVERIES_TOTAL = Counter(
     "webhook_deliveries_total",
     "Webhook delivery state transitions.",
