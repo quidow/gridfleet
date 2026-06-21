@@ -288,14 +288,13 @@ class RunReservationService:
 def run_release_intent_sources(run_id: uuid.UUID, device_id: uuid.UUID) -> list[str]:
     """Every intent source a permanent run-release must revoke.
 
-    The run-scoped routing/node intents, any sub-threshold cooldown intents (whose
+    The run-scoped routing intents, any sub-threshold cooldown intents (whose
     ``run_active`` precondition still holds after release because the *run* is still
     active), and the device-keyed health-failure exclusion (dropped so the next run
     to allocate this device does not inherit a stale exclusion verdict).
     """
     return [
         f"run:{run_id}",
-        f"cooldown:node:{run_id}",
         f"cooldown:grid:{run_id}",
         f"cooldown:reservation:{run_id}",
         f"cooldown:recovery:{run_id}",
