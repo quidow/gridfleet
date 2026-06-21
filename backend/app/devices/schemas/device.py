@@ -296,7 +296,7 @@ class DeviceRead(BaseModel):
     host_id: uuid.UUID
     operational_state: DeviceOperationalState
     is_reserved: bool = False
-    allocatable: bool = True
+    allocatable: bool
     unavailable_reason: UnavailableReason | None = None
     tags: DeviceTags | None
     manufacturer: str | None

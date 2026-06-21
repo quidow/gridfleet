@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation
 from app.devices.services.intent import IntentService
-from app.runs.models import TestRun
+from app.runs.models import TERMINAL_STATES, TestRun
 
 if TYPE_CHECKING:
     import uuid
@@ -305,3 +305,21 @@ def run_release_intent_sources(run_id: uuid.UUID, device_id: uuid.UUID) -> list[
 
 def reservation_entry_is_excluded(entry: DeviceReservation | None) -> bool:
     return bool(entry and _reservation_entry_is_excluded(entry))
+
+
+def reservation_gating_run_id(reservation_run: TestRun | None, device_id: uuid.UUID) -> uuid.UUID | None:
+    """The run a reservation gates *device_id* to for an arbitrary ticket, or ``None``
+    when the device is free for any ticket (no reservation, terminal run, or excluded
+    entry).
+
+    Single source for both the grid allocator's reservation gate
+    (``app.grid.allocation._reservation_run_id``) and the read-side allocatability
+    projection (``app.devices.services.allocatability``), so a UI "reserved"/
+    ``allocatable`` signal cannot contradict what the allocator actually refuses.
+    """
+    if reservation_run is None or reservation_run.state in TERMINAL_STATES:
+        return None
+    entry = get_reservation_entry_for_device(reservation_run, device_id)
+    if reservation_entry_is_excluded(entry):
+        return None
+    return reservation_run.id

@@ -1,38 +1,49 @@
 """Read-side projection of a device's allocatability (design P4).
 
-Mirrors the allocation gate in ``app.grid.allocation._eligible_devices``:
-a device is allocatable when its ``operational_state`` is ``available`` and it
-is not reserved. Pure — no IO. The presenter passes in the two facts it already
-holds (``device.operational_state`` and whether an active reservation exists).
+Approximates the grid allocation gate (``app.grid.allocation._eligible_devices``)
+using the two operator-legible axes the presenter already holds: the derived
+``operational_state`` and a **gate-honest** reservation signal — a live,
+non-excluded reservation on a non-terminal run, computed by
+``run_service.reservation_gating_run_id`` (the *same* predicate the allocator's
+reservation gate uses, so the badge cannot contradict the allocator). The caller
+passes the gate-honest reservation bool, not the broad ``is_reserved`` display
+flag.
 
-Operational state dominates: a non-``available`` device reports that cause
-(``busy`` / ``verifying`` / ``maintenance`` / ``offline``); an ``available`` but
-reserved device reports ``reserved``. Later stages extend the enum (e.g.
-``cooldown`` / ``draining`` / ``paused``) as the soft-gate lands.
+Deliberately NOT modelled here (until the operational_state stage / P6): the node
+transition window the gate also enforces via ``node_viability``
+(``transition_token`` / ``active_connection_target``). During a node restart an
+``available`` device can briefly read allocatable though the gate would refuse it;
+folding that in cleanly needs operational_state to model node transitions first.
+
+Pure — no IO. Later stages extend the enum (``cooldown`` / ``draining`` /
+``paused``).
 """
 
 from __future__ import annotations
 
+from typing import assert_never
+
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import UnavailableReason
 
-_OPERATIONAL_REASON: dict[DeviceOperationalState, UnavailableReason] = {
-    DeviceOperationalState.busy: UnavailableReason.busy,
-    DeviceOperationalState.verifying: UnavailableReason.verifying,
-    DeviceOperationalState.maintenance: UnavailableReason.maintenance,
-    DeviceOperationalState.offline: UnavailableReason.offline,
-}
 
+def unavailable_reason(operational_state: DeviceOperationalState, *, reserved: bool) -> UnavailableReason | None:
+    """Why the device cannot take an arbitrary new session now, or ``None`` if allocatable.
 
-def unavailable_reason(operational_state: DeviceOperationalState, *, is_reserved: bool) -> UnavailableReason | None:
-    """Why the device cannot take a new session now, or ``None`` if allocatable."""
-    reason = _OPERATIONAL_REASON.get(operational_state)
-    if reason is not None:
-        return reason
-    if is_reserved:
-        return UnavailableReason.reserved
-    return None
-
-
-def is_allocatable(operational_state: DeviceOperationalState, *, is_reserved: bool) -> bool:
-    return unavailable_reason(operational_state, is_reserved=is_reserved) is None
+    Operational state dominates; an ``available`` device is gated only by a
+    gate-honest reservation. ``match`` + ``assert_never`` make this exhaustive: a
+    new ``DeviceOperationalState`` member fails type-checking until it is mapped,
+    so a non-available state can never silently fall through to allocatable.
+    """
+    match operational_state:
+        case DeviceOperationalState.busy:
+            return UnavailableReason.busy
+        case DeviceOperationalState.verifying:
+            return UnavailableReason.verifying
+        case DeviceOperationalState.maintenance:
+            return UnavailableReason.maintenance
+        case DeviceOperationalState.offline:
+            return UnavailableReason.offline
+        case DeviceOperationalState.available:
+            return UnavailableReason.reserved if reserved else None
+    assert_never(operational_state)

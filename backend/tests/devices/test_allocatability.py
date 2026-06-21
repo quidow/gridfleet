@@ -4,17 +4,15 @@ import pytest
 
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import UnavailableReason
-from app.devices.services.allocatability import is_allocatable, unavailable_reason
+from app.devices.services.allocatability import unavailable_reason
 
 
 def test_available_and_free_is_allocatable() -> None:
-    assert is_allocatable(DeviceOperationalState.available, is_reserved=False) is True
-    assert unavailable_reason(DeviceOperationalState.available, is_reserved=False) is None
+    assert unavailable_reason(DeviceOperationalState.available, reserved=False) is None
 
 
 def test_available_but_reserved_reports_reserved() -> None:
-    assert is_allocatable(DeviceOperationalState.available, is_reserved=True) is False
-    assert unavailable_reason(DeviceOperationalState.available, is_reserved=True) is UnavailableReason.reserved
+    assert unavailable_reason(DeviceOperationalState.available, reserved=True) is UnavailableReason.reserved
 
 
 @pytest.mark.parametrize(
@@ -30,6 +28,16 @@ def test_operational_state_dominates_over_reservation(
     state: DeviceOperationalState, expected: UnavailableReason
 ) -> None:
     # A non-available operational cause is reported regardless of reservation.
-    assert unavailable_reason(state, is_reserved=False) is expected
-    assert unavailable_reason(state, is_reserved=True) is expected
-    assert is_allocatable(state, is_reserved=False) is False
+    assert unavailable_reason(state, reserved=False) is expected
+    assert unavailable_reason(state, reserved=True) is expected
+
+
+def test_every_operational_state_is_handled() -> None:
+    # Runtime companion to the match/assert_never exhaustiveness guard: every state
+    # maps, and `available` (when free) is the only allocatable outcome.
+    for state in DeviceOperationalState:
+        reason = unavailable_reason(state, reserved=False)
+        if state is DeviceOperationalState.available:
+            assert reason is None
+        else:
+            assert reason is not None

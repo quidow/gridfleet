@@ -698,12 +698,7 @@ class AllocationService:
         Anything else (no reservation, terminal run, excluded entry) leaves it
         unreserved.
         """
-        if reservation_run is None or reservation_run.state in TERMINAL_STATES:
-            return None
-        entry = run_service.get_reservation_entry_for_device(reservation_run, device_id)
-        if run_service.reservation_entry_is_excluded(entry):
-            return None
-        return reservation_run.id
+        return run_service.reservation_gating_run_id(reservation_run, device_id)
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket

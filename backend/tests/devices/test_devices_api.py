@@ -2327,3 +2327,54 @@ async def test_device_list_reports_unavailable_reason(
     assert by_id[str(offline.id)]["unavailable_reason"] == "offline"
     assert by_id[str(reserved.id)]["allocatable"] is False
     assert by_id[str(reserved.id)]["unavailable_reason"] == "reserved"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reservation_on_terminal_run_does_not_block_allocatable(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    # Gate-honest reservation: a reservation whose run has reached a terminal state no
+    # longer gates the device (the allocator frees it to any ticket), so the projection
+    # must report it allocatable even though a released_at-IS-NULL reservation row exists.
+    from app.runs.models import RunState, TestRun
+    from tests.helpers import create_reservation
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-terminal-res-1",
+        connection_target="alloc-terminal-res-1",
+        name="Alloc Terminal-Res Device",
+        operational_state=DeviceOperationalState.available,
+    )
+    reservation = await create_reservation(db_session, device_id=device.id)
+    run = await db_session.get(TestRun, reservation.run_id)
+    assert run is not None
+    run.state = RunState.completed
+    await db_session.commit()
+
+    got = await client.get(f"/api/devices/{device.id}")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["allocatable"] is True
+    assert body["unavailable_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_busy_device_reports_busy_unavailable_reason(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-busy-1",
+        connection_target="alloc-busy-1",
+        name="Alloc Busy Device",
+        operational_state=DeviceOperationalState.busy,
+    )
+    got = await client.get(f"/api/devices/{device.id}")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["allocatable"] is False
+    assert body["unavailable_reason"] == "busy"
