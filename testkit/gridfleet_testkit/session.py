@@ -27,8 +27,7 @@ def get_device_id_from_driver(driver: WebDriver) -> str:
     return _required_str_cap(
         driver,
         "gridfleet:deviceId",
-        "Session capabilities are missing 'gridfleet:deviceId'; "
-        "the GridFleet router must be new enough to inject it",
+        "Session capabilities are missing 'gridfleet:deviceId'; the GridFleet router must be new enough to inject it",
     )
 
 
