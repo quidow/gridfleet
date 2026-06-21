@@ -196,14 +196,14 @@ driver = create_appium_driver(
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
-| `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
+| `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `gridfleet:deviceId` session capability |
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned device as a typed `Device` from a running Appium session |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
 ### Targeting Devices by Tag
 
-GridFleet injects device tags into node stereotypes as `appium:gridfleet:tag:<key>` capabilities, so the router's backend allocation can route sessions to devices matching specific tags.
+GridFleet injects device tags into node stereotypes as `gridfleet:tag:<key>` capabilities, so the router's backend allocation can route sessions to devices matching specific tags.
 
 ```python
 @pytest.mark.parametrize(
@@ -212,7 +212,7 @@ GridFleet injects device tags into node stereotypes as `appium:gridfleet:tag:<ke
         {
             "pack_id": "appium-uiautomator2",
             "platform_id": "android_mobile",
-            "appium:gridfleet:tag:screen_type": "4k",
+            "gridfleet:tag:screen_type": "4k",
         }
     ],
     indirect=True,
@@ -227,7 +227,7 @@ The same capability works for free sessions:
 driver = create_appium_driver(
     pack_id="appium-uiautomator2",
     platform_id="android_mobile",
-    capabilities={"appium:gridfleet:tag:screen_type": "4k"},
+    capabilities={"gridfleet:tag:screen_type": "4k"},
 )
 ```
 

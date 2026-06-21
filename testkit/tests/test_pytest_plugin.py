@@ -200,7 +200,7 @@ def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
         {
             "pack_id": "appium-uiautomator2",
             "platform_id": "android_mobile",
-            "appium:gridfleet:tag:screen_type": "4k",
+            "gridfleet:tag:screen_type": "4k",
         },
         test_name="test_tag_cap",
     )
@@ -209,7 +209,7 @@ def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
     generator = fixture_fn(request, gridfleet_client, None)
     driver = next(generator)
 
-    assert created_drivers[0][1]["appium:gridfleet:tag:screen_type"] == "4k"
+    assert created_drivers[0][1]["gridfleet:tag:screen_type"] == "4k"
     assert created_drivers[0][1]["gridfleet:testName"] == "test_tag_cap"
 
     driver.quit()

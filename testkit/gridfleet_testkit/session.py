@@ -26,8 +26,8 @@ def get_device_id_from_driver(driver: WebDriver) -> str:
     """Return the GridFleet device id from a live Appium driver's session caps."""
     return _required_str_cap(
         driver,
-        "appium:gridfleet:deviceId",
-        "Session capabilities are missing 'appium:gridfleet:deviceId'; "
+        "gridfleet:deviceId",
+        "Session capabilities are missing 'gridfleet:deviceId'; "
         "the GridFleet router must be new enough to inject it",
     )
 

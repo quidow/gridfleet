@@ -159,7 +159,7 @@ Public Appium helpers:
 | --- | --- |
 | `build_appium_options(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, catalog_client=None)` | Build an Appium options object for an explicit driver-pack platform |
 | `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None, client_config=None)` | Create an Appium remote driver through the WebDriver router for an explicit driver-pack platform. `client_config` (an `AppiumClientConfig`) tunes the HTTP transport (connection retries, timeouts, proxy); the testkit still owns the endpoint |
-| `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `appium:gridfleet:deviceId` session capability |
+| `get_device_id_from_driver(driver)` | Resolve the backend device id from a live driver's `gridfleet:deviceId` session capability |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 
 ## Run Cleanup Policy
