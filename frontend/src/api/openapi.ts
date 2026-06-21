@@ -5368,7 +5368,7 @@ export interface components {
          * UnavailableReason
          * @enum {string}
          */
-        UnavailableReason: "busy" | "verifying" | "maintenance" | "offline" | "reserved";
+        UnavailableReason: "busy" | "verifying" | "maintenance" | "offline" | "reserved" | "cooldown";
         /** ValidationError */
         ValidationError: {
             /** Context */

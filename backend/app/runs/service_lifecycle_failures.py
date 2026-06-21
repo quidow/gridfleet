@@ -14,7 +14,6 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
-    NODE_PROCESS,
     PRIORITY_COOLDOWN,
     RECOVERY,
     RESERVATION,
@@ -50,14 +49,10 @@ def _cooldown_intents(
 ) -> list[IntentRegistration]:
     precondition: RunActivePrecondition = {"kind": "run_active", "run_id": str(run_id)}
     return [
-        IntentRegistration(
-            source=f"cooldown:node:{run_id}",
-            axis=NODE_PROCESS,
-            run_id=run_id,
-            expires_at=expires_at,
-            payload={"action": "stop", "priority": PRIORITY_COOLDOWN, "stop_mode": "defer"},
-            precondition=precondition,
-        ),
+        # No NODE_PROCESS (cooldown:node) intent: cooldown is a warm soft-gate park
+        # (design P2). The node stays running (baseline:idle keeps it warm); the
+        # cooldown:grid intent below sets accepting_new_sessions=False, which the
+        # grid allocator now honors (P1). Reservation exclusion still gates the run.
         IntentRegistration(
             source=f"cooldown:grid:{run_id}",
             axis=GRID_ROUTING,

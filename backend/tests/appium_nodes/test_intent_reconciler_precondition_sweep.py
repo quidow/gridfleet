@@ -251,7 +251,6 @@ async def test_cooldown_intents_carry_run_active_precondition(db_session: AsyncS
     )
     sources = {intent.source for intent in intents}
     assert sources == {
-        f"cooldown:node:{run_id}",
         f"cooldown:grid:{run_id}",
         f"cooldown:reservation:{run_id}",
         f"cooldown:recovery:{run_id}",

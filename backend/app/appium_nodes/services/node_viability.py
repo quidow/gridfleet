@@ -52,3 +52,30 @@ def device_node_is_viable(device: Device) -> bool:
     if node is None:
         return True
     return node.pid is not None and node.active_connection_target is not None and node.transition_token is None
+
+
+def node_accepting_new_sessions_predicate() -> ColumnElement[bool]:
+    """A device's Appium node is accepting new sessions (the warm soft-gate, design P1).
+
+    SQL counterpart of :func:`device_node_accepting_new_sessions`. A node-less
+    device (``AppiumNode.id IS NULL``) passes — node-less devices are filtered
+    elsewhere by their node target — mirroring :func:`node_viable_predicate`'s
+    node-less arm. This is a *different axis* from node viability (process up / not
+    transitioning): it is the warm-park gate the grid new-session allocator
+    (``_eligible_devices``) and the read-side allocatability projection both
+    consult, so the two cannot disagree on whether a parked device is allocatable.
+    """
+    return or_(AppiumNode.id.is_(None), AppiumNode.accepting_new_sessions.is_(True))
+
+
+def device_node_accepting_new_sessions(device: Device) -> bool:
+    """Python-side equivalent of :func:`node_accepting_new_sessions_predicate`.
+
+    Used by the grid allocator's locked re-check and the read-side projection on an
+    eager-loaded device. A device with no node row is treated as accepting (matches
+    the ``AppiumNode.id IS NULL`` arm).
+    """
+    node = device.appium_node
+    if node is None:
+        return True
+    return bool(node.accepting_new_sessions)

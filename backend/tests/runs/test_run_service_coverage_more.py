@@ -15,7 +15,7 @@ from app.core.pagination import encode_cursor
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
+from app.devices.services.intent_types import GRID_ROUTING, RECOVERY, RESERVATION, IntentRegistration
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -1362,7 +1362,7 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
-    # Seed all six intent sources that release_device_from_run must revoke.
+    # Seed all five intent sources that release_device_from_run must revoke.
     await IntentService(db_session).register_intents(
         device_id=device.id,
         reason="seed full intent set",
@@ -1372,12 +1372,6 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
                 axis=GRID_ROUTING,
                 run_id=run.id,
                 payload={"accepting_new_sessions": True, "priority": 10},
-            ),
-            IntentRegistration(
-                source=f"cooldown:node:{run.id}",
-                axis=NODE_PROCESS,
-                run_id=run.id,
-                payload={"action": "stop", "priority": 50},
             ),
             IntentRegistration(
                 source=f"cooldown:grid:{run.id}",
@@ -1462,7 +1456,6 @@ def test_run_release_intent_sources_lists_the_full_set() -> None:
     device_id = _uuid.UUID("22222222-2222-2222-2222-222222222222")
     assert run_release_intent_sources(run_id, device_id) == [
         f"run:{run_id}",
-        f"cooldown:node:{run_id}",
         f"cooldown:grid:{run_id}",
         f"cooldown:reservation:{run_id}",
         f"cooldown:recovery:{run_id}",

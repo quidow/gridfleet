@@ -20,7 +20,12 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
-from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
+from app.appium_nodes.services.node_viability import (
+    device_node_accepting_new_sessions,
+    device_node_is_viable,
+    node_accepting_new_sessions_predicate,
+    node_viable_predicate,
+)
 from app.core.protocols import SettingsReader
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -679,6 +684,7 @@ class AllocationService:
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
             .where(Device.operational_state == DeviceOperationalState.available)
             .where(node_viable_predicate())
+            .where(node_accepting_new_sessions_predicate())
             .where(~select(Session.id).where(Session.device_id == Device.id, live_session_predicate()).exists())
         )
         devices = list((await db.execute(stmt)).scalars().all())
@@ -799,6 +805,8 @@ class AllocationService:
         if locked.operational_state != DeviceOperationalState.available:
             return None
         if not device_node_is_viable(locked):
+            return None
+        if not device_node_accepting_new_sessions(locked):
             return None
         recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
         if recheck.first() is not None:
