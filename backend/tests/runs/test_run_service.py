@@ -89,6 +89,10 @@ async def test_force_release_clears_stop_pending(
         "app.runs.service_lifecycle_release.appium_direct.terminate_session",
         AsyncMock(return_value=True),
     )
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.session_alive",
+        AsyncMock(return_value=True),
+    )
 
     real_deferred_stop = LifecyclePolicyService(
         review=build_review_service(),
@@ -311,3 +315,113 @@ async def test_terminate_and_probe_survivors_classifies_alive_vs_gone(
     survivors = await release_svc.terminate_run_sessions_and_probe_survivors(db_session, refreshed)
 
     assert survivors == {survivor_dev.id}
+
+
+async def _seed_force_release_fixture(db_session: AsyncSession, host_id: object, suffix: str) -> tuple:  # type: ignore[type-arg]
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"fr-{suffix}",
+            connection_target=f"fr-{suffix}",
+            name=f"Force Release {suffix}",
+            os_version="14",
+            host_id=host_id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    run = TestRun(
+        id=uuid4(),
+        name=f"fr-run-{suffix}",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run_id=run.id,
+            device_id=device.id,
+            identity_value=device.identity_value,
+            connection_target=device.connection_target,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            os_version=device.os_version,
+        )
+    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="http://10.0.0.1:4723",
+        )
+    db_session.add(node)
+    db_session.add(
+        Session(session_id=f"sess-fr-{suffix}", device_id=device.id, run_id=run.id, status=SessionStatus.running)
+    )
+    await db_session.commit()
+    return device, run, node
+
+
+async def test_force_release_keeps_node_warm_when_session_cleanly_gone(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P3: the DELETE removed the session (session_alive -> False), so force-release
+    registers NO forced_release hard-stop — the node stays desired=running (warm),
+    and the FORCED_RELEASE_NODE_STOP_TOTAL counter does not move."""
+    from app.core import metrics_recorders
+
+    _device, run, node = await _seed_force_release_fixture(db_session, db_host.id, "warm")
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.session_alive", AsyncMock(return_value=False))
+    before = metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL._value.get()
+
+    lifecycle = RunLifecycleService(
+        publisher=event_bus,
+        settings=_settings,
+        release=RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock()),
+    )
+    await lifecycle.force_release(db_session, run.id)
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running  # never stopped -> no cold restart
+    assert metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL._value.get() == before
+
+
+async def test_force_release_hard_stops_when_session_survives(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P3: the session is still alive after the DELETE (session_alive -> True), so
+    force-release registers the forced_release hard-stop -> node desired=stopped,
+    and the counter increments."""
+    from app.core import metrics_recorders
+
+    _device, run, node = await _seed_force_release_fixture(db_session, db_host.id, "stop")
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.session_alive", AsyncMock(return_value=True))
+    before = metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL._value.get()
+
+    lifecycle = RunLifecycleService(
+        publisher=event_bus,
+        settings=_settings,
+        release=RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock()),
+    )
+    await lifecycle.force_release(db_session, run.id)
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL._value.get() == before + 1

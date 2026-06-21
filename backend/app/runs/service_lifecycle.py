@@ -190,7 +190,15 @@ class RunLifecycleService:
         if run is None:
             raise ValueError("Run not found")
 
-        await self._release.clear_desired_grid_run_id_for_run(db, run=run, caller="run_force_release")
+        # Verify-then-stop (design P3): DELETE the run's live sessions and probe
+        # which genuinely survived BEFORE deciding hard-stops. This runs while the
+        # run is still active (so the forced_release intent's run_active precondition
+        # holds) and touches no reservations (so clear_... still sees them active).
+        # It closes the session rows, so release_devices' DELETE pass below no-ops.
+        survivors = await self._release.terminate_run_sessions_and_probe_survivors(db, run)
+        await self._release.clear_desired_grid_run_id_for_run(
+            db, run=run, caller="run_force_release", stop_device_ids=survivors
+        )
         run.state = RunState.cancelled
         run.error = "Force released by admin"
         run.completed_at = datetime.now(UTC)

@@ -30,7 +30,14 @@ class RunReleaseProtocol(Protocol):
         self, db: AsyncSession, run: TestRun, *, commit: bool = True, terminate_grid_sessions: bool = False
     ) -> list[uuid.UUID]: ...
     async def clear_desired_grid_run_id_for_run(
-        self, db: AsyncSession, *, run: TestRun, caller: str, actor: str | None = None, reason: str | None = None
+        self,
+        db: AsyncSession,
+        *,
+        run: TestRun,
+        caller: str,
+        actor: str | None = None,
+        reason: str | None = None,
+        stop_device_ids: set[uuid.UUID] | None = None,
     ) -> None: ...
     async def complete_deferred_stops_post_commit(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> None: ...
     async def terminate_run_sessions_and_probe_survivors(self, db: AsyncSession, run: TestRun) -> set[uuid.UUID]: ...

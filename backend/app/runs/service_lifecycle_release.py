@@ -9,6 +9,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core import metrics_recorders
 from app.core.concurrency import per_key_semaphores
 from app.runs.service_reservation import run_release_intent_sources
 
@@ -158,6 +159,7 @@ class RunReleaseService:
         caller: str,
         actor: str | None = None,
         reason: str | None = None,
+        stop_device_ids: set[uuid.UUID] | None = None,
     ) -> None:
         del actor
         for reservation in run.device_reservations:
@@ -168,7 +170,12 @@ class RunReleaseService:
             except NoResultFound:
                 continue
             sources = run_release_intent_sources(run.id, device.id)
-            if caller == "run_force_release":
+            # Verify-then-stop (design P3): only hard-stop a device whose session
+            # genuinely survived the W3C DELETE (or stayed indeterminate). A
+            # cleanly-gone session leaves the node warm — no cold restart. When no
+            # survivor set is supplied (non-probing caller), fall back to stopping
+            # all (fail-safe: never leak a live session).
+            if caller == "run_force_release" and (stop_device_ids is None or device.id in stop_device_ids):
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=[
@@ -183,6 +190,7 @@ class RunReleaseService:
                     reason=reason or f"force release run {run.id}",
                     publisher=self._publisher,
                 )
+                metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL.inc()
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=sources,
