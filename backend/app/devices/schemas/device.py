@@ -280,6 +280,14 @@ class UnavailableReason(enum.StrEnum):
     # Warm soft-gate park (Stage 2): node is up but not accepting new sessions
     # (cooldown). Distinct from ``offline`` (node down / crashed).
     cooldown = "cooldown"
+    # Node transition window (Stage 4 / P6): the node is healthy and the device is
+    # still ``available``, but its Appium process is mid-transition — a restart is in
+    # flight (``transition_token`` set) or its routable target is not yet settled
+    # (``active_connection_target`` missing) — so the allocator's node-viability gate
+    # refuses it. Distinct from ``offline`` (process down) and ``cooldown`` (warm but
+    # soft-gated): the node stays warm and returns to allocatable within seconds, with
+    # NO operational_state flip. Read-side only; operational_state never models this.
+    transitioning = "transitioning"
 
 
 class DeviceRead(BaseModel):

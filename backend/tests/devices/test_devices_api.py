@@ -2413,3 +2413,41 @@ async def test_not_accepting_available_device_reports_cooldown(
     body = got.json()
     assert body["allocatable"] is False
     assert body["unavailable_reason"] == "cooldown"
+
+
+async def test_transitioning_available_device_reports_transitioning(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    import uuid
+
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import state_write_guard
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-transitioning-1",
+        connection_target="alloc-transitioning-1",
+        name="Alloc Transitioning Device",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        # A restart is in flight: the process is still up (pid + target present, so the
+        # device stays ``available``) but ``transition_token`` is set, so the allocator's
+        # node-viability gate refuses it. Guarded node columns seeded under bypass().
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+            transition_token=uuid.uuid4(),
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    got = await client.get(f"/api/devices/{device.id}")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["allocatable"] is False
+    assert body["unavailable_reason"] == "transitioning"

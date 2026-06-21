@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect, select
 
-from app.appium_nodes.services.node_viability import device_node_accepting_new_sessions
+from app.appium_nodes.services.node_viability import device_node_accepting_new_sessions, device_node_is_viable
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import DeviceIntent
 from app.devices.schemas.device import DeviceReservationRead
@@ -89,10 +89,12 @@ class DevicePresenterService:
         # AppiumNode.accepting_new_sessions (the same flag _eligible_devices gates on).
         await _ensure_appium_node_loaded(db, device)
         node_accepting = device_node_accepting_new_sessions(device)
+        node_viable = device_node_is_viable(device)
         allocatability_reason = unavailable_reason(
             device.operational_state,
             reserved=reservation_blocks_allocation,
             accepting_new_sessions=node_accepting,
+            node_viable=node_viable,
         )
         readiness = (
             precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
