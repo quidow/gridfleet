@@ -366,7 +366,6 @@ async def test_maintenance_intents_carry_maintenance_active_precondition(
     sources = {intent.source for intent in intents}
     assert sources == {
         f"maintenance:node:{device.id}",
-        f"maintenance:grid:{device.id}",
         f"maintenance:recovery:{device.id}",
     }
     for intent in intents:
