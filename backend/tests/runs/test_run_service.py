@@ -332,6 +332,12 @@ async def _seed_force_release_fixture(db_session: AsyncSession, host_id: object,
             operational_state=DeviceOperationalState.busy,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
+            # verified_at required so device_in_service() is True, which causes the
+            # reconciler to synthesize a baseline:idle (priority 10) node-start intent
+            # after run intents are revoked — this is the P3 warm-park benefit. Without
+            # it, no baseline:idle is synthesized and the node stops via the no-intent
+            # path, masking the warm path entirely.
+            verified_at=datetime.now(UTC),
         )
     db_session.add(device)
     run = TestRun(
