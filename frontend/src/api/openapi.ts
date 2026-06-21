@@ -2426,10 +2426,7 @@ export interface components {
         };
         /** DeviceDetail */
         DeviceDetail: {
-            /**
-             * Allocatable
-             * @default true
-             */
+            /** Allocatable */
             allocatable: boolean;
             appium_node?: components["schemas"]["AppiumNodeRead"] | null;
             /** Battery Level Percent */
@@ -2769,10 +2766,7 @@ export interface components {
         };
         /** DeviceRead */
         DeviceRead: {
-            /**
-             * Allocatable
-             * @default true
-             */
+            /** Allocatable */
             allocatable: boolean;
             /** Battery Level Percent */
             battery_level_percent: number | null;

@@ -7,7 +7,7 @@ export type DeviceRead = Omit<Schemas['DeviceRead'], 'platform_label' | 'readine
   platform_label: string | null;
   readiness_state: DeviceReadinessState;
 };
-export type UnavailableReason = NonNullable<Schemas['DeviceRead']['unavailable_reason']>;
+export type UnavailableReason = Schemas['UnavailableReason'];
 export type AppiumNodeRead = Schemas['AppiumNodeRead'];
 export type HealthVerdictRead = Schemas['HealthVerdictRead'];
 export type HealthVerdictStatus = HealthVerdictRead['status'];
