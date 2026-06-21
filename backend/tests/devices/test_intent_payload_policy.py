@@ -126,16 +126,13 @@ async def test_health_failure_intent_payload_shape(
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — cooldown:node:* and cooldown:reservation:* payload shapes
+# Test 2 — cooldown:grid:* and cooldown:reservation:* payload shapes
 #
 # Producer: runs.service_lifecycle_failures.cooldown_device
 #
-# Documented fields (intents.md):
-#   cooldown:node:{run_id}
-#     - stop_mode: "defer"   (intentional snapshot)
-#   cooldown:reservation:{run_id}
-#     - cooldown_count        (refresh-on-event)
-#     - exclusion_reason      (intentional snapshot, called "exclusion_reason" in model)
+# Cooldown is a warm soft-gate park (design P2): no cooldown:node intent. The
+# grid intent carries accepting_new_sessions=False (the load-bearing lever under
+# P1); the reservation intent carries cooldown_count + exclusion_reason.
 # ---------------------------------------------------------------------------
 
 
@@ -205,16 +202,14 @@ async def test_cooldown_intent_payload_shape(
     )
     assert not escalated  # non-escalation path registers the intents we want
 
-    # --- cooldown:node:{run_id} ---
-    node_intent = await _get_intent(db_session, device.id, prefix=f"cooldown:node:{run.id}")
-    node_payload = node_intent.payload
+    # --- cooldown:grid:{run_id} (the warm soft-gate lever) ---
+    grid_intent = await _get_intent(db_session, device.id, prefix=f"cooldown:grid:{run.id}")
+    grid_payload = grid_intent.payload
 
-    # Documented: stop_mode = "defer" (intentional snapshot)
-    assert node_payload.get("stop_mode") == "defer", (
-        f"cooldown:node intent stop_mode must be 'defer'; got {node_payload!r}"
+    assert grid_payload.get("accepting_new_sessions") is False, (
+        f"cooldown:grid intent must set accepting_new_sessions=False; got {grid_payload!r}"
     )
-    assert node_payload.get("action") == "stop"
-    assert "priority" in node_payload
+    assert "priority" in grid_payload
 
     # --- cooldown:reservation:{run_id} ---
     res_intent = await _get_intent(db_session, device.id, prefix=f"cooldown:reservation:{run.id}")

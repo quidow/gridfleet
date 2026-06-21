@@ -318,7 +318,7 @@ async def test_cooldown_preserves_desired_grid_run_id(
     # Cooldown keeps the process alive for in-flight sessions but blocks routing.
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
-    assert node.stop_pending is True
+    assert node.stop_pending is False
 
 
 async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
@@ -408,7 +408,7 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     kwargs = reconfigure.await_args.kwargs
     assert kwargs["port"] == 4723
     assert kwargs["accepting_new_sessions"] is False
-    assert kwargs["stop_pending"] is True
+    assert kwargs["stop_pending"] is False
     # Inline delivery must pass a bounded timeout — testkit's cooldown call
     # times out at 10 s, so the agent-call budget here has to leave headroom.
     assert kwargs["timeout"] == INLINE_AGENT_CALL_TIMEOUT_SEC
@@ -482,6 +482,53 @@ async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncS
     assert info["cooldown_count"] == 1
 
 
+async def test_cooldown_keeps_device_warm_and_reports_cooldown(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """P2: cooldown parks the device WARM. The Appium node keeps running (no
+    stop_pending, pid intact), the device derives ``available`` instead of
+    ``offline`` (the Finding 7 conflation fix), and the soft-gate
+    (accepting_new_sessions=False) is the sole out-of-rotation lever. The
+    read-side projection reports this honestly as ``cooldown`` (allocatable=False),
+    matching the allocator's accepting_new_sessions gate."""
+    device = await _create_available_device(db_session, default_host_id, "cooldown-warm")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(node)
+    await db_session.refresh(device)
+    # Node stays warm: running, process intact, not draining.
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.pid is not None
+    assert node.stop_pending is False
+    # The soft-gate is the only out-of-rotation lever now.
+    assert node.accepting_new_sessions is False
+    # The device no longer derives offline during cooldown.
+    assert device.operational_state == DeviceOperationalState.available
+
+    got = await client.get(f"/api/devices/{device.id}")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["allocatable"] is False
+    assert body["unavailable_reason"] == "cooldown"
+
+
 async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-stop")
     run = await _create_run(client)
@@ -509,7 +556,7 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
-    assert node.stop_pending is True
+    assert node.stop_pending is False
 
 
 async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSession, default_host_id: str) -> None:

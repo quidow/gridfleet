@@ -107,7 +107,6 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     past = datetime.now(UTC) - timedelta(seconds=1)
     earlier = past - timedelta(seconds=120)
     cooldown_sources = {
-        f"cooldown:node:{run.id}",
         f"cooldown:grid:{run.id}",
         f"cooldown:reservation:{run.id}",
         f"cooldown:recovery:{run.id}",
