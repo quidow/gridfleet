@@ -74,7 +74,7 @@ describe('RouterPage', () => {
     expect(screen.getByRole('heading', { name: 'Router' })).toBeInTheDocument();
     expect(screen.getByText('Pixel 7')).toBeInTheDocument();
     expect(screen.getByText('iPhone 15')).toBeInTheDocument();
-    expect(screen.getByText('Registered')).toBeInTheDocument();
+    expect(screen.getByText('registered')).toBeInTheDocument();
     expect(screen.getByText('Queue (1)')).toBeInTheDocument();
   });
 });

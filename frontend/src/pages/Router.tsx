@@ -11,7 +11,7 @@ import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useGridRouter } from '../hooks/useGridRouter';
 import { NodeCard } from './router/NodeCard';
 import { QueueTile } from './router/QueueTile';
-import { RouterCounts } from './router/RouterCounts';
+import { RouterSummaryPills } from './router/RouterSummaryPills';
 
 const STATES = ['all', 'available', 'busy', 'verifying', 'offline', 'maintenance'] as const;
 
@@ -36,63 +36,61 @@ export function RouterPage() {
         title="Router"
         subtitle="Grid nodes, routing stereotypes, and the live allocation queue."
         updatedAt={data ? new Date(dataUpdatedAt) : null}
+        summary={data ? <RouterSummaryPills counts={data.counts} /> : undefined}
       />
 
       {isLoading ? <LoadingSpinner /> : null}
       {isError && !data ? <FetchError onRetry={() => refetch()} /> : null}
 
       {data ? (
-        <>
-          <RouterCounts counts={data.counts} />
-          <SectionErrorBoundary scope="router-grid">
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
-              <div>
-                <FilterBar
-                  onClear={() => {
-                    setSearch('');
-                    setState('all');
-                  }}
-                >
-                  <input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search device…"
-                    aria-label="Search device"
-                    className="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-sm"
-                  />
-                  <Select
-                    value={state}
-                    onChange={(value) => setState(value as (typeof STATES)[number])}
-                    ariaLabel="State filter"
-                    size="sm"
-                    options={STATES.map((value) => ({ value, label: value === 'all' ? 'All states' : value }))}
-                  />
-                </FilterBar>
+        <SectionErrorBoundary scope="router-grid">
+          <div className="space-y-4">
+            <div>
+              <FilterBar
+                onClear={() => {
+                  setSearch('');
+                  setState('all');
+                }}
+              >
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search device…"
+                  aria-label="Search device"
+                  className="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-sm"
+                />
+                <Select
+                  value={state}
+                  onChange={(value) => setState(value as (typeof STATES)[number])}
+                  ariaLabel="State filter"
+                  size="sm"
+                  options={STATES.map((value) => ({ value, label: value === 'all' ? 'All states' : value }))}
+                />
+              </FilterBar>
 
-                {filtered.length === 0 ? (
-                  <EmptyState
-                    icon={Network}
-                    title={data.nodes.length === 0 ? 'No devices' : 'No matches'}
-                    description={
-                      data.nodes.length === 0
-                        ? 'No devices are registered in the grid.'
-                        : 'No devices match the current filters.'
-                    }
-                    className="mt-3"
-                  />
-                ) : (
-                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {filtered.map((node) => (
-                      <NodeCard key={node.device_id} node={node} />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <QueueTile queue={data.queue} />
+              {filtered.length === 0 ? (
+                <EmptyState
+                  icon={Network}
+                  title={data.nodes.length === 0 ? 'No devices' : 'No matches'}
+                  description={
+                    data.nodes.length === 0
+                      ? 'No devices are registered in the grid.'
+                      : 'No devices match the current filters.'
+                  }
+                  className="mt-3"
+                />
+              ) : (
+                <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(min(30rem,100%),1fr))] gap-3">
+                  {filtered.map((node) => (
+                    <NodeCard key={node.device_id} node={node} />
+                  ))}
+                </div>
+              )}
             </div>
-          </SectionErrorBoundary>
-        </>
+
+            <QueueTile queue={data.queue} />
+          </div>
+        </SectionErrorBoundary>
       ) : null}
     </div>
   );
