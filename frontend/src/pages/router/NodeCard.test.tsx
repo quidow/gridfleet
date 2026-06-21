@@ -16,7 +16,7 @@ const node: GridRouterNodeRead = {
   node_effective_state: 'running',
   session_id: 's_4821',
   session_target: 'http://host-b:8100',
-  stereotype: { platformName: 'iOS', 'appium:gridfleet:deviceId': '2b9c41' },
+  stereotype: { platformName: 'iOS', 'gridfleet:deviceId': '2b9c41' },
 };
 
 function renderCard() {
