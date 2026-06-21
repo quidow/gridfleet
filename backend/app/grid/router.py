@@ -1,13 +1,18 @@
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
 from sqlalchemy import select
 
+from app.appium_nodes.services.effective_state import compute_effective_state
 from app.core.dependencies import DbDep
 from app.devices.dependencies import DeviceServicesDep
+from app.devices.models import DeviceOperationalState
+from app.grid.allocation import StereotypeTemplateCache, device_match_surface
 from app.grid.matching import CapabilityMergeError, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.grid.schemas import GridQueueRead, GridStatusRead
+from app.grid.schemas import GridQueueRead, GridRouterRead, GridStatusRead
+from app.hosts.models import Host
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
@@ -26,11 +31,28 @@ def _ticket_capabilities(ticket: GridSessionQueueTicket) -> dict[str, Any]:
     return candidates[0] if candidates else {}
 
 
+def _queue_entry(ticket: GridSessionQueueTicket) -> dict[str, Any]:
+    """Selenium-queue-shaped (camelCase) view of one waiting ticket. Shared by the
+    ``/queue`` and ``/router`` endpoints so their queue payloads cannot drift."""
+    return {
+        "requestId": str(ticket.id),
+        "capabilities": _ticket_capabilities(ticket),
+        "requestTimestamp": ticket.created_at.isoformat(),
+        "runId": str(ticket.run_id) if ticket.run_id is not None else None,
+    }
+
+
 async def _live_sessions_by_device(db: DbDep) -> dict[Any, list[str]]:
     # running|pending via the shared chokepoint: a pending allocation
     # (allocate->confirm window) already claims its device, so the public status
     # must count it rather than report the device free (wave-5 re-review B2).
-    stmt = select(Session.device_id, Session.session_id).where(live_session_predicate())
+    # Deterministic order (newest first) so a device with >1 live session surfaces a
+    # stable session each poll instead of flickering on Postgres row order.
+    stmt = (
+        select(Session.device_id, Session.session_id)
+        .where(live_session_predicate())
+        .order_by(Session.started_at.desc())
+    )
     rows = (await db.execute(stmt)).all()
     by_device: dict[Any, list[str]] = {}
     for device_id, session_id in rows:
@@ -89,16 +111,83 @@ async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str
 @router.get("/queue", response_model=GridQueueRead)
 async def grid_queue(db: DbDep) -> dict[str, Any]:
     waiting = await _waiting_tickets(db)
-    requests = [
-        {
-            "requestId": str(ticket.id),
-            "capabilities": _ticket_capabilities(ticket),
-            "requestTimestamp": ticket.created_at.isoformat(),
-            "runId": str(ticket.run_id) if ticket.run_id is not None else None,
-        }
-        for ticket in waiting
-    ]
     return {
         "queue_size": len(waiting),
-        "requests": requests,
+        "requests": [_queue_entry(ticket) for ticket in waiting],
+    }
+
+
+@router.get("/router", response_model=GridRouterRead)
+async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+    devices = await device_services.crud.list_devices(db)
+    sessions_by_device = await _live_sessions_by_device(db)
+    waiting = await _waiting_tickets(db)
+
+    hosts = (await db.execute(select(Host))).scalars().all()
+    hosts_by_id = {host.id: host for host in hosts}
+
+    template_cache: StereotypeTemplateCache = {}
+    now = datetime.now(UTC)
+
+    # Seed the per-operational-state buckets from the enum itself so that adding a 6th
+    # DeviceOperationalState cannot turn the `counts[...] += 1` below into a fleet-wide
+    # KeyError/500 — an unmodelled state is simply dropped by response_model validation.
+    counts: dict[str, int] = {state.value: 0 for state in DeviceOperationalState}
+    counts.update({"registered": len(devices), "running": 0, "active_sessions": 0, "queue_depth": len(waiting)})
+
+    nodes: list[dict[str, Any]] = []
+    for device in devices:
+        node = device.appium_node
+        host = hosts_by_id.get(device.host_id)
+        counts[device.operational_state.value] += 1
+
+        running = bool(node and node.observed_running)
+        if running:
+            counts["running"] += 1
+
+        effective_state = None
+        node_port = None
+        if node is not None:
+            node_port = node.port
+            effective_state = compute_effective_state(
+                pid=node.pid,
+                desired_state=node.desired_state.value,
+                health_running=node.health_running,
+                health_state=node.health_state,
+                transition_token=node.transition_token,
+                transition_deadline=node.transition_deadline,
+                lifecycle_policy_state=device.lifecycle_policy_state,
+                now=now,
+            )
+
+        target = None
+        if running and host is not None and node_port is not None:
+            target = f"http://{host.ip}:{node_port}"
+
+        session_ids = sessions_by_device.get(device.id, [])
+        session_id = session_ids[0] if session_ids else None
+
+        stereotype = await device_match_surface(db, device, template_cache=template_cache)
+
+        nodes.append(
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "platform_id": device.platform_id,
+                "host_id": str(device.host_id),
+                "host_name": host.hostname if host is not None else None,
+                "operational_state": device.operational_state.value,
+                "node_effective_state": effective_state,
+                "session_id": session_id,
+                "session_target": target if session_id else None,
+                "stereotype": stereotype,
+            }
+        )
+
+    counts["active_sessions"] = sum(len(sids) for sids in sessions_by_device.values())
+
+    return {
+        "counts": counts,
+        "nodes": nodes,
+        "queue": [_queue_entry(ticket) for ticket in waiting],
     }

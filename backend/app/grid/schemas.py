@@ -2,6 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.appium_nodes.services.effective_state import EffectiveNodeStateValue
 from app.devices.models import DeviceOperationalState
 
 
@@ -49,3 +50,36 @@ class GridQueueRequestRead(BaseModel):
 class GridQueueRead(BaseModel):
     queue_size: int
     requests: list[GridQueueRequestRead] = Field(default_factory=list)
+
+
+class GridRouterCounts(BaseModel):
+    registered: int
+    running: int
+    available: int
+    busy: int
+    verifying: int
+    offline: int
+    maintenance: int
+    active_sessions: int
+    queue_depth: int
+
+
+class GridRouterNodeRead(BaseModel):
+    device_id: str
+    device_name: str
+    platform_id: str
+    host_id: str | None = None
+    host_name: str | None = None
+    operational_state: DeviceOperationalState
+    node_effective_state: EffectiveNodeStateValue | None = None
+    session_id: str | None = None
+    session_target: str | None = None
+    stereotype: dict[str, Any]
+
+
+class GridRouterRead(BaseModel):
+    # nodes/queue are always populated by the handler, so they are required (not
+    # defaulted) — this keeps the generated TS types non-optional for the frontend.
+    counts: GridRouterCounts
+    nodes: list[GridRouterNodeRead]
+    queue: list[GridQueueRequestRead]

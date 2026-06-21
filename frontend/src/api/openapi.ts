@@ -1107,6 +1107,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/grid/router": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Grid Router */
+        get: operations["grid_router_api_grid_router_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/grid/status": {
         parameters: {
             query?: never;
@@ -3569,6 +3586,59 @@ export interface components {
             device_count: number;
             /** Devices */
             devices?: components["schemas"]["GridRegistryDeviceRead"][];
+        };
+        /** GridRouterCounts */
+        GridRouterCounts: {
+            /** Active Sessions */
+            active_sessions: number;
+            /** Available */
+            available: number;
+            /** Busy */
+            busy: number;
+            /** Maintenance */
+            maintenance: number;
+            /** Offline */
+            offline: number;
+            /** Queue Depth */
+            queue_depth: number;
+            /** Registered */
+            registered: number;
+            /** Running */
+            running: number;
+            /** Verifying */
+            verifying: number;
+        };
+        /** GridRouterNodeRead */
+        GridRouterNodeRead: {
+            /** Device Id */
+            device_id: string;
+            /** Device Name */
+            device_name: string;
+            /** Host Id */
+            host_id?: string | null;
+            /** Host Name */
+            host_name?: string | null;
+            /** Node Effective State */
+            node_effective_state?: ("starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error") | null;
+            operational_state: components["schemas"]["DeviceOperationalState"];
+            /** Platform Id */
+            platform_id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Session Target */
+            session_target?: string | null;
+            /** Stereotype */
+            stereotype: {
+                [key: string]: unknown;
+            };
+        };
+        /** GridRouterRead */
+        GridRouterRead: {
+            counts: components["schemas"]["GridRouterCounts"];
+            /** Nodes */
+            nodes: components["schemas"]["GridRouterNodeRead"][];
+            /** Queue */
+            queue: components["schemas"]["GridQueueRequestRead"][];
         };
         /** GridStatusRead */
         GridStatusRead: {
@@ -9326,6 +9396,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GridQueueRead"];
+                };
+            };
+        };
+    };
+    grid_router_api_grid_router_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GridRouterRead"];
                 };
             };
         };

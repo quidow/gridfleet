@@ -92,6 +92,9 @@ export const qk = {
     fleetCapacityTimeline: (params: unknown) => ['analytics', 'fleet-capacity-timeline', params] as const,
   },
   hosts: { root: ['hosts'] as const },
+  gridRouter: {
+    root: ['grid-router'] as const,
+  },
   host: {
     root: ['host'] as const,
     detail: (id: string) => ['host', id] as const,
