@@ -783,6 +783,10 @@ async def test_force_release_restores_busy_run_devices(
         return True
 
     monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.session_alive",
+        AsyncMock(return_value=True),
+    )
 
     resp = await client.post(f"/api/runs/{run['id']}/force-release")
     assert resp.status_code == 200

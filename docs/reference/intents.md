@@ -105,7 +105,7 @@ authoritative (snapshot) or must be re-evaluated on each cycle.
 
 ### Per-source payload table
 
-One row per (source, field) pair across all 31 `IntentRegistration` call sites.
+One row per (source, field) pair across all 23 `IntentRegistration` call sites.
 `priority` and axis-required fields (`action`, `accepting_new_sessions`,
 `excluded`, `allowed`) are omitted — they are structural and always intentional
 snapshots of the caller's intent. Only semantically interesting fields appear
@@ -120,7 +120,7 @@ below.
 | `verification:{device_id}` | `expires_at` (TTL) | Refresh-on-event | `startup_timeout_sec` + `session_viability_timeout_sec` + 60 s safety margin; re-registered each verification start (verification execution `_register_verification_node_intent`) and on `exit_maintenance`. |
 | `active_session:{sid}` | _(no extra fields)_ | — | Structural only (`action`, `priority`). |
 | `run:{run_id}` (grid_routing) | `accepting_new_sessions` | Refresh-on-event | Re-registered on each allocation / restore-to-run call; structural for the axis. |
-| `forced_release:{run_id}` | `stop_mode` | Intentional snapshot | "hard" stop is a policy decision made at the moment of force-release; not a moving row value. |
+| `forced_release:{run_id}` | `stop_mode` | Intentional snapshot | "hard" stop policy. **Conditionally registered (design P3):** force-release first W3C-DELETEs the session, then registers this intent only if `appium_direct.session_alive` confirms the session survived (or stays indeterminate after one retry). A cleanly-gone session registers no stop — the node stays warm. Counter: `gridfleet_forced_release_node_stop_total`. |
 | `cooldown:node:{run_id}` | `stop_mode` | Intentional snapshot | "defer" policy set at cooldown registration; fixed for the cooldown lifetime. |
 | `cooldown:grid:{run_id}` | _(no extra fields)_ | — | Structural only. |
 | `cooldown:reservation:{run_id}` | `cooldown_count` | Refresh-on-event | Re-registered on each cooldown increment; reconciler's `_update_reservation_exclusion` takes `max()` across concurrent registrations. |
@@ -138,7 +138,6 @@ below.
 | `operator:start:{device_id}` (restart variant) | `transition_token` | Intentional snapshot | Fresh UUID minted at registration for restart coordination. |
 | `operator:start:{device_id}` (restart variant) | `transition_deadline` | Intentional snapshot | Window computed fresh from `appium_reconciler.restart_window_sec` at restart time. |
 | `operator:stop:node:{device_id}` | `stop_mode` | Intentional snapshot | "hard" stop policy fixed at operator-stop time. |
-| `operator:stop:grid:{device_id}` | _(no extra fields)_ | — | Structural only. |
 
 **Audit note.** The `desired_port` field on `auto_recovery:node:*` was a Drop
 violation (it captured `node.port`, a moving row field); it was removed in
@@ -174,8 +173,8 @@ primary mechanism.
 | `device_delete:{axis}:{device_id}` | Node stopped / device deleted | Device row deletion cascades `device_intents` rows via FK; also overwritten by subsequent operator start | Covered via cascade. |
 | `operator:start:{device_id}` | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
 | `operator:stop:node:{device_id}` | Operator starts the node | `_bulk_start_one` via `revoke_intents_and_reconcile(_operator_stop_sources(...))` | Covered. |
-| `operator:stop:grid:{device_id}` | Operator starts the node | Same revoke call as `operator:stop:node` | Covered. |
-| `maintenance:{axis}:{device_id}` | Operator exits maintenance | `maintenance_active` precondition auto-retires all three axes when the device's `maintenance_reason` is cleared (operator exits maintenance) | Covered via precondition. |
+| `operator:stop:grid:{device_id}` | No longer registered | The GRID_ROUTING accepting=False intent was removed (design P5 — the `operator:stop:node` hard stop already forces accepting_new_sessions=False). Retained in `operator_stop_sources` as a defensive revoke target so any pre-deploy row is cleared on operator start | N/A — not registered. |
+| `maintenance:{axis}:{device_id}` | Operator exits maintenance | `maintenance_active` precondition auto-retires the axes when `maintenance_reason` is cleared. The `grid` axis is no longer registered (design P5 — the `maintenance:node` graceful stop already forces accepting_new_sessions=False); `maintenance:grid` is retained in `_maintenance_sources` as a defensive revoke target for any pre-deploy row | Covered via precondition. |
 
 ## Defense-in-depth: the Stale-Intent Sweep
 

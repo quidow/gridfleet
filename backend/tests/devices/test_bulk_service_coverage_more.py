@@ -11,7 +11,11 @@ from app.devices.services import bulk as bulk_service
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_sources
+from app.lifecycle.services.operator_node import (
+    OperatorNodeLifecycleService,
+    operator_stop_intents,
+    operator_stop_sources,
+)
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
@@ -255,6 +259,21 @@ def test_bulk_small_helpers_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
     err = AgentCallError("10.0.0.1", "agent down")
     assert str(err) == "agent down"
+
+
+def test_operator_stop_intents_drops_redundant_grid_intent() -> None:
+    """P5: operator stop registers only the node hard-stop + recovery deny. The
+    node stop already forces accepting_new_sessions=False (node_factor), so the
+    operator:stop:grid intent was pure redundancy. The revoke list keeps it for
+    cleaning pre-deploy rows."""
+    device_id = uuid.uuid4()
+    sources = {intent.source for intent in operator_stop_intents(device_id)}
+    assert sources == {
+        f"operator:stop:node:{device_id}",
+        f"operator:stop:recovery:{device_id}",
+    }
+    # Defensive revoke target retained (no precondition/TTL -> only dies via revoke):
+    assert f"operator:stop:grid:{device_id}" in operator_stop_sources(device_id)
 
 
 async def test_bulk_per_device_action_records_lock_and_action_errors(monkeypatch: pytest.MonkeyPatch) -> None:

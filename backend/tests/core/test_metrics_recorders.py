@@ -57,3 +57,15 @@ def test_appium_reconciler_stop_failures_counter_exists() -> None:
     counter = metrics_recorders.APPIUM_RECONCILER_STOP_FAILURES
     assert counter._name == "appium_reconciler_stop_failures"
     assert sorted(counter._labelnames) == ["reason"]
+
+
+def test_appium_terminate_failed_counter_exists() -> None:
+    counter = metrics_recorders.APPIUM_TERMINATE_FAILED_TOTAL
+    assert counter._name == "appium_terminate_failed"
+    assert counter._labelnames == ()
+
+
+def test_forced_release_node_stop_counter_exists() -> None:
+    counter = metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL
+    assert counter._name == "gridfleet_forced_release_node_stop"
+    assert counter._labelnames == ()

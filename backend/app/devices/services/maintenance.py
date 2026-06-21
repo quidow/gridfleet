@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    GRID_ROUTING,
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
     PRIORITY_MAINTENANCE,
@@ -47,17 +46,18 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
         "kind": "maintenance_active",
         "device_id": str(device_id),
     }
+    # No GRID_ROUTING (maintenance:grid) intent: the maintenance:node graceful stop
+    # already forces accepting_new_sessions=False via the node_factor in
+    # intent_reconciler (a graceful/deferred stop sets node_factor=False ->
+    # accepting=False), so a separate accepting=False grid intent was redundant
+    # (design P5). _maintenance_sources still lists maintenance:grid so any row
+    # registered before this change is revoked on maintenance exit (the
+    # maintenance_active precondition is the primary cleanup).
     return [
         IntentRegistration(
             source=f"maintenance:node:{device_id}",
             axis=NODE_PROCESS,
             payload={"action": "stop", "priority": PRIORITY_MAINTENANCE, "stop_mode": "graceful"},
-            precondition=precondition,
-        ),
-        IntentRegistration(
-            source=f"maintenance:grid:{device_id}",
-            axis=GRID_ROUTING,
-            payload={"accepting_new_sessions": False, "priority": PRIORITY_MAINTENANCE},
             precondition=precondition,
         ),
         IntentRegistration(

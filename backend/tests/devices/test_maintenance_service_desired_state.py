@@ -115,6 +115,5 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     )
     assert {intent.source for intent in intents} == {
         f"maintenance:node:{device.id}",
-        f"maintenance:grid:{device.id}",
         f"maintenance:recovery:{device.id}",
     }

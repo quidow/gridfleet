@@ -9,6 +9,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core import metrics_recorders
 from app.core.concurrency import per_key_semaphores
 from app.runs.service_reservation import run_release_intent_sources
 
@@ -45,6 +46,10 @@ logger = logging.getLogger(__name__)
 # node cannot stall the whole release. Mirrors the observation loops' per-host
 # probe ceiling (settings key general.probe_concurrency_per_host).
 TERMINATE_CONCURRENCY_PER_HOST = 2
+# One brief retry on an indeterminate (network-error) liveness probe before
+# treating the session as a survivor. Force-release is rare, so a short fixed
+# delay is fine; no setting needed (design P3).
+SURVIVAL_PROBE_RETRY_DELAY_SEC = 0.5
 
 
 def _resolve_session_target(session: Session, devices_by_id: dict[uuid.UUID, Device]) -> str | None:
@@ -154,6 +159,7 @@ class RunReleaseService:
         caller: str,
         actor: str | None = None,
         reason: str | None = None,
+        stop_device_ids: set[uuid.UUID] | None = None,
     ) -> None:
         del actor
         for reservation in run.device_reservations:
@@ -164,7 +170,12 @@ class RunReleaseService:
             except NoResultFound:
                 continue
             sources = run_release_intent_sources(run.id, device.id)
-            if caller == "run_force_release":
+            # Verify-then-stop (design P3): only hard-stop a device whose session
+            # genuinely survived the W3C DELETE (or stayed indeterminate). A
+            # cleanly-gone session leaves the node warm — no cold restart. When no
+            # survivor set is supplied (non-probing caller), fall back to stopping
+            # all (fail-safe: never leak a live session).
+            if caller == "run_force_release" and (stop_device_ids is None or device.id in stop_device_ids):
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=[
@@ -179,6 +190,7 @@ class RunReleaseService:
                     reason=reason or f"force release run {run.id}",
                     publisher=self._publisher,
                 )
+                metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL.inc()
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=sources,
@@ -203,13 +215,15 @@ class RunReleaseService:
         released_at: datetime,
         *,
         terminate_grid_sessions: bool,
-    ) -> None:
+        probe_survivors: bool = False,
+        close_rows: bool = True,
+    ) -> set[uuid.UUID]:
         del released_at  # close_running_session stamps ended_at itself
         if not terminate_grid_sessions:
             # complete_run path: session lifecycle is owned by the testkit/operator.
             # Leaving running rows untouched keeps device_has_running_session honest
             # so devices with live Grid sessions are not freed under the run.
-            return
+            return set()
 
         # ``pending`` is the grid allocate->confirm window. A run cancelled while a
         # session is pending must terminalize that row too (#3): otherwise the pending
@@ -228,7 +242,7 @@ class RunReleaseService:
         result = await db.execute(stmt)
         sessions = result.scalars().all()
         if not sessions:
-            return
+            return set()
 
         # Three phases (wave-5 #8): the callers hold the run FOR UPDATE for the
         # whole call, so awaiting each Appium DELETE serially cost up to Nx10s of
@@ -280,6 +294,24 @@ class RunReleaseService:
         results = await asyncio.gather(*[_terminate(session, target) for session, target in running_with_target])
         terminated_ok = {session.id: ok for (session, _), ok in zip(running_with_target, results, strict=True)}
 
+        survivors: set[uuid.UUID] = set()
+        if probe_survivors:
+            survivors = await self._probe_session_survivors(running_with_target, host_semaphores)
+            # Fail-safe: a running session with no resolvable Appium target can be
+            # neither DELETEd nor probed, so we cannot confirm it is gone — treat it as a
+            # survivor and hard-stop its node (the same way an indeterminate probe is kept
+            # a survivor). Otherwise a live session on a stale-port/unaddressable node
+            # would leak past force-release.
+            survivors |= {
+                session.device_id
+                for session in sessions
+                if session.status == SessionStatus.running
+                and targets.get(session.id) is None
+                and session.device_id is not None
+            }
+
+        if not close_rows:
+            return survivors
         for session in sessions:
             if session.status == SessionStatus.running:
                 if targets.get(session.id) is None:
@@ -307,3 +339,53 @@ class RunReleaseService:
             await session_service.close_running_session(
                 db, session, attached_run=session.run, publisher=self._publisher
             )
+        return survivors
+
+    async def _probe_session_survivors(
+        self,
+        running_with_target: list[tuple[Session, str]],
+        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore],
+    ) -> set[uuid.UUID]:
+        """After the W3C DELETE, probe each session's liveness (design P3).
+
+        A device is a *survivor* (its node warrants a force-release hard-stop) when
+        its session is still alive, or stays indeterminate after one brief retry.
+        A 404/gone result (``session_alive`` -> ``False``) means the DELETE took:
+        not a survivor, the node stays warm. Probes are bounded per host by the
+        same semaphore the DELETE gather uses.
+        """
+
+        async def _alive(session: Session, target: str) -> bool:
+            host_id = session.device.host_id if session.device is not None else None
+            async with host_semaphores[host_id]:
+                verdict = await appium_direct.session_alive(target, session.session_id)
+                if verdict is None:
+                    await asyncio.sleep(SURVIVAL_PROBE_RETRY_DELAY_SEC)
+                    verdict = await appium_direct.session_alive(target, session.session_id)
+            return verdict is not False  # True (alive) or None (indeterminate) -> survivor
+
+        results = await asyncio.gather(*[_alive(session, target) for session, target in running_with_target])
+        return {
+            session.device_id
+            for (session, _), alive in zip(running_with_target, results, strict=True)
+            if alive and session.device_id is not None
+        }
+
+    async def terminate_run_sessions_and_probe_survivors(self, db: AsyncSession, run: TestRun) -> set[uuid.UUID]:
+        """Force-release pre-step (design P3): W3C DELETE every live session for the
+        run, then probe which genuinely survived. Returns the device IDs whose
+        session is still alive (or indeterminate) — the only devices the force
+        release should hard-stop; a confirmed-gone session leaves the node warm.
+
+        Does NOT close the session rows. ``release_devices`` closes them AFTER
+        ``run.state = cancelled`` so they stamp ``error`` (not ``passed``) — avoiding
+        the TR12 outcome-masking lost-update that occurs when rows are closed while
+        the run is still ``active``. The pre-step's DELETE means ``release_devices``'
+        re-DELETE of an already-gone session is a 404 no-op.
+
+        Touches no ``DeviceReservation`` rows, so it is safe to run before
+        ``clear_desired_grid_run_id_for_run`` (which needs reservations still active).
+        """
+        return await self._mark_running_sessions_released(
+            db, run, now_utc(), terminate_grid_sessions=True, probe_survivors=True, close_rows=False
+        )
