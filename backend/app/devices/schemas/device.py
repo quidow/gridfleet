@@ -271,6 +271,14 @@ class HardwareTelemetryState(enum.StrEnum):
     unsupported = "unsupported"
 
 
+class UnavailableReason(enum.StrEnum):
+    busy = "busy"
+    verifying = "verifying"
+    maintenance = "maintenance"
+    offline = "offline"
+    reserved = "reserved"
+
+
 class DeviceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
