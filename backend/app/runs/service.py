@@ -18,6 +18,7 @@ from app.runs.service_reservation import (
     get_reservation_entry_for_device,
     get_run,
     reservation_entry_is_excluded,
+    reservation_gating_run_id,
 )
 from app.runs.service_reservation import (
     get_run_for_update as _get_run_for_update,
@@ -36,4 +37,5 @@ __all__ = [
     "get_reservation_entry_for_device",
     "get_run",
     "reservation_entry_is_excluded",
+    "reservation_gating_run_id",
 ]

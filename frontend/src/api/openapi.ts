@@ -2426,6 +2426,8 @@ export interface components {
         };
         /** DeviceDetail */
         DeviceDetail: {
+            /** Allocatable */
+            allocatable: boolean;
             appium_node?: components["schemas"]["AppiumNodeRead"] | null;
             /** Battery Level Percent */
             battery_level_percent: number | null;
@@ -2525,6 +2527,7 @@ export interface components {
             tags: {
                 [key: string]: string;
             } | null;
+            unavailable_reason?: components["schemas"]["UnavailableReason"] | null;
             /**
              * Updated At
              * Format: date-time
@@ -2763,6 +2766,8 @@ export interface components {
         };
         /** DeviceRead */
         DeviceRead: {
+            /** Allocatable */
+            allocatable: boolean;
             /** Battery Level Percent */
             battery_level_percent: number | null;
             /** Battery Temperature C */
@@ -2860,6 +2865,7 @@ export interface components {
             tags: {
                 [key: string]: string;
             } | null;
+            unavailable_reason?: components["schemas"]["UnavailableReason"] | null;
             /**
              * Updated At
              * Format: date-time
@@ -5358,6 +5364,11 @@ export interface components {
             /** Version */
             version?: string | null;
         };
+        /**
+         * UnavailableReason
+         * @enum {string}
+         */
+        UnavailableReason: "busy" | "verifying" | "maintenance" | "offline" | "reserved";
         /** ValidationError */
         ValidationError: {
             /** Context */

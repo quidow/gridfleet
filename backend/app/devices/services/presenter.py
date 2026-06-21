@@ -13,6 +13,7 @@ from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy_summary
 from app.devices.services import readiness as device_readiness
+from app.devices.services.allocatability import unavailable_reason
 from app.devices.services.intent_evaluator import (
     evaluate_grid_routing,
     evaluate_node_process,
@@ -78,6 +79,12 @@ class DevicePresenterService:
         if reservation_context is None:
             reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
         reservation, reservation_entry = reservation_context
+        is_reserved = reservation is not None
+        # Gate-honest reservation: only a live, non-excluded reservation on a non-terminal
+        # run actually blocks an arbitrary ticket (the same predicate the allocator uses).
+        # Distinct from the broad ``is_reserved`` display flag above.
+        reservation_blocks_allocation = run_service.reservation_gating_run_id(reservation, device.id) is not None
+        allocatability_reason = unavailable_reason(device.operational_state, reserved=reservation_blocks_allocation)
         readiness = (
             precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
         )
@@ -129,7 +136,9 @@ class DevicePresenterService:
             "software_versions": device.software_versions,
             "host_id": device.host_id,
             "operational_state": device.operational_state,
-            "is_reserved": reservation is not None,
+            "is_reserved": is_reserved,
+            "allocatable": allocatability_reason is None,
+            "unavailable_reason": allocatability_reason,
             "tags": device.tags,
             "device_type": device.device_type,
             "connection_type": device.connection_type,
