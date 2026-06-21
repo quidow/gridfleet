@@ -51,10 +51,13 @@ def unavailable_reason(
         case DeviceOperationalState.offline:
             return UnavailableReason.offline
         case DeviceOperationalState.available:
-            # Warm park: a running node that stopped accepting new sessions is
-            # soft-gated. Stage 2's only producer is cooldown; later stages that
-            # add other warm-park reasons (operator pause, drain-to-park) will
-            # distinguish them here.
+            # Warm soft-gate park. Three intents set accepting_new_sessions=False
+            # (cooldown, operator-stop, maintenance), but operator-stop derives
+            # ``offline`` and maintenance derives ``maintenance`` — neither reaches
+            # this ``available`` branch, so cooldown is the only warm-park reason
+            # that lands here today. A future warm-park producer that leaves the
+            # device ``available`` (operator pause, drain-to-park) MUST extend this
+            # branch to report its own reason rather than inherit ``cooldown``.
             if not accepting_new_sessions:
                 return UnavailableReason.cooldown
             return UnavailableReason.reserved if reserved else None

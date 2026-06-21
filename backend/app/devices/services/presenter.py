@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect, select
 
+from app.appium_nodes.services.node_viability import device_node_accepting_new_sessions
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import DeviceIntent
 from app.devices.schemas.device import DeviceReservationRead
@@ -87,7 +88,7 @@ class DevicePresenterService:
         # Load the node before the projection: the warm soft-gate reads
         # AppiumNode.accepting_new_sessions (the same flag _eligible_devices gates on).
         await _ensure_appium_node_loaded(db, device)
-        node_accepting = device.appium_node is None or device.appium_node.accepting_new_sessions
+        node_accepting = device_node_accepting_new_sessions(device)
         allocatability_reason = unavailable_reason(
             device.operational_state,
             reserved=reservation_blocks_allocation,

@@ -20,7 +20,12 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
-from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
+from app.appium_nodes.services.node_viability import (
+    device_node_accepting_new_sessions,
+    device_node_is_viable,
+    node_accepting_new_sessions_predicate,
+    node_viable_predicate,
+)
 from app.core.protocols import SettingsReader
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -269,18 +274,6 @@ def _candidate_can_take(
     if not candidate_matches_stereotype(candidate, stereotype):
         return False
     return _ticket_passes_reservation(ticket_run_id, reservation_run_id)
-
-
-def node_accepting_new_sessions_predicate() -> ColumnElement[bool]:
-    """Soft-gate (design P1): the device's Appium node is accepting new sessions.
-
-    A node-less device (``AppiumNode.id IS NULL``) passes — node-less devices are
-    filtered elsewhere by their node target — mirroring ``node_viable_predicate``'s
-    node-less arm so this filter adds the soft-gate without changing which
-    node-less devices reach ``_claim``. Grid new-session admission only; the run
-    reservation allocator gates cooled-down devices via the reservation exclusion.
-    """
-    return or_(AppiumNode.id.is_(None), AppiumNode.accepting_new_sessions.is_(True))
 
 
 class AllocationService:
@@ -813,8 +806,7 @@ class AllocationService:
             return None
         if not device_node_is_viable(locked):
             return None
-        node = locked.appium_node
-        if node is not None and not node.accepting_new_sessions:
+        if not device_node_accepting_new_sessions(locked):
             return None
         recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
         if recheck.first() is not None:
