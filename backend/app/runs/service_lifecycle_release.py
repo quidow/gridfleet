@@ -297,35 +297,48 @@ class RunReleaseService:
         survivors: set[uuid.UUID] = set()
         if probe_survivors:
             survivors = await self._probe_session_survivors(running_with_target, host_semaphores)
+            # Fail-safe: a running session with no resolvable Appium target can be
+            # neither DELETEd nor probed, so we cannot confirm it is gone — treat it as a
+            # survivor and hard-stop its node (the same way an indeterminate probe is kept
+            # a survivor). Otherwise a live session on a stale-port/unaddressable node
+            # would leak past force-release.
+            survivors |= {
+                session.device_id
+                for session in sessions
+                if session.status == SessionStatus.running
+                and targets.get(session.id) is None
+                and session.device_id is not None
+            }
 
-        if close_rows:
-            for session in sessions:
-                if session.status == SessionStatus.running:
-                    if targets.get(session.id) is None:
-                        logger.warning(
-                            "Leaving session %s running: no Appium target resolvable during run %s release",
-                            session.session_id,
-                            run.id,
-                        )
-                        continue
-                    if not terminated_ok[session.id]:
-                        logger.warning(
-                            "Leaving session %s running: Appium deletion failed during run %s release",
-                            session.session_id,
-                            run.id,
-                        )
-                        continue
-                # pending rows carry a placeholder session_id (no real Appium session yet),
-                # so they skip the DELETE and are closed directly.
-                #
-                # Route through close_running_session so the run-terminal close emits
-                # session.ended + reconciles the device (#12) instead of stamping status
-                # inline. The run reached a non-completed terminal state here, so
-                # close_running_session stamps error/run_released and expires the
-                # allocation ticket — unifying with the session_sync + router close paths.
-                await session_service.close_running_session(
-                    db, session, attached_run=session.run, publisher=self._publisher
-                )
+        if not close_rows:
+            return survivors
+        for session in sessions:
+            if session.status == SessionStatus.running:
+                if targets.get(session.id) is None:
+                    logger.warning(
+                        "Leaving session %s running because no Appium node target was resolvable during run %s release",
+                        session.session_id,
+                        run.id,
+                    )
+                    continue
+                if not terminated_ok[session.id]:
+                    logger.warning(
+                        "Leaving session %s running because Appium deletion failed during run %s release",
+                        session.session_id,
+                        run.id,
+                    )
+                    continue
+            # pending rows carry a placeholder session_id (no real Appium session yet),
+            # so they skip the DELETE and are closed directly.
+            #
+            # Route through close_running_session so the run-terminal close emits
+            # session.ended + reconciles the device (#12) instead of stamping status
+            # inline. The run reached a non-completed terminal state here, so
+            # close_running_session stamps error/run_released and expires the
+            # allocation ticket — unifying with the session_sync + router close paths.
+            await session_service.close_running_session(
+                db, session, attached_run=session.run, publisher=self._publisher
+            )
         return survivors
 
     async def _probe_session_survivors(
