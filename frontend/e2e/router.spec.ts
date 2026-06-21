@@ -24,7 +24,7 @@ const ROUTER_FIXTURE = {
       node_effective_state: 'running',
       session_id: null,
       session_target: null,
-      stereotype: { platformName: 'Android', 'appium:gridfleet:deviceId': '7f3a' },
+      stereotype: { platformName: 'Android', 'gridfleet:deviceId': '7f3a' },
     },
     {
       device_id: 'd2',
@@ -36,13 +36,13 @@ const ROUTER_FIXTURE = {
       node_effective_state: 'running',
       session_id: 's_4821',
       session_target: 'http://host-b:8100',
-      stereotype: { platformName: 'iOS', 'appium:gridfleet:deviceId': '2b9c' },
+      stereotype: { platformName: 'iOS', 'gridfleet:deviceId': '2b9c' },
     },
   ],
   queue: [
     {
       requestId: 'q1',
-      capabilities: { platformName: 'Android', 'appium:gridfleet:tag:team': 'qa' },
+      capabilities: { platformName: 'Android', 'gridfleet:tag:team': 'qa' },
       requestTimestamp: new Date().toISOString(),
       runId: null,
     },

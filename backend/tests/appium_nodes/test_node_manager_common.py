@@ -35,16 +35,16 @@ def test_build_grid_stereotype_caps_includes_tag_caps() -> None:
 
     caps = build_grid_stereotype_caps(device)
 
-    assert caps["appium:gridfleet:tag:screen_type"] == "4k"
-    assert caps["appium:gridfleet:tag:rack"] == "A1"
+    assert caps["gridfleet:tag:screen_type"] == "4k"
+    assert caps["gridfleet:tag:rack"] == "A1"
 
 
 def test_build_grid_stereotype_caps_keeps_db_tags_authoritative() -> None:
     device = _device(
         tags={"screen_type": "4k"},
-        device_config={"appium_caps": {"appium:gridfleet:tag:screen_type": "hd"}},
+        device_config={"appium_caps": {"gridfleet:tag:screen_type": "hd"}},
     )
 
     caps = build_grid_stereotype_caps(device)
 
-    assert caps["appium:gridfleet:tag:screen_type"] == "4k"
+    assert caps["gridfleet:tag:screen_type"] == "4k"

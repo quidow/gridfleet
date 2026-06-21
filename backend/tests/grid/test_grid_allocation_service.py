@@ -34,7 +34,7 @@ async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: 
     return {
         "platformName": "Android",
         "appium:udid": device.connection_target,
-        "appium:gridfleet:deviceId": str(device.id),
+        "gridfleet:deviceId": str(device.id),
     }
 
 
@@ -342,6 +342,26 @@ async def test_legacy_run_id_cap_rejected(
     db_session.add(ticket)
     await db_session.flush()
     with pytest.raises(CapabilityMergeError, match="no longer supported"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert ticket.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("legacy_cap", ["appium:gridfleet:deviceId", "appium:gridfleet:tag:pool"])
+async def test_legacy_appium_gridfleet_cap_rejected(
+    db_session: AsyncSession,
+    seeded_available_device: Device,
+    allocation_service: AllocationService,
+    legacy_cap: str,
+) -> None:
+    """Clean-break tombstone: the retired appium:gridfleet:* prefix is rejected loudly
+    rather than silently matching any device (the matcher would otherwise ignore it)."""
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{legacy_cap: str(seeded_available_device.id)})
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    with pytest.raises(CapabilityMergeError, match="gridfleet:"):
         await allocation_service.try_allocate(db_session, ticket=ticket)
     assert ticket.status == GridQueueStatus.cancelled
 

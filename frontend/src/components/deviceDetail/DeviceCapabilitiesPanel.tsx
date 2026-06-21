@@ -7,7 +7,7 @@ type Props = {
   device?: DeviceDetail;
 };
 
-const ROUTING_KEYS = ['platformName', 'appium:udid', 'appium:deviceName', 'appium:gridfleet:deviceId'];
+const ROUTING_KEYS = ['platformName', 'appium:udid', 'appium:deviceName', 'gridfleet:deviceId'];
 
 function expectedUdid(device: DeviceDetail | undefined): string | null {
   if (!device) {

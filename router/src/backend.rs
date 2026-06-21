@@ -13,7 +13,7 @@ pub enum AllocateOutcome {
         /// `proxy_timeout` alone.
         claim_window_sec: Option<u64>,
         /// The allocated GridFleet device id, injected into the new-session
-        /// response caps as `appium:gridfleet:deviceId`. `None` when an older
+        /// response caps as `gridfleet:deviceId`. `None` when an older
         /// backend does not supply it (best-effort: no injection then).
         device_id: Option<String>,
     },

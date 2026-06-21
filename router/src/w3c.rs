@@ -54,7 +54,7 @@ pub fn extract_session_capabilities(body: &[u8]) -> Option<serde_json::Value> {
     caps.is_object().then_some(caps)
 }
 
-/// Inject `appium:gridfleet:deviceId` into a W3C create-session response's
+/// Inject `gridfleet:deviceId` into a W3C create-session response's
 /// `value.capabilities`. Best-effort: returns `body` unchanged on any
 /// unexpected shape — injection must never fail a session create.
 pub fn inject_device_id(body: &[u8], device_id: &str) -> Vec<u8> {
@@ -65,7 +65,7 @@ pub fn inject_device_id(body: &[u8], device_id: &str) -> Vec<u8> {
         return body.to_vec();
     };
     caps.insert(
-        "appium:gridfleet:deviceId".to_string(),
+        "gridfleet:deviceId".to_string(),
         serde_json::Value::String(device_id.to_string()),
     );
     serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
@@ -152,7 +152,7 @@ mod tests {
         let out = inject_device_id(body, "dev-uuid-1");
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(
-            v["value"]["capabilities"]["appium:gridfleet:deviceId"],
+            v["value"]["capabilities"]["gridfleet:deviceId"],
             "dev-uuid-1"
         );
         assert_eq!(v["value"]["capabilities"]["platformName"], "Android");

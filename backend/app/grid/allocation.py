@@ -29,6 +29,7 @@ from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
+    LEGACY_APPIUM_GRIDFLEET_PREFIX,
     LEGACY_RUN_ID_CAP,
     CapabilityMergeError,
     candidate_matches_stereotype,
@@ -581,6 +582,16 @@ class AllocationService:
             raise CapabilityMergeError(
                 "the gridfleet:run_id capability is no longer supported; "
                 "create run sessions through the router's /run/{run_id} endpoint"
+            )
+        # Clean-break tombstone: the retired ``appium:gridfleet:`` cap namespace
+        # moved to the bare ``gridfleet:`` prefix. Reject the old prefix loudly so
+        # a stale pin fails fast instead of silently matching any device.
+        if any(k.startswith(LEGACY_APPIUM_GRIDFLEET_PREFIX) for c in candidates for k in c):
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="legacy_appium_gridfleet_cap")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise CapabilityMergeError(
+                "the appium:gridfleet:* capability namespace is no longer supported; "
+                "use the gridfleet:* prefix instead (e.g. gridfleet:deviceId)"
             )
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.

@@ -130,7 +130,7 @@ def gridfleet_client() -> GridFleetClient:
 def device_test_data(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
     """Fetch operator-attached test_data for the device the live session landed on.
 
-    The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
+    The device is resolved from the ``gridfleet:deviceId`` session capability.
     """
     try:
         return get_device_test_data_for_driver(appium_driver, gridfleet_client=gridfleet_client)
@@ -143,7 +143,7 @@ def device_test_data(appium_driver: WebDriver, gridfleet_client: GridFleetClient
 def device_handle(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> Device:
     """Fetch the canonical manager device row (typed ``Device``) for the device the live session landed on.
 
-    The device is resolved from the ``appium:gridfleet:deviceId`` session capability.
+    The device is resolved from the ``gridfleet:deviceId`` session capability.
     """
     try:
         return resolve_device_handle_from_driver(appium_driver, client=gridfleet_client)

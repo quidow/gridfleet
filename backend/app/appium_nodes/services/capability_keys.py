@@ -9,11 +9,11 @@ _CORE_OWNED_CAP_KEYS = frozenset(
         "platformName",
         "appium:udid",
         "appium:deviceName",
-        "appium:gridfleet:deviceId",
-        "appium:gridfleet:deviceName",
+        "gridfleet:deviceId",
+        "gridfleet:deviceName",
     }
 )
-_GRIDFLEET_TAG_CAP_PREFIX = "appium:gridfleet:tag:"
+_GRIDFLEET_TAG_CAP_PREFIX = "gridfleet:tag:"
 
 
 def core_manager_owned_cap_keys() -> frozenset[str]:

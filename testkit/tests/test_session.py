@@ -19,14 +19,14 @@ from gridfleet_testkit.session import (
 
 def test_get_device_id_from_driver_returns_injected_cap() -> None:
     driver = MagicMock()
-    driver.capabilities = {"appium:gridfleet:deviceId": "dev-uuid-1"}
+    driver.capabilities = {"gridfleet:deviceId": "dev-uuid-1"}
     assert get_device_id_from_driver(driver) == "dev-uuid-1"
 
 
 def test_get_device_id_from_driver_rejects_missing_cap() -> None:
     driver = MagicMock()
     driver.capabilities = {"appium:udid": "10.0.0.8:5555"}
-    with pytest.raises(ValueError, match="appium:gridfleet:deviceId"):
+    with pytest.raises(ValueError, match="gridfleet:deviceId"):
         get_device_id_from_driver(driver)
 
 
@@ -37,7 +37,7 @@ def test_get_device_id_from_driver_rejects_missing_cap() -> None:
 
 def test_resolves_handle_via_device_id() -> None:
     fake_driver = MagicMock()
-    fake_driver.capabilities = {"appium:gridfleet:deviceId": "device-uuid"}
+    fake_driver.capabilities = {"gridfleet:deviceId": "device-uuid"}
 
     fake_client = MagicMock(spec=GridFleetClient)
     fake_client.get_device.return_value = Device.from_payload(

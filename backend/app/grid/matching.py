@@ -14,16 +14,24 @@ IDENTITY_KEYS = frozenset(
     {
         "appium:udid",
         "appium:deviceName",
-        "appium:gridfleet:deviceId",
-        "appium:gridfleet:deviceName",
+        "gridfleet:deviceId",
+        "gridfleet:deviceName",
     }
 )
-TAG_PREFIX = "appium:gridfleet:tag:"
+TAG_PREFIX = "gridfleet:tag:"
 # Tombstone for the retired capability-borne run binding (pre run-scoped
 # endpoint). Bodies still carrying it are REJECTED at allocation with a
 # pointer to the /run/{run_id} endpoint — a loud clean break instead of a
 # silent queue timeout for stale clients.
 LEGACY_RUN_ID_CAP = "gridfleet:run_id"
+# Tombstone for the retired ``appium:gridfleet:`` capability namespace. The
+# manager-owned routing caps (deviceId, deviceName, tag:*) moved to the bare
+# ``gridfleet:`` vendor prefix — Appium accepts any vendor prefix, so the
+# ``appium:`` wrapper was never required. Bodies still carrying the old prefix
+# are REJECTED at allocation with a pointer to the new keys — a loud clean break
+# instead of silently allocating any device (the matcher otherwise ignores
+# unrecognized ``appium:`` options, so a stale pin would match anything).
+LEGACY_APPIUM_GRIDFLEET_PREFIX = "appium:gridfleet:"
 
 
 def is_match_relevant_key(key: str) -> bool:

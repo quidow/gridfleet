@@ -61,8 +61,8 @@ def build_grid_stereotype_caps(
     if pack_stereotype:
         stereotype.update(pack_stereotype)
     if device.id:
-        stereotype["appium:gridfleet:deviceId"] = str(device.id)
+        stereotype["gridfleet:deviceId"] = str(device.id)
     if device.tags:
         for key, value in device.tags.items():
-            stereotype[f"appium:gridfleet:tag:{key}"] = value
+            stereotype[f"gridfleet:tag:{key}"] = value
     return stereotype
