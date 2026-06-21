@@ -2,6 +2,19 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.27.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.1...gridfleet-agent-v0.27.2) (2026-06-21)
+
+
+### Dependencies
+
+* **agent:** migrate from httpx to httpx2 ([42c0255](https://github.com/quidow/gridfleet/commit/42c0255804fa24578648f0520ce4c582d2963b03))
+* **deps:** bump fastapi in /agent in the python-dependencies group ([#616](https://github.com/quidow/gridfleet/issues/616)) ([3b9eb7c](https://github.com/quidow/gridfleet/commit/3b9eb7c4a78ddcc8d23db29203b8348025026f90))
+* **deps:** bump pydantic-settings from 2.14.1 to 2.14.2 in /agent ([#642](https://github.com/quidow/gridfleet/issues/642)) ([78e4bc9](https://github.com/quidow/gridfleet/commit/78e4bc9a2ec98b85d5e48d5d05f3638c1d149890))
+* **deps:** bump ruff in /agent in the python-dependencies group ([#585](https://github.com/quidow/gridfleet/issues/585)) ([cd06fa8](https://github.com/quidow/gridfleet/commit/cd06fa8d0e4360387c100f107f743892ef9f3feb))
+* **deps:** bump ruff in /agent in the python-dependencies group ([#629](https://github.com/quidow/gridfleet/issues/629)) ([370fde3](https://github.com/quidow/gridfleet/commit/370fde3cb62dd4116dd700e9cc4f9ac98adacc72))
+* **deps:** bump starlette from 1.0.1 to 1.3.1 in /agent ([#609](https://github.com/quidow/gridfleet/issues/609)) ([d821876](https://github.com/quidow/gridfleet/commit/d82187657762b69668aeffc3398924727fc3ed16))
+* **deps:** bump the python-dependencies group across 1 directory with 2 updates ([#597](https://github.com/quidow/gridfleet/issues/597)) ([edcdb16](https://github.com/quidow/gridfleet/commit/edcdb169883d9cbc233bffbb4e90dcaed8605148))
+
 ## [0.27.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.0...gridfleet-agent-v0.27.1) (2026-06-11)
 
 
