@@ -271,6 +271,18 @@ def _candidate_can_take(
     return _ticket_passes_reservation(ticket_run_id, reservation_run_id)
 
 
+def node_accepting_new_sessions_predicate() -> ColumnElement[bool]:
+    """Soft-gate (design P1): the device's Appium node is accepting new sessions.
+
+    A node-less device (``AppiumNode.id IS NULL``) passes — node-less devices are
+    filtered elsewhere by their node target — mirroring ``node_viable_predicate``'s
+    node-less arm so this filter adds the soft-gate without changing which
+    node-less devices reach ``_claim``. Grid new-session admission only; the run
+    reservation allocator gates cooled-down devices via the reservation exclusion.
+    """
+    return or_(AppiumNode.id.is_(None), AppiumNode.accepting_new_sessions.is_(True))
+
+
 class AllocationService:
     def __init__(
         self,
@@ -679,6 +691,7 @@ class AllocationService:
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
             .where(Device.operational_state == DeviceOperationalState.available)
             .where(node_viable_predicate())
+            .where(node_accepting_new_sessions_predicate())
             .where(~select(Session.id).where(Session.device_id == Device.id, live_session_predicate()).exists())
         )
         devices = list((await db.execute(stmt)).scalars().all())
@@ -799,6 +812,9 @@ class AllocationService:
         if locked.operational_state != DeviceOperationalState.available:
             return None
         if not device_node_is_viable(locked):
+            return None
+        node = locked.appium_node
+        if node is not None and not node.accepting_new_sessions:
             return None
         recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
         if recheck.first() is not None:

@@ -481,3 +481,57 @@ async def test_transition_tickets_bulk_raises_on_illegal_transition() -> None:
             db, from_status=GridQueueStatus.cancelled, to=GridQueueStatus.waiting, reason="test"
         )
     db.execute.assert_not_called()
+
+
+@pytest.mark.db
+async def test_not_accepting_device_not_grid_eligible(
+    db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """Soft-gate (P1): a healthy, available device whose node has
+    accepting_new_sessions=False must be excluded from grid eligibility — the
+    warm-park lever that cooldown (Stage 2 P2) rides on."""
+    from app.appium_nodes.models import AppiumNode
+
+    node = (
+        (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == seeded_available_device.id)))
+        .scalars()
+        .one()
+    )
+    # Accepting before: the device is eligible.
+    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    assert seeded_available_device.id in eligible_ids
+
+    node.accepting_new_sessions = False  # not a guard-protected column
+    await db_session.flush()
+
+    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    assert seeded_available_device.id not in eligible_ids
+
+
+@pytest.mark.db
+async def test_claim_declines_when_node_not_accepting_under_lock(
+    db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """The lock-time recheck must also honor the soft-gate: if a device was
+    eligible at _eligible_devices time but its node flipped to
+    accepting_new_sessions=False before the row lock, _claim declines and the
+    ticket stays waiting."""
+    from app.appium_nodes.models import AppiumNode
+
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+
+    node = (
+        (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == seeded_available_device.id)))
+        .scalars()
+        .one()
+    )
+    node.accepting_new_sessions = False
+    await db_session.flush()
+
+    result = await _service()._claim(
+        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+    )
+    assert result is None
+    assert ticket.status == GridQueueStatus.waiting
