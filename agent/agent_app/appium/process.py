@@ -79,7 +79,7 @@ def sanitize_appium_driver_capabilities(capabilities: dict[str, Any]) -> dict[st
     """Drop GridFleet routing metadata before capabilities reach an Appium driver."""
     sanitized: dict[str, Any] = {}
     for key, value in capabilities.items():
-        if key.startswith("gridfleet:") or key.startswith("appium:gridfleet:"):
+        if key.startswith("gridfleet:"):
             continue
         if key in APPIUM_DRIVER_CAPABILITY_DROP_KEYS:
             continue

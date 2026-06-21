@@ -364,7 +364,7 @@ async def test_start_passes_only_driver_caps_to_appium_server() -> None:
             extra_caps={
                 "appium:udid": "device-002",
                 "appium:automationName": "UiAutomator2",
-                "appium:gridfleet:deviceId": "device-id",
+                "gridfleet:deviceId": "device-id",
                 "appium:platform": "android_mobile",
             },
         )
@@ -1243,7 +1243,7 @@ def test_sanitize_appium_driver_capabilities_drops_gridfleet_and_known_keys() ->
     raw = {
         "appium:automationName": "UiAutomator2",
         "gridfleet:run_id": "abc",
-        "appium:gridfleet:deviceId": "123",
+        "gridfleet:deviceId": "123",
         "appium:deviceName": "Pixel",
         "platformName": "Android",
         "custom": "keep",
