@@ -12,7 +12,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
@@ -2272,3 +2272,58 @@ async def test_device_list_exposes_is_reserved(
     by_id = {item["id"]: item for item in data}
     assert by_id[str(reserved.id)]["is_reserved"] is True
     assert by_id[str(free.id)]["is_reserved"] is False
+
+
+@pytest.mark.asyncio
+async def test_device_detail_exposes_allocatable_when_available_and_free(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-detail-1",
+        connection_target="alloc-detail-1",
+        name="Alloc Detail Device",
+        operational_state=DeviceOperationalState.available,
+    )
+    got = await client.get(f"/api/devices/{device.id}")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["allocatable"] is True
+    assert body["unavailable_reason"] is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_device_list_reports_unavailable_reason(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from tests.helpers import create_reservation
+
+    offline = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-offline-1",
+        connection_target="alloc-offline-1",
+        name="Alloc Offline Device",
+        operational_state=DeviceOperationalState.offline,
+    )
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-reserved-1",
+        connection_target="alloc-reserved-1",
+        name="Alloc Reserved Device",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reservation(db_session, device_id=reserved.id)
+    await db_session.commit()
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    by_id = {item["id"]: item for item in resp.json()}
+
+    assert by_id[str(offline.id)]["allocatable"] is False
+    assert by_id[str(offline.id)]["unavailable_reason"] == "offline"
+    assert by_id[str(reserved.id)]["allocatable"] is False
+    assert by_id[str(reserved.id)]["unavailable_reason"] == "reserved"
