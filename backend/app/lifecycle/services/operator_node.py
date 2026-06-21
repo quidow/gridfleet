@@ -21,7 +21,6 @@ from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    GRID_ROUTING,
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
     PRIORITY_OPERATOR_STOP,
@@ -120,16 +119,17 @@ def operator_restart_intent(device: Device, desired_port: int, *, settings: Sett
 
 
 def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
+    # No GRID_ROUTING (operator:stop:grid) intent: the operator:stop:node hard stop
+    # already forces accepting_new_sessions=False via the node_factor in
+    # intent_reconciler (the node stops -> node_factor=False -> accepting=False),
+    # so a separate accepting=False grid intent was redundant (design P5).
+    # operator_stop_sources still lists operator:stop:grid so any row registered
+    # before this change is revoked on the next operator start.
     return [
         IntentRegistration(
             source=f"operator:stop:node:{device_id}",
             axis=NODE_PROCESS,
             payload={"action": "stop", "priority": PRIORITY_OPERATOR_STOP, "stop_mode": "hard"},
-        ),
-        IntentRegistration(
-            source=f"operator:stop:grid:{device_id}",
-            axis=GRID_ROUTING,
-            payload={"accepting_new_sessions": False, "priority": PRIORITY_OPERATOR_STOP},
         ),
         # An operator stop is sticky: deny auto-recovery so the device_connectivity
         # loop suppresses recovery (recovery_allowed=False) instead of spinning a
