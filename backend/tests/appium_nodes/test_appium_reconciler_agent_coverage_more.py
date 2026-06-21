@@ -112,7 +112,7 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
             port=4723,
             pid=123,
             allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
-            settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+            settings=FakeSettingsReader({}),
             publisher=Mock(),
         )
 
@@ -143,7 +143,7 @@ async def test_start_remote_node_error_and_override_paths(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
-            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
             circuit_breaker=Mock(),
         )
 
@@ -163,7 +163,7 @@ async def test_start_remote_node_error_and_override_paths(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
-            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
             circuit_breaker=Mock(),
         )
 
@@ -194,7 +194,7 @@ async def test_start_remote_node_error_and_override_paths(
         allocated_caps={"appium:systemPort": 8201},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
         circuit_breaker=Mock(),
     )
 
@@ -248,7 +248,7 @@ async def test_start_remote_node_propagates_agent_call_errors(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
-            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
             circuit_breaker=Mock(),
         )
 
@@ -290,7 +290,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
-            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
             circuit_breaker=Mock(),
         )
 
@@ -306,7 +306,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
-            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
             circuit_breaker=Mock(),
         )
 
@@ -367,7 +367,7 @@ async def test_start_remote_node_merges_host_tool_env_and_pack_appium_env(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
         circuit_breaker=Mock(),
     )
 
@@ -415,7 +415,7 @@ async def test_start_remote_node_pack_appium_env_wins_on_conflict(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
         circuit_breaker=Mock(),
     )
 
@@ -461,7 +461,7 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
         circuit_breaker=Mock(),
     )
 
@@ -499,7 +499,7 @@ async def test_start_remote_node_host_tool_env_no_pack_overrides(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
         circuit_breaker=Mock(),
     )
 
@@ -617,7 +617,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
         port=4723,
         pid=123,
         allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({}),
         publisher=Mock(),
     )
 
@@ -677,7 +677,7 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         device,
         port=4723,  # new port after restart
         pid=999,
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({}),
         publisher=Mock(),
     )
 
@@ -722,7 +722,7 @@ async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_acc
         device,
         port=4723,
         pid=111,
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({}),
         publisher=Mock(),
     )
 
@@ -761,7 +761,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         device,
         port=4723,
         pid=123,
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({}),
         publisher=Mock(),
     )
 
@@ -1032,7 +1032,7 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         device_type=SimpleNamespace(value="real_device"),
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
     )
     node = SimpleNamespace(id=uuid.uuid4())
     with pytest.raises(NodeManagerError, match="has no host assigned"):
@@ -1047,7 +1047,7 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
         platform_id="android_mobile",
         device_type=SimpleNamespace(value="real_device"),
         device_config=None,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
     )
     reserve_session = AsyncMock()
     reserve_session.commit = AsyncMock()
@@ -1092,7 +1092,7 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
         pack_id="missing-pack",
         platform_id="missing",
         device_type=None,
-        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
     )
     node = SimpleNamespace(id=uuid.uuid4())
     cleanup_session = AsyncMock()
@@ -1126,7 +1126,7 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
 
     assert node_agent.appium_node_resource_service.release_capability.await_count == 2
     release_managed.assert_awaited_once()
-    _ = (FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),)
+    _ = (FakeSettingsReader({"appium.startup_timeout_sec": 30}),)
 
 
 @pytest.mark.asyncio

@@ -191,7 +191,6 @@ def _settings_stub(review_threshold: int) -> dict[str, object]:
         "general.lifecycle_recovery_review_threshold": review_threshold,
         "appium.port_range_start": 4720,
         "appium.port_range_end": 4800,
-        "grid.hub_url": "http://hub:4444",
     }
 
 
