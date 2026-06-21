@@ -1112,7 +1112,6 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
             "general.lifecycle_recovery_review_threshold": 5,
             "appium.port_range_start": 4720,
             "appium.port_range_end": 4800,
-            "grid.hub_url": "http://hub:4444",
         }
     )
     probe_mock = AsyncMock(
@@ -2126,7 +2125,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
             "general.lifecycle_recovery_backoff_base_sec": 5,
             "general.lifecycle_recovery_backoff_max_sec": 20,
             "general.lifecycle_recovery_review_threshold": 5,
-            "grid.hub_url": "http://grid:4444",
         }
     )
     svc = _make_svc(

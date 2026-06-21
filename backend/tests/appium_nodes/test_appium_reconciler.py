@@ -57,7 +57,6 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
         4723,
         settings=FakeSettingsReader(
             {
-                "grid.hub_url": "http://grid:4444",
                 "appium.session_override": True,
                 "appium.default_plugins": "",
             }

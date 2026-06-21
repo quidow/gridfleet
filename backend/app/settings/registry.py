@@ -33,7 +33,7 @@ class SettingDefinition:
 # Ordered display names for UI tabs
 CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "general": "General",
-    "grid": "Appium & Grid",
+    "grid": "Appium & Allocation",
     "notifications": "Notifications",
     "agent": "Agent",
     "reservations": "Reservations",
@@ -409,7 +409,7 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=1,
         max_value=50,
     ),
-    # ── Appium & Grid ──
+    # ── Appium & Allocation ──
     SettingDefinition(
         key="grid.session_poll_interval_sec",
         category="grid",

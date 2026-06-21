@@ -445,7 +445,7 @@ async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_s
     payload = build_agent_start_payload(
         device,
         4723,
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444", "appium.session_override": True}),
+        settings=FakeSettingsReader({"appium.session_override": True}),
     )
 
     assert payload["headless"] is True
@@ -468,7 +468,7 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
     payload = build_agent_start_payload(
         device,
         4724,
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444", "appium.session_override": True}),
+        settings=FakeSettingsReader({"appium.session_override": True}),
     )
 
     assert payload["headless"] is False
@@ -529,7 +529,6 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
             http_client_factory=AsyncMock(),
             settings=FakeSettingsReader(
                 {
-                    "grid.hub_url": "http://selenium-hub:4444",
                     "appium.session_override": True,
                     "appium.startup_timeout_sec": 30,
                 }

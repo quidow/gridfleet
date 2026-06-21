@@ -200,20 +200,16 @@ async def mark_node_started(
     if clear_transition:
         node.transition_token = None
         node.transition_deadline = None
-    # Defense in depth for the cooldown / maintenance restart path: a
-    # freshly started Appium process always constructs ``NodeState``
-    # with ``_drain=False``. The agent honors the launch spec's
-    # ``accepting_new_sessions=False`` and re-applies the drain flag to
-    # the new process (see ``_start_grid_node_service`` in agent process.py),
-    # but if that agent fix regresses or a third-party agent fails to apply it,
-    # the new process would silently accept sessions until the next
-    # ``device_intent_reconciler_loop`` tick happens to stage a fresh
-    # reconfigure — and the dedup check in ``_stage_agent_reconfigure``
-    # only stages on metadata change, so a steady-state cooldown intent
-    # would never produce a follow-up row on its own. Stage a forced
-    # outbox row here whenever the restart lands on a process that should
-    # be drained or stopping; the background delivery loop picks it up
-    # within seconds and re-pushes the drain to the new port.
+    # Re-deliver the drain/stop state to the freshly restarted process. A new
+    # Appium process always starts non-draining, and the agent does not enforce
+    # ``accepting_new_sessions`` itself — admission is gated centrally by the
+    # backend soft-gate (``allocation._eligible_devices``), so that flag is
+    # belt-and-suspenders here. ``stop_pending`` IS honored by the agent, and the
+    # dedup in ``_stage_agent_reconfigure`` only stages on metadata change — so a
+    # steady-state cooldown/stop intent would never re-emit on its own. Stage a
+    # forced outbox row whenever the restart lands on a process that should be
+    # drained or stopping; the background delivery loop re-pushes it to the new
+    # port within seconds.
     if node.port is not None and (not node.accepting_new_sessions or node.stop_pending):
         db.add(
             AgentReconfigureOutbox(

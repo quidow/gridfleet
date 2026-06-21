@@ -416,12 +416,10 @@ async def get_session_viability(db: AsyncSession, device: Device) -> dict[str, A
 def _classify_session_error(error: str | None) -> str | None:
     """Categorise a viability probe failure for diagnostics.
 
-    ``grid_no_slot`` matches the signature seen when Appium accepts a
+    ``driver_not_loaded`` matches the signature seen when Appium accepts a
     session-create request but no driver is loaded: the response carries
-    ``Driver info: driver.version: unknown``. This is a transient
-    infrastructure error (node still warming up), not a persistent device-side
-    fault. The category name is retained for backward compatibility with
-    historical session_viability records.
+    ``Driver info: driver.version: unknown``. This is a transient infrastructure
+    error (node still warming up), not a persistent device-side fault.
 
     Everything else is ``driver``. Unrecognised payloads are debug-logged with
     a short excerpt so future signature changes surface in operator logs
@@ -430,8 +428,8 @@ def _classify_session_error(error: str | None) -> str | None:
     if error is None:
         return None
     if "driver.version: unknown" in error:
-        return "grid_no_slot"
-    logger.debug("session_viability error unmatched by grid_no_slot signature: %s", error[:200])
+        return "driver_not_loaded"
+    logger.debug("session_viability error unmatched by driver_not_loaded signature: %s", error[:200])
     return "driver"
 
 

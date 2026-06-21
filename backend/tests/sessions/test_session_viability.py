@@ -1077,7 +1077,7 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
 
 def test_classify_session_error_recognises_grid_no_slot() -> None:
     no_slot = "Could not start a new session. {value={error=session not created}} Driver info: driver.version: unknown"
-    assert session_viability._classify_session_error(no_slot) == "grid_no_slot"
+    assert session_viability._classify_session_error(no_slot) == "driver_not_loaded"
     assert session_viability._classify_session_error("ADB device 'X' not found within timeout") == "driver"
     assert session_viability._classify_session_error(None) is None
 
@@ -1296,7 +1296,7 @@ async def test_write_session_viability_persists_error_category(
     persisted = await get_session_viability(db_session, device)
     assert persisted is not None
     assert persisted["status"] == "failed"
-    assert persisted["error_category"] == "grid_no_slot"
+    assert persisted["error_category"] == "driver_not_loaded"
 
     # A passing probe must clear ``error_category`` so a recovered device does
     # not keep an old infra tag attached.

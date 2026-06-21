@@ -99,6 +99,10 @@ class NodeHealthService:
             self._doorbell = asyncio.Event()
         return self._doorbell
 
+    # NOTE (2026-06-21): no production caller — the hub event-bus subscriber that rang this
+    # doorbell was removed; the loop is currently tick-only.  Kept intentionally: the
+    # NodeHealthLoop docstring records the intent to wire a direct-observation trigger here.
+    # Removal deferred pending that wiring decision; see Stage-4 P7 investigation.
     def wake(self) -> None:
         self._get_doorbell().set()
 
