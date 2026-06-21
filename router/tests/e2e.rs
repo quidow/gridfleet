@@ -596,10 +596,26 @@ fn spawn_backend_dead_route(dead_target: String) -> (String, Arc<AtomicUsize>) {
     (addr, ended)
 }
 
-/// Reserve a TCP port and immediately release it: the returned `http://` target
-/// points at a port nothing listens on, so proxying to it fails at transport.
+/// A `http://` target that holds its port for the whole test but refuses to
+/// serve it: a dedicated thread accepts each inbound connection and drops it
+/// immediately, so proxying to it fails at transport (reset/EOF before any HTTP
+/// response). The router treats that the same as connection-refused — the
+/// `logging()` hook still fires `session_ended` on any DELETE upstream error.
+///
+/// Holding the port is the point. The old "bind to :0, read the port, release
+/// it" trick left the port free, so under cargo's parallel test execution
+/// another test could re-bind it and turn the "dead" upstream live — the DELETE
+/// then unexpectedly succeeded (flaky on loaded CI runners).
 fn dead_http_target() -> String {
-    let port = free_port();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            // Drop each accepted connection at once: the proxy's upstream read
+            // sees a reset/EOF instead of a response.
+            drop(conn);
+        }
+    });
     format!("http://127.0.0.1:{port}")
 }
 
