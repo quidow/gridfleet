@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
+from app.devices.services.intent_reconciler import _reconcile_expired_intents
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
@@ -527,6 +528,58 @@ async def test_cooldown_keeps_device_warm_and_reports_cooldown(
     body = got.json()
     assert body["allocatable"] is False
     assert body["unavailable_reason"] == "cooldown"
+
+
+async def test_cooldown_warm_expiry_restores_accepting(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """P2 expiry: when the cooldown:grid intent's TTL lapses, the reconciler flips
+    ``accepting_new_sessions`` back to ``True`` while the node stays running — the
+    device is instantly re-allocatable with no cold restart. Guards the warm
+    re-entry promise that the entry test does not cover."""
+    device = await _create_available_device(db_session, default_host_id, "cooldown-expiry")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    await db_session.refresh(node)
+    assert node.accepting_new_sessions is False  # warm-parked
+
+    # Simulate the cooldown TTL lapsing: backdate every cooldown intent's expires_at,
+    # then run the reconciler's expired-intent sweep (which revokes them and reconciles).
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    intents = (
+        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    )
+    for intent in intents:
+        if intent.source.startswith("cooldown:"):
+            intent.expires_at = past
+    await db_session.commit()
+
+    await _reconcile_expired_intents(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    # Warm re-entry: the soft-gate re-opens and the node was never stopped.
+    assert node.accepting_new_sessions is True
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.pid is not None
 
 
 async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
