@@ -55,6 +55,14 @@ export function NodeCard({ node }: { node: GridRouterNodeRead }) {
         {node.node_effective_state ? (
           <span className="text-xs font-semibold text-text-3">{node.node_effective_state}</span>
         ) : null}
+        {node.operational_state === 'available' && node.unavailable_reason ? (
+          // An `available` device the allocator would still refuse (warm-park / restart /
+          // reserved). For the other states the reason just echoes the badge, so it is
+          // only surfaced here where it adds information.
+          <span className="rounded-md bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning-strong">
+            {node.unavailable_reason}
+          </span>
+        ) : null}
         <span className="ml-auto rounded-md bg-surface-2 px-2 py-0.5 text-xs font-semibold text-text-2">
           {node.platform_id}
         </span>

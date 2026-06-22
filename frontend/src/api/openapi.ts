@@ -3601,6 +3601,8 @@ export interface components {
             available: number;
             /** Busy */
             busy: number;
+            /** Eligible */
+            eligible: number;
             /** Maintenance */
             maintenance: number;
             /** Offline */
@@ -3637,6 +3639,7 @@ export interface components {
             stereotype: {
                 [key: string]: unknown;
             };
+            unavailable_reason?: components["schemas"]["UnavailableReason"] | null;
         };
         /** GridRouterRead */
         GridRouterRead: {

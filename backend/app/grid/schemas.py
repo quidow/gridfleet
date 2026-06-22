@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.appium_nodes.services.effective_state import EffectiveNodeStateValue
 from app.devices.models import DeviceOperationalState
+from app.devices.schemas.device import UnavailableReason
 
 
 class GridRegistryDeviceRead(BaseModel):
@@ -60,6 +61,11 @@ class GridRouterCounts(BaseModel):
     verifying: int
     offline: int
     maintenance: int
+    # Devices the allocator could serve right now: available ∧ node-viable ∧ accepting
+    # ∧ no live session — the same gate as ``allocation._eligible_devices`` (reservation
+    # is NOT subtracted; a reserved-but-ready device is still routable to its run). The
+    # Router "open" pill renders this, and "not ready" is ``available - eligible``.
+    eligible: int
     active_sessions: int
     queue_depth: int
 
@@ -72,6 +78,10 @@ class GridRouterNodeRead(BaseModel):
     host_name: str | None = None
     operational_state: DeviceOperationalState
     node_effective_state: EffectiveNodeStateValue | None = None
+    # Why the allocator would refuse this device an arbitrary new session now, or null
+    # if it is open. For an ``available`` device this distinguishes the not-ready causes
+    # (``transitioning`` / ``cooldown`` / ``reserved``) the Router card surfaces.
+    unavailable_reason: UnavailableReason | None = None
     session_id: str | None = None
     session_target: str | None = None
     stereotype: dict[str, Any]

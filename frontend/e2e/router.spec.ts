@@ -10,6 +10,7 @@ const ROUTER_FIXTURE = {
     verifying: 0,
     offline: 0,
     maintenance: 0,
+    eligible: 1,
     active_sessions: 1,
     queue_depth: 1,
   },
@@ -61,7 +62,7 @@ test.describe('Router page', () => {
     await expect(page.getByRole('heading', { name: 'Router' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Pixel 7')).toBeVisible();
     await expect(page.getByText('iPhone 15')).toBeVisible();
-    await expect(page.getByText('Registered')).toBeVisible();
+    await expect(page.getByText('open', { exact: true })).toBeVisible();
     // queue side-panel shows the one waiting, run-less ticket
     await expect(page.getByText('Queue (1)')).toBeVisible();
     await expect(page.getByText('free')).toBeVisible();

@@ -5,14 +5,20 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.appium_nodes.services.effective_state import compute_effective_state
+from app.appium_nodes.services.node_viability import (
+    device_node_accepting_new_sessions,
+    device_node_is_viable,
+)
 from app.core.dependencies import DbDep
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import DeviceOperationalState
+from app.devices.services.allocatability import unavailable_reason
 from app.grid.allocation import StereotypeTemplateCache, device_match_surface
 from app.grid.matching import CapabilityMergeError, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas import GridQueueRead, GridRouterRead, GridStatusRead
 from app.hosts.models import Host
+from app.runs import service as run_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
@@ -125,6 +131,9 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
 
     hosts = (await db.execute(select(Host))).scalars().all()
     hosts_by_id = {host.id: host for host in hosts}
+    # Gate-honest reservation per device, loaded once (mirrors the allocator's batch
+    # load) so the per-node ``unavailable_reason`` can report ``reserved``.
+    reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
 
     template_cache: StereotypeTemplateCache = {}
     now = datetime.now(UTC)
@@ -133,7 +142,9 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
     # DeviceOperationalState cannot turn the `counts[...] += 1` below into a fleet-wide
     # KeyError/500 — an unmodelled state is simply dropped by response_model validation.
     counts: dict[str, int] = {state.value: 0 for state in DeviceOperationalState}
-    counts.update({"registered": len(devices), "running": 0, "active_sessions": 0, "queue_depth": len(waiting)})
+    counts.update(
+        {"registered": len(devices), "running": 0, "eligible": 0, "active_sessions": 0, "queue_depth": len(waiting)}
+    )
 
     nodes: list[dict[str, Any]] = []
     for device in devices:
@@ -144,6 +155,29 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
         running = bool(node and node.observed_running)
         if running:
             counts["running"] += 1
+
+        session_ids = sessions_by_device.get(device.id, [])
+
+        # Routability projection (design P4): node viability + warm soft-gate + gate-honest
+        # reservation, the same axes the allocator's lock-time recheck applies. ``eligible``
+        # mirrors ``allocation._eligible_devices`` exactly (it also excludes a device with a
+        # live session, e.g. a viability probe, which ``unavailable_reason`` does not model).
+        node_viable = device_node_is_viable(device)
+        node_accepting = device_node_accepting_new_sessions(device)
+        reserved = run_service.reservation_gating_run_id(reservation_map.get(device.id), device.id) is not None
+        reason = unavailable_reason(
+            device.operational_state,
+            reserved=reserved,
+            accepting_new_sessions=node_accepting,
+            node_viable=node_viable,
+        )
+        if (
+            device.operational_state is DeviceOperationalState.available
+            and node_viable
+            and node_accepting
+            and not session_ids
+        ):
+            counts["eligible"] += 1
 
         effective_state = None
         node_port = None
@@ -164,7 +198,6 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
         if running and host is not None and node_port is not None:
             target = f"http://{host.ip}:{node_port}"
 
-        session_ids = sessions_by_device.get(device.id, [])
         session_id = session_ids[0] if session_ids else None
 
         stereotype = await device_match_surface(db, device, template_cache=template_cache)
@@ -178,6 +211,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 "host_name": host.hostname if host is not None else None,
                 "operational_state": device.operational_state.value,
                 "node_effective_state": effective_state,
+                "unavailable_reason": reason.value if reason is not None else None,
                 "session_id": session_id,
                 "session_target": target if session_id else None,
                 "stereotype": stereotype,

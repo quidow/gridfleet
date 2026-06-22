@@ -28,7 +28,9 @@ async def _seed_device(db: AsyncSession, host_id: str, identity: str, name: str,
     return await create_device_record(db, host_id=host_id, **payload)
 
 
-async def _add_running_node(db: AsyncSession, device_id: object, port: int) -> None:
+async def _add_running_node(
+    db: AsyncSession, device_id: object, port: int, *, accepting_new_sessions: bool = True
+) -> None:
     with state_write_guard.bypass():
         db.add(
             AppiumNode(
@@ -38,6 +40,7 @@ async def _add_running_node(db: AsyncSession, device_id: object, port: int) -> N
                 active_connection_target="emulator-5554",
                 desired_state=AppiumDesiredState.running,
                 desired_port=port,
+                accepting_new_sessions=accepting_new_sessions,
             )
         )
 
@@ -69,6 +72,10 @@ async def test_grid_router_shape_and_counts(
     assert counts["running"] == 2
     assert counts["active_sessions"] == 1
     assert counts["queue_depth"] == 1
+    # `eligible` is the Router "open" count: available ∧ node-viable ∧ accepting ∧ no
+    # live session — the same gate the allocator applies. Only `avail` qualifies (busy
+    # is not available).
+    assert counts["eligible"] == 1
 
     nodes = {n["device_name"]: n for n in body["nodes"]}
     assert set(nodes) == {"Pixel 7", "iPhone 15"}
@@ -79,6 +86,33 @@ async def test_grid_router_shape_and_counts(
     assert nodes["iPhone 15"]["session_target"].startswith("http://")
 
     assert len(body["queue"]) == 1
+
+
+async def test_grid_router_eligible_excludes_warm_parked_device(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """`eligible` follows the allocator's gate, not the coarse operational axis.
+
+    Two `available` devices: one with a warm, accepting node (open) and one warm-parked
+    by cooldown (`accepting_new_sessions=False`). Both read `available`, but only the
+    accepting one is `eligible`; the parked node reports `unavailable_reason="cooldown"`
+    while the open one reports `None`.
+    """
+    open_dev = await _seed_device(db_session, default_host_id, "dev-open", "Open", operational_state="available")
+    parked = await _seed_device(db_session, default_host_id, "dev-parked", "Parked", operational_state="available")
+    await _add_running_node(db_session, open_dev.id, 4731)
+    await _add_running_node(db_session, parked.id, 4732, accepting_new_sessions=False)
+    await db_session.commit()
+
+    body = (await client.get("/api/grid/router")).json()
+
+    counts = body["counts"]
+    assert counts["available"] == 2
+    assert counts["eligible"] == 1
+
+    nodes = {n["device_name"]: n for n in body["nodes"]}
+    assert nodes["Open"]["unavailable_reason"] is None
+    assert nodes["Parked"]["unavailable_reason"] == "cooldown"
 
 
 async def test_grid_router_degrades_when_pack_unresolved(

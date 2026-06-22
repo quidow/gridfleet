@@ -18,6 +18,7 @@ const data: GridRouterRead = {
     verifying: 0,
     offline: 0,
     maintenance: 0,
+    eligible: 1,
     active_sessions: 1,
     queue_depth: 1,
   },
@@ -74,7 +75,7 @@ describe('RouterPage', () => {
     expect(screen.getByRole('heading', { name: 'Router' })).toBeInTheDocument();
     expect(screen.getByText('Pixel 7')).toBeInTheDocument();
     expect(screen.getByText('iPhone 15')).toBeInTheDocument();
-    expect(screen.getByText('registered')).toBeInTheDocument();
+    expect(screen.getByText('open')).toBeInTheDocument();
     expect(screen.getByText('Queue (1)')).toBeInTheDocument();
   });
 });
