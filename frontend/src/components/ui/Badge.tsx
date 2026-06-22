@@ -16,7 +16,11 @@ interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'children'> {
 // public surface uses semantic names that match backend event severity; the
 // design tokens stay on their original color names.
 const TONE_CLASSES: Record<BadgeTone, string> = {
-  neutral: 'bg-neutral-soft text-neutral-foreground',
+  // neutral-soft sits ~1% off white/dark surfaces, so the pill reads as bare
+  // text without an edge. A hairline inset ring restores the pill affordance on
+  // any surface (e.g. the "Maintenance" availability badge on white table rows)
+  // without adding box width.
+  neutral: 'bg-neutral-soft text-neutral-foreground ring-1 ring-inset ring-border',
   info: 'bg-info-soft text-info-foreground',
   success: 'bg-success-soft text-success-foreground',
   warning: 'bg-warning-soft text-warning-foreground',

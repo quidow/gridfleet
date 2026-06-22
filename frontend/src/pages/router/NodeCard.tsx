@@ -3,20 +3,12 @@ import { Link } from 'react-router-dom';
 import { Check, Copy } from 'lucide-react';
 
 import { Badge, type BadgeTone } from '../../components/ui/Badge';
+import { OPERATIONAL_STATE_TONE } from '../../lib/deviceState';
 import type { GridRouterNodeRead } from '../../types/gridRouter';
 
-type OpState = GridRouterNodeRead['operational_state'];
-
-// Single source of operational-state colour: the Badge (status pill + dot) and the
-// card spine both derive from this tone, so a colour change lands in one place.
-const TONE: Record<OpState, BadgeTone> = {
-  available: 'success',
-  busy: 'warning',
-  verifying: 'info',
-  offline: 'critical',
-  maintenance: 'neutral',
-};
-
+// The Badge (status pill + dot) and the card spine both derive from the shared
+// operational-state tone map, so the colour for a state stays identical to the
+// Devices table and dashboard.
 const SPINE: Record<BadgeTone, string> = {
   success: 'bg-success-strong',
   warning: 'bg-warning-strong',
@@ -43,7 +35,7 @@ export function NodeCard({ node }: { node: GridRouterNodeRead }) {
     }
   };
 
-  const tone = TONE[node.operational_state];
+  const tone = OPERATIONAL_STATE_TONE[node.operational_state];
 
   return (
     <div className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-surface-1 py-3 pl-4 pr-3 shadow-sm">

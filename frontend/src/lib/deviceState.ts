@@ -25,12 +25,19 @@ export function deviceChipStatus(device: {
   return device.operational_state;
 }
 
+// Single source of truth for operational-state → badge tone. Shared by the
+// Devices table (AvailabilityCell), the dashboard ActivityCard, and the Router
+// node cards so the same state never renders two colours across pages.
+// `verifying` is info (blue) — kept distinct from busy (warning/amber) — so an
+// operator can tell "occupied" from "checking" by colour alone.
+export const OPERATIONAL_STATE_TONE: Record<DeviceOperationalState, BadgeTone> = {
+  available: 'success',
+  busy: 'warning',
+  verifying: 'info',
+  offline: 'critical',
+  maintenance: 'neutral',
+};
+
 export function availabilityTone(status: DeviceChipStatus): BadgeTone {
-  switch (status) {
-    case 'available': return 'success';
-    case 'busy': return 'warning';
-    case 'verifying': return 'warning';
-    case 'offline': return 'critical';
-    case 'maintenance': return 'neutral';
-  }
+  return OPERATIONAL_STATE_TONE[status];
 }

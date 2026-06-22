@@ -140,7 +140,7 @@ export function ActivityCard() {
       <div className="mt-4 border-t border-border pt-4">
         <SectionHead label="Busy outside runs" empty={strayBusy.length === 0} />
         {strayBusy.length > 0 ? (
-          <ul className="mt-1 grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-3">
+          <ul className="mt-1 flex flex-wrap gap-x-8 gap-y-1">
             {strayBusy.slice(0, MAX_BUSY).map((device) => (
               <DeviceStateRow
                 key={device.id}

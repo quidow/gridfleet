@@ -31,11 +31,14 @@ export function Tabs({ tabs, activeId, onChange, className }: TabsProps) {
 
     return (
       <div className={`border-b border-border ${className ?? ''}`}>
-        <nav aria-label="Tabs" className="-mb-px flex items-end overflow-x-auto">
+        {/* Wrap (not horizontal-scroll): with many grouped tabs a scroll strip
+            clips the trailing tabs with no affordance. Wrapping keeps every tab
+            visible at any width. */}
+        <nav aria-label="Tabs" className="-mb-px flex flex-wrap items-end gap-y-1">
           {sections.map((section, sIdx) => {
             const sectionTabs = tabs.filter((t) => (t.section ?? 'Other') === section);
             return (
-              <div key={section} className="flex items-end">
+              <div key={section} className="flex flex-wrap items-end">
                 {/* Subtle separator between section groups */}
                 {sIdx > 0 && (
                   <div className="mx-3 mb-2 h-6 w-px self-end bg-border" />

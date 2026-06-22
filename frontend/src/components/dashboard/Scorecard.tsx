@@ -86,7 +86,7 @@ export function Scorecard() {
           className="bg-surface-1 px-4 py-3 transition-colors hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
         >
           <p className="heading-label">{cell.label}</p>
-          <p className={`mt-1 text-2xl font-semibold tabular-nums ${VALUE_TONE[cell.tone]}`}>{cell.value}</p>
+          <p className={`metric-numeric mt-1 text-2xl font-semibold ${VALUE_TONE[cell.tone]}`}>{cell.value}</p>
           <p className="mt-0.5 text-xs text-text-3">{cell.hint}</p>
         </Link>
       ))}

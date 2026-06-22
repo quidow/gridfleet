@@ -49,7 +49,7 @@ export function StatCard({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="heading-label">{label}</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-text-1">{value}</p>
+          <p className="metric-numeric mt-1 text-2xl font-semibold text-text-1">{value}</p>
           {hint && <p className="mt-1 text-xs text-text-3">{hint}</p>}
         </div>
         <div className="flex flex-col items-end gap-2">
