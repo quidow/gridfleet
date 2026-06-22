@@ -1,0 +1,17 @@
+name: "GridFleet CodeQL config"
+
+# Scope CodeQL analysis to shipping code. Test suites and the live-stack test
+# harness generate maintainability noise (unused locals, ineffectual `await
+# task`, `pytest.raises`/`pytest.fail` flow that CodeQL cannot model) without
+# representing production risk. paths-ignore takes effect for the interpreted
+# languages we scan (python, javascript-typescript).
+paths-ignore:
+  - backend/tests
+  - agent/tests
+  - testkit/tests
+  - scripts/state-testing
+  - frontend/e2e
+  - "frontend/**/*.test.ts"
+  - "frontend/**/*.test.tsx"
+  - "frontend/**/*.spec.ts"
+  - "frontend/**/*.spec.tsx"
