@@ -9,21 +9,22 @@ import { LoadingSpinner } from '../LoadingSpinner';
 import { AnalyticsEmptyState } from './AnalyticsEmptyState';
 import { Card } from '../ui/Card';
 import type { AnalyticsParams } from '../../api/analytics';
+import { useChartColor } from '../../hooks/useChartColors';
 
 interface Props {
   params: AnalyticsParams;
 }
 
-function barColor(pct: number): string {
-  if (pct > 90) return '#ef4444'; // red
-  if (pct < 10) return '#f59e0b'; // amber
-  return '#3b82f6'; // blue
+function barColor(pct: number, c: (hex: string) => string): string {
+  if (pct > 90) return c('#ef4444'); // red
+  if (pct < 10) return c('#f59e0b'); // amber
+  return c('#3b82f6'); // blue
 }
-
-const PIE_COLORS = ['#3b82f6', '#d1d5db', '#ef4444'];
 
 export function DeviceUtilizationTab({ params }: Props) {
   const { data, isLoading } = useDeviceUtilization(params);
+  const c = useChartColor();
+  const pieColors = [c('#3b82f6'), c('#d1d5db'), c('#ef4444')];
 
   if (isLoading) return <LoadingSpinner />;
 
@@ -66,7 +67,7 @@ export function DeviceUtilizationTab({ params }: Props) {
               <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
               <Bar dataKey="busy_pct" name="Busy %">
                 {rows.map((entry, idx) => (
-                  <Cell key={idx} fill={barColor(entry.busy_pct)} />
+                  <Cell key={idx} fill={barColor(entry.busy_pct, c)} />
                 ))}
               </Bar>
             </BarChart>
@@ -132,7 +133,7 @@ export function DeviceUtilizationTab({ params }: Props) {
                   label={({ name, percent }: { name?: string; percent?: number }) => `${name ?? ''} ${((percent ?? 0) * 100).toFixed(0)}%`}
                 >
                   {pieData.map((_entry, idx) => (
-                    <Cell key={idx} fill={PIE_COLORS[idx]} />
+                    <Cell key={idx} fill={pieColors[idx]} />
                   ))}
                 </Pie>
                 <Tooltip formatter={(value) => `${Math.round(Number(value) / 3600)}h`} />
