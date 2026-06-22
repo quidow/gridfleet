@@ -6,6 +6,12 @@ interface SummaryPillProps {
   tone: SummaryPillTone;
   label: string;
   value?: ReactNode;
+  /**
+   * `numeric` (default) renders the value in tabular mono with slashed zeros —
+   * right for counts. `text` renders word-values (e.g. "Live", "Polling") in
+   * the sans body face so status prose doesn't read as terminal output.
+   */
+  valueVariant?: 'numeric' | 'text';
 }
 
 const TONE_DOT: Record<SummaryPillTone, string> = {
@@ -15,12 +21,22 @@ const TONE_DOT: Record<SummaryPillTone, string> = {
   neutral: 'bg-neutral-strong',
 };
 
-export function SummaryPill({ tone, label, value }: SummaryPillProps) {
+export function SummaryPill({ tone, label, value, valueVariant = 'numeric' }: SummaryPillProps) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-1 px-2.5 py-1 text-xs text-text-2">
       <span className={`inline-block h-2 w-2 rounded-full ${TONE_DOT[tone]}`} />
       <span className="font-medium text-text-2">{label}</span>
-      {value !== undefined && <span className="metric-numeric font-mono tabular-nums text-text-1">{value}</span>}
+      {value !== undefined && (
+        <span
+          className={
+            valueVariant === 'numeric'
+              ? 'metric-numeric font-mono tabular-nums text-text-1'
+              : 'font-medium text-text-1'
+          }
+        >
+          {value}
+        </span>
+      )}
     </span>
   );
 }

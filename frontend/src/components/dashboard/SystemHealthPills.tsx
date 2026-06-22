@@ -58,7 +58,9 @@ export function SystemHealthPills() {
   return (
     <>
       {pills.map((pill) => {
-        const pillNode = <SummaryPill tone={pill.tone} label={pill.label} value={pill.value} />;
+        const pillNode = (
+          <SummaryPill tone={pill.tone} label={pill.label} value={pill.value} valueVariant="text" />
+        );
         return pill.to ? (
           <Link
             key={pill.key}

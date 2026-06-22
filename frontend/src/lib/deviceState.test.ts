@@ -27,7 +27,7 @@ describe('availabilityTone', () => {
   it('maps every chip status to a badge tone', () => {
     expect(availabilityTone('available')).toBe('success');
     expect(availabilityTone('busy')).toBe('warning');
-    expect(availabilityTone('verifying')).toBe('warning');
+    expect(availabilityTone('verifying')).toBe('info');
     expect(availabilityTone('offline')).toBe('critical');
     expect(availabilityTone('maintenance')).toBe('neutral');
   });
