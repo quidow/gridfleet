@@ -12,6 +12,79 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.2.0...gridfleet-frontend-v0.3.0) (2026-06-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **frontend:** the device detail Diagnostics panel and its bundle capture/history are removed.
+* **backend:** the `/api/diagnostics/devices/{device_id}/export`, `/snapshots`, and `/snapshots/{snapshot_id}` endpoints are removed.
+* **backend:** POST /api/runs no longer accepts ?include=; the config, live_capabilities, test_data, and unavailable_includes fields are removed from reserved-device responses. Fetch device config/test_data/capabilities via the per-device GET endpoints instead.
+* **backend:** remove devices by-connection-target lookup endpoint
+
+### Features
+
+* add Router page (grid visibility console) ([c4a0318](https://github.com/quidow/gridfleet/commit/c4a031836b447de19fe9992a9ccb79731d97f7a8))
+* **backend:** detect and cure orphan adb-server systemPort socket ([4bc42f9](https://github.com/quidow/gridfleet/commit/4bc42f97de89818c52f66d89ca16a2a963c366c8))
+* **backend:** expose device allocatable and unavailable_reason projection ([dee5571](https://github.com/quidow/gridfleet/commit/dee557133acad7655a5c2f9b25b7525503b00e63))
+* **backend:** make preparation-failure maintenance escalation configurable ([3aeccc8](https://github.com/quidow/gridfleet/commit/3aeccc8bc3ee93360219b96f4ecbb776f85a3e45))
+* **backend:** remove device diagnostics feature ([6c73c47](https://github.com/quidow/gridfleet/commit/6c73c471f0404fe66f45c7df335da237c2308a68))
+* **backend:** remove devices by-connection-target lookup endpoint ([e5dccfc](https://github.com/quidow/gridfleet/commit/e5dccfc7a2680490b88d2ed9fc66e2201d49638f))
+* **backend:** retire runs ?include feature ([0d06451](https://github.com/quidow/gridfleet/commit/0d0645135284fa21875171f3e284d95388f57a39))
+* **backend:** stage 4 — transitioning projection (P6) + post-grid cruft cleanup (P7) ([19183cf](https://github.com/quidow/gridfleet/commit/19183cf12746e2202dfeb46c60e7de340dbce211))
+* **backend:** tvos appium_env rename and prefer_devicectl toggle ([2e52296](https://github.com/quidow/gridfleet/commit/2e5229642f69d13e5ba32510d3aacab434718cb4))
+* **backend:** warm-park cooldown via the accepting_new_sessions soft-gate (Stage 2) ([7130430](https://github.com/quidow/gridfleet/commit/7130430c34fbed4550c198b4a0351a81e24be17d))
+* derive needs_attention from the operational axis and align the dashboard card ([c9d6a24](https://github.com/quidow/gridfleet/commit/c9d6a247fb5288a4de6ea300d190c812053966e1))
+* **frontend:** add attention-row derivation to dashboard summary ([dc3261d](https://github.com/quidow/gridfleet/commit/dc3261dfa47b8853dbc68c4e2781044fa07c21ac))
+* **frontend:** add dashboard kpi scorecard ([7ab1fac](https://github.com/quidow/gridfleet/commit/7ab1fac42699b21459c9275e867223f3287d2297))
+* **frontend:** add fleet card with reserved legend and analytics chart link ([7c5302e](https://github.com/quidow/gridfleet/commit/7c5302e70148f874edd15f5fba8d05391b286d14))
+* **frontend:** add grid-router api client, hook, and types ([0108dd6](https://github.com/quidow/gridfleet/commit/0108dd68e45acb5d28365654ac2cc8f79eab4eea))
+* **frontend:** add needs-attention card ([eb870c8](https://github.com/quidow/gridfleet/commit/eb870c8f9639b5301b85ffb1fec86d0e77a7d34b))
+* **frontend:** add rolling seven-day window hook ([80ce26f](https://github.com/quidow/gridfleet/commit/80ce26ff3457b82ab660772b959df54721b01259))
+* **frontend:** add router counts and queue tile components ([ba46903](https://github.com/quidow/gridfleet/commit/ba469033bf6fabb3bbb80572b8199b80af987a85))
+* **frontend:** add router NodeCard component ([016e6e6](https://github.com/quidow/gridfleet/commit/016e6e6a4f4dbe1729b3260017df1811d25a3e80))
+* **frontend:** add Router page with route and nav link ([5a920e7](https://github.com/quidow/gridfleet/commit/5a920e755c68c8845b6bf3b7f89207c3c1c448f4))
+* **frontend:** add run-grouped activity card ([f1bb2ac](https://github.com/quidow/gridfleet/commit/f1bb2ac65fec2254385eef78a7159091df1eb64f))
+* **frontend:** align attention card rows with the needs_attention flag ([585ca21](https://github.com/quidow/gridfleet/commit/585ca210b02f5b5d9e57c8a16f0103873bda627e))
+* **frontend:** drop reserved from fleet card and filter reservation via reserved param ([7d3830b](https://github.com/quidow/gridfleet/commit/7d3830b702192938ff4bdd1ee661756bda0f0848))
+* **frontend:** per-signal health filters on devices page ([a95dcc8](https://github.com/quidow/gridfleet/commit/a95dcc8a61736fd1f84b81297bbe7196c624ce5f))
+* **frontend:** per-verdict status pills and triage on device detail ([24491db](https://github.com/quidow/gridfleet/commit/24491dba91dcda01b84769cafc012f973136715e))
+* **frontend:** redesign dashboard with kpi scorecard and tiled layout ([7ec4105](https://github.com/quidow/gridfleet/commit/7ec41055386b889176505d98017a1bcb27870745))
+* **frontend:** regenerate api types for health verdicts ([f0b99da](https://github.com/quidow/gridfleet/commit/f0b99da72e81b20525e0d9a024cf19bcf70ef1a7))
+* **frontend:** regenerate openapi types for cooldown unavailable reason ([d7e284d](https://github.com/quidow/gridfleet/commit/d7e284d48f2a3b47d2c080a96931a7bfe50636c1))
+* **frontend:** regenerate openapi types for release_forwarded_ports action ([5dfa1e8](https://github.com/quidow/gridfleet/commit/5dfa1e82e7e1c73aa49e21ac620d928a07f67895))
+* **frontend:** regenerate openapi types for transitioning unavailable_reason ([5383989](https://github.com/quidow/gridfleet/commit/538398918f2f25f7a482b5ab30ce3aa5049db501))
+* **frontend:** remove device diagnostics UI ([e0e9ac7](https://github.com/quidow/gridfleet/commit/e0e9ac7c3ac08138bd42fcb23aecb64af855be37))
+* **frontend:** restructure dashboard into scorecard and tiled layout ([755fa04](https://github.com/quidow/gridfleet/commit/755fa0413396f86fa833e312acf79a5668a09d35))
+* **frontend:** session capabilities expansion component ([284082e](https://github.com/quidow/gridfleet/commit/284082ec3d80ad82374bf71e2ab6d90476a65ac2))
+* **frontend:** session kill api client and active list params ([ea540de](https://github.com/quidow/gridfleet/commit/ea540de8456976a8f84da901f6f737e390ae4427))
+* **frontend:** split sessions page into active and history tabs with kill action ([cfc06b2](https://github.com/quidow/gridfleet/commit/cfc06b268383a703b518e2572b41b629f0ed762a))
+* **frontend:** surface allocatable and unavailable_reason device fields ([0c35600](https://github.com/quidow/gridfleet/commit/0c35600786364095c1eb7ae79e48018f19581cc0))
+* **frontend:** tri-dot device health cell from verdicts ([9b61210](https://github.com/quidow/gridfleet/commit/9b61210827699e2e1cbcc433531eeb3214faddbb))
+* sessions page rework — active/history tabs, capabilities, operator kill ([c8edbe9](https://github.com/quidow/gridfleet/commit/c8edbe9c4e52a87b561132e9166fe0544e53f7ac))
+* split device health into per-signal verdicts (device / node / viability) ([ab11a4b](https://github.com/quidow/gridfleet/commit/ab11a4b91ff56f6af1806103157355ba5f37ab23))
+* thread gridfleet device id into session caps; retire by-connection-target lookup ([0fe77ce](https://github.com/quidow/gridfleet/commit/0fe77ced0475597213d4bbf1eadc694d78856680))
+
+
+### Bug Fixes
+
+* **backend:** address grid router review (counts, ordering, trim, dedupe) ([f806b4f](https://github.com/quidow/gridfleet/commit/f806b4fafbe948dd87f75c6ff082d9e712dc5e6f))
+* **backend:** cooldown escalation status reflects the maintenance toggle ([7e43d2e](https://github.com/quidow/gridfleet/commit/7e43d2e3b3a77ad6ff89018dadd9b33d430ec96b))
+* **backend:** debounce flaky health checks and restore self-healed devices to their run ([51a11b7](https://github.com/quidow/gridfleet/commit/51a11b786791fe646b829f68cc78cbd2d4ae3955))
+* **backend:** make grid router nodes/queue required for non-optional TS types ([7b56763](https://github.com/quidow/gridfleet/commit/7b567630fef6c0a523575112fc439b9ebfc6be67))
+* batch of open grid/lifecycle issues (recovery-skip, queue hygiene, BL[#1](https://github.com/quidow/gridfleet/issues/1), F1, I11/N15, test_name, frontend) ([673c4d8](https://github.com/quidow/gridfleet/commit/673c4d8a5c911da38cd7dcb39d966d949b97dd77))
+* **frontend:** add aria-label to router search filter input ([da38bfd](https://github.com/quidow/gridfleet/commit/da38bfdef5e2937eafd89190234cc3486dc1a95c))
+* **frontend:** address Router page review (clipboard, states, reuse, e2e) ([069d803](https://github.com/quidow/gridfleet/commit/069d8035b58207ed7c0414704e515466c6db16e1))
+* **frontend:** derive severity toggle from latest URL param ([d38eb65](https://github.com/quidow/gridfleet/commit/d38eb659f7e0ee2c6f6e2769c0d1165cc962a232))
+* **frontend:** read correct deviceId cap in QueuedRequestsCard ([ca29593](https://github.com/quidow/gridfleet/commit/ca29593c51dea9b5c088d5dacd5666fcfe098c22))
+* **frontend:** read pinned device id from the gridfleet deviceId cap ([4a74f4e](https://github.com/quidow/gridfleet/commit/4a74f4eaa3ae061d2b30c1659fa2fb6c29b91f57))
+* **frontend:** stabilize notifications severity filter against rapid-toggle race ([a5ba4b6](https://github.com/quidow/gridfleet/commit/a5ba4b6dbea46e99abd2a3e8516835d3da403416))
+* **frontend:** stabilize notifications severity filter against rapid-toggle race ([6651402](https://github.com/quidow/gridfleet/commit/6651402f55b5ab823a56e2e542879451b5e478d5))
+* **frontend:** surface session-test 409 as a notice, not a console error ([69c2a15](https://github.com/quidow/gridfleet/commit/69c2a15b561a1f7ae4c6ca3b9b0359e0864df619))
+* **frontend:** treat degraded health 503 payload as data, not an error ([52c8964](https://github.com/quidow/gridfleet/commit/52c896452841e03564deb87a08f47d46a9cb511d))
+* **frontend:** use distinct info token for verifying node state ([5be6e8b](https://github.com/quidow/gridfleet/commit/5be6e8b7c2151af6dca00ef0b8cdc83192796ab0))
+* stop spurious 409 on Test Session from leaked viability probe lock ([1a0731b](https://github.com/quidow/gridfleet/commit/1a0731b5341c669570e903129487cb94bbbc5e94))
+
 ## [0.2.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.1.0...gridfleet-frontend-v0.2.0) (2026-05-25)
 
 
