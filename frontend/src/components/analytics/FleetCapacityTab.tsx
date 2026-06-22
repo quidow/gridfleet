@@ -15,6 +15,7 @@ import type { FleetCapacityTimelinePoint } from '../../types';
 import { buildFleetCapacityChartData } from '../../lib/fleetCapacityTimeline';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
 import { Card } from '../ui/Card';
+import { useChartColor } from '../../hooks/useChartColors';
 
 interface Props {
   params: AnalyticsParams;
@@ -72,6 +73,7 @@ function MetricSummary({ label, value, detail }: { label: string; value: number;
 export function FleetCapacityTab({ params }: Props) {
   const queryParams = { ...params, bucket_minutes: 1 };
   const { data, isLoading } = useFleetCapacityTimeline(queryParams);
+  const c = useChartColor();
 
   if (isLoading) return <SectionSkeleton shape="split" rows={3} label="Fleet capacity loading" />;
 
@@ -133,7 +135,7 @@ export function FleetCapacityTab({ params }: Props) {
               type="linear"
               dataKey="total_capacity_slots"
               name="Supply"
-              stroke="#2563eb"
+              stroke={c('#2563eb')}
               strokeWidth={2}
               dot={false}
               connectNulls={false}
@@ -142,7 +144,7 @@ export function FleetCapacityTab({ params }: Props) {
               type="linear"
               dataKey="active_sessions"
               name="Active usage"
-              stroke="#16a34a"
+              stroke={c('#16a34a')}
               strokeWidth={2}
               dot={false}
               connectNulls={false}
@@ -151,7 +153,7 @@ export function FleetCapacityTab({ params }: Props) {
               type="linear"
               dataKey="queued_requests"
               name="Queued requests"
-              stroke="#d97706"
+              stroke={c('#d97706')}
               strokeWidth={2}
               dot={false}
               connectNulls={false}
@@ -160,7 +162,7 @@ export function FleetCapacityTab({ params }: Props) {
               type="linear"
               dataKey="rejected_unfulfilled_sessions"
               name="Unfulfilled attempts"
-              stroke="#dc2626"
+              stroke={c('#dc2626')}
               strokeWidth={2}
               dot={false}
               connectNulls={false}
@@ -169,7 +171,7 @@ export function FleetCapacityTab({ params }: Props) {
               type="linear"
               dataKey="inferred_demand"
               name="Inferred demand"
-              stroke="#7c3aed"
+              stroke={c('#7c3aed')}
               strokeDasharray="5 4"
               strokeWidth={2}
               dot={false}

@@ -14,6 +14,7 @@ import { Card } from '../ui/Card';
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import { deriveHostResourceTelemetryState } from '../../lib/hostResourceTelemetry';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormatting';
+import { useChartColor } from '../../hooks/useChartColors';
 
 type Props = {
   hostId: string;
@@ -104,6 +105,7 @@ function MetricCard({
 
 export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
   const { data, isLoading } = useHostResourceTelemetry(hostId);
+  const c = useChartColor();
   const telemetryState = deriveHostResourceTelemetryState(data?.latest_recorded_at ?? null, 60);
   const chartPoints = toChartPoints(data?.samples ?? []);
   const lastSampleText = data?.latest_recorded_at
@@ -140,9 +142,9 @@ export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
         </div>
       ) : (
         <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <MetricCard title="CPU" dataKey="cpuPercent" stroke="#2563eb" points={chartPoints} />
-          <MetricCard title="Memory" dataKey="memoryPercent" stroke="#16a34a" points={chartPoints} />
-          <MetricCard title="Disk" dataKey="diskPercent" stroke="#f59e0b" points={chartPoints} />
+          <MetricCard title="CPU" dataKey="cpuPercent" stroke={c('#2563eb')} points={chartPoints} />
+          <MetricCard title="Memory" dataKey="memoryPercent" stroke={c('#16a34a')} points={chartPoints} />
+          <MetricCard title="Disk" dataKey="diskPercent" stroke={c('#f59e0b')} points={chartPoints} />
         </div>
       )}
     </Card>

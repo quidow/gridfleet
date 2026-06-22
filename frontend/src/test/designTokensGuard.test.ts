@@ -163,16 +163,16 @@ describe('design token guard', () => {
     const darkBlockMatch = tokens.match(/\.dark \{[\s\S]*?\n {2}\}/);
     expect(darkBlockMatch, 'could not locate .dark {} block in tokens.css').not.toBeNull();
     const darkBlock = darkBlockMatch![0];
-    expect(darkBlock).toContain('--color-surface-0: #16161a;');
-    expect(darkBlock).toContain('--color-surface-1: #1f1f24;');
-    expect(darkBlock).toContain('--color-surface-2: #2a2a30;');
-    expect(darkBlock).toContain('--color-surface-soft: #1b1b20;');
-    expect(darkBlock).toContain('--color-border: #3a3a42;');
-    expect(darkBlock).toContain('--color-sidebar-surface: #0c0c0f;');
-    expect(darkBlock).toContain('--color-sidebar-active-bg: #1f1f24;');
-    expect(darkBlock).toContain('--color-sidebar-hover-bg: #18181c;');
-    expect(darkBlock).toContain('--color-sidebar-border: #3a3a42;');
-    expect(darkBlock).toContain('--color-text-3: #939399;');
+    expect(darkBlock).toContain('--color-surface-0: #0d1117;');
+    expect(darkBlock).toContain('--color-surface-1: #161b22;');
+    expect(darkBlock).toContain('--color-surface-2: #21262d;');
+    expect(darkBlock).toContain('--color-surface-soft: #11161d;');
+    expect(darkBlock).toContain('--color-border: #30363d;');
+    expect(darkBlock).toContain('--color-sidebar-surface: #010409;');
+    expect(darkBlock).toContain('--color-sidebar-active-bg: #161b22;');
+    expect(darkBlock).toContain('--color-sidebar-hover-bg: #0d1117;');
+    expect(darkBlock).toContain('--color-sidebar-border: #21262d;');
+    expect(darkBlock).toContain('--color-text-3: #8b949e;');
   });
 
   it('does not reintroduce legacy tight heading typography', () => {

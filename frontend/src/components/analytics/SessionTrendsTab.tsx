@@ -12,6 +12,7 @@ import { Card } from '../ui/Card';
 import { resolvePlatformLabel } from '../../lib/labels';
 import type { AnalyticsParams } from '../../api/analytics';
 import { formatDateOnly } from '../../utils/dateFormatting';
+import { useChartColor } from '../../hooks/useChartColors';
 
 interface Props {
   params: AnalyticsParams;
@@ -26,6 +27,7 @@ function formatDuration(sec: number | null): string {
 export function SessionTrendsTab({ params }: Props) {
   const { data: byDay, isLoading: dayLoading } = useSessionSummary({ ...params, group_by: 'day' });
   const { data: byPlatform, isLoading: platLoading } = useSessionSummary({ ...params, group_by: 'platform' });
+  const c = useChartColor();
 
   if (dayLoading || platLoading) return <LoadingSpinner />;
 
@@ -62,9 +64,9 @@ export function SessionTrendsTab({ params }: Props) {
               <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="passed" stroke="#22c55e" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="failed" stroke="#ef4444" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="error" stroke="#f59e0b" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="passed" stroke={c('#22c55e')} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="failed" stroke={c('#ef4444')} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="error" stroke={c('#f59e0b')} strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -94,9 +96,9 @@ export function SessionTrendsTab({ params }: Props) {
               <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="passed" stackId="status" fill="#22c55e" />
-              <Bar dataKey="failed" stackId="status" fill="#ef4444" />
-              <Bar dataKey="error" stackId="status" fill="#f59e0b" />
+              <Bar dataKey="passed" stackId="status" fill={c('#22c55e')} />
+              <Bar dataKey="failed" stackId="status" fill={c('#ef4444')} />
+              <Bar dataKey="error" stackId="status" fill={c('#f59e0b')} />
             </BarChart>
           </ResponsiveContainer>
         )}
