@@ -37,10 +37,12 @@ from app.devices.services.intent_evaluator import (
     evaluate_recovery,
     evaluate_reservation,
     map_node_process_decision,
+    reconcile_unsatisfied_preconditions,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
+from app.runs.models import TERMINAL_STATES, TestRun
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
@@ -121,10 +123,6 @@ async def run_device_intent_reconciler_once(
     await _reconcile_terminal_run_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
-    from app.devices.services.intent_evaluator import (  # noqa: PLC0415
-        reconcile_unsatisfied_preconditions,
-    )
-
     precondition_affected = await reconcile_unsatisfied_preconditions(db)
     for affected_id in sorted(precondition_affected):
         await reconcile_device(db, affected_id, publisher=publisher)
@@ -330,8 +328,6 @@ async def _reconcile_terminal_run_intents(
     skipping a source or crashing mid-release — a run-bound intent must never
     outlive its owning run.
     """
-    from app.runs.models import TERMINAL_STATES, TestRun  # noqa: PLC0415
-
     terminal_run_subq = select(TestRun.id).where(TestRun.state.in_(TERMINAL_STATES))
     device_ids = (
         (

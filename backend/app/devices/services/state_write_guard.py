@@ -31,6 +31,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event
 
+from app.appium_nodes.models import AppiumNode
+from app.devices.models import Device
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
@@ -213,9 +216,6 @@ def register() -> None:
     lifespan runs, so registration is also triggered lazily from
     ``backend/tests/conftest.py``.
     """
-    from app.appium_nodes.models import AppiumNode  # noqa: PLC0415
-    from app.devices.models import Device  # noqa: PLC0415
-
     model_by_table: dict[str, type[Any]] = {
         "devices": Device,
         "appium_nodes": AppiumNode,

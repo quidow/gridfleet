@@ -8,11 +8,13 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core import metrics_recorders
 from app.core.observability import get_logger
-from app.devices.models import DeviceEventType, DeviceIntent
+from app.devices.models import Device, DeviceEventType, DeviceIntent, DeviceReservation
 from app.devices.services.event import record_event
+from app.devices.services.lifecycle_policy_state import in_maintenance
+from app.runs.models import TERMINAL_STATES, TestRun
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -335,8 +337,6 @@ async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> set[UUID]:
 
 
 async def _eval_run_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    from app.runs.models import TERMINAL_STATES, TestRun  # noqa: PLC0415
-
     raw_run_id = precondition.get("run_id")
     if not isinstance(raw_run_id, str):
         return False
@@ -351,10 +351,6 @@ async def _eval_run_active(db: AsyncSession, precondition: dict[str, object]) ->
 
 
 async def _eval_reservation_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.devices.models import DeviceReservation  # noqa: PLC0415
-
     raw_run_id = precondition.get("run_id")
     raw_device_id = precondition.get("device_id")
     if not isinstance(raw_run_id, str) or not isinstance(raw_device_id, str):
@@ -377,10 +373,6 @@ async def _eval_reservation_active(db: AsyncSession, precondition: dict[str, obj
 
 
 async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.appium_nodes.models import AppiumNode  # noqa: PLC0415
-
     raw_device_id = precondition.get("device_id")
     expected = precondition.get("expected")
     if not isinstance(raw_device_id, str) or not isinstance(expected, bool):
@@ -396,9 +388,6 @@ async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) 
 
 
 async def _eval_maintenance_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    from app.devices.models import Device  # noqa: PLC0415
-    from app.devices.services.lifecycle_policy_state import in_maintenance  # noqa: PLC0415
-
     raw_device_id = precondition.get("device_id")
     if not isinstance(raw_device_id, str):
         return False
