@@ -113,8 +113,8 @@ async def list_devices(
     filters: DeviceFiltersDep,
     db: DbDep,
     device_services: DeviceServicesDep,
-    limit: int | None = Query(None, ge=1, le=500),
-    offset: int | None = Query(None, ge=0),
+    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+    offset: Annotated[int | None, Query(ge=0)] = None,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     if limit is not None:
         effective_offset = offset if offset is not None else 0
@@ -202,7 +202,7 @@ async def device_session_outcome_heatmap(
     db: DbDep,
     device_services: DeviceServicesDep,
     session_services: SessionServicesDep,
-    days: int = Query(90, ge=1, le=90),
+    days: Annotated[int, Query(ge=1, le=90)] = 90,
 ) -> list[SessionOutcomeHeatmapRow]:
     await get_device_or_404(device_id, db, device_services.crud)
     rows = await session_services.crud.get_device_session_outcome_heatmap_rows(db, device_id, days=days)

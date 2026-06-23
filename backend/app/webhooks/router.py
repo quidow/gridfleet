@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -69,7 +69,7 @@ async def list_webhook_deliveries(
     webhook_id: uuid.UUID,
     db: DbDep,
     webhook_services: WebhookServicesDep,
-    limit: int = Query(10, ge=1, le=50),
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
 ) -> dict[str, Any]:
     found_or_404(await webhook_services.crud.get_webhook(db, webhook_id), "Webhook not found")
     items, total = await webhook_services.dispatch.list_deliveries(db, webhook_id, limit=limit)

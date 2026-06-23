@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import signal
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
@@ -373,8 +373,8 @@ async def metrics(db: DbDep) -> Response:
 async def check_availability(
     db: DbDep,
     device_services: DeviceServicesDep,
-    platform_id: str = Query(...),
-    count: int = Query(1, ge=1),
+    platform_id: Annotated[str, Query()],
+    count: Annotated[int, Query(ge=1)] = 1,
 ) -> dict[str, Any]:
     # Mirror the run allocator's eligibility gates (``_find_matching_devices``):
     # reserved devices and non-viable nodes never match an allocation, and both

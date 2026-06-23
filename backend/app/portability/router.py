@@ -72,7 +72,7 @@ async def inventory(
     portability_services: PortabilityServicesDep,
     columns: Annotated[list[InventoryColumn], Depends(_parse_columns)],
     filters: Annotated[DeviceQueryFilters, Depends(build_device_query_filters)],
-    fmt: InventoryFormat = Query(default=InventoryFormat.JSON, alias="format"),
+    fmt: Annotated[InventoryFormat, Query(alias="format")] = InventoryFormat.JSON,
 ) -> StreamingResponse:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     if fmt == InventoryFormat.CSV:

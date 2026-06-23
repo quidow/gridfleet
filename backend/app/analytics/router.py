@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -34,10 +35,10 @@ def _default_capacity_date_from() -> datetime:
 @router.get("/sessions/summary", response_model=list[SessionSummaryRow])
 async def session_summary(
     db: DbDep,
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
-    group_by: GroupByOption = Query(GroupByOption.day),
-    export_format: str | None = Query(None, alias="format"),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    group_by: Annotated[GroupByOption, Query()] = GroupByOption.day,
+    export_format: Annotated[str | None, Query(alias="format")] = None,
 ) -> list[SessionSummaryRow] | StreamingResponse:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -50,9 +51,9 @@ async def session_summary(
 @router.get("/devices/utilization", response_model=list[DeviceUtilizationRow])
 async def device_utilization(
     db: DbDep,
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
-    export_format: str | None = Query(None, alias="format"),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    export_format: Annotated[str | None, Query(alias="format")] = None,
 ) -> list[DeviceUtilizationRow] | StreamingResponse:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -65,9 +66,9 @@ async def device_utilization(
 @router.get("/devices/reliability", response_model=list[DeviceReliabilityRow])
 async def device_reliability(
     db: DbDep,
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
-    export_format: str | None = Query(None, alias="format"),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    export_format: Annotated[str | None, Query(alias="format")] = None,
 ) -> list[DeviceReliabilityRow] | StreamingResponse:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -80,8 +81,8 @@ async def device_reliability(
 @router.get("/fleet/overview", response_model=FleetOverview)
 async def fleet_overview(
     db: DbDep,
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
 ) -> FleetOverview:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -92,9 +93,9 @@ async def fleet_overview(
 async def fleet_capacity_timeline(
     db: DbDep,
     device_services: DeviceServicesDep,
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
-    bucket_minutes: int = Query(1, ge=1, le=1440),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    bucket_minutes: Annotated[int, Query(ge=1, le=1440)] = 1,
 ) -> FleetCapacityTimeline:
     df = date_from or _default_capacity_date_from()
     dt = date_to or _default_date_to()

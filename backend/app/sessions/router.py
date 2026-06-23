@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -54,23 +54,23 @@ async def list_sessions(
     request: Request,
     db: DbDep,
     session_services: SessionServicesDep,
-    device_id: uuid.UUID | None = Query(None),
-    status: SessionStatus | None = Query(None),
-    pack_id: str | None = Query(None),
-    platform_id: str | None = Query(None),
-    started_after: datetime | None = Query(None),
-    started_before: datetime | None = Query(None),
-    run_id: uuid.UUID | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    cursor: str | None = Query(None),
-    direction: Literal["older", "newer"] = Query("older"),
-    offset: int = Query(0, ge=0),
-    sort_by: Literal["session_id", "device", "test_name", "platform", "started_at", "duration", "status"] = Query(
-        "started_at"
-    ),
-    sort_dir: Literal["asc", "desc"] = Query("desc"),
-    include_probes: bool = Query(False),
-    active: bool = Query(False),
+    device_id: Annotated[uuid.UUID | None, Query()] = None,
+    status: Annotated[SessionStatus | None, Query()] = None,
+    pack_id: Annotated[str | None, Query()] = None,
+    platform_id: Annotated[str | None, Query()] = None,
+    started_after: Annotated[datetime | None, Query()] = None,
+    started_before: Annotated[datetime | None, Query()] = None,
+    run_id: Annotated[uuid.UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query()] = None,
+    direction: Annotated[Literal["older", "newer"], Query()] = "older",
+    offset: Annotated[int, Query(ge=0)] = 0,
+    sort_by: Annotated[
+        Literal["session_id", "device", "test_name", "platform", "started_at", "duration", "status"], Query()
+    ] = "started_at",
+    sort_dir: Annotated[Literal["asc", "desc"], Query()] = "desc",
+    include_probes: Annotated[bool, Query()] = False,
+    active: Annotated[bool, Query()] = False,
 ) -> dict[str, Any]:
     filters = SessionFilters(
         device_id=device_id,
