@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -253,33 +254,45 @@ async def _has_session_rows(
     return result.scalar_one_or_none() is not None
 
 
+@dataclass(frozen=True, slots=True)
+class SessionFilters:
+    """Shared session-list filter parameters.
+
+    Bundles the where-clause inputs common to ``list_sessions`` and
+    ``list_sessions_cursor`` so each signature stays under the argument limit;
+    purely a parameter container — it carries no behavior.
+    """
+
+    device_id: uuid.UUID | None = None
+    status: SessionStatus | None = None
+    pack_id: str | None = None
+    platform_id: str | None = None
+    started_after: datetime | None = None
+    started_before: datetime | None = None
+    run_id: uuid.UUID | None = None
+    active: bool = False
+
+
 def _apply_session_filters(
     stmt: Select[tuple[Session]],
     *,
-    device_id: uuid.UUID | None,
-    status: SessionStatus | None,
-    pack_id: str | None,
-    platform_id: str | None,
-    started_after: datetime | None,
-    started_before: datetime | None,
-    run_id: uuid.UUID | None,
-    active: bool,
+    filters: SessionFilters,
 ) -> Select[tuple[Session]]:
-    if device_id is not None:
-        stmt = stmt.where(Session.device_id == device_id)
-    if status is not None:
-        stmt = stmt.where(Session.status == status)
-    if pack_id is not None:
-        stmt = stmt.where(Device.pack_id == pack_id)
-    if platform_id is not None:
-        stmt = stmt.where(Device.platform_id == platform_id)
-    if started_after is not None:
-        stmt = stmt.where(Session.started_at >= started_after)
-    if started_before is not None:
-        stmt = stmt.where(Session.started_at <= started_before)
-    if run_id is not None:
-        stmt = stmt.where(Session.run_id == run_id)
-    if active:
+    if filters.device_id is not None:
+        stmt = stmt.where(Session.device_id == filters.device_id)
+    if filters.status is not None:
+        stmt = stmt.where(Session.status == filters.status)
+    if filters.pack_id is not None:
+        stmt = stmt.where(Device.pack_id == filters.pack_id)
+    if filters.platform_id is not None:
+        stmt = stmt.where(Device.platform_id == filters.platform_id)
+    if filters.started_after is not None:
+        stmt = stmt.where(Session.started_at >= filters.started_after)
+    if filters.started_before is not None:
+        stmt = stmt.where(Session.started_at <= filters.started_before)
+    if filters.run_id is not None:
+        stmt = stmt.where(Session.run_id == filters.run_id)
+    if filters.active:
         # Live set: served by the ix_sessions_live partial index.
         stmt = stmt.where(Session.ended_at.is_(None))
     return stmt
@@ -293,41 +306,19 @@ class SessionCrudService:
     async def list_sessions(
         self,
         db: AsyncSession,
-        device_id: uuid.UUID | None = None,
-        status: SessionStatus | None = None,
-        pack_id: str | None = None,
-        platform_id: str | None = None,
-        started_after: datetime | None = None,
-        started_before: datetime | None = None,
-        run_id: uuid.UUID | None = None,
+        *,
+        filters: SessionFilters,
         limit: int = 50,
         offset: int = 0,
         sort_by: str = "started_at",
         sort_dir: str = "desc",
         include_probes: bool = False,
-        active: bool = False,
     ) -> tuple[list[Session], int]:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
         platform_id_expr = Device.platform_id
 
-        if device_id is not None:
-            stmt = stmt.where(Session.device_id == device_id)
-        if status is not None:
-            stmt = stmt.where(Session.status == status)
-        if pack_id is not None:
-            stmt = stmt.where(Device.pack_id == pack_id)
-        if platform_id is not None:
-            stmt = stmt.where(platform_id_expr == platform_id)
-        if started_after is not None:
-            stmt = stmt.where(Session.started_at >= started_after)
-        if started_before is not None:
-            stmt = stmt.where(Session.started_at <= started_before)
-        if run_id is not None:
-            stmt = stmt.where(Session.run_id == run_id)
-        if active:
-            # Live set: served by the ix_sessions_live partial index.
-            stmt = stmt.where(Session.ended_at.is_(None))
+        stmt = _apply_session_filters(stmt, filters=filters)
 
         count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
         total = int((await db.execute(count_stmt)).scalar_one())
@@ -360,33 +351,17 @@ class SessionCrudService:
     async def list_sessions_cursor(
         self,
         db: AsyncSession,
-        device_id: uuid.UUID | None = None,
-        status: SessionStatus | None = None,
-        pack_id: str | None = None,
-        platform_id: str | None = None,
-        started_after: datetime | None = None,
-        started_before: datetime | None = None,
-        run_id: uuid.UUID | None = None,
+        *,
+        filters: SessionFilters,
         limit: int = 50,
         cursor: str | None = None,
         direction: str = "older",
         include_probes: bool = False,
-        active: bool = False,
     ) -> CursorPage[Session]:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
 
-        stmt = _apply_session_filters(
-            stmt,
-            device_id=device_id,
-            status=status,
-            pack_id=pack_id,
-            platform_id=platform_id,
-            started_after=started_after,
-            started_before=started_before,
-            run_id=run_id,
-            active=active,
-        )
+        stmt = _apply_session_filters(stmt, filters=filters)
 
         page_stmt = stmt
         cursor_token = decode_cursor(cursor) if cursor else None

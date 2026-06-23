@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import desc, select
@@ -54,20 +55,15 @@ DesiredGridRunIdCaller = Literal[
 ]
 
 
-async def write_desired_state(
-    db: AsyncSession,
-    *,
-    node: AppiumNode,
-    target: AppiumDesiredState,
-    caller: DesiredStateCaller,
-    desired_port: int | None = None,
-    transition_token: uuid.UUID | None = None,
-    transition_deadline: datetime | None = None,
-    actor: str | None = None,
-    reason: str | None = None,
-    transition_token_natural_clear: bool = False,
-) -> None:
-    """Write desired Appium state on an already locked node row. Caller commits.
+@dataclass(frozen=True, slots=True)
+class DesiredStateWrite:
+    """Cohesive payload describing a single desired Appium state write.
+
+    Bundles the target state with its transition fields and audit metadata so
+    the writer call site stays under the argument-count ceiling. ``db``,
+    ``node`` and ``caller`` remain direct arguments to ``write_desired_state``
+    because they describe *where* the write lands and *who* issued it, not
+    *what* is being written.
 
     ``transition_token_natural_clear`` opts callers out of the
     ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN`` metric for the case where an
@@ -76,6 +72,32 @@ async def write_desired_state(
     elapsed. Counting that as an override pollutes the override dashboard
     once per reconciler tick that lands on an expired deadline.
     """
+
+    target: AppiumDesiredState
+    desired_port: int | None = None
+    transition_token: uuid.UUID | None = None
+    transition_deadline: datetime | None = None
+    actor: str | None = None
+    reason: str | None = None
+    transition_token_natural_clear: bool = False
+
+
+async def write_desired_state(
+    db: AsyncSession,
+    *,
+    node: AppiumNode,
+    caller: DesiredStateCaller,
+    write: DesiredStateWrite,
+) -> None:
+    """Write desired Appium state on an already locked node row. Caller commits."""
+    target = write.target
+    desired_port = write.desired_port
+    transition_token = write.transition_token
+    transition_deadline = write.transition_deadline
+    actor = write.actor
+    reason = write.reason
+    transition_token_natural_clear = write.transition_token_natural_clear
+
     if target == AppiumDesiredState.stopped and desired_port is not None:
         raise ValueError("desired_port must be None when target=stopped")
     if transition_token is not None and transition_deadline is None:

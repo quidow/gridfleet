@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.core.pagination import CursorPage
     from app.devices.models import Device
     from app.sessions.models import Session, SessionStatus
+    from app.sessions.service import SessionFilters
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
@@ -22,36 +23,24 @@ class SessionCrudProtocol(Protocol):
     async def list_sessions(
         self,
         db: AsyncSession,
-        device_id: uuid.UUID | None = None,
-        status: SessionStatus | None = None,
-        pack_id: str | None = None,
-        platform_id: str | None = None,
-        started_after: datetime | None = None,
-        started_before: datetime | None = None,
-        run_id: uuid.UUID | None = None,
+        *,
+        filters: SessionFilters,
         limit: int = 50,
         offset: int = 0,
         sort_by: str = "started_at",
         sort_dir: str = "desc",
         include_probes: bool = False,
-        active: bool = False,
     ) -> tuple[list[Session], int]: ...
 
     async def list_sessions_cursor(
         self,
         db: AsyncSession,
-        device_id: uuid.UUID | None = None,
-        status: SessionStatus | None = None,
-        pack_id: str | None = None,
-        platform_id: str | None = None,
-        started_after: datetime | None = None,
-        started_before: datetime | None = None,
-        run_id: uuid.UUID | None = None,
+        *,
+        filters: SessionFilters,
         limit: int = 50,
         cursor: str | None = None,
         direction: str = "older",
         include_probes: bool = False,
-        active: bool = False,
     ) -> CursorPage[Session]: ...
 
     async def get_session(self, db: AsyncSession, session_id: str) -> Session | None: ...

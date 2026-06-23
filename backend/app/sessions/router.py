@@ -15,6 +15,7 @@ from app.devices.services import platform_label as platform_label_service
 from app.sessions import service_kill
 from app.sessions.dependencies import SessionServicesDep
 from app.sessions.models import Session, SessionStatus
+from app.sessions.service import SessionFilters
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,23 +72,26 @@ async def list_sessions(
     include_probes: bool = Query(False),
     active: bool = Query(False),
 ) -> dict[str, Any]:
+    filters = SessionFilters(
+        device_id=device_id,
+        status=status,
+        pack_id=pack_id,
+        platform_id=platform_id,
+        started_after=started_after,
+        started_before=started_before,
+        run_id=run_id,
+        active=active,
+    )
     cursor_mode = "cursor" in request.query_params or "direction" in request.query_params
     if cursor_mode:
         try:
             page = await session_services.crud.list_sessions_cursor(
                 db,
-                device_id=device_id,
-                status=status,
-                pack_id=pack_id,
-                platform_id=platform_id,
-                started_after=started_after,
-                started_before=started_before,
-                run_id=run_id,
+                filters=filters,
                 limit=limit,
                 cursor=cursor,
                 direction=direction,
                 include_probes=include_probes,
-                active=active,
             )
         except CursorPaginationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -99,19 +103,12 @@ async def list_sessions(
         }
     sessions, total = await session_services.crud.list_sessions(
         db,
-        device_id=device_id,
-        status=status,
-        pack_id=pack_id,
-        platform_id=platform_id,
-        started_after=started_after,
-        started_before=started_before,
-        run_id=run_id,
+        filters=filters,
         limit=limit,
         offset=offset,
         sort_by=sort_by,
         sort_dir=sort_dir,
         include_probes=include_probes,
-        active=active,
     )
     return {
         "items": await _session_details_with_labels(db, sessions),

@@ -199,17 +199,17 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
         await desired_state_writer.write_desired_state(
             db,
             node=SimpleNamespace(desired_state=AppiumDesiredState.running, transition_token=None, desired_port=1),
-            target=AppiumDesiredState.stopped,
             caller="test",
-            desired_port=1,
+            write=desired_state_writer.DesiredStateWrite(target=AppiumDesiredState.stopped, desired_port=1),
         )
     with pytest.raises(ValueError, match="transition_deadline"):
         await desired_state_writer.write_desired_state(
             db,
             node=SimpleNamespace(desired_state=AppiumDesiredState.running, transition_token=None, desired_port=1),
-            target=AppiumDesiredState.running,
             caller="test",
-            transition_token=uuid.uuid4(),
+            write=desired_state_writer.DesiredStateWrite(
+                target=AppiumDesiredState.running, transition_token=uuid.uuid4()
+            ),
         )
 
     assert (

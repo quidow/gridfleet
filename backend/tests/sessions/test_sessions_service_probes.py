@@ -9,7 +9,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
-from app.sessions.service import SessionCrudService
+from app.sessions.service import SessionCrudService, SessionFilters
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +64,7 @@ async def _seed(db_session: AsyncSession, db_host: Host, suffix: str) -> tuple[S
 async def test_list_sessions_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
     real, _ = await _seed(db_session, db_host, "default")
     crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
-    sessions, _total = await crud.list_sessions(db_session)
+    sessions, _total = await crud.list_sessions(db_session, filters=SessionFilters())
     ids = {s.id for s in sessions}
     assert real.id in ids
     assert all(s.test_name != PROBE_TEST_NAME for s in sessions)
@@ -74,7 +74,7 @@ async def test_list_sessions_hides_probes_by_default(db_session: AsyncSession, d
 async def test_list_sessions_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
     real, probe = await _seed(db_session, db_host, "include")
     crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
-    sessions, _total = await crud.list_sessions(db_session, include_probes=True)
+    sessions, _total = await crud.list_sessions(db_session, filters=SessionFilters(), include_probes=True)
     ids = {s.id for s in sessions}
     assert real.id in ids
     assert probe.id in ids
@@ -84,7 +84,7 @@ async def test_list_sessions_includes_probes_when_requested(db_session: AsyncSes
 async def test_list_sessions_cursor_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
     real, _ = await _seed(db_session, db_host, "cursor-default")
     crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
-    page = await crud.list_sessions_cursor(db_session)
+    page = await crud.list_sessions_cursor(db_session, filters=SessionFilters())
     ids = {s.id for s in page.items}
     assert real.id in ids
     assert all(s.test_name != PROBE_TEST_NAME for s in page.items)
@@ -94,7 +94,7 @@ async def test_list_sessions_cursor_hides_probes_by_default(db_session: AsyncSes
 async def test_list_sessions_cursor_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
     real, probe = await _seed(db_session, db_host, "cursor-include")
     crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
-    page = await crud.list_sessions_cursor(db_session, include_probes=True)
+    page = await crud.list_sessions_cursor(db_session, filters=SessionFilters(), include_probes=True)
     ids = {s.id for s in page.items}
     assert real.id in ids
     assert probe.id in ids

@@ -28,7 +28,7 @@ from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
-from app.appium_nodes.services.desired_state_writer import write_desired_state
+from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.appium_nodes.services.reconciler_agent import (
     NodeStartDetails,
     _start_for_node,
@@ -458,10 +458,12 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     await write_desired_state(
         db,
         node=node,
-        target=node.desired_state,
         caller="appium_reconciler",
-        desired_port=node.desired_port,
-        transition_token_natural_clear=True,
+        write=DesiredStateWrite(
+            target=node.desired_state,
+            desired_port=node.desired_port,
+            transition_token_natural_clear=True,
+        ),
     )
     await db.commit()
 
@@ -983,11 +985,13 @@ class ReconcilerService:
                     await write_desired_state(
                         db,
                         node=node,
-                        target=node.desired_state,
                         caller="appium_reconciler",
-                        desired_port=None if clear_desired_port else node.desired_port,
-                        transition_token=None if clear_transition else node.transition_token,
-                        transition_deadline=None if clear_transition else node.transition_deadline,
+                        write=DesiredStateWrite(
+                            target=node.desired_state,
+                            desired_port=None if clear_desired_port else node.desired_port,
+                            transition_token=None if clear_transition else node.transition_token,
+                            transition_deadline=None if clear_transition else node.transition_deadline,
+                        ),
                     )
                     await db.commit()
 

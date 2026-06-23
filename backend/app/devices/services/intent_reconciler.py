@@ -10,7 +10,11 @@ from sqlalchemy.exc import NoResultFound
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
 from app.appium_nodes.models import AppiumDesiredState
-from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
+from app.appium_nodes.services.desired_state_writer import (
+    DesiredStateWrite,
+    write_desired_grid_run_id,
+    write_desired_state,
+)
 from app.core import metrics_recorders
 from app.core.background_loop import BackgroundLoop
 from app.core.leader.advisory import assert_current_leader
@@ -450,12 +454,14 @@ async def reconcile_device(
     await write_desired_state(
         db,
         node=node,
-        target=target_state,
-        desired_port=desired_port,
-        transition_token=node_decision.transition_token,
-        transition_deadline=node_decision.transition_deadline,
         caller="intent_reconciler",
-        reason=node_decision.reason,
+        write=DesiredStateWrite(
+            target=target_state,
+            desired_port=desired_port,
+            transition_token=node_decision.transition_token,
+            transition_deadline=node_decision.transition_deadline,
+            reason=node_decision.reason,
+        ),
     )
     await write_desired_grid_run_id(
         db,

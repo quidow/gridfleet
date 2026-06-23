@@ -18,7 +18,7 @@ from app.devices.services.service import DeviceCrudService
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service import SessionCrudService
+from app.sessions.service import SessionCrudService, SessionFilters
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -69,11 +69,13 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
     listed, total = await crud.list_sessions(
         db_session,
-        status=SessionStatus.error,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        started_after=now - timedelta(minutes=2),
-        started_before=now + timedelta(seconds=1),
+        filters=SessionFilters(
+            status=SessionStatus.error,
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            started_after=now - timedelta(minutes=2),
+            started_before=now + timedelta(seconds=1),
+        ),
         limit=10,
         sort_by="duration",
         sort_dir="asc",
@@ -81,10 +83,11 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     assert total == 1
     assert [session.session_id for session in listed] == ["sess-new"]
 
-    first_page = await crud.list_sessions_cursor(db_session, limit=1)
+    first_page = await crud.list_sessions_cursor(db_session, filters=SessionFilters(), limit=1)
     assert first_page.next_cursor is not None
     newer_page = await crud.list_sessions_cursor(
         db_session,
+        filters=SessionFilters(),
         cursor=encode_cursor(sessions[0].started_at, sessions[0].id),
         direction="newer",
         limit=1,
@@ -93,12 +96,14 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
 
     filtered_page = await crud.list_sessions_cursor(
         db_session,
-        device_id=device.id,
-        status=SessionStatus.passed,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        started_after=now - timedelta(minutes=4),
-        started_before=now,
+        filters=SessionFilters(
+            device_id=device.id,
+            status=SessionStatus.passed,
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            started_after=now - timedelta(minutes=4),
+            started_before=now,
+        ),
         limit=10,
     )
     assert [session.session_id for session in filtered_page.items] == ["sess-old"]
@@ -110,6 +115,7 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
 
     empty_page = await crud.list_sessions_cursor(
         db_session,
+        filters=SessionFilters(),
         cursor=encode_cursor(now - timedelta(days=1), sessions[0].id),
     )
     assert empty_page.items == []

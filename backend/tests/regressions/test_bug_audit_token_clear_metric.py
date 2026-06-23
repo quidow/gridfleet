@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services.desired_state_writer import write_desired_state
+from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.core.metrics_recorders import APPIUM_TRANSITION_TOKEN_OVERRIDDEN
 from app.devices.models import DeviceOperationalState
 from tests.helpers import create_device, create_host
@@ -78,10 +78,12 @@ async def test_clear_expired_transition_token_does_not_emit_override_metric(
     await write_desired_state(
         db_session,
         node=node,
-        target=node.desired_state,
         caller="appium_reconciler",
-        desired_port=node.desired_port,
-        transition_token_natural_clear=True,
+        write=DesiredStateWrite(
+            target=node.desired_state,
+            desired_port=node.desired_port,
+            transition_token_natural_clear=True,
+        ),
     )
     await db_session.commit()
 

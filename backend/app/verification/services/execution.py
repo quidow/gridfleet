@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeManagerError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services.desired_state_writer import write_desired_state
+from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
@@ -412,8 +412,8 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
     await write_desired_state(
         db,
         node=node,
-        target=AppiumDesiredState.stopped,
         caller="verification",
+        write=DesiredStateWrite(target=AppiumDesiredState.stopped),
     )
     node.pid = None
     node.active_connection_target = None

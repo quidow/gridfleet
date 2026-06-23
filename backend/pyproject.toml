@@ -64,7 +64,7 @@ target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0414", "PLC0415", "PLR0402", "PLR2004", "PLW0108"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0414", "PLC0415", "PLR0402", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLW0108"]
 ignore = ["B008"]
 
 [tool.ruff.lint.flake8-type-checking]
@@ -98,10 +98,20 @@ runtime-evaluated-decorators = [
     "fastapi.APIRouter.options",
 ]
 
+[tool.ruff.lint.pylint]
+max-args = 8  # service constructors and DI-style helpers routinely take 6-8 cohesive params; anything over 8 must group into a dataclass
+
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["PLC0415", "PLR2004"]  # tests: lazy imports for fixture/patch ordering; magic values (== 200, == 2) are idiomatic in assertions
+# tests: lazy imports for fixture/patch ordering; magic values (== 200, == 2) are idiomatic in assertions;
+# long setup-heavy test bodies and many-arg fixtures/constructors are not a code smell.
+"tests/**" = ["PLC0415", "PLR2004", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
 "tests/packs/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
 "app/agent_comm/generated.py" = ["ALL"]  # auto-generated — do not lint
+# PLR0913 structural exemptions — these arg counts cannot be reduced in isolation:
+"app/**/router.py" = ["PLR0913"]       # FastAPI handlers: args are DI Depends() params
+"app/**/routers/*.py" = ["PLR0913"]    # FastAPI handlers: args are DI Depends() params
+"app/**/protocols.py" = ["PLR0913"]    # Protocol signatures mirror their implementations
+"app/agent_comm/**" = ["PLR0913"]      # HTTP client wrappers pass request fields straight through
 
 [tool.ruff.format]
 quote-style = "double"
