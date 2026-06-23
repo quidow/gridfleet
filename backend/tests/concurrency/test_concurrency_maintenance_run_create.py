@@ -228,12 +228,11 @@ async def test_run_create_and_maintenance_cannot_overlap(
             f"Reservation exists but device row is in maintenance — the maintenance path stomped a "
             f"reservation. HTTP statuses were {statuses}."
         )
-    else:
-        if any(s in (200, 201) for s in statuses):
-            # hold is now derived by the reconciler (Task 7+8); check maintenance_reason signal
-            from app.devices.services.lifecycle_policy_state import state as ps
+    elif any(s in (200, 201) for s in statuses):
+        # hold is now derived by the reconciler (Task 7+8); check maintenance_reason signal
+        from app.devices.services.lifecycle_policy_state import state as ps
 
-            assert ps(device_row).get("maintenance_reason") is not None, (
-                f"No reservation but maintenance_reason not set; "
-                f"expected maintenance signal because at least one request succeeded. statuses={statuses}"
-            )
+        assert ps(device_row).get("maintenance_reason") is not None, (
+            f"No reservation but maintenance_reason not set; "
+            f"expected maintenance signal because at least one request succeeded. statuses={statuses}"
+        )

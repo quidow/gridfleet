@@ -121,8 +121,7 @@ async def test_approve_host_races_concurrent_reject(
             "approve_host returned an approved Host but the underlying row is gone — phantom success"
         )
         assert persisted.status == HostStatus.online
-    else:
-        # Approval was abandoned cleanly (race lost). DB state may or may not
-        # have the row, but if it does it must not be silently flipped online.
-        if persisted is not None:
-            assert persisted.status == HostStatus.pending
+    # Approval was abandoned cleanly (race lost). DB state may or may not
+    # have the row, but if it does it must not be silently flipped online.
+    elif persisted is not None:
+        assert persisted.status == HostStatus.pending
