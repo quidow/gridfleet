@@ -107,7 +107,7 @@ def _decode_session_payload(token: str) -> dict[str, Any] | None:
             algorithms=[_ALGORITHM],
             options={"require": ["sub", "csrf", "exp"]},
         )
-    except (jwt.PyJWTError, TypeError):
+    except jwt.PyJWTError, TypeError:
         return None
 
 
@@ -135,7 +135,7 @@ def resolve_browser_session_from_token(token: str | None) -> SessionState:
         username = payload["sub"]
         csrf_token = payload["csrf"]
         expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return SessionState(True, False, None, None, None)
     if not isinstance(username, str) or not username:
         return SessionState(True, False, None, None, None)

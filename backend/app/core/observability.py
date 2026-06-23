@@ -413,7 +413,7 @@ class BackgroundLoopObservation:
     interval_seconds: float
 
     @asynccontextmanager
-    async def cycle(self) -> AsyncGenerator[None, None]:
+    async def cycle(self) -> AsyncGenerator[None]:
         started_at = _now()
         started_monotonic = perf_counter()
         _update_loop_snapshot(

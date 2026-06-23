@@ -133,14 +133,14 @@ async def _send_request(
 def _pool_enabled(*, settings: SettingsReader) -> bool:
     try:
         return bool(settings.get("agent.http_pool_enabled"))
-    except (KeyError, RuntimeError):
+    except KeyError, RuntimeError:
         return False
 
 
 def _settings_int(key: str, *, default: int, settings: SettingsReader) -> int:
     try:
         return int(settings.get(key))
-    except (KeyError, RuntimeError, TypeError, ValueError):
+    except KeyError, RuntimeError, TypeError, ValueError:
         return default
 
 

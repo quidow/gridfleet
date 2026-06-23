@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import uuid  # noqa: TC003 - FastAPI evaluates path parameter annotations at runtime.
+import uuid
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
-from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
-from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
+from app.auth.dependencies import AdminDep
+from app.core.dependencies import DbDep
 from app.core.http_errors import found_or_404
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType

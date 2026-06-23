@@ -1,9 +1,6 @@
 import logging
 import uuid
-from collections.abc import Mapping
-from typing import Any
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any
 
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
@@ -15,6 +12,11 @@ from app.devices.services.identity import (
 )
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services.capability import coerce_device_config_fields
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 

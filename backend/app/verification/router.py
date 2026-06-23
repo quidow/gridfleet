@@ -111,7 +111,7 @@ async def stream_device_verification_job_events(
 
     queue = event_services.subscriber.subscribe()
 
-    async def generate() -> AsyncGenerator[dict[str, str], None]:
+    async def generate() -> AsyncGenerator[dict[str, str]]:
         try:
             yield {
                 "event": "device.verification.updated",

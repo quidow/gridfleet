@@ -215,7 +215,7 @@ class RunReservationService:
         locked_entry.cooldown_count = 0
         try:
             device = await device_locking.lock_device(db, device_id, load_sessions=False)
-        except (NoResultFound, AttributeError):
+        except NoResultFound, AttributeError:
             # AttributeError reaches us only from in-process unit tests that
             # stub the session with a Fake that has no ``execute``. Production
             # callers always pass a real AsyncSession.

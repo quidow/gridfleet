@@ -1,14 +1,12 @@
 import asyncio
 import contextlib
 import signal
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.config import agent_settings
@@ -30,7 +28,10 @@ from app.core.config import DOCS_ENABLED_ENVIRONMENTS
 from app.core.config import settings as process_settings
 from app.core.database import async_session as session_factory
 from app.core.database import engine
-from app.core.dependencies import DbDep
+
+# FastAPI resolves these Annotated dependency aliases at runtime for the health/
+# metrics endpoints defined in this module, so they must stay at module scope.
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
 from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
 from app.core.leader.advisory import control_plane_leader
@@ -41,12 +42,13 @@ from app.core.observability import (
     flush_background_loop_snapshots,
     get_logger,
 )
-from app.core.protocols import SettingsReader
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
 from app.devices import services as device_services
-from app.devices.dependencies import DeviceServicesDep
+from app.devices.dependencies import (
+    DeviceServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
+)
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import state_write_guard
 from app.events import router as events
@@ -73,11 +75,20 @@ from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.settings import router as settings
 from app.settings import validate_leader_keepalive_settings
-from app.settings.dependencies import SettingsServicesDep
+from app.settings.dependencies import (
+    SettingsServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
+)
 from app.settings.service import SettingsService
 from app.verification import router as verification_router
 from app.webhooks import router as webhooks
 from app.webhooks.dispatcher import WebhookDeliveryLoop
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
 
 configure_logging()
 

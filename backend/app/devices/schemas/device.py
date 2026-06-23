@@ -162,7 +162,7 @@ class SessionRead(BaseModel):
     probe_checked_by: str | None = None
 
     @model_validator(mode="after")
-    def _derive_probe_fields(self) -> "SessionRead":
+    def _derive_probe_fields(self) -> SessionRead:
         is_probe = self.test_name == PROBE_TEST_NAME
         probe_checked_by: str | None = None
         if is_probe and isinstance(self.requested_capabilities, dict):
@@ -353,7 +353,7 @@ class SessionDetail(SessionRead):
     device_platform_label: str | None = None
 
     @classmethod
-    def from_session(cls, session: Session, *, device_platform_label: str | None = None) -> "SessionDetail":
+    def from_session(cls, session: Session, *, device_platform_label: str | None = None) -> SessionDetail:
         device = session.device
         return cls(
             id=session.id,

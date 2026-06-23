@@ -1,10 +1,12 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_
-from sqlalchemy.sql import Select
 
 from app.sessions.models import Session
 from app.sessions.probe_constants import PROBE_TEST_NAME
+
+if TYPE_CHECKING:
+    from sqlalchemy.sql import Select
 
 RESERVED_SESSION_ID = "reserved"
 

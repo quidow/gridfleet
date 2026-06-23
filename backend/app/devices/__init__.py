@@ -1,6 +1,5 @@
 import importlib
 from datetime import UTC, datetime
-from types import ModuleType
 from typing import TYPE_CHECKING
 
 from sqlalchemy import column, func, select, table
@@ -9,6 +8,8 @@ from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import DEVICES_IN_COOLDOWN, INTENT_REGISTRY_INTENTS
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 _SUBMODULES = frozenset({"locking", "models", "routers", "schemas", "services"})
@@ -28,7 +29,7 @@ DEVICE_INTENTS = table(
 )
 
 
-async def _refresh_devices_gauges(db: "AsyncSession") -> None:
+async def _refresh_devices_gauges(db: AsyncSession) -> None:
     cooldown_result = await db.execute(
         select(func.count(func.distinct(DEVICE_RESERVATIONS.c.device_id)))
         .select_from(DEVICE_RESERVATIONS)

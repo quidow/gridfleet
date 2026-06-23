@@ -17,9 +17,9 @@ import re
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
 
-from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep
+from app.core.dependencies import DbDep
+from app.packs.dependencies import PackServicesDep
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 

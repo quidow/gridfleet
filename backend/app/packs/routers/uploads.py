@@ -6,10 +6,10 @@ from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep
+from app.core.dependencies import DbDep
 from app.core.http_errors import convert_not_found, found_or_404
-from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs.dependencies import PackServicesDep
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
 from app.packs.services.ingest import (

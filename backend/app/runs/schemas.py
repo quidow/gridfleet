@@ -17,7 +17,7 @@ class DeviceRequirement(BaseModel):
     tags: dict[str, str] | None = None
 
     @model_validator(mode="after")
-    def validate_allocation(self) -> "DeviceRequirement":
+    def validate_allocation(self) -> DeviceRequirement:
         if self.allocation == "all_available":
             if self.count is not None:
                 raise ValueError("count cannot be provided when allocation is all_available")
@@ -83,7 +83,7 @@ class SessionCounts(BaseModel):
     total: int = 0
 
     @classmethod
-    def from_status_map(cls, status_map: dict[str, int]) -> "SessionCounts":
+    def from_status_map(cls, status_map: dict[str, int]) -> SessionCounts:
         return cls(
             passed=status_map.get("passed", 0),
             failed=status_map.get("failed", 0),

@@ -209,7 +209,7 @@ class SettingsService:
             # JSON values must be serializable (they already are if they got here via Pydantic)
             try:
                 json.dumps(value)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return f"Value for {key} is not JSON-serializable"
             if defn.json_list_item_type == "string":
                 if not isinstance(value, list):

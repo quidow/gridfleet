@@ -97,7 +97,7 @@ async def restart_node(device_id: uuid.UUID, db: DbDep, appium_services: AppiumN
         converged_node = await appium_services.reconciler.converge_device_now(device.id, db=db)
         if converged_node is not None:
             node = converged_node
-    except (NodeAlreadyRunningError, NodeStopNotAcknowledgedError):
+    except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
         # Expected, self-healing transient during the Appium process restart window
         # — the reconciler tick converges. Debug, not warning.
         logger.debug("operator_restart_immediate_convergence_transient", exc_info=True, device_id=str(device.id))
