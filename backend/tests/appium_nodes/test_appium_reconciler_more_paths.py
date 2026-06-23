@@ -147,8 +147,9 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         clear_transition=True,
     )
     appium_reconciler.mark_node_stopped.assert_awaited_once()
-    assert write.await_args.kwargs["desired_port"] is None
-    assert write.await_args.kwargs["transition_token"] is None
+    written = write.await_args.kwargs["write"]
+    assert written.desired_port is None
+    assert written.transition_token is None
 
 
 async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatch: pytest.MonkeyPatch) -> None:

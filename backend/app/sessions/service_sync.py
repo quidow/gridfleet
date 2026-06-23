@@ -140,6 +140,32 @@ def _effective_idle_timeout_sec(session: Session, *, idle_timeout: int, ceiling:
     return max(idle_timeout, extension)
 
 
+async def _terminate_for_close(session: Session, target: str | None, *, reap_reason: str | None) -> _LivenessVerdict:
+    """Terminate the Appium session for a reap/node-stop close, returning the verdict.
+
+    Caller holds the per-host semaphore and has already decided this session should
+    close (``reap_reason is not None or node_stopped``). A ``defer`` verdict means the
+    DB row must stay open (no resolvable target, or an unconfirmed terminate).
+    """
+    if target is None:
+        # No resolvable Appium target at all: closing the DB row would
+        # orphan a possibly-still-live Appium session (and _kill_orphans
+        # also skips a None-target device), re-allocating the device while
+        # the session keeps holding it. Defer to a later tick when a target
+        # resolves rather than close blind (C3).
+        return _LivenessVerdict(action="defer", reap_reason=reap_reason, defer_detail="no resolvable Appium target")
+    if not await appium_direct.terminate_session(target, session.session_id):
+        # Terminate unconfirmed (5xx/timeout): the Appium session may
+        # still be alive. Closing the row would free the device for
+        # re-allocation under the live foreign session (wave-5 #3) —
+        # keep the row and retry next tick, mirroring run-release.
+        # An already-gone session converges: terminate_session maps
+        # 404 to True, so the retry closes it.
+        return _LivenessVerdict(action="defer", reap_reason=reap_reason, defer_detail="Appium terminate failed")
+    action: _LivenessAction = "close_reap" if reap_reason is not None else "close_node_stopped"
+    return _LivenessVerdict(action=action, reap_reason=reap_reason)
+
+
 # Module-level wake hook (P2). The session_sync loop registers its running service's
 # ``wake`` here on startup; other leader-owned loops (e.g. the allocation reaper, which
 # runs in the same process as the leader's session_sync loop) call
@@ -326,27 +352,7 @@ class SessionSyncService:
                 return _LivenessVerdict(action="leave", reap_reason=None)
             async with host_semaphores[device.host_id]:
                 if reap_reason is not None or node_stopped:
-                    if target is None:
-                        # No resolvable Appium target at all: closing the DB row would
-                        # orphan a possibly-still-live Appium session (and _kill_orphans
-                        # also skips a None-target device), re-allocating the device while
-                        # the session keeps holding it. Defer to a later tick when a target
-                        # resolves rather than close blind (C3).
-                        return _LivenessVerdict(
-                            action="defer", reap_reason=reap_reason, defer_detail="no resolvable Appium target"
-                        )
-                    if not await appium_direct.terminate_session(target, session.session_id):
-                        # Terminate unconfirmed (5xx/timeout): the Appium session may
-                        # still be alive. Closing the row would free the device for
-                        # re-allocation under the live foreign session (wave-5 #3) —
-                        # keep the row and retry next tick, mirroring run-release.
-                        # An already-gone session converges: terminate_session maps
-                        # 404 to True, so the retry closes it.
-                        return _LivenessVerdict(
-                            action="defer", reap_reason=reap_reason, defer_detail="Appium terminate failed"
-                        )
-                    action: _LivenessAction = "close_reap" if reap_reason is not None else "close_node_stopped"
-                    return _LivenessVerdict(action=action, reap_reason=reap_reason)
+                    return await _terminate_for_close(session, target, reap_reason=reap_reason)
                 if target is None:
                     return _LivenessVerdict(action="leave", reap_reason=None)  # nothing to probe
                 alive = await appium_direct.session_alive(target, session.session_id)
@@ -380,40 +386,54 @@ class SessionSyncService:
                 continue
             # Every remaining action closes the DB row the same way a vanished session is
             # closed, so the session stops pinning the device busy.
-            if verdict.action == "close_reap":
-                if verdict.reap_reason == "never_commanded":
-                    GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL.inc()
-                    logger.warning(
-                        "grid_never_commanded_session_reaped session=%s device=%s started_at=%s grace_sec=%s",
-                        session.session_id,
-                        device.id,
-                        session.started_at.isoformat(),
-                        grace,
-                    )
-                else:
-                    GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
-                    logger.warning(
-                        "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s "
-                        "effective_idle_timeout_sec=%s",
-                        session.session_id,
-                        device.id,
-                        session.last_activity_at.isoformat() if session.last_activity_at else None,
-                        idle_timeout,
-                        _effective_idle_timeout_sec(session, idle_timeout=idle_timeout, ceiling=idle_ceiling),
-                    )
-            elif verdict.action == "close_node_stopped":
-                GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL.inc()
-                logger.warning(
-                    "grid_node_stopped_session_closed session=%s device=%s",
-                    session.session_id,
-                    device.id,
-                )
+            self._log_session_close(session, verdict, grace=grace, idle_timeout=idle_timeout, idle_ceiling=idle_ceiling)
             await self._end_session(db, session)
             if session.device_id is not None:
                 device_ids_to_restore.add(session.device_id)
 
         for device_id in sorted(device_ids_to_restore):
             await self._restore_device_after_session_end(db, device_id)
+
+    def _log_session_close(
+        self,
+        session: Session,
+        verdict: _LivenessVerdict,
+        *,
+        grace: int,
+        idle_timeout: int,
+        idle_ceiling: int,
+    ) -> None:
+        """Emit the close metric + warning for a reap / node-stopped verdict."""
+        device = session.device
+        assert device is not None
+        if verdict.action == "close_reap":
+            if verdict.reap_reason == "never_commanded":
+                GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL.inc()
+                logger.warning(
+                    "grid_never_commanded_session_reaped session=%s device=%s started_at=%s grace_sec=%s",
+                    session.session_id,
+                    device.id,
+                    session.started_at.isoformat(),
+                    grace,
+                )
+            else:
+                GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
+                logger.warning(
+                    "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s "
+                    "effective_idle_timeout_sec=%s",
+                    session.session_id,
+                    device.id,
+                    session.last_activity_at.isoformat() if session.last_activity_at else None,
+                    idle_timeout,
+                    _effective_idle_timeout_sec(session, idle_timeout=idle_timeout, ceiling=idle_ceiling),
+                )
+        elif verdict.action == "close_node_stopped":
+            GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL.inc()
+            logger.warning(
+                "grid_node_stopped_session_closed session=%s device=%s",
+                session.session_id,
+                device.id,
+            )
 
     async def _end_session(self, db: AsyncSession, session: Session) -> None:
         """Close a single running session the same way the allocator does."""
@@ -561,6 +581,24 @@ class SessionSyncService:
                     doomed_ids_by_device[device_id].add(session_id)
 
         # Write phase: terminate orphans serially on the session.
+        await self._terminate_orphans(
+            candidates,
+            live_id_lists,
+            known_ids_by_device=known_ids_by_device,
+            devices_with_pending=devices_with_pending,
+            doomed_ids_by_device=doomed_ids_by_device,
+        )
+
+    async def _terminate_orphans(
+        self,
+        candidates: list[tuple[Device, str]],
+        live_id_lists: list[list[str] | None],
+        *,
+        known_ids_by_device: defaultdict[uuid.UUID, set[str]],
+        devices_with_pending: set[uuid.UUID],
+        doomed_ids_by_device: defaultdict[uuid.UUID, set[str]],
+    ) -> None:
+        """Terminate Appium sessions with no tracking DB row, serially on the session."""
         for (device, target), live_ids in zip(candidates, live_id_lists, strict=True):
             if live_ids is None:
                 GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.inc()

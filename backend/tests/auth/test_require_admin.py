@@ -1,3 +1,5 @@
+from typing import Annotated
+
 import pytest
 from fastapi import Depends, FastAPI
 from httpx2 import ASGITransport, AsyncClient
@@ -10,7 +12,7 @@ async def test_require_admin_allows_authenticated() -> None:
     app = FastAPI()
 
     @app.get("/protected")
-    async def protected(username: str = Depends(require_admin)) -> dict[str, str]:
+    async def protected(username: Annotated[str, Depends(require_admin)]) -> dict[str, str]:
         return {"user": username}
 
     transport = ASGITransport(app=app)
@@ -32,7 +34,7 @@ async def test_require_admin_rejects_when_auth_enabled_and_anonymous(
     app = FastAPI()
 
     @app.get("/protected")
-    async def protected(username: str = Depends(require_admin)) -> dict[str, str]:
+    async def protected(username: Annotated[str, Depends(require_admin)]) -> dict[str, str]:
         return {"user": username}
 
     transport = ASGITransport(app=app)
@@ -61,7 +63,7 @@ async def test_require_admin_returns_username_when_auth_enabled(
     app = FastAPI()
 
     @app.get("/api/protected", dependencies=[Depends(require_any_auth)])
-    async def protected(username: str = Depends(require_admin)) -> dict[str, str]:
+    async def protected(username: Annotated[str, Depends(require_admin)]) -> dict[str, str]:
         return {"user": username}
 
     from app.core.middleware import RequestContextMiddleware

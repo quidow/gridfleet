@@ -7,7 +7,7 @@ import pytest
 from app.appium_nodes.services import (
     reconciler_agent as appium_reconciler_agent,
 )
-from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
+from app.appium_nodes.services.reconciler_agent import AgentTransport, build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
@@ -161,9 +161,8 @@ async def test_temporary_start_forwards_pack_appium_env(
         port=4723,
         allocated_caps=None,
         agent_base="http://starts.local:5100",
-        http_client_factory=AsyncMock(),
+        transport=AgentTransport(http_client_factory=AsyncMock(), circuit_breaker=Mock()),
         settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
     )
 
     assert _patched_remote_start["payload"]["appium_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
@@ -217,9 +216,8 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
         port=4724,
         allocated_caps=None,
         agent_base="http://starts.local:5100",
-        http_client_factory=AsyncMock(),
+        transport=AgentTransport(http_client_factory=AsyncMock(), circuit_breaker=Mock()),
         settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
     )
 
     payload = captured["payload"]

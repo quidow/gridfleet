@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import Response
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/agent/driver-packs", tags=["agent-driver-packs"])
 async def desired(
     db: DbDep,
     packs: PackServicesDep,
-    host_id: uuid.UUID = Query(...),
+    host_id: Annotated[uuid.UUID, Query()],
 ) -> dict[str, Any]:
     return await packs.status.compute_desired(db, host_id)
 
@@ -23,7 +23,7 @@ async def desired(
 async def status(
     db: DbDep,
     packs: PackServicesDep,
-    payload: dict[str, Any] = Body(...),
+    payload: Annotated[dict[str, Any], Body()],
 ) -> Response:
     await packs.status.apply_status(db, payload)
     await db.commit()

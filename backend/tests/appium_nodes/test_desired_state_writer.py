@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services.desired_state_writer import write_desired_state
-from app.core import metrics_recorders as metrics_recorders
+from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
+from app.core import metrics_recorders
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from tests.helpers import create_device
@@ -48,9 +48,8 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
     await write_desired_state(
         db_session,
         node=node,
-        target=AppiumDesiredState.running,
         caller="operator_route",
-        desired_port=4723,
+        write=DesiredStateWrite(target=AppiumDesiredState.running, desired_port=4723),
     )
     await db_session.commit()
     await db_session.refresh(node)
@@ -96,8 +95,8 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
     await write_desired_state(
         db_session,
         node=node,
-        target=AppiumDesiredState.stopped,
         caller="connectivity",
+        write=DesiredStateWrite(target=AppiumDesiredState.stopped),
     )
     await db_session.commit()
     await db_session.refresh(node)
@@ -131,11 +130,13 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
     await write_desired_state(
         db_session,
         node=node,
-        target=AppiumDesiredState.running,
         caller="operator_restart",
-        desired_port=4723,
-        transition_token=token,
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+        write=DesiredStateWrite(
+            target=AppiumDesiredState.running,
+            desired_port=4723,
+            transition_token=token,
+            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+        ),
     )
     await db_session.commit()
     await db_session.refresh(node)
@@ -182,11 +183,13 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
     await write_desired_state(
         db_session,
         node=node,
-        target=AppiumDesiredState.running,
         caller="health_restart",
-        desired_port=4723,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+        write=DesiredStateWrite(
+            target=AppiumDesiredState.running,
+            desired_port=4723,
+            transition_token=uuid.uuid4(),
+            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+        ),
     )
     await db_session.commit()
 

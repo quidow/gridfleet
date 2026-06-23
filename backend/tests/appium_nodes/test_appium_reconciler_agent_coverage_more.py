@@ -16,6 +16,7 @@ from app.appium_nodes.exceptions import (
 )
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
+from app.appium_nodes.services.reconciler_agent import AgentTransport, NodeStartDetails
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
@@ -115,7 +116,7 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
             device,
             port=4723,
             pid=123,
-            allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
+            details=NodeStartDetails(allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"}),
             settings=FakeSettingsReader({}),
             publisher=Mock(),
         )
@@ -146,9 +147,8 @@ async def test_start_remote_node_error_and_override_paths(
             port=4723,
             allocated_caps={},
             agent_base="http://agent",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(
@@ -166,9 +166,8 @@ async def test_start_remote_node_error_and_override_paths(
             port=4723,
             allocated_caps={},
             agent_base="http://agent",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(
@@ -197,9 +196,8 @@ async def test_start_remote_node_error_and_override_paths(
         port=4724,
         allocated_caps={"appium:systemPort": 8201},
         agent_base="http://agent",
-        http_client_factory=httpx.AsyncClient,
+        transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-        circuit_breaker=Mock(),
     )
 
     assert result == RemoteStartResult(
@@ -251,9 +249,8 @@ async def test_start_remote_node_propagates_agent_call_errors(
             port=4723,
             allocated_caps={},
             agent_base="http://agent",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-            circuit_breaker=Mock(),
         )
 
 
@@ -293,9 +290,8 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             port=4723,
             allocated_caps={},
             agent_base="http://agent",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(
@@ -309,9 +305,8 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             port=4723,
             allocated_caps={},
             agent_base="http://agent",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-            circuit_breaker=Mock(),
         )
 
 
@@ -370,9 +365,8 @@ async def test_start_remote_node_merges_host_tool_env_and_pack_appium_env(
         port=4730,
         allocated_caps={},
         agent_base="http://agent",
-        http_client_factory=httpx.AsyncClient,
+        transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -418,9 +412,8 @@ async def test_start_remote_node_pack_appium_env_wins_on_conflict(
         port=4731,
         allocated_caps={},
         agent_base="http://agent",
-        http_client_factory=httpx.AsyncClient,
+        transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -464,9 +457,8 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
         port=4732,
         allocated_caps={},
         agent_base="http://agent",
-        http_client_factory=httpx.AsyncClient,
+        transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -502,9 +494,8 @@ async def test_start_remote_node_host_tool_env_no_pack_overrides(
         port=4733,
         allocated_caps={},
         agent_base="http://agent",
-        http_client_factory=httpx.AsyncClient,
+        transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -620,7 +611,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
         device,
         port=4723,
         pid=123,
-        allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
+        details=NodeStartDetails(allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"}),
         settings=FakeSettingsReader({}),
         publisher=Mock(),
     )

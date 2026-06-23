@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from app.core.pagination import CursorPage
     from app.devices.models import Device, DeviceEvent, DeviceEventType
     from app.devices.models.reservation import DeviceReservation
-    from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.incidents import LifecycleIncidentDetails
     from app.runs.models import RunState, TestRun
     from app.runs.schemas import ReservedDeviceInfo, RunCreate, SessionCounts
 
@@ -175,15 +175,5 @@ class LifecycleIncidentRecorder(Protocol):
         db: AsyncSession,
         device: Device,
         event_type: DeviceEventType,
-        *,
-        summary_state: DeviceLifecyclePolicySummaryState,
-        reason: str | None = ...,
-        detail: str | None = ...,
-        source: str | None = ...,
-        run_id: uuid.UUID | str | None = ...,
-        run_name: str | None = ...,
-        backoff_until: str | datetime | None = ...,
-        ttl_seconds: int | None = ...,
-        worker_id: str | None = ...,
-        expires_at: str | datetime | None = ...,
+        incident: LifecycleIncidentDetails,
     ) -> DeviceEvent: ...

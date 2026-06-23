@@ -15,7 +15,7 @@ from app.appium_nodes.services import (
     common as node_service_common,
 )
 from app.appium_nodes.services import (
-    desired_state_writer as desired_state_writer,
+    desired_state_writer,
 )
 from app.appium_nodes.services import (
     reconciler as appium_reconciler,
@@ -39,7 +39,8 @@ from app.devices.services import (
     capability as capability_service,
 )
 from app.devices.services import (
-    data_cleanup as data_cleanup,
+    data_cleanup,
+    state_write_guard,
 )
 from app.devices.services import (
     groups as device_group_service,
@@ -53,7 +54,6 @@ from app.devices.services import (
 from app.devices.services import (
     state as device_state,
 )
-from app.devices.services import state_write_guard
 from app.devices.services import test_data as test_data_service
 from app.devices.services import (
     write as device_write,
@@ -102,7 +102,7 @@ from app.sessions import protocols as session_viability_protocols
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.settings.service_config import SettingsConfigService
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.webhooks.schemas import WebhookUpdate
@@ -199,17 +199,17 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
         await desired_state_writer.write_desired_state(
             db,
             node=SimpleNamespace(desired_state=AppiumDesiredState.running, transition_token=None, desired_port=1),
-            target=AppiumDesiredState.stopped,
             caller="test",
-            desired_port=1,
+            write=desired_state_writer.DesiredStateWrite(target=AppiumDesiredState.stopped, desired_port=1),
         )
     with pytest.raises(ValueError, match="transition_deadline"):
         await desired_state_writer.write_desired_state(
             db,
             node=SimpleNamespace(desired_state=AppiumDesiredState.running, transition_token=None, desired_port=1),
-            target=AppiumDesiredState.running,
             caller="test",
-            transition_token=uuid.uuid4(),
+            write=desired_state_writer.DesiredStateWrite(
+                target=AppiumDesiredState.running, transition_token=uuid.uuid4()
+            ),
         )
 
     assert (
@@ -334,7 +334,7 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
 
 
 async def test_device_verification_runner_missing_job_branches() -> None:
-    from app.verification.services.execution import VerificationExecutionService
+    from app.verification.services.execution import AgentCallContext, VerificationExecutionService
     from app.verification.services.preparation import VerificationPreparationService
     from app.verification.services.runner import VerificationRunnerService
 
@@ -359,8 +359,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
     exec_svc = VerificationExecutionService(
         review=build_review_service(),
         publisher=publisher,
-        settings=settings,
-        circuit_breaker=cb,
+        agent=AgentCallContext(settings=settings, circuit_breaker=cb),
         crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
@@ -857,8 +856,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
+                agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
                 crud=DeviceCrudService(
                     settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
                 ),

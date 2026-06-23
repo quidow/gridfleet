@@ -19,7 +19,7 @@ import pytest
 from app.auth import auth_settings as process_settings
 from app.main import app
 from app.packs.adapter import FeatureActionResult
-from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.feature_dispatch import FeatureActionTarget, FeatureService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -61,19 +61,15 @@ async def test_action_route_dispatches_to_service(
         self: FeatureService,
         session: AsyncSession,
         *,
-        host_id: uuid.UUID,
-        pack_id: str,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
+        target: FeatureActionTarget,
         **_extra: object,
     ) -> FeatureActionResult:
         del self, session  # unused — exercise routes only
-        captured["host_id"] = host_id
-        captured["pack_id"] = pack_id
-        captured["feature_id"] = feature_id
-        captured["action_id"] = action_id
-        captured["args"] = args
+        captured["host_id"] = target.host_id
+        captured["pack_id"] = target.pack_id
+        captured["feature_id"] = target.feature_id
+        captured["action_id"] = target.action_id
+        captured["args"] = target.args
         return FeatureActionResult(ok=True, detail="dispatched", data={"k": "v"})
 
     monkeypatch.setattr(FeatureService, "dispatch_feature_action", fake_dispatch)

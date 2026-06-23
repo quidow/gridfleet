@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.packs.manifest import Manifest
     from app.packs.services.storage import PackStorageService, StorageRecord
 
 
@@ -112,6 +113,31 @@ def _extract_manifest_text(data: bytes) -> str:
 
 def _store_artifact(storage: PackStorageService, *, pack_id: str, release: str, data: bytes) -> StorageRecord:
     return storage.store(pack_id=pack_id, release=release, data=data)
+
+
+def _add_release_children(session: AsyncSession, manifest: Manifest, release_row: DriverPackRelease) -> None:
+    for platform in manifest.platforms:
+        session.add(
+            DriverPackPlatform(
+                pack_release_id=release_row.id,
+                manifest_platform_id=platform.id,
+                display_name=platform.display_name,
+                automation_name=platform.automation_name,
+                appium_platform_name=platform.appium_platform_name,
+                device_types=list(platform.device_types),
+                connection_types=list(platform.connection_types),
+                data=platform.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+
+    for feature_id, feature_data in manifest.features.items():
+        session.add(
+            DriverPackFeature(
+                pack_release_id=release_row.id,
+                manifest_feature_id=feature_id,
+                data=feature_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
 
 
 async def record_pack_upload(
@@ -246,28 +272,7 @@ async def ingest_pack_tarball(
     pack.current_release = release_id
     await session.flush()
 
-    for platform in manifest.platforms:
-        session.add(
-            DriverPackPlatform(
-                pack_release_id=release_row.id,
-                manifest_platform_id=platform.id,
-                display_name=platform.display_name,
-                automation_name=platform.automation_name,
-                appium_platform_name=platform.appium_platform_name,
-                device_types=list(platform.device_types),
-                connection_types=list(platform.connection_types),
-                data=platform.model_dump(exclude_none=True, mode="json"),
-            )
-        )
-
-    for feature_id, feature_data in manifest.features.items():
-        session.add(
-            DriverPackFeature(
-                pack_release_id=release_row.id,
-                manifest_feature_id=feature_id,
-                data=feature_data.model_dump(exclude_none=True, mode="json"),
-            )
-        )
+    _add_release_children(session, manifest, release_row)
     await session.flush()
 
     await record_pack_upload(

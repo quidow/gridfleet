@@ -37,7 +37,7 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     the node never restarted. The evaluator now prefers tokenized intents on
     same-priority `start` ties.
     """
-    from app.appium_nodes.services.desired_state_writer import write_desired_state
+    from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
     from app.devices.services import bulk as bulk_service
     from app.devices.services.intent import IntentService
     from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
@@ -56,9 +56,8 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     await write_desired_state(
         db_session,
         node=node,
-        target=AppiumDesiredState.running,
-        desired_port=4723,
         caller="bulk",
+        write=DesiredStateWrite(target=AppiumDesiredState.running, desired_port=4723),
     )
     # Simulate the standing baseline registered by lifecycle_policy when a
     # device boots healthy. Same priority + axis as the operator restart, but

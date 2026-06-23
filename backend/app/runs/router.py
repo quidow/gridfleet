@@ -1,6 +1,6 @@
 import uuid
 from datetime import UTC, date, datetime, time
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -79,15 +79,17 @@ async def list_runs(
     request: Request,
     db: DbDep,
     run_services: RunServicesDep,
-    state: RunState | None = Query(None),
-    created_from: str | None = Query(None),
-    created_to: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    cursor: str | None = Query(None),
-    direction: Literal["older", "newer"] = Query("older"),
-    offset: int = Query(0, ge=0),
-    sort_by: Literal["name", "state", "devices", "created_by", "created_at", "duration"] = Query("created_at"),
-    sort_dir: Literal["asc", "desc"] = Query("desc"),
+    state: Annotated[RunState | None, Query()] = None,
+    created_from: Annotated[str | None, Query()] = None,
+    created_to: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query()] = None,
+    direction: Annotated[Literal["older", "newer"], Query()] = "older",
+    offset: Annotated[int, Query(ge=0)] = 0,
+    sort_by: Annotated[
+        Literal["name", "state", "devices", "created_by", "created_at", "duration"], Query()
+    ] = "created_at",
+    sort_dir: Annotated[Literal["asc", "desc"], Query()] = "desc",
 ) -> dict[str, Any]:
     try:
         parsed_created_from = _parse_run_filter_datetime(created_from)

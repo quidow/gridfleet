@@ -11,10 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent_comm import client as agent_client
-from app.core import database as database
-from app.core import health as health
-from app.core import metrics as metrics
-from app.core import metrics_recorders
+from app.core import database, health, metrics, metrics_recorders
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.models import ControlPlaneStateEntry

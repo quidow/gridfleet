@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
@@ -15,10 +15,10 @@ router = APIRouter(prefix="/api/lifecycle", tags=["lifecycle"], responses={**RES
 async def get_lifecycle_incidents(
     db: DbDep,
     lifecycle_services: LifecycleServicesDep,
-    limit: int = Query(50, ge=1, le=200),
-    device_id: uuid.UUID | None = Query(None),
-    cursor: str | None = Query(None),
-    direction: str = Query("older"),
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    device_id: Annotated[uuid.UUID | None, Query()] = None,
+    cursor: Annotated[str | None, Query()] = None,
+    direction: Annotated[str, Query()] = "older",
 ) -> dict[str, Any]:
     items, next_cursor, prev_cursor = await lifecycle_services.incidents.list_lifecycle_incidents_paginated(
         db, limit=limit, device_id=device_id, cursor=cursor, direction=direction

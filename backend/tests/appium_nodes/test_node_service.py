@@ -10,6 +10,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler_agent import (
+    AgentTransport,
     ReconcilerAgentService,
     agent_url,
     build_agent_start_payload,
@@ -528,14 +529,13 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
             port=4724,
             allocated_caps={"appium:wdaLocalPort": 8100},
             agent_base="http://192.168.88.105:5100",
-            http_client_factory=AsyncMock(),
+            transport=AgentTransport(http_client_factory=AsyncMock(), circuit_breaker=AsyncMock()),
             settings=FakeSettingsReader(
                 {
                     "appium.session_override": True,
                     "appium.startup_timeout_sec": 30,
                 }
             ),
-            circuit_breaker=AsyncMock(),
         )
 
     assert start_mock.await_args is not None
@@ -585,9 +585,8 @@ async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_s
             port=4723,
             allocated_caps=None,
             agent_base=f"http://{HOST_PAYLOAD['ip']}:{HOST_PAYLOAD['agent_port']}",
-            http_client_factory=lambda: mock_client_obj,
+            transport=AgentTransport(http_client_factory=lambda: mock_client_obj, circuit_breaker=AsyncMock()),
             settings=FakeSettingsReader({}),
-            circuit_breaker=AsyncMock(),
         )
 
     mock_client_obj.post.assert_not_called()
@@ -650,9 +649,8 @@ async def test_start_remote_node_renders_stereotype_once(
             port=4723,
             allocated_caps=None,
             agent_base=f"http://{HOST_PAYLOAD['ip']}:{HOST_PAYLOAD['agent_port']}",
-            http_client_factory=_client_factory,
+            transport=AgentTransport(http_client_factory=_client_factory, circuit_breaker=cb),
             settings=FakeSettingsReader({}),
-            circuit_breaker=cb,
         )
 
     assert calls == 1

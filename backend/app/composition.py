@@ -89,7 +89,7 @@ from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.verification.services.service import VerificationService
@@ -261,15 +261,13 @@ def compose_app(
     )
     verification_execution_svc = VerificationExecutionService(
         publisher=bus,
-        settings=settings_svc,
-        circuit_breaker=circuit_breaker,
+        agent=AgentCallContext(settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool),
         crud=crud_svc,
         viability=viability_svc,
         capability=device_capability_svc,
         reconciler=reconciler_svc,
         node_manager=reconciler_agent_svc,
         review=review_svc,
-        pool=http_pool,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,

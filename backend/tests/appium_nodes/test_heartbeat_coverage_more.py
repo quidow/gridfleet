@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services import heartbeat
 from app.appium_nodes.services.heartbeat import HeartbeatLoop, HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.appium_nodes.services_container import AppiumNodeServices
@@ -91,7 +91,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             MagicMock(),
             MagicMock(),
             _dead_result(),
-            guard_active=True,
+            guard=heartbeat._ResumeGuard(active=True),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
         )

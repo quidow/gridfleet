@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
-    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +13,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.sentinels import UnsetType
     from app.devices.models import Device, DeviceEvent, DeviceEventType
-    from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+    from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 
 @runtime_checkable
@@ -110,15 +109,5 @@ class LifecycleIncidentRecorder(Protocol):
         db: AsyncSession,
         device: Device,
         event_type: DeviceEventType,
-        *,
-        summary_state: DeviceLifecyclePolicySummaryState,
-        reason: str | None = ...,
-        detail: str | None = ...,
-        source: str | None = ...,
-        run_id: uuid.UUID | str | None = ...,
-        run_name: str | None = ...,
-        backoff_until: str | datetime | None = ...,
-        ttl_seconds: int | None = ...,
-        worker_id: str | None = ...,
-        expires_at: str | datetime | None = ...,
+        incident: LifecycleIncidentDetails,
     ) -> DeviceEvent: ...

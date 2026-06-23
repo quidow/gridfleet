@@ -8,8 +8,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.presenter import DevicePresenterService
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.lifecycle.services import incidents
-from app.lifecycle.services.incidents import LifecycleIncidentService
-from app.packs.services import discovery as discovery
+from app.lifecycle.services.incidents import LifecycleIncidentDetails, LifecycleIncidentService
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -37,16 +36,18 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
         db_session,
         device,
         DeviceEventType.lifecycle_recovery_backoff,
-        summary_state=DeviceLifecyclePolicySummaryState.recoverable,
-        reason="adb offline",
-        detail="recovery delayed",
-        source="test",
-        run_id=run_id,
-        run_name="run",
-        backoff_until=datetime.now(UTC) + timedelta(minutes=5),
-        ttl_seconds=30,
-        worker_id="worker-1",
-        expires_at=datetime.now(UTC) + timedelta(minutes=1),
+        LifecycleIncidentDetails(
+            summary_state=DeviceLifecyclePolicySummaryState.recoverable,
+            reason="adb offline",
+            detail="recovery delayed",
+            source="test",
+            run_id=run_id,
+            run_name="run",
+            backoff_until=datetime.now(UTC) + timedelta(minutes=5),
+            ttl_seconds=30,
+            worker_id="worker-1",
+            expires_at=datetime.now(UTC) + timedelta(minutes=1),
+        ),
     )
     await db_session.commit()
     await db_session.refresh(event)

@@ -111,23 +111,7 @@ def _decode_session_payload(token: str) -> dict[str, Any] | None:
         return None
 
 
-def resolve_browser_session_from_token(token: str | None) -> SessionState:
-    if not is_auth_enabled():
-        return SessionState(
-            enabled=False,
-            authenticated=False,
-            username=None,
-            csrf_token=None,
-            expires_at=None,
-        )
-    if not token:
-        return SessionState(
-            enabled=True,
-            authenticated=False,
-            username=None,
-            csrf_token=None,
-            expires_at=None,
-        )
+def _validate_decoded_session(token: str) -> SessionState:
     payload = _decode_session_payload(token)
     if payload is None:
         return SessionState(True, False, None, None, None)
@@ -151,6 +135,26 @@ def resolve_browser_session_from_token(token: str | None) -> SessionState:
         csrf_token=csrf_token,
         expires_at=expires_at,
     )
+
+
+def resolve_browser_session_from_token(token: str | None) -> SessionState:
+    if not is_auth_enabled():
+        return SessionState(
+            enabled=False,
+            authenticated=False,
+            username=None,
+            csrf_token=None,
+            expires_at=None,
+        )
+    if not token:
+        return SessionState(
+            enabled=True,
+            authenticated=False,
+            username=None,
+            csrf_token=None,
+            expires_at=None,
+        )
+    return _validate_decoded_session(token)
 
 
 def resolve_browser_session_from_headers(headers: Headers) -> SessionState:

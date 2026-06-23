@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services import heartbeat
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device

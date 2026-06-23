@@ -116,7 +116,6 @@ async def test_probe_failure_threshold_writes_restart_intent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.appium_nodes.models import AppiumDesiredState
-    from app.appium_nodes.services import node_health as node_health
 
     _, device, node = await seed_host_and_running_node(db_session, identity="probe-fail-1")
     event_bus_capture.clear()

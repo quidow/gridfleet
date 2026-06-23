@@ -22,7 +22,7 @@ from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableEr
 from app.core.pagination import CursorPage, CursorPaginationError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.routers import (
-    bulk as bulk,
+    bulk,
 )
 from app.devices.routers import (
     control as devices_control,

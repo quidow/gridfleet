@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
@@ -60,8 +60,8 @@ async def get_event_catalog() -> dict[str, Any]:
 async def event_stream(
     request: Request,
     events: EventServicesDep,
-    types: str | None = Query(None, description="Comma-separated event types to filter"),
-    device_ids: str | None = Query(None, description="Comma-separated device UUIDs to filter"),
+    types: Annotated[str | None, Query(description="Comma-separated event types to filter")] = None,
+    device_ids: Annotated[str | None, Query(description="Comma-separated device UUIDs to filter")] = None,
 ) -> EventSourceResponse:
     type_filter = {t.strip() for t in types.split(",")} if types else None
     device_filter = {d.strip() for d in device_ids.split(",")} if device_ids else None
@@ -123,10 +123,10 @@ def _parse_types_filter(raw: str) -> list[str] | None:
 @router.get("/notifications", response_model=NotificationListRead)
 async def get_notifications(
     events: EventServicesDep,
-    limit: int = Query(25, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    types: str | None = Query(None, description="Comma-separated event types to filter"),
-    severity: str | None = Query(None, description="Comma-separated severities to filter"),
+    limit: Annotated[int, Query(ge=1, le=200)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    types: Annotated[str | None, Query(description="Comma-separated event types to filter")] = None,
+    severity: Annotated[str | None, Query(description="Comma-separated severities to filter")] = None,
 ) -> dict[str, Any]:
     type_filter = _parse_types_filter(types) if types is not None else None
     severity_filter = _parse_severity_filter(severity) if severity is not None else None

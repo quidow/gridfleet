@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
 from app.packs.services import feature_dispatch as pack_feature_dispatch_service
-from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.feature_dispatch import FeatureActionTarget, FeatureService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -165,11 +165,13 @@ async def test_dispatch_calls_agent_and_records_ok_status(
 
     result = await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
-        host_id=sample_host.id,
-        pack_id=PACK_ID,
-        feature_id=FEATURE_ID,
-        action_id=ACTION_ID,
-        args={"with_logs": True},
+        target=FeatureActionTarget(
+            host_id=sample_host.id,
+            pack_id=PACK_ID,
+            feature_id=FEATURE_ID,
+            action_id=ACTION_ID,
+            args={"with_logs": True},
+        ),
         http_client_factory=_factory(client),
     )
     await db_session.commit()
@@ -216,11 +218,13 @@ async def test_dispatch_passes_agent_auth_to_agent_request(
 
     await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
-        host_id=sample_host.id,
-        pack_id=PACK_ID,
-        feature_id=FEATURE_ID,
-        action_id=ACTION_ID,
-        args={},
+        target=FeatureActionTarget(
+            host_id=sample_host.id,
+            pack_id=PACK_ID,
+            feature_id=FEATURE_ID,
+            action_id=ACTION_ID,
+            args={},
+        ),
         http_client_factory=_factory(client),
         agent_auth=sentinel,
     )
@@ -250,11 +254,13 @@ async def test_dispatch_omits_auth_when_no_agent_auth_supplied(
 
     await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
-        host_id=sample_host.id,
-        pack_id=PACK_ID,
-        feature_id=FEATURE_ID,
-        action_id=ACTION_ID,
-        args={},
+        target=FeatureActionTarget(
+            host_id=sample_host.id,
+            pack_id=PACK_ID,
+            feature_id=FEATURE_ID,
+            action_id=ACTION_ID,
+            args={},
+        ),
         http_client_factory=_factory(client),
         agent_auth=None,
     )
@@ -283,11 +289,13 @@ async def test_dispatch_records_failure_when_agent_returns_not_ok(
 
     result = await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
-        host_id=sample_host.id,
-        pack_id=PACK_ID,
-        feature_id=FEATURE_ID,
-        action_id=ACTION_ID,
-        args={},
+        target=FeatureActionTarget(
+            host_id=sample_host.id,
+            pack_id=PACK_ID,
+            feature_id=FEATURE_ID,
+            action_id=ACTION_ID,
+            args={},
+        ),
         http_client_factory=_factory(client),
     )
     await db_session.commit()
@@ -321,11 +329,13 @@ async def test_dispatch_404_when_host_missing(
     with pytest.raises(HTTPException) as exc_info:
         await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
-            host_id=uuid.uuid4(),  # unknown
-            pack_id=PACK_ID,
-            feature_id=FEATURE_ID,
-            action_id=ACTION_ID,
-            args={},
+            target=FeatureActionTarget(
+                host_id=uuid.uuid4(),  # unknown
+                pack_id=PACK_ID,
+                feature_id=FEATURE_ID,
+                action_id=ACTION_ID,
+                args={},
+            ),
             http_client_factory=_factory(client),
         )
     assert exc_info.value.status_code == 404
@@ -342,11 +352,13 @@ async def test_dispatch_404_when_pack_missing(
     with pytest.raises(HTTPException) as exc_info:
         await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
-            host_id=sample_host.id,
-            pack_id="no-such-pack",
-            feature_id=FEATURE_ID,
-            action_id=ACTION_ID,
-            args={},
+            target=FeatureActionTarget(
+                host_id=sample_host.id,
+                pack_id="no-such-pack",
+                feature_id=FEATURE_ID,
+                action_id=ACTION_ID,
+                args={},
+            ),
             http_client_factory=_factory(client),
         )
     assert exc_info.value.status_code == 404
@@ -365,11 +377,13 @@ async def test_dispatch_404_when_feature_id_not_in_release(
     with pytest.raises(HTTPException) as exc_info:
         await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
-            host_id=sample_host.id,
-            pack_id=PACK_ID,
-            feature_id="not.in.release",
-            action_id=ACTION_ID,
-            args={},
+            target=FeatureActionTarget(
+                host_id=sample_host.id,
+                pack_id=PACK_ID,
+                feature_id="not.in.release",
+                action_id=ACTION_ID,
+                args={},
+            ),
             http_client_factory=_factory(client),
         )
     assert exc_info.value.status_code == 404
@@ -397,11 +411,13 @@ async def test_dispatch_502_on_agent_5xx(
     with pytest.raises(HTTPException) as exc_info:
         await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
-            host_id=sample_host.id,
-            pack_id=PACK_ID,
-            feature_id=FEATURE_ID,
-            action_id=ACTION_ID,
-            args={},
+            target=FeatureActionTarget(
+                host_id=sample_host.id,
+                pack_id=PACK_ID,
+                feature_id=FEATURE_ID,
+                action_id=ACTION_ID,
+                args={},
+            ),
             http_client_factory=_factory(client),
         )
     assert exc_info.value.status_code == 502
@@ -434,11 +450,13 @@ async def test_dispatch_502_on_transport_error_records_degraded(
     with pytest.raises(HTTPException) as exc_info:
         await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
-            host_id=sample_host.id,
-            pack_id=PACK_ID,
-            feature_id=FEATURE_ID,
-            action_id=ACTION_ID,
-            args={},
+            target=FeatureActionTarget(
+                host_id=sample_host.id,
+                pack_id=PACK_ID,
+                feature_id=FEATURE_ID,
+                action_id=ACTION_ID,
+                args={},
+            ),
             http_client_factory=_factory(client),
         )
     assert exc_info.value.status_code == 502

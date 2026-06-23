@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.devices.models import DeviceTestDataAuditLog
-from app.devices.services import data_cleanup as data_cleanup
+from app.devices.services import data_cleanup
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 

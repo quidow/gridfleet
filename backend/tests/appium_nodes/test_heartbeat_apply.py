@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.appium_nodes.services.heartbeat import _apply_host_ping_result
+from app.appium_nodes.services.heartbeat import _apply_host_ping_result, _ResumeGuard
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
@@ -43,7 +43,7 @@ async def test_apply_host_ping_result_alive_persists_health_data(db_session: Asy
         db_session,
         db_host,
         success,
-        guard_active=False,
+        guard=_ResumeGuard(active=False),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
     )
@@ -71,9 +71,7 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         db_session,
         db_host,
         timeout_result,
-        guard_active=True,
-        guard_gap_sec=150.0,
-        guard_threshold_sec=45.0,
+        guard=_ResumeGuard(active=True, gap_sec=150.0, threshold_sec=45.0),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
     )

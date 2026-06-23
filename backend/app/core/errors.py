@@ -174,20 +174,19 @@ def envelope_response(
     return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
+_HTTP_ERROR_CODES: dict[int, str] = {
+    HTTPStatus.UNAUTHORIZED: "UNAUTHORIZED",
+    HTTPStatus.FORBIDDEN: "FORBIDDEN",
+    HTTPStatus.NOT_FOUND: "NOT_FOUND",
+    HTTPStatus.CONFLICT: "CONFLICT",
+    HTTPStatus.BAD_REQUEST: "VALIDATION_ERROR",
+    HTTPStatus.UNPROCESSABLE_ENTITY: "VALIDATION_ERROR",
+    HTTPStatus.SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
+}
+
+
 def _http_error_code(status_code: int) -> str:
-    if status_code == HTTPStatus.UNAUTHORIZED:
-        return "UNAUTHORIZED"
-    if status_code == HTTPStatus.FORBIDDEN:
-        return "FORBIDDEN"
-    if status_code == HTTPStatus.NOT_FOUND:
-        return "NOT_FOUND"
-    if status_code == HTTPStatus.CONFLICT:
-        return "CONFLICT"
-    if status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.UNPROCESSABLE_ENTITY):
-        return "VALIDATION_ERROR"
-    if status_code == HTTPStatus.SERVICE_UNAVAILABLE:
-        return "SERVICE_UNAVAILABLE"
-    return "HTTP_ERROR"
+    return _HTTP_ERROR_CODES.get(status_code, "HTTP_ERROR")
 
 
 def _http_error_payload(exc: HTTPException) -> tuple[str, object | None]:

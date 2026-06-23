@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy import select
 
-from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services import heartbeat
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.devices import locking as device_locking

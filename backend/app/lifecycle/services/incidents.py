@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -90,6 +91,27 @@ def serialize_lifecycle_incident(event: DeviceEvent, device: Device) -> Lifecycl
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LifecycleIncidentDetails:
+    """Cohesive descriptive payload for a recorded lifecycle incident.
+
+    Groups the incident-metadata fields formerly passed as individual keyword
+    arguments to ``record_lifecycle_incident``. The structural arguments (db
+    session, device, event type) stay direct parameters of the method.
+    """
+
+    summary_state: DeviceLifecyclePolicySummaryState
+    reason: str | None = None
+    detail: str | None = None
+    source: str | None = None
+    run_id: uuid.UUID | str | None = None
+    run_name: str | None = None
+    backoff_until: str | datetime | None = None
+    ttl_seconds: int | None = None
+    worker_id: str | None = None
+    expires_at: str | datetime | None = None
+
+
 class LifecycleIncidentService:
     """Container-held facade for the device lifecycle-incident surface."""
 
@@ -103,41 +125,31 @@ class LifecycleIncidentService:
         db: AsyncSession,
         device: Device,
         event_type: DeviceEventType,
-        *,
-        summary_state: DeviceLifecyclePolicySummaryState,
-        reason: str | None = None,
-        detail: str | None = None,
-        source: str | None = None,
-        run_id: uuid.UUID | str | None = None,
-        run_name: str | None = None,
-        backoff_until: str | datetime | None = None,
-        ttl_seconds: int | None = None,
-        worker_id: str | None = None,
-        expires_at: str | datetime | None = None,
+        incident: LifecycleIncidentDetails,
     ) -> DeviceEvent:
-        details: dict[str, Any] = {"summary_state": summary_state.value}
-        if reason is not None:
-            details["reason"] = reason
-        if detail is not None:
-            details["detail"] = detail
-        if source is not None:
-            details["source"] = source
-        if run_id is not None:
-            details["run_id"] = str(run_id)
-        if run_name is not None:
-            details["run_name"] = run_name
-        if isinstance(backoff_until, datetime):
-            details["backoff_until"] = backoff_until.isoformat()
-        elif backoff_until is not None:
-            details["backoff_until"] = backoff_until
-        if ttl_seconds is not None:
-            details["ttl_seconds"] = ttl_seconds
-        if worker_id is not None:
-            details["worker_id"] = worker_id
-        if isinstance(expires_at, datetime):
-            details["expires_at"] = expires_at.isoformat()
-        elif expires_at is not None:
-            details["expires_at"] = expires_at
+        details: dict[str, Any] = {"summary_state": incident.summary_state.value}
+        if incident.reason is not None:
+            details["reason"] = incident.reason
+        if incident.detail is not None:
+            details["detail"] = incident.detail
+        if incident.source is not None:
+            details["source"] = incident.source
+        if incident.run_id is not None:
+            details["run_id"] = str(incident.run_id)
+        if incident.run_name is not None:
+            details["run_name"] = incident.run_name
+        if isinstance(incident.backoff_until, datetime):
+            details["backoff_until"] = incident.backoff_until.isoformat()
+        elif incident.backoff_until is not None:
+            details["backoff_until"] = incident.backoff_until
+        if incident.ttl_seconds is not None:
+            details["ttl_seconds"] = incident.ttl_seconds
+        if incident.worker_id is not None:
+            details["worker_id"] = incident.worker_id
+        if isinstance(incident.expires_at, datetime):
+            details["expires_at"] = incident.expires_at.isoformat()
+        elif incident.expires_at is not None:
+            details["expires_at"] = incident.expires_at
 
         event = await record_event(db, device.id, event_type, details)
 
@@ -153,12 +165,12 @@ class LifecycleIncidentService:
                     "device_name": device.name,
                     "event_type": event_type.value,
                     "label": LIFECYCLE_INCIDENT_LABELS.get(event_type),
-                    "summary_state": summary_state.value,
-                    "reason": reason,
-                    "detail": detail,
-                    "source": source,
-                    "run_id": str(run_id) if run_id is not None else None,
-                    "run_name": run_name,
+                    "summary_state": incident.summary_state.value,
+                    "reason": incident.reason,
+                    "detail": incident.detail,
+                    "source": incident.source,
+                    "run_id": str(incident.run_id) if incident.run_id is not None else None,
+                    "run_name": incident.run_name,
                 },
                 severity=_LIFECYCLE_INCIDENT_SEVERITY.get(event_type, "info"),
             )

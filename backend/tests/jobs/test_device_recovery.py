@@ -26,7 +26,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.runs.service_reservation import RunReservationService
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
@@ -115,8 +115,7 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
-                settings=settings_service,
-                circuit_breaker=AsyncMock(),
+                agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
                 crud=DeviceCrudService(
                     settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
                 ),
@@ -254,8 +253,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 execution=VerificationExecutionService(
                     review=build_review_service(),
                     publisher=AsyncMock(),
-                    settings=settings_service,
-                    circuit_breaker=AsyncMock(),
+                    agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
                     crud=DeviceCrudService(
                         settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
                     ),
@@ -349,8 +347,7 @@ async def test_device_recovery_job_completed_when_device_missing(
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
-                settings=settings_service,
-                circuit_breaker=AsyncMock(),
+                agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
                 crud=DeviceCrudService(
                     settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
                 ),

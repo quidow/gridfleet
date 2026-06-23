@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 import httpx2 as httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -78,7 +78,7 @@ async def get_device_config(
     device_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
-    keys: str | None = Query(None, description="Comma-separated list of keys to return"),
+    keys: Annotated[str | None, Query(description="Comma-separated list of keys to return")] = None,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
     key_list = [k.strip() for k in keys.split(",")] if keys else None
@@ -102,7 +102,7 @@ async def get_config_history(
     db: DbDep,
     device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
-    limit: int = Query(50, le=200),
+    limit: Annotated[int, Query(le=200)] = 50,
 ) -> list[dict[str, Any]]:
     await get_device_or_404(device_id, db, device_services.crud)
     logs = await settings_services.config.get_config_history(db, device_id, limit=limit)
@@ -358,7 +358,7 @@ async def device_logs(
     device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
-    lines: int = Query(100, le=5000),
+    lines: Annotated[int, Query(le=5000)] = 100,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
     host = require_management_host(device, action="fetch device logs")

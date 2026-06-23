@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
@@ -45,7 +45,7 @@ async def get_history(
     device_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
-    limit: int = Query(50, ge=1, le=200),
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[dict[str, Any]]:
     await get_device_or_404(device_id, db, device_services.crud)
     logs = await device_services.test_data.get_test_data_history(db, device_id, limit=limit)

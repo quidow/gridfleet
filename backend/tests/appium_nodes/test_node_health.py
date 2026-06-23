@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services import node_health as node_health
+from app.appium_nodes.services import node_health
 from app.appium_nodes.services.node_health import NodeHealthLoop, NodeHealthService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError

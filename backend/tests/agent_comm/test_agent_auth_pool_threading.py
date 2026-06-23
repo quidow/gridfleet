@@ -23,13 +23,18 @@ from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler import ReconcilerService
-from app.appium_nodes.services.reconciler_agent import RemoteStartResult, start_remote_node, stop_remote_node
+from app.appium_nodes.services.reconciler_agent import (
+    AgentTransport,
+    RemoteStartResult,
+    start_remote_node,
+    stop_remote_node,
+)
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import connectivity as device_connectivity
 from app.packs.services import discovery as pack_discovery
 from app.packs.services.discovery import PackDiscoveryService
 from app.verification.services import execution as verification_execution
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
@@ -116,14 +121,12 @@ async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPa
     await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=settings,
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=settings, circuit_breaker=Mock(), pool=pool),
         crud=AsyncMock(),
         viability=Mock(),
         capability=Mock(),
         reconciler=AsyncMock(),
         node_manager=AsyncMock(),
-        pool=pool,
     ).run_device_health({"stages": []}, device, http_client_factory=MagicMock())
 
     assert fetch.await_args.kwargs["pool"] is pool
@@ -237,7 +240,7 @@ async def test_start_for_node_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> 
         AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock(), pool=pool
     )
 
-    assert start_mock.await_args.kwargs["pool"] is pool
+    assert start_mock.await_args.kwargs["transport"].pool is pool
 
 
 async def test_start_remote_node_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -268,10 +271,8 @@ async def test_start_remote_node_forwards_pool(monkeypatch: pytest.MonkeyPatch) 
         port=4723,
         allocated_caps=None,
         agent_base="http://10.0.0.10:5100",
-        http_client_factory=AsyncMock(),
+        transport=AgentTransport(http_client_factory=AsyncMock(), circuit_breaker=Mock(), pool=pool),
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
-        circuit_breaker=Mock(),
-        pool=pool,
     )
 
     assert start_mock.await_args.kwargs["pool"] is pool

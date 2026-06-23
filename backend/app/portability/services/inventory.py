@@ -40,18 +40,8 @@ def _csv_safe(value: str) -> str:
     return value
 
 
-def _column_value(device: Device, column: InventoryColumn) -> object:
-    v = column.value
-    if v == "host.id":
-        return str(device.host.id) if device.host else None
-    if v == "host.hostname":
-        return device.host.hostname if device.host else None
-    if v == "identity.scheme":
-        return device.identity_scheme
-    if v == "identity.scope":
-        return device.identity_scope
-    if v == "identity.value":
-        return device.identity_value
+def _prefixed_attr_value(device: Device, v: str) -> object:
+    """Resolve dotted hardware.*/verification.* columns via their model-attribute mapping."""
     if v.startswith("hardware."):
         attr = {
             "hardware.battery_level_percent": "battery_level_percent",
@@ -61,14 +51,34 @@ def _column_value(device: Device, column: InventoryColumn) -> object:
             "hardware.telemetry_reported_at": "hardware_telemetry_reported_at",
         }[v]
         return getattr(device, attr)
-    if v.startswith("verification."):
-        attr = {
-            "verification.verified_at": "verified_at",
-            "verification.session_viability_status": "session_viability_status",
-            "verification.device_checks_healthy": "device_checks_healthy",
-            "verification.device_checks_checked_at": "device_checks_checked_at",
-        }[v]
-        return getattr(device, attr)
+    attr = {
+        "verification.verified_at": "verified_at",
+        "verification.session_viability_status": "session_viability_status",
+        "verification.device_checks_healthy": "device_checks_healthy",
+        "verification.device_checks_checked_at": "device_checks_checked_at",
+    }[v]
+    return getattr(device, attr)
+
+
+def _host_column_value(device: Device, v: str) -> object:
+    """Resolve host.* columns, tolerating a missing host relationship."""
+    if v == "host.id":
+        return str(device.host.id) if device.host else None
+    return device.host.hostname if device.host else None
+
+
+def _column_value(device: Device, column: InventoryColumn) -> object:
+    v = column.value
+    if v in ("host.id", "host.hostname"):
+        return _host_column_value(device, v)
+    if v == "identity.scheme":
+        return device.identity_scheme
+    if v == "identity.scope":
+        return device.identity_scope
+    if v == "identity.value":
+        return device.identity_value
+    if v.startswith(("hardware.", "verification.")):
+        return _prefixed_attr_value(device, v)
     return getattr(device, v)
 
 

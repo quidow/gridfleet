@@ -32,6 +32,7 @@ def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any], *, publis
 
 if TYPE_CHECKING:
     from app.core.type_defs import SettingValue
+    from app.settings.registry import SettingDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,87 @@ def validate_leader_keepalive_settings(*, keepalive_interval_sec: int, stale_thr
             "general.leader_keepalive_interval_sec "
             f"({minimum_stale_threshold}s for the current keepalive interval)"
         )
+    return None
+
+
+def _validate_int(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return f"Expected integer for {key}, got {type(value).__name__}"
+    if defn.min_value is not None and value < defn.min_value:
+        return f"Value {value} is below minimum {defn.min_value} for {key}"
+    if defn.max_value is not None and value > defn.max_value:
+        return f"Value {value} exceeds maximum {defn.max_value} for {key}"
+    return None
+
+
+def _validate_float(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return f"Expected float for {key}, got {type(value).__name__}"
+    fval = float(value)
+    if not math.isfinite(fval):
+        return f"Expected finite float for {key}, got {fval!r}"
+    if defn.min_value is not None and fval < defn.min_value:
+        return f"Value {fval} is below minimum {defn.min_value} for {key}"
+    if defn.max_value is not None and fval > defn.max_value:
+        return f"Value {fval} exceeds maximum {defn.max_value} for {key}"
+    return None
+
+
+def _validate_bool(key: str, value: SettingValue) -> str | None:
+    if not isinstance(value, bool):
+        return f"Expected boolean for {key}, got {type(value).__name__}"
+    return None
+
+
+def _validate_string(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
+    if not isinstance(value, str):
+        return f"Expected string for {key}, got {type(value).__name__}"
+    if defn.allowed_values and value not in defn.allowed_values:
+        return f"Value '{value}' not in allowed values {defn.allowed_values} for {key}"
+    return None
+
+
+def _validate_json_string_items(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
+    if not isinstance(value, list):
+        return f"Expected list for {key}, got {type(value).__name__}"
+    invalid_items = [item for item in value if not isinstance(item, str) or not item.strip()]
+    if invalid_items:
+        invalid_display = ", ".join(sorted({str(item) for item in invalid_items}))
+        return f"Invalid item(s) for {key}: {invalid_display}"
+    if defn.reject_item_prefixes:
+        rejected = [
+            item for item in value if any(item.strip().startswith(prefix) for prefix in defn.reject_item_prefixes or [])
+        ]
+        if rejected:
+            invalid_display = ", ".join(sorted({str(item) for item in rejected}))
+            return f"Invalid item(s) for {key}: {invalid_display}"
+    return None
+
+
+def _validate_json_allowed_items(key: str, value: SettingValue, allowed_values: list[str]) -> str | None:
+    if not isinstance(value, list):
+        return f"Expected list for {key}, got {type(value).__name__}"
+    invalid_items = [item for item in value if not isinstance(item, str) or item not in set(allowed_values)]
+    if invalid_items:
+        invalid_display = ", ".join(sorted({str(item) for item in invalid_items}))
+        return f"Unknown item(s) for {key}: {invalid_display}"
+    return None
+
+
+def _validate_json(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
+    # JSON values must be serializable (they already are if they got here via Pydantic)
+    try:
+        json.dumps(value)
+    except TypeError, ValueError:
+        return f"Value for {key} is not JSON-serializable"
+    if defn.json_list_item_type == "string":
+        error = _validate_json_string_items(key, value, defn)
+        if error:
+            return error
+    if defn.item_allowed_values is not None:
+        error = _validate_json_allowed_items(key, value, defn.item_allowed_values)
+        if error:
+            return error
     return None
 
 
@@ -177,66 +259,15 @@ class SettingsService:
         defn = SETTINGS_REGISTRY[key]
 
         if defn.setting_type == "int":
-            if not isinstance(value, int) or isinstance(value, bool):
-                return f"Expected integer for {key}, got {type(value).__name__}"
-            if defn.min_value is not None and value < defn.min_value:
-                return f"Value {value} is below minimum {defn.min_value} for {key}"
-            if defn.max_value is not None and value > defn.max_value:
-                return f"Value {value} exceeds maximum {defn.max_value} for {key}"
-
-        elif defn.setting_type == "float":
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                return f"Expected float for {key}, got {type(value).__name__}"
-            fval = float(value)
-            if not math.isfinite(fval):
-                return f"Expected finite float for {key}, got {fval!r}"
-            if defn.min_value is not None and fval < defn.min_value:
-                return f"Value {fval} is below minimum {defn.min_value} for {key}"
-            if defn.max_value is not None and fval > defn.max_value:
-                return f"Value {fval} exceeds maximum {defn.max_value} for {key}"
-
-        elif defn.setting_type == "bool":
-            if not isinstance(value, bool):
-                return f"Expected boolean for {key}, got {type(value).__name__}"
-
-        elif defn.setting_type == "string":
-            if not isinstance(value, str):
-                return f"Expected string for {key}, got {type(value).__name__}"
-            if defn.allowed_values and value not in defn.allowed_values:
-                return f"Value '{value}' not in allowed values {defn.allowed_values} for {key}"
-
-        elif defn.setting_type == "json":
-            # JSON values must be serializable (they already are if they got here via Pydantic)
-            try:
-                json.dumps(value)
-            except TypeError, ValueError:
-                return f"Value for {key} is not JSON-serializable"
-            if defn.json_list_item_type == "string":
-                if not isinstance(value, list):
-                    return f"Expected list for {key}, got {type(value).__name__}"
-                invalid_items = [item for item in value if not isinstance(item, str) or not item.strip()]
-                if invalid_items:
-                    invalid_display = ", ".join(sorted({str(item) for item in invalid_items}))
-                    return f"Invalid item(s) for {key}: {invalid_display}"
-                if defn.reject_item_prefixes:
-                    rejected = [
-                        item
-                        for item in value
-                        if any(item.strip().startswith(prefix) for prefix in defn.reject_item_prefixes or [])
-                    ]
-                    if rejected:
-                        invalid_display = ", ".join(sorted({str(item) for item in rejected}))
-                        return f"Invalid item(s) for {key}: {invalid_display}"
-            if defn.item_allowed_values is not None:
-                if not isinstance(value, list):
-                    return f"Expected list for {key}, got {type(value).__name__}"
-                invalid_items = [
-                    item for item in value if not isinstance(item, str) or item not in set(defn.item_allowed_values)
-                ]
-                if invalid_items:
-                    invalid_display = ", ".join(sorted({str(item) for item in invalid_items}))
-                    return f"Unknown item(s) for {key}: {invalid_display}"
-
+            return _validate_int(key, value, defn)
+        if defn.setting_type == "float":
+            return _validate_float(key, value, defn)
+        if defn.setting_type == "bool":
+            return _validate_bool(key, value)
+        if defn.setting_type == "string":
+            return _validate_string(key, value, defn)
+        if defn.setting_type == "json":
+            return _validate_json(key, value, defn)
         return None
 
     def _validate_leader_keepalive_candidate(self, candidate: dict[str, SettingValue]) -> str | None:
