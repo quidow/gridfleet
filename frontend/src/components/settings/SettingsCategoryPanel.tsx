@@ -8,7 +8,7 @@ const CATEGORY_LABELS: Record<string, { title: string; description?: string }> =
   general: { title: 'General', description: 'Core health-check, session, and recovery timing.' },
   grid: { title: 'Appium & Allocation', description: 'Grid routing and Appium node configuration.' },
   notifications: { title: 'Notifications', description: 'Toast events and delivery settings.' },
-  devices: { title: 'Device Defaults', description: 'Default values applied when registering devices.' },
+  device_checks: { title: 'Device Checks', description: 'Health-probe thresholds and debounce behavior for device checks.' },
   agent: { title: 'Agent', description: 'Agent enrollment and heartbeat behavior.' },
   reservations: { title: 'Reservations', description: 'Run-default reservation settings.' },
   retention: { title: 'Data Retention', description: 'How long sessions, runs, and events are kept.' },

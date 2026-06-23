@@ -23,7 +23,7 @@ const displayNames: Record<string, string> = {
   general: 'General',
   grid: 'Appium & Allocation',
   notifications: 'Notifications',
-  devices: 'Device Defaults',
+  device_checks: 'Device Checks',
   agent: 'Agent',
   reservations: 'Reservations',
   retention: 'Data Retention',
@@ -113,6 +113,15 @@ function createSettingsState(): MockSetting[] {
       default_value: 30,
       value: 30,
       validation: { min: 1, max: 365 },
+    },
+    {
+      key: 'device_checks.ip_ping.consecutive_fail_threshold',
+      category: 'device_checks',
+      type: 'int',
+      description: 'Consecutive ICMP-ping misses before a device is marked unhealthy.',
+      default_value: 3,
+      value: 3,
+      validation: { min: 1, max: 50 },
     },
   ];
 }
@@ -412,7 +421,7 @@ test.describe('Settings Page', () => {
       'General',
       'Appium & Allocation',
       'Agent',
-      'Device Defaults',
+      'Device Checks',
       'Reservations',
       'Data Retention',
       'Backup & Restore',
