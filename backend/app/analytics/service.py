@@ -14,6 +14,10 @@ from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.sessions.filters import exclude_non_success_metric_sessions, exclude_non_test_sessions
 from app.sessions.models import Session, SessionStatus
 
+# A device with more than this many incidents in the reporting window is flagged
+# as "needing attention" in the fleet overview.
+_ATTENTION_INCIDENT_THRESHOLD = 5
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -245,7 +249,7 @@ async def get_fleet_overview(
             ),
         )
         .group_by(DeviceEvent.device_id)
-        .having(func.count() > 5)
+        .having(func.count() > _ATTENTION_INCIDENT_THRESHOLD)
     )
     # Wrap to count the number of devices matching the having clause
     attention_result = await db.execute(select(func.count()).select_from(attention_stmt.subquery()))

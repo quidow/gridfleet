@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
@@ -493,7 +494,7 @@ def _classify_start_failure(exc: Exception) -> str:
         text = exc.response.text.lower() if exc.response is not None else ""
         if "already_running" in text:
             return "already_running"
-        if "port" in text or (exc.response is not None and exc.response.status_code == 409):
+        if "port" in text or (exc.response is not None and exc.response.status_code == HTTPStatus.CONFLICT):
             return "port_occupied"
     if isinstance(exc, httpx.HTTPError):
         return "http_error"

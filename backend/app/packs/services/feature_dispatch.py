@@ -14,6 +14,7 @@ treated as degraded.
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
@@ -260,9 +261,9 @@ class FeatureService:
             raise _AgentDispatchError(f"Agent transport error: {exc}") from exc
 
         status_code = response.status_code
-        if status_code >= 500:
+        if status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
             raise _AgentDispatchError(f"Agent feature action failed (HTTP {status_code})")
-        if status_code >= 400:
+        if status_code >= HTTPStatus.BAD_REQUEST:
             # 4xx from the agent is a permanent error — surface as failed dispatch.
             raise _AgentDispatchError(f"Agent rejected feature action (HTTP {status_code})")
 

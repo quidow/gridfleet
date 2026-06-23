@@ -1,6 +1,7 @@
 """Direct Appium HTTP operations (spec §6) — the only backend->Appium call site."""
 
 import logging
+from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
 
@@ -48,7 +49,7 @@ async def terminate_session(target: str, session_id: str, *, timeout: float = 10
     sid = quote(session_id, safe="")
     try:
         resp = await _get_client().delete(f"{target}/session/{sid}", timeout=timeout)
-        return resp.status_code == 404 or resp.is_success
+        return resp.status_code == HTTPStatus.NOT_FOUND or resp.is_success
     except httpx.HTTPError as exc:
         metrics_recorders.APPIUM_TERMINATE_FAILED_TOTAL.inc()
         logger.warning("appium_terminate_failed target=%s session=%s err=%s", target, sid, exc)
@@ -67,7 +68,7 @@ async def session_alive(target: str, session_id: str, *, timeout: float = 10.0) 
         return None
     if resp.is_success:
         return True
-    return False if resp.status_code == 404 else None
+    return False if resp.status_code == HTTPStatus.NOT_FOUND else None
 
 
 async def list_sessions(target: str, *, timeout: float = 10.0) -> list[str] | None:

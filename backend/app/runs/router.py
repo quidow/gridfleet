@@ -31,13 +31,16 @@ RUN_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESP
 
 router = APIRouter(prefix="/api/runs", tags=["runs"], responses=RUN_ERROR_RESPONSES)
 
+# Length of a bare "YYYY-MM-DD" date (no time component).
+_ISO_DATE_LENGTH = 10
+
 
 def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -> datetime | None:
     if value is None:
         return None
 
     parsed: datetime
-    if len(value) == 10:
+    if len(value) == _ISO_DATE_LENGTH:
         parsed_date = date.fromisoformat(value)
         parsed = datetime.combine(parsed_date, time.max if end_of_day else time.min, tzinfo=UTC)
     else:

@@ -264,6 +264,8 @@ class HostToolEnvRead(BaseModel):
 
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MAX_ENV_KEY_LEN = 256
+_MAX_ENV_VALUE_LEN = 4096
 
 
 class HostToolEnvUpdate(BaseModel):
@@ -275,10 +277,10 @@ class HostToolEnvUpdate(BaseModel):
         for key, value in v.items():
             if not _ENV_KEY_RE.match(key):
                 raise ValueError(f"invalid env var name (must be POSIX-safe): {key!r}")
-            if len(key) > 256:
-                raise ValueError(f"env var name exceeds 256 chars: {key[:32]}...")
-            if len(value) > 4096:
-                raise ValueError(f"env var value exceeds 4096 chars for key: {key}")
+            if len(key) > _MAX_ENV_KEY_LEN:
+                raise ValueError(f"env var name exceeds {_MAX_ENV_KEY_LEN} chars: {key[:32]}...")
+            if len(value) > _MAX_ENV_VALUE_LEN:
+                raise ValueError(f"env var value exceeds {_MAX_ENV_VALUE_LEN} chars for key: {key}")
             if "\x00" in value:
                 raise ValueError(f"env var value must not contain null bytes: {key}")
         return v

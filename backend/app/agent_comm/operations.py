@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final, cast
 from urllib.parse import quote
 
@@ -193,10 +194,10 @@ def _decode_model_payload_lenient(
     for other error statuses.
     """
     if require_200:
-        if response.status_code != 200:
+        if response.status_code != HTTPStatus.OK:
             return None
     else:
-        if none_on_404 and response.status_code == 404:
+        if none_on_404 and response.status_code == HTTPStatus.NOT_FOUND:
             return None
         _raise_for_status(response, host=host, action=action)
     try:
@@ -609,7 +610,7 @@ async def normalize_pack_device(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    if response.status_code == 404:
+    if response.status_code == HTTPStatus.NOT_FOUND:
         return None
     return _decode_model_payload(response, host=host, action="normalize pack device", model=NormalizeDeviceResponse)
 

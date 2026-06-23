@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from http import HTTPStatus
 from time import perf_counter
 from typing import TYPE_CHECKING, Protocol, Self, cast
 
@@ -152,7 +153,7 @@ async def request(
                 client_mode = "pooled_retried"
                 response = cast("httpx.Response", await requester(url, **request_kwargs))
         status_code = getattr(response, "status_code", None)
-        if isinstance(status_code, int) and status_code >= 500:
+        if isinstance(status_code, int) and status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
             outcome = "http_error"
             await circuit_breaker.record_failure(host, error=f"HTTP {status_code}")
         else:

@@ -64,7 +64,7 @@ target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0415", "PLR0402", "PLW0108"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0415", "PLR0402", "PLR2004", "PLW0108"]
 ignore = ["B008"]
 
 [tool.ruff.lint.flake8-type-checking]
@@ -99,7 +99,7 @@ runtime-evaluated-decorators = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["PLC0415"]  # tests often need lazy imports for fixture and patch ordering
+"tests/**" = ["PLC0415", "PLR2004"]  # tests: lazy imports for fixture/patch ordering; magic values (== 200, == 2) are idiomatic in assertions
 "tests/packs/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
 "app/agent_comm/generated.py" = ["ALL"]  # auto-generated — do not lint
 

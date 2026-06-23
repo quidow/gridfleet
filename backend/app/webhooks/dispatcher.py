@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import httpx2 as httpx
@@ -39,7 +40,7 @@ def _is_retryable_exception(exc: BaseException) -> bool:
     if isinstance(exc, httpx.NetworkError | httpx.TimeoutException):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
+        return exc.response.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
     return False
 
 

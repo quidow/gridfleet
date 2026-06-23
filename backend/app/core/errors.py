@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -174,17 +175,17 @@ def envelope_response(
 
 
 def _http_error_code(status_code: int) -> str:
-    if status_code == 401:
+    if status_code == HTTPStatus.UNAUTHORIZED:
         return "UNAUTHORIZED"
-    if status_code == 403:
+    if status_code == HTTPStatus.FORBIDDEN:
         return "FORBIDDEN"
-    if status_code == 404:
+    if status_code == HTTPStatus.NOT_FOUND:
         return "NOT_FOUND"
-    if status_code == 409:
+    if status_code == HTTPStatus.CONFLICT:
         return "CONFLICT"
-    if status_code in (400, 422):
+    if status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.UNPROCESSABLE_ENTITY):
         return "VALIDATION_ERROR"
-    if status_code == 503:
+    if status_code == HTTPStatus.SERVICE_UNAVAILABLE:
         return "SERVICE_UNAVAILABLE"
     return "HTTP_ERROR"
 

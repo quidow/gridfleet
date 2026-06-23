@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select, update
@@ -157,7 +158,7 @@ async def deliver_agent_reconfigures(
                     circuit_breaker=circuit_breaker,
                 )
         except (AgentUnreachableError, AgentResponseError) as exc:
-            if isinstance(exc, AgentResponseError) and exc.http_status == 404:
+            if isinstance(exc, AgentResponseError) and exc.http_status == HTTPStatus.NOT_FOUND:
                 # The reconfigure route's only 404 is DEVICE_NOT_FOUND: the agent
                 # authoritatively reports no managed Appium process on this port, so
                 # the row can never be delivered — consume it (a future start carries

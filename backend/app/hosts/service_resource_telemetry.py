@@ -30,6 +30,9 @@ logger = get_logger(__name__)
 LOOP_NAME = "host_resource_telemetry"
 agent_host_telemetry = agent_operations.agent_host_telemetry
 
+# Largest accepted telemetry bucket size: one day, expressed in minutes.
+_MAX_BUCKET_MINUTES = 1440
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -143,8 +146,8 @@ class HostResourceTelemetryService:
         retention_hours = self._settings.get_int("retention.host_resource_telemetry_hours")
         if since >= until:
             raise ValueError("since must be earlier than until")
-        if not 1 <= bucket_minutes <= 1440:
-            raise ValueError("bucket_minutes must be between 1 and 1440")
+        if not 1 <= bucket_minutes <= _MAX_BUCKET_MINUTES:
+            raise ValueError(f"bucket_minutes must be between 1 and {_MAX_BUCKET_MINUTES}")
         if _window_exceeds_retention(since=since, until=until, retention_hours=retention_hours):
             raise ValueError("requested window exceeds retention.host_resource_telemetry_hours")
 
