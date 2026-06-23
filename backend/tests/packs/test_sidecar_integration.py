@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.hosts.models import Host
+
 _status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 pytestmark = pytest.mark.asyncio
@@ -43,7 +45,7 @@ def pack_storage_root(tmp_path: Path) -> Path:
 async def test_uploaded_sidecar_pack_populates_feature_and_desired_state(
     client: AsyncClient,
     db_session: AsyncSession,
-    db_host,  # noqa: ANN001
+    db_host: Host,
 ) -> None:
     manifest_text = (Path(__file__).parent / "fixtures" / "sidecar_upload_pack" / "manifest.yaml").read_text()
     response = await client.post(

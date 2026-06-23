@@ -13,13 +13,15 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.hosts.models import Host
+
 _status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_desired_state_includes_manifest_features(db_session: AsyncSession, db_host) -> None:  # noqa: ANN001
+async def test_desired_state_includes_manifest_features(db_session: AsyncSession, db_host: Host) -> None:
     pack = DriverPack(
         id="uploaded-sidecar-pack",
         origin="uploaded",

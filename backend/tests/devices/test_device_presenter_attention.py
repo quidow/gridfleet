@@ -12,6 +12,7 @@ from app.devices.services.presenter import DevicePresenterService
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
+    import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
@@ -151,7 +152,7 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
     assert "reservation" in payload["derived"]
 
 
-async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch) -> None:  # noqa: ANN001
+async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: pytest.MonkeyPatch) -> None:
     with state_write_guard.bypass():
         _node = AppiumNode(
             id=uuid.uuid4(),

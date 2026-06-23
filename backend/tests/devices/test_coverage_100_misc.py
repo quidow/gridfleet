@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -109,6 +110,9 @@ from app.webhooks.schemas import WebhookUpdate
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 event_bus_mod = import_module("app.events.event_bus")
 
 
@@ -188,7 +192,7 @@ def test_device_readiness_effective_state_branches() -> None:
     )
 
 
-async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = AsyncMock()
     assert config_service._deep_merge({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
     audit_rows = [object()]
@@ -695,7 +699,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
 
 
-async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # noqa: ANN001
+async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     assert (
         appium_reconciler_agent._short_session_factory(SimpleNamespace(bind=None))
         is appium_reconciler_agent.async_session

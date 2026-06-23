@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import types
+from typing import TYPE_CHECKING
 
 import pytest
 
 from app.core.background_loop import BackgroundLoop
 from app.core.leader.advisory import LeadershipLost
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class _FakeSession:
@@ -42,7 +46,7 @@ class _RecordingLoop(BackgroundLoop):
     def _interval(self) -> float:
         return 0.0
 
-    async def _run_cycle(self, db) -> None:  # noqa: ANN001 - stub session
+    async def _run_cycle(self, db: AsyncSession) -> None:
         self.cycles += 1
         self.events.append("cycle")
         if self._fail_with is not None:
@@ -161,7 +165,7 @@ async def test_base_default_hooks_are_safe_noops() -> None:
         def _interval(self) -> float:
             return 0.0
 
-        async def _run_cycle(self, db) -> None:  # noqa: ANN001 - stub session
+        async def _run_cycle(self, db: AsyncSession) -> None:
             self.cycles += 1
             if self.cycles == 1:
                 raise ValueError("first cycle fails")
@@ -206,7 +210,7 @@ class _ClockLoop(_RecordingLoop):
     def _interval(self) -> float:
         return self._interval_seconds
 
-    async def _run_cycle(self, db) -> None:  # noqa: ANN001 - stub session
+    async def _run_cycle(self, db: AsyncSession) -> None:
         self.cycles += 1
         self.clock += self._cycle_cost
 
