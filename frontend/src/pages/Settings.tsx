@@ -12,7 +12,7 @@ const TABS = [
   { id: 'general', label: 'General', section: 'System' },
   { id: 'grid', label: 'Appium & Allocation', section: 'System' },
   { id: 'agent', label: 'Agent', section: 'System' },
-  { id: 'devices', label: 'Device Defaults', section: 'System' },
+  { id: 'device_checks', label: 'Device Checks', section: 'System' },
   { id: 'reservations', label: 'Reservations', section: 'System' },
   { id: 'retention', label: 'Data Retention', section: 'System' },
   { id: 'backup', label: 'Backup & Restore', section: 'System' },
