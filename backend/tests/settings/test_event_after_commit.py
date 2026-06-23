@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
+from typing import TYPE_CHECKING, Any
 
 from tests.conftest import settings_service
 from tests.helpers import settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_update_queues_settings_changed(

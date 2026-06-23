@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services.event import build_device_crashed_payload
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import build_review_service
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

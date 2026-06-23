@@ -16,12 +16,13 @@ node mid-create).
 
 from __future__ import annotations
 
-import uuid  # noqa: TC003 - used at runtime in the device_id-bound overload
 from typing import TYPE_CHECKING
 
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.sql.elements import ColumnElement
 
 _LIVE_STATUSES = (SessionStatus.running, SessionStatus.pending)

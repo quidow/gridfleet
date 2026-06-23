@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import event as sa_event
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session  # noqa: TC002
 
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published
@@ -27,6 +26,7 @@ from app.events.models import SystemEvent
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+    from sqlalchemy.orm import Session
 
     from app.events.protocols import EventPublisher
 

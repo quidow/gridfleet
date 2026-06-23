@@ -8,16 +8,18 @@ must now queue events on the session and dispatch only after the outer commit su
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import set_operational_state
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

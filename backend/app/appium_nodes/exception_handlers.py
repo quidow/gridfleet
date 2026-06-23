@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Request  # noqa: TC002 - FastAPI handler registration inspects annotations.
-from fastapi.responses import JSONResponse  # noqa: TC002 - FastAPI handler registration inspects annotations.
+from typing import TYPE_CHECKING
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import envelope_response
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
 
 
 def register(app: FastAPI) -> None:

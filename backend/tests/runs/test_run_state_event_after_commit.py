@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.runs.schemas import DeviceRequirement, RunCreate
 from app.runs.service_allocator import RunAllocatorService
@@ -18,6 +17,8 @@ from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.devices.models import Device
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")

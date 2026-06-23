@@ -5,12 +5,11 @@ import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - runtime use in helper signature
 
 from app.core.observability import get_logger
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
     from app.core.protocols import SettingsReader
 

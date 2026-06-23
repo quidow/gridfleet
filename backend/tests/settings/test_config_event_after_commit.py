@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
+from typing import TYPE_CHECKING, Any
 
 from app.hosts.schemas import HostRegister
 from app.hosts.service import HostCrudService
@@ -13,6 +11,9 @@ from app.settings.service_config import SettingsConfigService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 CAPS_V2 = {"orchestration_contract_version": 2}
 
