@@ -1,10 +1,10 @@
 import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx2 import ASGITransport, AsyncClient
 from starlette.responses import JSONResponse
-from starlette.types import Receive, Scope, Send
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.client import request as agent_request
@@ -16,6 +16,9 @@ from app.core.shutdown import shutdown_coordinator
 from app.main import app
 from app.packs.services.discovery import PackDiscoveryService
 from tests.helpers import create_host
+
+if TYPE_CHECKING:
+    from starlette.types import Receive, Scope, Send
 
 HOST_PAYLOAD = {
     "hostname": "phase65-host",

@@ -154,7 +154,7 @@ async def test_get_db_uses_async_session_context(monkeypatch: MonkeyPatch) -> No
     yielded = object()
 
     @asynccontextmanager
-    async def fake_async_session() -> AsyncGenerator[object, None]:
+    async def fake_async_session() -> AsyncGenerator[object]:
         yield yielded
 
     # The canonical async_session lookup happens in app.core.database.
@@ -174,11 +174,11 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
 
     class _Observation:
         @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[AsyncMock, None]:
+        async def cycle(self) -> AsyncGenerator[AsyncMock]:
             yield AsyncMock()
 
     @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[AsyncMock, None]:
+    async def fake_session() -> AsyncGenerator[AsyncMock]:
         yield AsyncMock()
 
     from types import SimpleNamespace

@@ -1,20 +1,24 @@
 import uuid
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import build_review_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 _actions = LifecyclePolicyActionsService(
     publisher=Mock(),

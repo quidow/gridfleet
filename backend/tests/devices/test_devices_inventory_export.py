@@ -1,8 +1,7 @@
 import json
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.portability.schemas import (
     DEFAULT_INVENTORY_COLUMNS,
@@ -11,6 +10,10 @@ from app.portability.schemas import (
 )
 from app.portability.services.inventory import InventoryExportService
 from tests.helpers import seed_host_and_device
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def test_inventory_column_enum_has_expected_dot_paths() -> None:

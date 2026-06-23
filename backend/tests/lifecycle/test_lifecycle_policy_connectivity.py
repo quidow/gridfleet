@@ -1,17 +1,16 @@
 """D1: connectivity loss must NOT exclude device from its active run."""
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_policy_state import write_state
-from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -20,6 +19,11 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import build_review_service
 from tests.fakes.settings import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

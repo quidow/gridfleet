@@ -1,9 +1,8 @@
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.services import (
     reconciler_agent as appium_reconciler_agent,
@@ -14,6 +13,9 @@ from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
 from tests.fakes import FakeSettingsReader
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class _FakeHost:

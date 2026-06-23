@@ -1,10 +1,9 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
@@ -17,6 +16,10 @@ from app.settings.models import ConfigAuditLog
 from tests.fakes import FakeSettingsReader
 from tests.helpers import recent_events
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:

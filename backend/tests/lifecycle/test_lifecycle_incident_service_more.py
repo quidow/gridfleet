@@ -1,13 +1,15 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
-
-import pytest
 
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.lifecycle.services import incidents
 from app.lifecycle.services.incidents import LifecycleIncidentService
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_lifecycle_incident_serialization_parse_fallbacks() -> None:

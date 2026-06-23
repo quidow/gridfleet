@@ -1,17 +1,20 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.services import presenter as device_presenter
 from app.devices.services import state_write_guard
 from app.devices.services.presenter import DevicePresenterService
-from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 
 async def test_serialize_device_includes_needs_attention(db_session: AsyncSession, db_host: Host) -> None:
@@ -126,7 +129,7 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
     ]
 
     class Result:
-        def scalars(self) -> "Result":
+        def scalars(self) -> Result:
             return self
 
         def all(self) -> list[DeviceIntent]:

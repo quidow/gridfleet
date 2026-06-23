@@ -1,15 +1,19 @@
 import asyncio
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.locking import lock_device, lock_devices
 from app.devices.models import DeviceOperationalState
 from app.devices.routers.helpers import get_device_for_update_or_404
-from app.hosts.models import Host
 from tests.helpers import create_device
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

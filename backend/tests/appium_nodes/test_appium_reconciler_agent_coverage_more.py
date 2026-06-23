@@ -1,12 +1,12 @@
 import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import httpx2 as httpx
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import (
     NodeAlreadyRunningError,
@@ -21,12 +21,16 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.hosts.models import Host
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.packs.services.start_shim import PackStartPayloadError
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -837,7 +841,7 @@ async def test_start_for_node_reserves_resources_and_derived_data(monkeypatch: p
     reserve_session.commit = AsyncMock()
 
     class SessionFactory:
-        def __call__(self) -> "SessionFactory":
+        def __call__(self) -> SessionFactory:
             return self
 
         async def __aenter__(self) -> AsyncMock:
@@ -898,7 +902,7 @@ async def test_start_for_node_skips_resource_port_gated_by_device_config(monkeyp
     reserve_session.commit = AsyncMock()
 
     class SessionFactory:
-        def __call__(self) -> "SessionFactory":
+        def __call__(self) -> SessionFactory:
             return self
 
         async def __aenter__(self) -> AsyncMock:
@@ -968,7 +972,7 @@ async def test_start_for_node_releases_stale_skip_when_excluded_claim(monkeypatc
     reserve_session.commit = AsyncMock()
 
     class SessionFactory:
-        def __call__(self) -> "SessionFactory":
+        def __call__(self) -> SessionFactory:
             return self
 
         async def __aenter__(self) -> AsyncMock:
@@ -1053,7 +1057,7 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
     reserve_session.commit = AsyncMock()
 
     class SessionFactory:
-        def __call__(self) -> "SessionFactory":
+        def __call__(self) -> SessionFactory:
             return self
 
         async def __aenter__(self) -> AsyncMock:
@@ -1099,7 +1103,7 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
     cleanup_session.commit = AsyncMock()
 
     class SessionFactory:
-        def __call__(self) -> "SessionFactory":
+        def __call__(self) -> SessionFactory:
             return self
 
         async def __aenter__(self) -> AsyncMock:
@@ -1146,7 +1150,7 @@ async def test_start_for_node_does_not_storm_ports_on_already_running(monkeypatc
     cleanup_session.commit = AsyncMock()
 
     class SessionFactory:
-        def __call__(self) -> "SessionFactory":
+        def __call__(self) -> SessionFactory:
             return self
 
         async def __aenter__(self) -> AsyncMock:

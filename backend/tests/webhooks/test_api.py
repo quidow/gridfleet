@@ -1,13 +1,14 @@
 import uuid
-from typing import Any
-
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any
 
 from app.events.models import SystemEvent
 from app.webhooks.models import WebhookDelivery
 from tests.helpers import drain_handlers
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 WEBHOOK_PAYLOAD = {
     "name": "CI Notifications",

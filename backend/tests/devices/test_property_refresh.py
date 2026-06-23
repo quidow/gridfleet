@@ -1,7 +1,7 @@
 import asyncio
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -27,6 +27,9 @@ from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices(
@@ -141,11 +144,11 @@ async def test_property_refresh_continues_after_device_failure(
 async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     class _Observation:
         @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[None, None]:
+        async def cycle(self) -> AsyncGenerator[None]:
             yield None
 
     @asynccontextmanager
-    async def _fake_session() -> AsyncGenerator[object, None]:
+    async def _fake_session() -> AsyncGenerator[object]:
         # The real session_factory is a sync callable returning an async context
         # manager; AsyncMock() here would make ``self._session_factory()`` a
         # coroutine, failing the ``async with`` before _run_cycle ever runs (so

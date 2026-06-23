@@ -1,12 +1,9 @@
-from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
@@ -19,6 +16,12 @@ from app.plugins.service import PluginService
 from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
+
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 HOST_PAYLOAD = {
     "hostname": "linux-lab-01",

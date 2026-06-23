@@ -1,12 +1,12 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
@@ -44,6 +44,9 @@ from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 RUN_FAILURES_MODULE = "app.runs.service_lifecycle_failures"
 RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"

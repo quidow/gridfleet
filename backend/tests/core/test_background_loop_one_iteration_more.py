@@ -40,10 +40,10 @@ from tests.helpers import test_event_bus as event_bus
 
 
 class _Cycle:
-    def cycle(self) -> "_Cycle":
+    def cycle(self) -> _Cycle:
         return self
 
-    async def __aenter__(self) -> "_Cycle":
+    async def __aenter__(self) -> _Cycle:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -51,7 +51,7 @@ class _Cycle:
 
 
 class _Session:
-    async def __aenter__(self) -> "_Session":
+    async def __aenter__(self) -> _Session:
         return self
 
     async def __aexit__(self, *args: object) -> None:

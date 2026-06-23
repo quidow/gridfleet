@@ -1,13 +1,10 @@
-import uuid
-from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentCallError
@@ -26,6 +23,12 @@ from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import get_connectivity_control_plane_state, track_previously_offline_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Callable, Coroutine
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

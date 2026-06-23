@@ -1,11 +1,14 @@
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.services.readiness import assess_device_async
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _make_device(

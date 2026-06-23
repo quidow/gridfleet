@@ -6,16 +6,19 @@ failed recovery retries). Explicit None keeps its 'clear' meaning.
 """
 
 from datetime import UTC, datetime
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.health_view import build_public_summary
-from app.hosts.models import Host
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 
 async def _seed_device_with_error_node(db_session: AsyncSession, db_host: Host, identity: str) -> Device:

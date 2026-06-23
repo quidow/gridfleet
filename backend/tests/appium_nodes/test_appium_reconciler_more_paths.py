@@ -83,7 +83,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
 
 async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *args: object) -> None:
@@ -153,7 +153,7 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
 
 async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *args: object) -> None:
@@ -243,17 +243,17 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
     import app.core.background_loop as background_loop
 
     class Cycle:
-        def cycle(self) -> "Cycle":
+        def cycle(self) -> Cycle:
             return self
 
-        async def __aenter__(self) -> "Cycle":
+        async def __aenter__(self) -> Cycle:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
             return None
 
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
@@ -281,7 +281,7 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
 
 async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pytest.MonkeyPatch) -> None:
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

@@ -1,15 +1,16 @@
 import csv
 import io
 from datetime import UTC, datetime, timedelta
-from typing import Any
-
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any
 
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 DEVICE_PAYLOAD = {
     "identity_value": "analytics-device-1",

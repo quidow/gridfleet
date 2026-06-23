@@ -1,18 +1,15 @@
 import uuid
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
-from app.hosts.models import Host
 from app.sessions import service_viability as session_viability
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -34,6 +31,13 @@ from tests.helpers import (
     set_session_viability_control_plane_entry,
 )
 from tests.helpers import test_event_bus as _test_event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

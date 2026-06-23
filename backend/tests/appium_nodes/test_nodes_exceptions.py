@@ -1,12 +1,10 @@
 """Phase 2: narrowed exception handling in nodes router (Sites 1 & 2)."""
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pytest
 import pytest_asyncio
 from httpx2 import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
@@ -15,6 +13,12 @@ from app.devices.services import state_write_guard
 from app.main import app
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 HOST_PAYLOAD = {
     "hostname": "nodes-exc-host",
@@ -118,9 +122,7 @@ async def test_start_node_unexpected_exception_bubbles_to_500(
 
     monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
 
-    from collections.abc import AsyncGenerator
-
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db

@@ -1,11 +1,15 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _make_payload(host_id: str) -> dict:

@@ -1,21 +1,25 @@
 """D3: exit_maintenance must enqueue a recovery job."""
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services.maintenance import MaintenanceService
-from app.hosts.models import Host
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

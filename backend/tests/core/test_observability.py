@@ -1,11 +1,10 @@
 import json
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import httpx2 as httpx
-import pytest
 import structlog
 from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.client import request as agent_request
 from app.core.health import check_readiness
@@ -21,6 +20,10 @@ from app.core.observability import (
 )
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_ready_loop_snapshots
+
+if TYPE_CHECKING:
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_health_live_returns_ok_and_request_id(client: AsyncClient) -> None:

@@ -1,12 +1,17 @@
+from typing import TYPE_CHECKING
+
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceTestDataAuditLog
 from app.devices.services.test_data import TestDataService
-from app.hosts.models import Host
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.db
 

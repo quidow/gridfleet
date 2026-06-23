@@ -1,5 +1,6 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.packs.services.capability import (
     _device_field_defaults,
@@ -12,6 +13,9 @@ from app.packs.services.capability import (
 )
 from app.packs.services.platform_resolver import resolve_pack_platform
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.asyncio

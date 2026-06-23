@@ -93,14 +93,14 @@ def test_pack_ingest_manifest_extraction_read_boundaries(monkeypatch: pytest.Mon
         pack_ingest_service._extract_limited_manifest(MissingFileTar(), member)  # type: ignore[arg-type]
 
     class BigHandle(io.BytesIO):
-        def __enter__(self) -> "BigHandle":
+        def __enter__(self) -> BigHandle:
             return self
 
         def __exit__(self, *_args: object) -> None:
             return None
 
     class BigReadTar:
-        def extractfile(self, _member: tarfile.TarInfo) -> "BigHandle":
+        def extractfile(self, _member: tarfile.TarInfo) -> BigHandle:
             return BigHandle(b"xx")
 
     monkeypatch.setattr(pack_ingest_service, "MAX_PACK_MANIFEST_BYTES", 1)

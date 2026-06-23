@@ -1,13 +1,12 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.probe_result import ProbeResult
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import (
@@ -16,6 +15,11 @@ from app.sessions.service_probes import (
     map_probe_result_to_status,
     record_probe_session,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 
 async def _make_device(db_session: AsyncSession, db_host: Host, suffix: str) -> Device:

@@ -1,7 +1,7 @@
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceType
 from app.packs.services.start_shim import (
@@ -11,6 +11,9 @@ from app.packs.services.start_shim import (
     resolve_pack_for_device,
 )
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _has_session_discovery(features: list[str]) -> bool:

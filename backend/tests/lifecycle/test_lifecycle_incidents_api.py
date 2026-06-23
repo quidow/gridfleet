@@ -1,11 +1,12 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
-
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any, cast
 
 from app.devices.models import DeviceEvent, DeviceEventType
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 DEVICE_PAYLOAD = {
     "identity_value": "lifecycle-api-device-1",

@@ -42,7 +42,7 @@ async def test_settings_service_event_refresh_and_cancel_paths(monkeypatch: pyte
     assert service._refresh_task is None
 
     class _Session:
-        async def __aenter__(self) -> "_Session":
+        async def __aenter__(self) -> _Session:
             return self
 
         async def __aexit__(self, *args: object) -> None:
@@ -67,7 +67,7 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     service = settings_module.SettingsService()
 
     class EmptyResult:
-        def scalars(self) -> "EmptyResult":
+        def scalars(self) -> EmptyResult:
             return self
 
         def all(self) -> list[object]:

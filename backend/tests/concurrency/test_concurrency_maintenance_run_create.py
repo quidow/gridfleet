@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -25,7 +25,6 @@ from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
-from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.main import app
@@ -44,6 +43,11 @@ from tests.conftest import settings_service, test_circuit_breaker
 from tests.fakes import build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

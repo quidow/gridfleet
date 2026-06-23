@@ -1,8 +1,8 @@
 import asyncio
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
@@ -13,6 +13,9 @@ from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _settings = FakeSettingsReader({})
 _allocator_svc = RunAllocatorService(

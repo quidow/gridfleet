@@ -1,15 +1,19 @@
 import base64
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import jwt as _pyjwt
 import pytest
-from httpx2 import AsyncClient
 from pydantic import ValidationError
 from starlette.datastructures import Headers
 
 from app.auth import auth_settings as settings
 from app.auth import service as auth
 from app.auth.config import AuthConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from httpx2 import AsyncClient
 
 HOST_PAYLOAD = {
     "hostname": "auth-host-01",

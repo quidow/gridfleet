@@ -1,7 +1,7 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from httpx2 import AsyncClient
 from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.portability.schemas import (
     ExportBundle,
@@ -10,6 +10,10 @@ from app.portability.schemas import (
     ImportRowStatus,
     OriginalHost,
 )
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def test_exported_device_strict_extra_forbid() -> None:

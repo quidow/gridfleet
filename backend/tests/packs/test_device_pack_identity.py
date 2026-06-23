@@ -1,12 +1,16 @@
 import uuid
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import exc
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.hosts.models import Host, HostStatus, OSType
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.fixture

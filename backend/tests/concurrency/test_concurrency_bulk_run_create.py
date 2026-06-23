@@ -1,6 +1,6 @@
 # backend/tests/test_concurrency_bulk_run_create.py
 import asyncio
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -44,6 +44,9 @@ from tests.conftest import settings_service, test_circuit_breaker
 from tests.fakes import build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 pytestmark = pytest.mark.asyncio
 

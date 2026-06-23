@@ -1,8 +1,11 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.services.readiness import assess_device_from_required_fields
-from app.hosts.models import Host
+
+if TYPE_CHECKING:
+    from app.hosts.models import Host
 
 
 def test_assess_device_from_required_fields_reports_missing_session_field(db_host: Host) -> None:

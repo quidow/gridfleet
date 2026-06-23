@@ -1,9 +1,9 @@
 import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import DeviceReservation
 from app.runs import service as run_service
@@ -13,6 +13,9 @@ from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _settings = FakeSettingsReader({})
 _release_svc = RunReleaseService(

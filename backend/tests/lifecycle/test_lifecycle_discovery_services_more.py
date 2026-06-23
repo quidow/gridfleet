@@ -1,14 +1,11 @@
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
-
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.presenter import DevicePresenterService
-from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.lifecycle.services import incidents
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -16,6 +13,12 @@ from app.packs.services import discovery as discovery
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 
 async def test_lifecycle_incident_record_serialize_and_paginate(

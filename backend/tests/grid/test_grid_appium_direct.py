@@ -1,11 +1,15 @@
 """Tests for direct backend->Appium HTTP helpers (spec §6)."""
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import httpx2 as httpx
-import pytest
 
 from app.grid import appium_direct
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pytest
 
 TARGET = "http://appium-host:4723"
 

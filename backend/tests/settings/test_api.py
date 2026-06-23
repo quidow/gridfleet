@@ -1,9 +1,13 @@
-from httpx2 import AsyncClient
+from typing import TYPE_CHECKING
+
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings.models import Setting
 from tests.conftest import settings_service
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_list_settings(client: AsyncClient) -> None:

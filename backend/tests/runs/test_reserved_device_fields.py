@@ -7,18 +7,22 @@ get_device_reservation_with_entry not loading reserved-device rows (N+1 guard).
 """
 
 import contextlib
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
 from app.runs import service as run_service
 from app.runs.service_allocator import _build_device_info
 from tests.helpers import create_device, create_reserved_run
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

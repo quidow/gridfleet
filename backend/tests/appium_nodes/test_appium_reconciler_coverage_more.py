@@ -1,12 +1,12 @@
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import httpx2 as httpx
 import pytest
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -18,6 +18,9 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _desired_row(**overrides: object) -> DesiredRow:
@@ -209,7 +212,7 @@ async def test_start_agent_does_not_record_failure_on_already_running(monkeypatc
     ``_start`` closure must re-raise it without tripping recovery backoff."""
 
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
@@ -291,7 +294,7 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
     )
 
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import HardwareChargingState, HardwareHealthStatus, HardwareTelemetrySupportStatus
 from app.hosts import service_hardware_telemetry as hardware_telemetry
@@ -9,6 +8,9 @@ from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, drain_handlers, seed_host_named
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSession) -> None:

@@ -1,12 +1,11 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from httpx2 import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import Device
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
@@ -22,6 +21,10 @@ from app.portability.services.hash import compute_bundle_hash
 from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
 from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _bundle(devices: list[ExportedDevice]) -> ExportBundle:

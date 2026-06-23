@@ -1,12 +1,16 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import Device
 from app.sessions import service_kill
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.models import Device
 
 
 async def _device(db_session: AsyncSession, host_id: str) -> Device:

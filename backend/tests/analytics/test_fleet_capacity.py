@@ -1,10 +1,9 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -20,6 +19,10 @@ from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, create_reservation
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def test_align_window_to_buckets_pads_partial_bounds() -> None:

@@ -1,15 +1,13 @@
 import contextlib
 import uuid
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
-from httpx2 import AsyncClient
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -19,13 +17,20 @@ from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host, seed_ready_loop_snapshots
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 DEVICE_PAYLOAD = {
     "identity_value": "emulator-5554",

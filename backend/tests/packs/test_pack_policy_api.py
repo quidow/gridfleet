@@ -1,5 +1,9 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from httpx2 import AsyncClient
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 

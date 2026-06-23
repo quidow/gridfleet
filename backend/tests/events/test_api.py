@@ -1,13 +1,11 @@
 import asyncio
 import json
-from collections.abc import AsyncGenerator
 from contextlib import suppress
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
@@ -19,9 +17,14 @@ from app.verification.services.service import VerificationService
 from tests.helpers import reset_event_bus, store_verification_job_for_test
 from tests.helpers import test_event_bus as event_bus
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
-def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:
-    return cast("AsyncGenerator[dict[str, str], None]", body_iterator)
+    from httpx2 import AsyncClient
+
+
+def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str]]:
+    return cast("AsyncGenerator[dict[str, str]]", body_iterator)
 
 
 @pytest.fixture(autouse=True)
