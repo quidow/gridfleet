@@ -183,10 +183,11 @@ async def mark_node_started(
     *,
     port: int,
     pid: int | None,
-    details: NodeStartDetails = NodeStartDetails(),
+    details: NodeStartDetails | None = None,
     publisher: EventPublisher,
     settings: SettingsReader,
 ) -> AppiumNode:
+    details = details or NodeStartDetails()
     device = await _hold_device_row_lock(db, device.id)
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     active_connection_target = details.active_connection_target or appium_connection_target(device)
