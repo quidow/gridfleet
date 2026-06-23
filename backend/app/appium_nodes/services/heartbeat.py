@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -309,6 +310,171 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
     )
 
 
+def _collect_restart_candidate_events(raw_events: list[Any], *, last_sequence: int) -> list[dict[str, Any]]:
+    candidate_events: list[dict[str, Any]] = []
+    for raw_event in raw_events:
+        if not isinstance(raw_event, dict):
+            continue
+        sequence = _coerce_int(raw_event.get("sequence"))
+        port = _coerce_int(raw_event.get("port"))
+        kind = raw_event.get("kind")
+        if sequence is None or sequence <= last_sequence or port is None:
+            continue
+        if not isinstance(kind, str) or kind not in APPIUM_RESTART_EVENT_KINDS:
+            continue
+        candidate_events.append(raw_event)
+    return candidate_events
+
+
+@dataclass(frozen=True, slots=True)
+class _RestartEventFields:
+    sequence: int
+    process: str
+    kind: str
+    attempt: int
+    port: int
+    will_retry: bool
+    delay_sec: int | None
+    exit_code: int | None
+    pid: int | None
+
+
+def _build_restart_event_details(event: dict[str, Any], fields: _RestartEventFields) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "source": "agent_local_restart",
+        "sequence": fields.sequence,
+        "process": fields.process,
+        "kind": fields.kind,
+        "attempt": fields.attempt,
+        "port": fields.port,
+        "will_restart": fields.will_retry,
+    }
+    if fields.delay_sec is not None:
+        details["delay_sec"] = fields.delay_sec
+    if fields.exit_code is not None:
+        details["exit_code"] = fields.exit_code
+    if fields.pid is not None:
+        details["pid"] = fields.pid
+    occurred_at = event.get("occurred_at")
+    if isinstance(occurred_at, str):
+        details["occurred_at"] = occurred_at
+    return details
+
+
+async def _handle_restart_succeeded(
+    db: AsyncSession,
+    device: Device,
+    locked_node: AppiumNode,
+    *,
+    process: str,
+    pid: int | None,
+    port: int,
+    details: dict[str, Any],
+    publisher: EventPublisher,
+) -> None:
+    if process == "appium" and pid is not None:
+        locked_node.pid = pid
+        # Eager-fill the node-viability marker (I11/N15). A reconciler poll that
+        # observed the crash window may have nulled active_connection_target; the
+        # agent has now confirmed the node is back, so restore it immediately rather
+        # than waiting for the next reconciler poll to refill it — otherwise the
+        # device reads ``available`` but fails the allocator's node_viable_predicate
+        # (pid + active_connection_target set, no transition_token) for up to one
+        # reconciler interval. The value is a liveness marker only (routing uses
+        # host.ip + node.port via node_target); the reconciler reconciles it to the
+        # agent-reported connection_target on its next poll. Only fill when null so a
+        # live value the reconciler already wrote is never churned.
+        if locked_node.active_connection_target is None:
+            locked_node.active_connection_target = appium_connection_target(device)
+    locked_node.consecutive_health_failures = 0
+    if process == "appium":
+        publisher.queue_for_session(
+            db,
+            "node.state_changed",
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "old_state": "error",
+                "new_state": "running",
+                "port": port,
+            },
+            severity=node_state_severity("error", "running"),
+        )
+    await record_event(
+        db,
+        device.id,
+        DeviceEventType.node_restart,
+        {
+            **details,
+            "recovered_from": "agent_auto_restart",
+        },
+    )
+    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+        db,
+        device,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
+
+
+async def _handle_restart_failure(
+    db: AsyncSession,
+    device: Device,
+    *,
+    kind: str,
+    exit_code: int | None,
+    process: str,
+    will_retry: bool,
+    details: dict[str, Any],
+    publisher: EventPublisher,
+) -> None:
+    error_message = _restart_error_message(kind, exit_code)
+    publisher.queue_for_session(
+        db,
+        "node.crash",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "error": error_message,
+            "will_restart": will_retry,
+            "process": process,
+        },
+        severity="warning" if will_retry else None,
+    )
+    publisher.queue_for_session(
+        db,
+        "device.crashed",
+        build_device_crashed_payload(
+            device_id=str(device.id),
+            device_name=device.name,
+            source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
+            reason=error_message,
+            will_restart=will_retry,
+            process=process,
+        ),
+        severity="warning" if will_retry else None,
+    )
+    await record_event(
+        db,
+        device.id,
+        DeviceEventType.node_crash,
+        {
+            **details,
+            "error": error_message,
+        },
+    )
+    degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
+    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+        db,
+        device,
+        health_running=False,
+        health_state=degraded_state,
+        mark_offline=False,
+        reason=error_message,
+    )
+
+
 async def _ingest_appium_restart_events(
     db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventPublisher
 ) -> None:
@@ -325,18 +491,7 @@ async def _ingest_appium_restart_events(
         _coerce_int(await control_plane_state_store.get_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key)) or 0
     )
 
-    candidate_events: list[dict[str, Any]] = []
-    for raw_event in raw_events:
-        if not isinstance(raw_event, dict):
-            continue
-        sequence = _coerce_int(raw_event.get("sequence"))
-        port = _coerce_int(raw_event.get("port"))
-        kind = raw_event.get("kind")
-        if sequence is None or sequence <= last_sequence or port is None:
-            continue
-        if not isinstance(kind, str) or kind not in APPIUM_RESTART_EVENT_KINDS:
-            continue
-        candidate_events.append(raw_event)
+    candidate_events = _collect_restart_candidate_events(raw_events, last_sequence=last_sequence)
 
     if not candidate_events:
         return
@@ -394,118 +549,53 @@ async def _ingest_appium_restart_events(
         pid = _coerce_int(event.get("pid"))
         will_retry = bool(event.get("will_retry"))
 
-        details = {
-            "source": "agent_local_restart",
-            "sequence": sequence,
-            "process": process,
-            "kind": kind,
-            "attempt": attempt,
-            "port": port,
-            "will_restart": will_retry,
-        }
-        if delay_sec is not None:
-            details["delay_sec"] = delay_sec
-        if exit_code is not None:
-            details["exit_code"] = exit_code
-        if pid is not None:
-            details["pid"] = pid
-        occurred_at = event.get("occurred_at")
-        if isinstance(occurred_at, str):
-            details["occurred_at"] = occurred_at
+        details = _build_restart_event_details(
+            event,
+            _RestartEventFields(
+                sequence=sequence,
+                process=process,
+                kind=kind,
+                attempt=attempt,
+                port=port,
+                will_retry=will_retry,
+                delay_sec=delay_sec,
+                exit_code=exit_code,
+                pid=pid,
+            ),
+        )
 
         if kind == "restart_succeeded":
-            if process == "appium" and pid is not None:
-                locked_node.pid = pid
-                # Eager-fill the node-viability marker (I11/N15). A reconciler poll that
-                # observed the crash window may have nulled active_connection_target; the
-                # agent has now confirmed the node is back, so restore it immediately rather
-                # than waiting for the next reconciler poll to refill it — otherwise the
-                # device reads ``available`` but fails the allocator's node_viable_predicate
-                # (pid + active_connection_target set, no transition_token) for up to one
-                # reconciler interval. The value is a liveness marker only (routing uses
-                # host.ip + node.port via node_target); the reconciler reconciles it to the
-                # agent-reported connection_target on its next poll. Only fill when null so a
-                # live value the reconciler already wrote is never churned.
-                if locked_node.active_connection_target is None:
-                    locked_node.active_connection_target = appium_connection_target(device)
-            locked_node.consecutive_health_failures = 0
-            if process == "appium":
-                publisher.queue_for_session(
-                    db,
-                    "node.state_changed",
-                    {
-                        "device_id": str(device.id),
-                        "device_name": device.name,
-                        "old_state": "error",
-                        "new_state": "running",
-                        "port": port,
-                    },
-                    severity=node_state_severity("error", "running"),
-                )
-            await record_event(
-                db,
-                device.id,
-                DeviceEventType.node_restart,
-                {
-                    **details,
-                    "recovered_from": "agent_auto_restart",
-                },
-            )
-            await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+            await _handle_restart_succeeded(
                 db,
                 device,
-                health_running=None,
-                health_state=None,
-                mark_offline=False,
+                locked_node,
+                process=process,
+                pid=pid,
+                port=port,
+                details=details,
+                publisher=publisher,
             )
             continue
 
-        error_message = _restart_error_message(kind, exit_code)
-        publisher.queue_for_session(
-            db,
-            "node.crash",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "error": error_message,
-                "will_restart": will_retry,
-                "process": process,
-            },
-            severity="warning" if will_retry else None,
-        )
-        publisher.queue_for_session(
-            db,
-            "device.crashed",
-            build_device_crashed_payload(
-                device_id=str(device.id),
-                device_name=device.name,
-                source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
-                reason=error_message,
-                will_restart=will_retry,
-                process=process,
-            ),
-            severity="warning" if will_retry else None,
-        )
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.node_crash,
-            {
-                **details,
-                "error": error_message,
-            },
-        )
-        degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
-        await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+        await _handle_restart_failure(
             db,
             device,
-            health_running=False,
-            health_state=degraded_state,
-            mark_offline=False,
-            reason=error_message,
+            kind=kind,
+            exit_code=exit_code,
+            process=process,
+            will_retry=will_retry,
+            details=details,
+            publisher=publisher,
         )
 
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
+
+
+@dataclass(frozen=True, slots=True)
+class _ResumeGuard:
+    active: bool
+    gap_sec: float | None = None
+    threshold_sec: float | None = None
 
 
 async def _apply_host_ping_result(
@@ -513,9 +603,7 @@ async def _apply_host_ping_result(
     host: Host,
     result: HeartbeatPingResult,
     *,
-    guard_active: bool,
-    guard_gap_sec: float | None = None,
-    guard_threshold_sec: float | None = None,
+    guard: _ResumeGuard,
     publisher: EventPublisher,
     settings: SettingsReader,
     on_host_recovered: AsyncTaskFactory | None = None,
@@ -523,13 +611,13 @@ async def _apply_host_ping_result(
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
     Pre-conditions: caller has already emitted the structured log and the heartbeat metric.
-    When guard_active=True, caller MUST also supply guard_gap_sec and guard_threshold_sec
+    When guard.active=True, caller MUST also supply guard.gap_sec and guard.threshold_sec
     so the swallowed-miss log carries diagnostic context.
     Post-conditions: caller commits the session.
     """
-    if guard_active and (guard_gap_sec is None or guard_threshold_sec is None):
+    if guard.active and (guard.gap_sec is None or guard.threshold_sec is None):
         raise AssertionError(
-            "_apply_host_ping_result: guard_active=True requires guard_gap_sec and guard_threshold_sec"
+            "_apply_host_ping_result: guard.active=True requires guard.gap_sec and guard.threshold_sec"
         )
     host_key = str(host.id)
     health_data = result.payload
@@ -564,12 +652,12 @@ async def _apply_host_ping_result(
             await _ingest_appium_restart_events(db, host, health_data, publisher=publisher)
         return
 
-    if guard_active:
+    if guard.active:
         logger.warning(
             "heartbeat_resume_guard_swallowed_miss",
             host_id=str(host.id),
-            gap_sec=guard_gap_sec,
-            threshold_sec=guard_threshold_sec,
+            gap_sec=guard.gap_sec,
+            threshold_sec=guard.threshold_sec,
         )
         return
 
@@ -682,6 +770,7 @@ class HeartbeatService:
         self._last_cycle_monotonic = now_mono
         guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
         guard_threshold_sec = interval * max_missed
+        resume_guard = _ResumeGuard(active=guard_active, gap_sec=guard_gap_sec, threshold_sec=guard_threshold_sec)
 
         stmt = select(Host.id).where(Host.status != HostStatus.pending)
         host_ids = list((await db.execute(stmt)).scalars().all())
@@ -721,9 +810,7 @@ class HeartbeatService:
                             host_db,
                             host,
                             ping_result,
-                            guard_active=guard_active,
-                            guard_gap_sec=guard_gap_sec,
-                            guard_threshold_sec=guard_threshold_sec,
+                            guard=resume_guard,
                             publisher=self._publisher,
                             settings=self._settings,
                             on_host_recovered=self._auto_sync_plugins_on_recovery,

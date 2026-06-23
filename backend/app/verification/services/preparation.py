@@ -150,23 +150,9 @@ class VerificationPreparationService:
         http_client_factory: AgentClientFactory,
     ) -> tuple[PreparedVerificationContext | None, str | None]:
         await set_stage(job, "validation", "running")
-        existing = await self._crud.get_device(db, device_id)
+        existing, precondition_error = await self._check_update_preconditions(db, device_id)
         if existing is None:
-            return await _validation_failed(job, "Device was not found")
-
-        # Spec §14.1: verification tears down the client-serving node, so it must
-        # never run on a device with a live session. The router rejects this with a
-        # 409; this guard closes the enqueue→run TOCTOU window (a session that starts
-        # after the request was accepted) by failing the job instead.
-        if await device_has_running_session(db, existing.id):
-            return await _validation_failed(job, "Device has a live session; verification cannot run during a session")
-
-        # Spec/N13b: the verification node-start path revokes the sticky operator:stop. The
-        # router rejects this with a 409; this guard closes the enqueue→run TOCTOU window (an
-        # operator stop registered after the request was accepted) so a verify never silently
-        # revives an operator-stopped device.
-        if await operator_stop_active(db, existing.id):
-            return await _validation_failed(job, "Device is operator-stopped; start the node before verifying")
+            return await _validation_failed(job, precondition_error or "Device was not found")
 
         try:
             payload = await device_write.prepare_device_update_payload_async(
@@ -205,44 +191,19 @@ class VerificationPreparationService:
             "replace_device_config": data.replace_device_config,
         }
 
-        resolution_error = await self.resolve_host_derived_payload(
+        resolve_error = await self._resolve_and_check_identity(
+            db,
             verification_payload,
             host,
+            existing.id,
             http_client_factory=http_client_factory,
-            db=db,
         )
-        if resolution_error:
-            return await _validation_failed(job, resolution_error)
-        try:
-            await self._identity.ensure_device_payload_identity_available(
-                db, verification_payload, exclude_device_id=existing.id
-            )
-        except DeviceIdentityConflictError as exc:
-            return await _validation_failed(job, str(exc))
+        if resolve_error is not None:
+            return await _validation_failed(job, resolve_error)
 
-        _probe_device = Device(
-            pack_id=verification_payload.get("pack_id"),
-            platform_id=verification_payload.get("platform_id"),
-            connection_type=verification_payload.get("connection_type"),
-            ip_address=verification_payload.get("ip_address"),
-            device_config=verification_payload.get("device_config"),
-            verified_at=None,
-            # Required non-nullable fields — provide defaults for the probe object.
-            identity_scheme=verification_payload.get("identity_scheme", ""),
-            identity_scope=verification_payload.get("identity_scope", ""),
-            identity_value=verification_payload.get("identity_value", ""),
-            connection_target=verification_payload.get("connection_target", ""),
-            name=verification_payload.get("name", ""),
-            device_type=verification_payload.get("device_type", DeviceType.real_device),
-            os_version=verification_payload.get("os_version"),
-            os_version_display=verification_payload.get("os_version_display"),
-        )
-        readiness = await device_readiness.assess_device_async(db, _probe_device)
-        if readiness.missing_setup_fields:
-            return await _validation_failed(
-                job,
-                f"Missing required setup fields: {', '.join(readiness.missing_setup_fields)}",
-            )
+        readiness_error = await _check_probe_readiness(db, verification_payload)
+        if readiness_error is not None:
+            return await _validation_failed(job, readiness_error)
 
         await set_stage(
             job,
@@ -267,6 +228,56 @@ class VerificationPreparationService:
             None,
         )
 
+    async def _check_update_preconditions(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+    ) -> tuple[Device | None, str | None]:
+        existing = await self._crud.get_device(db, device_id)
+        if existing is None:
+            return None, "Device was not found"
+
+        # Spec §14.1: verification tears down the client-serving node, so it must
+        # never run on a device with a live session. The router rejects this with a
+        # 409; this guard closes the enqueue→run TOCTOU window (a session that starts
+        # after the request was accepted) by failing the job instead.
+        if await device_has_running_session(db, existing.id):
+            return None, "Device has a live session; verification cannot run during a session"
+
+        # Spec/N13b: the verification node-start path revokes the sticky operator:stop. The
+        # router rejects this with a 409; this guard closes the enqueue→run TOCTOU window (an
+        # operator stop registered after the request was accepted) so a verify never silently
+        # revives an operator-stopped device.
+        if await operator_stop_active(db, existing.id):
+            return None, "Device is operator-stopped; start the node before verifying"
+
+        return existing, None
+
+    async def _resolve_and_check_identity(
+        self,
+        db: AsyncSession,
+        verification_payload: dict[str, Any],
+        host: Host | None,
+        existing_device_id: uuid.UUID,
+        *,
+        http_client_factory: AgentClientFactory,
+    ) -> str | None:
+        resolution_error = await self.resolve_host_derived_payload(
+            verification_payload,
+            host,
+            http_client_factory=http_client_factory,
+            db=db,
+        )
+        if resolution_error:
+            return resolution_error
+        try:
+            await self._identity.ensure_device_payload_identity_available(
+                db, verification_payload, exclude_device_id=existing_device_id
+            )
+        except DeviceIdentityConflictError as exc:
+            return str(exc)
+        return None
+
     async def resolve_host_derived_payload(
         self,
         payload: dict[str, Any],
@@ -279,71 +290,14 @@ class VerificationPreparationService:
             return "Assigned host is required"
 
         if db is not None and payload.get("pack_id") and payload.get("platform_id"):
-            try:
-                resolved_platform = await resolve_pack_platform(
-                    db,
-                    pack_id=str(payload["pack_id"]),
-                    platform_id=str(payload["platform_id"]),
-                    device_type=str(payload["device_type"]) if payload.get("device_type") else None,
-                )
-                normalized = await normalize_pack_device(
-                    host.ip,
-                    host.agent_port,
-                    pack_id=resolved_platform.pack_id,
-                    pack_release=resolved_platform.release,
-                    platform_id=resolved_platform.platform_id,
-                    raw_input={
-                        key: value.value if hasattr(value, "value") else str(value) if key == "host_id" else value
-                        for key, value in payload.items()
-                        if key not in {"device_config", "replace_device_config", "host_id"}
-                    },
-                    http_client_factory=http_client_factory,
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
-                )
-            except AgentCallError:
-                normalized = None
-            except LookupError:
-                normalized = None
-            except TypeError:
-                # Some tests provide lightweight HTTP mocks for health-only flows.
-                # Treat missing normalize support the same way the real agent's
-                # 404 response is treated: continue with manifest/local fields.
-                normalized = None
-
-            if normalized is not None:
-                errors = normalized.get("field_errors")
-                if isinstance(errors, list) and errors:
-                    first = errors[0]
-                    if isinstance(first, dict):
-                        field = first.get("field_id", "device")
-                        msg = first.get("message", "Adapter rejected device input")
-                        return f"{field}: {msg}"
-                    return "Adapter rejected device input"
-                payload["identity_scheme"] = normalized.get("identity_scheme") or payload.get("identity_scheme")
-                payload["identity_scope"] = normalized.get("identity_scope") or payload.get("identity_scope")
-                payload["identity_value"] = normalized.get("identity_value") or payload.get("identity_value")
-                payload["connection_target"] = normalized.get("connection_target") or payload.get("connection_target")
-                payload["os_version"] = normalized.get("os_version") or payload.get("os_version")
-                payload["os_version_display"] = normalized.get("os_version_display") or payload.get(
-                    "os_version_display"
-                )
-                payload["manufacturer"] = normalized.get("manufacturer") or payload.get("manufacturer")
-                payload["model"] = normalized.get("model") or payload.get("model")
-                payload["model_number"] = normalized.get("model_number") or payload.get("model_number")
-                payload["software_versions"] = normalized.get("software_versions") or payload.get("software_versions")
-                if not _payload_requests_virtual_lane(payload):
-                    payload["device_type"] = normalized.get("device_type") or payload.get("device_type")
-                    payload["connection_type"] = normalized.get("connection_type") or payload.get("connection_type")
-                payload["ip_address"] = normalized.get("ip_address") or payload.get("ip_address")
-                normalized_name = normalized.get("model") or normalized.get("model_number")
-                if normalized_name and payload.get("name") in {
-                    payload.get("connection_target"),
-                    payload.get("ip_address"),
-                    payload.get("identity_value"),
-                }:
-                    payload["name"] = normalized_name
+            normalization_error = await self._apply_pack_normalization(
+                payload,
+                host,
+                http_client_factory=http_client_factory,
+                db=db,
+            )
+            if normalization_error is not None:
+                return normalization_error
 
         # Determine whether the payload needs host-side resolution from manifest metadata.
         needs_resolution = False
@@ -352,51 +306,151 @@ class VerificationPreparationService:
             needs_resolution, action = await _payload_needs_host_resolution(db, payload)
 
         if needs_resolution and action:
-            try:
-                resolved = await pack_device_lifecycle_action(
-                    host.ip,
-                    host.agent_port,
-                    payload["connection_target"],
-                    pack_id=payload.get("pack_id", ""),
-                    platform_id=payload.get("platform_id", ""),
-                    action=action,
-                    http_client_factory=http_client_factory,
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
-                )
-            except AgentCallError as exc:
-                error_msg = str(exc)
-                if "404" in error_msg or action in error_msg.lower():
-                    return f"Device must resolve to a stable identity before save (action: {action})"
-                return f"Host resolution failed: {exc}"
-
-            resolved_identity = resolved.get("identity_value")
-            if not isinstance(resolved_identity, str) or not resolved_identity:
-                return f"Device must resolve to a stable identity before save (action: {action})"
-            payload["identity_scheme"] = resolved.get("identity_scheme") or payload.get("identity_scheme")
-            payload["identity_value"] = resolved_identity
-            payload["connection_target"] = resolved.get("connection_target") or payload["connection_target"]
-            payload["platform_id"] = resolved.get("platform_id") or payload.get("platform_id")
-            payload["os_version"] = resolved.get("os_version") or payload.get("os_version")
-            payload["os_version_display"] = resolved.get("os_version_display") or payload.get("os_version_display")
-            payload["manufacturer"] = resolved.get("manufacturer") or payload.get("manufacturer")
-            payload["model"] = resolved.get("model") or payload.get("model")
-            payload["model_number"] = resolved.get("model_number") or payload.get("model_number")
-            payload["software_versions"] = resolved.get("software_versions") or payload.get("software_versions")
-            payload["device_type"] = resolved.get("device_type") or payload.get("device_type")
-            payload["connection_type"] = resolved.get("connection_type") or payload.get("connection_type")
-            payload["ip_address"] = resolved.get("ip_address") or payload.get("ip_address")
-            resolved_name = resolved.get("name") or resolved.get("model") or resolved.get("model_number")
-            if resolved_name and (
-                not payload.get("name")
-                or payload.get("name")
-                in {payload.get("connection_target"), payload.get("ip_address"), payload.get("identity_value")}
-            ):
-                payload["name"] = resolved_name
+            resolution_error = await self._apply_host_resolution(
+                payload,
+                host,
+                action,
+                http_client_factory=http_client_factory,
+            )
+            if resolution_error is not None:
+                return resolution_error
 
         _coerce_payload_enums_in_place(payload)
         return None
+
+    async def _apply_pack_normalization(
+        self,
+        payload: dict[str, Any],
+        host: Host,
+        *,
+        http_client_factory: AgentClientFactory,
+        db: AsyncSession,
+    ) -> str | None:
+        try:
+            resolved_platform = await resolve_pack_platform(
+                db,
+                pack_id=str(payload["pack_id"]),
+                platform_id=str(payload["platform_id"]),
+                device_type=str(payload["device_type"]) if payload.get("device_type") else None,
+            )
+            normalized = await normalize_pack_device(
+                host.ip,
+                host.agent_port,
+                pack_id=resolved_platform.pack_id,
+                pack_release=resolved_platform.release,
+                platform_id=resolved_platform.platform_id,
+                raw_input={
+                    key: value.value if hasattr(value, "value") else str(value) if key == "host_id" else value
+                    for key, value in payload.items()
+                    if key not in {"device_config", "replace_device_config", "host_id"}
+                },
+                http_client_factory=http_client_factory,
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
+            )
+        except AgentCallError:
+            normalized = None
+        except LookupError:
+            normalized = None
+        except TypeError:
+            # Some tests provide lightweight HTTP mocks for health-only flows.
+            # Treat missing normalize support the same way the real agent's
+            # 404 response is treated: continue with manifest/local fields.
+            normalized = None
+
+        if normalized is not None:
+            return _apply_normalized_fields(payload, normalized)
+        return None
+
+    async def _apply_host_resolution(
+        self,
+        payload: dict[str, Any],
+        host: Host,
+        action: str,
+        *,
+        http_client_factory: AgentClientFactory,
+    ) -> str | None:
+        try:
+            resolved = await pack_device_lifecycle_action(
+                host.ip,
+                host.agent_port,
+                payload["connection_target"],
+                pack_id=payload.get("pack_id", ""),
+                platform_id=payload.get("platform_id", ""),
+                action=action,
+                http_client_factory=http_client_factory,
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
+            )
+        except AgentCallError as exc:
+            error_msg = str(exc)
+            if "404" in error_msg or action in error_msg.lower():
+                return f"Device must resolve to a stable identity before save (action: {action})"
+            return f"Host resolution failed: {exc}"
+
+        resolved_identity = resolved.get("identity_value")
+        if not isinstance(resolved_identity, str) or not resolved_identity:
+            return f"Device must resolve to a stable identity before save (action: {action})"
+        _apply_resolved_fields(payload, resolved, resolved_identity)
+        return None
+
+
+def _apply_normalized_fields(payload: dict[str, Any], normalized: dict[str, Any]) -> str | None:
+    errors = normalized.get("field_errors")
+    if isinstance(errors, list) and errors:
+        first = errors[0]
+        if isinstance(first, dict):
+            field = first.get("field_id", "device")
+            msg = first.get("message", "Adapter rejected device input")
+            return f"{field}: {msg}"
+        return "Adapter rejected device input"
+    payload["identity_scheme"] = normalized.get("identity_scheme") or payload.get("identity_scheme")
+    payload["identity_scope"] = normalized.get("identity_scope") or payload.get("identity_scope")
+    payload["identity_value"] = normalized.get("identity_value") or payload.get("identity_value")
+    payload["connection_target"] = normalized.get("connection_target") or payload.get("connection_target")
+    payload["os_version"] = normalized.get("os_version") or payload.get("os_version")
+    payload["os_version_display"] = normalized.get("os_version_display") or payload.get("os_version_display")
+    payload["manufacturer"] = normalized.get("manufacturer") or payload.get("manufacturer")
+    payload["model"] = normalized.get("model") or payload.get("model")
+    payload["model_number"] = normalized.get("model_number") or payload.get("model_number")
+    payload["software_versions"] = normalized.get("software_versions") or payload.get("software_versions")
+    if not _payload_requests_virtual_lane(payload):
+        payload["device_type"] = normalized.get("device_type") or payload.get("device_type")
+        payload["connection_type"] = normalized.get("connection_type") or payload.get("connection_type")
+    payload["ip_address"] = normalized.get("ip_address") or payload.get("ip_address")
+    normalized_name = normalized.get("model") or normalized.get("model_number")
+    if normalized_name and payload.get("name") in {
+        payload.get("connection_target"),
+        payload.get("ip_address"),
+        payload.get("identity_value"),
+    }:
+        payload["name"] = normalized_name
+    return None
+
+
+def _apply_resolved_fields(payload: dict[str, Any], resolved: dict[str, Any], resolved_identity: str) -> None:
+    payload["identity_scheme"] = resolved.get("identity_scheme") or payload.get("identity_scheme")
+    payload["identity_value"] = resolved_identity
+    payload["connection_target"] = resolved.get("connection_target") or payload["connection_target"]
+    payload["platform_id"] = resolved.get("platform_id") or payload.get("platform_id")
+    payload["os_version"] = resolved.get("os_version") or payload.get("os_version")
+    payload["os_version_display"] = resolved.get("os_version_display") or payload.get("os_version_display")
+    payload["manufacturer"] = resolved.get("manufacturer") or payload.get("manufacturer")
+    payload["model"] = resolved.get("model") or payload.get("model")
+    payload["model_number"] = resolved.get("model_number") or payload.get("model_number")
+    payload["software_versions"] = resolved.get("software_versions") or payload.get("software_versions")
+    payload["device_type"] = resolved.get("device_type") or payload.get("device_type")
+    payload["connection_type"] = resolved.get("connection_type") or payload.get("connection_type")
+    payload["ip_address"] = resolved.get("ip_address") or payload.get("ip_address")
+    resolved_name = resolved.get("name") or resolved.get("model") or resolved.get("model_number")
+    if resolved_name and (
+        not payload.get("name")
+        or payload.get("name")
+        in {payload.get("connection_target"), payload.get("ip_address"), payload.get("identity_value")}
+    ):
+        payload["name"] = resolved_name
 
 
 def _coerce_payload_enums_in_place(payload: dict[str, Any]) -> None:
@@ -489,6 +543,30 @@ async def _payload_needs_host_resolution(
         payload.get("connection_target"),
         payload.get("ip_address"),
     ), str(action)
+
+
+async def _check_probe_readiness(db: AsyncSession, verification_payload: dict[str, Any]) -> str | None:
+    _probe_device = Device(
+        pack_id=verification_payload.get("pack_id"),
+        platform_id=verification_payload.get("platform_id"),
+        connection_type=verification_payload.get("connection_type"),
+        ip_address=verification_payload.get("ip_address"),
+        device_config=verification_payload.get("device_config"),
+        verified_at=None,
+        # Required non-nullable fields — provide defaults for the probe object.
+        identity_scheme=verification_payload.get("identity_scheme", ""),
+        identity_scope=verification_payload.get("identity_scope", ""),
+        identity_value=verification_payload.get("identity_value", ""),
+        connection_target=verification_payload.get("connection_target", ""),
+        name=verification_payload.get("name", ""),
+        device_type=verification_payload.get("device_type", DeviceType.real_device),
+        os_version=verification_payload.get("os_version"),
+        os_version_display=verification_payload.get("os_version_display"),
+    )
+    readiness = await device_readiness.assess_device_async(db, _probe_device)
+    if readiness.missing_setup_fields:
+        return f"Missing required setup fields: {', '.join(readiness.missing_setup_fields)}"
+    return None
 
 
 async def _validation_failed(job: dict[str, Any], detail: str) -> tuple[None, str]:

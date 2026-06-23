@@ -253,6 +253,38 @@ async def _has_session_rows(
     return result.scalar_one_or_none() is not None
 
 
+def _apply_session_filters(
+    stmt: Select[tuple[Session]],
+    *,
+    device_id: uuid.UUID | None,
+    status: SessionStatus | None,
+    pack_id: str | None,
+    platform_id: str | None,
+    started_after: datetime | None,
+    started_before: datetime | None,
+    run_id: uuid.UUID | None,
+    active: bool,
+) -> Select[tuple[Session]]:
+    if device_id is not None:
+        stmt = stmt.where(Session.device_id == device_id)
+    if status is not None:
+        stmt = stmt.where(Session.status == status)
+    if pack_id is not None:
+        stmt = stmt.where(Device.pack_id == pack_id)
+    if platform_id is not None:
+        stmt = stmt.where(Device.platform_id == platform_id)
+    if started_after is not None:
+        stmt = stmt.where(Session.started_at >= started_after)
+    if started_before is not None:
+        stmt = stmt.where(Session.started_at <= started_before)
+    if run_id is not None:
+        stmt = stmt.where(Session.run_id == run_id)
+    if active:
+        # Live set: served by the ix_sessions_live partial index.
+        stmt = stmt.where(Session.ended_at.is_(None))
+    return stmt
+
+
 class SessionCrudService:
     def __init__(self, *, publisher: EventPublisher, lifecycle: DeviceSessionLifecycle) -> None:
         self._publisher = publisher
@@ -344,23 +376,17 @@ class SessionCrudService:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
 
-        if device_id is not None:
-            stmt = stmt.where(Session.device_id == device_id)
-        if status is not None:
-            stmt = stmt.where(Session.status == status)
-        if pack_id is not None:
-            stmt = stmt.where(Device.pack_id == pack_id)
-        if platform_id is not None:
-            stmt = stmt.where(Device.platform_id == platform_id)
-        if started_after is not None:
-            stmt = stmt.where(Session.started_at >= started_after)
-        if started_before is not None:
-            stmt = stmt.where(Session.started_at <= started_before)
-        if run_id is not None:
-            stmt = stmt.where(Session.run_id == run_id)
-        if active:
-            # Live set: served by the ix_sessions_live partial index.
-            stmt = stmt.where(Session.ended_at.is_(None))
+        stmt = _apply_session_filters(
+            stmt,
+            device_id=device_id,
+            status=status,
+            pack_id=pack_id,
+            platform_id=platform_id,
+            started_after=started_after,
+            started_before=started_before,
+            run_id=run_id,
+            active=active,
+        )
 
         page_stmt = stmt
         cursor_token = decode_cursor(cursor) if cursor else None

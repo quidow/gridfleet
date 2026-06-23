@@ -11,7 +11,7 @@ from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.verification.services import execution
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, FailureFinalizers, VerificationExecutionService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
@@ -47,8 +47,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=settings,
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=settings, circuit_breaker=Mock()),
             crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
@@ -67,8 +66,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=_s2,
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=_s2, circuit_breaker=Mock()),
             crud=DeviceCrudService(settings=_s2, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
@@ -83,8 +81,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     assert await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=_s3,
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=_s3, circuit_breaker=Mock()),
         crud=DeviceCrudService(settings=_s3, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
@@ -98,8 +95,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=_s4,
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=_s4, circuit_breaker=Mock()),
             crud=DeviceCrudService(settings=_s4, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
@@ -130,10 +126,12 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         error="bad",
         job=job,
         node=node,
-        publisher=event_bus,
-        crud=mock_crud,
-        node_manager=AsyncMock(),
-        review=AsyncMock(),
+        finalizers=FailureFinalizers(
+            publisher=event_bus,
+            crud=mock_crud,
+            node_manager=AsyncMock(),
+            review=AsyncMock(),
+        ),
     )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
@@ -158,10 +156,12 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         error="bad",
         job=job,
         original_fields={"name": "original"},
-        publisher=event_bus,
-        crud=mock_crud,
-        node_manager=AsyncMock(),
-        review=review_mock,
+        finalizers=FailureFinalizers(
+            publisher=event_bus,
+            crud=mock_crud,
+            node_manager=AsyncMock(),
+            review=review_mock,
+        ),
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -187,8 +187,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     svc = VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=_s5,
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=_s5, circuit_breaker=Mock()),
         crud=DeviceCrudService(settings=_s5, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
@@ -216,8 +215,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     svc2 = VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=_s6,
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=_s6, circuit_breaker=Mock()),
         crud=DeviceCrudService(settings=_s6, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
@@ -336,10 +334,12 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
         error="adb probe timed out",
         job=job,
         original_fields={},
-        publisher=event_bus,
-        crud=AsyncMock(),
-        node_manager=AsyncMock(),
-        review=review_mock,
+        finalizers=FailureFinalizers(
+            publisher=event_bus,
+            crud=AsyncMock(),
+            node_manager=AsyncMock(),
+            review=review_mock,
+        ),
     )
 
     assert outcome.status == "failed"
@@ -373,8 +373,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=settings,
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=settings, circuit_breaker=Mock()),
             crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),

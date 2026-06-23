@@ -374,10 +374,19 @@ class Manifest(BaseModel):
                     schemas.append(override.device_fields_schema)
         for schema in schemas:
             all_ids.update(field.id for field in schema)
+        self._check_appium_env_gate_keys(all_ids)
+        self._check_required_for_session_gate_keys(schemas, all_ids)
+        self._check_port_skip_gate_keys(all_ids)
+        return self
+
+    def _check_appium_env_gate_keys(self, all_ids: set[str]) -> None:
         for rule in self.appium_env:
             for key in rule.applies_when.device_config:
                 if key not in all_ids:
                     raise ValueError(f"appium_env rule '{rule.id}' gates on unknown device field '{key}'")
+
+    @staticmethod
+    def _check_required_for_session_gate_keys(schemas: list[list[FieldSchema]], all_ids: set[str]) -> None:
         for schema in schemas:
             for field_def in schema:
                 for key in field_def.required_for_session_when:
@@ -385,6 +394,8 @@ class Manifest(BaseModel):
                         raise ValueError(
                             f"field '{field_def.id}' required_for_session_when gates on unknown device field '{key}'"
                         )
+
+    def _check_port_skip_gate_keys(self, all_ids: set[str]) -> None:
         for plat in self.platforms:
             for port in plat.parallel_resources.ports:
                 for key in port.skip_when:
@@ -392,7 +403,6 @@ class Manifest(BaseModel):
                         raise ValueError(
                             f"port '{port.capability_name}' skip_when gates on unknown device field '{key}'"
                         )
-        return self
 
 
 def load_manifest_yaml(text: str) -> Manifest:

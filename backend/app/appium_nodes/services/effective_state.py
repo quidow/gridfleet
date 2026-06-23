@@ -19,6 +19,33 @@ EffectiveNodeStateValue = Literal[
 ]
 
 
+def _is_recovery_blocked(lifecycle_state: dict[str, Any], now: datetime) -> bool:
+    suppression_reason = lifecycle_state.get("recovery_suppressed_reason")
+    if not (isinstance(suppression_reason, str) and suppression_reason):
+        return False
+    backoff_raw = lifecycle_state.get("backoff_until")
+    backoff_active = False
+    if isinstance(backoff_raw, str):
+        try:
+            backoff_until = datetime.fromisoformat(backoff_raw)
+            if backoff_until.tzinfo is None:
+                backoff_until = backoff_until.replace(tzinfo=UTC)
+            backoff_active = backoff_until > now
+        except ValueError:
+            backoff_active = False
+    return backoff_raw is None or backoff_active
+
+
+def _desired_state_effective(*, desired_state: str, pid: int | None) -> EffectiveNodeStateValue:
+    if desired_state == "running" and pid is None:
+        return "starting"
+    if desired_state == "stopped" and pid is not None:
+        return "stopping"
+    if desired_state == "running" and pid is not None:
+        return "running"
+    return "stopped"
+
+
 def compute_effective_state(
     *,
     pid: int | None,
@@ -34,28 +61,10 @@ def compute_effective_state(
         return "restarting"
 
     lifecycle_state = lifecycle_policy_state or {}
-    suppression_reason = lifecycle_state.get("recovery_suppressed_reason")
-    if isinstance(suppression_reason, str) and suppression_reason:
-        backoff_raw = lifecycle_state.get("backoff_until")
-        backoff_active = False
-        if isinstance(backoff_raw, str):
-            try:
-                backoff_until = datetime.fromisoformat(backoff_raw)
-                if backoff_until.tzinfo is None:
-                    backoff_until = backoff_until.replace(tzinfo=UTC)
-                backoff_active = backoff_until > now
-            except ValueError:
-                backoff_active = False
-        if backoff_raw is None or backoff_active:
-            return "blocked"
+    if _is_recovery_blocked(lifecycle_state, now):
+        return "blocked"
 
     if health_state == "error" or health_running is False:
         return "error"
 
-    if desired_state == "running" and pid is None:
-        return "starting"
-    if desired_state == "stopped" and pid is not None:
-        return "stopping"
-    if desired_state == "running" and pid is not None:
-        return "running"
-    return "stopped"
+    return _desired_state_effective(desired_state=desired_state, pid=pid)

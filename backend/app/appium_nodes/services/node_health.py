@@ -38,6 +38,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
+from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -363,10 +364,12 @@ class NodeHealthService:
                     db,
                     device,
                     DeviceEventType.lifecycle_recovered,
-                    summary_state=DeviceLifecyclePolicySummaryState.idle,
-                    reason="Node health checks recovered",
-                    detail="The node resumed healthy operation after transient failures",
-                    source="node_health",
+                    LifecycleIncidentDetails(
+                        summary_state=DeviceLifecyclePolicySummaryState.idle,
+                        reason="Node health checks recovered",
+                        detail="The node resumed healthy operation after transient failures",
+                        source="node_health",
+                    ),
                 )
             locked_node.consecutive_health_failures = 0
             # Direct probe acked: the node is the authoritative health signal.
@@ -384,6 +387,15 @@ class NodeHealthService:
             )
             return
 
+        await self._record_health_failure(db, node, locked_node, device)
+
+    async def _record_health_failure(
+        self,
+        db: AsyncSession,
+        node: AppiumNode,
+        locked_node: AppiumNode,
+        device: Device,
+    ) -> None:
         locked_node.consecutive_health_failures += 1
         count = locked_node.consecutive_health_failures
         max_failures = self._settings.get("general.node_max_failures")
@@ -413,7 +425,6 @@ class NodeHealthService:
 
             logger.error("Node for device %s reached max failures, attempting restart", device.name)
             await self._attempt_node_restart(db, device=device)
-            return
 
 
 class NodeHealthLoop(BackgroundLoop):

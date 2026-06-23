@@ -26,6 +26,7 @@ from app.devices.models import (
 )
 from app.devices.services.event import record_event
 from app.devices.services.intent_evaluator import (
+    RecoveryDecision,
     ReservationDecision,
     evaluate_grid_routing,
     evaluate_node_process,
@@ -478,26 +479,7 @@ async def reconcile_device(
         await _record_field_change(db, device_id, "stop_pending", node.stop_pending, stop_pending, node_decision.reason)
         node.stop_pending = stop_pending
 
-    if device.recovery_allowed != recovery_decision.allowed:
-        await _record_field_change(
-            db,
-            device_id,
-            "recovery_allowed",
-            device.recovery_allowed,
-            recovery_decision.allowed,
-            recovery_decision.reason,
-        )
-        device.recovery_allowed = recovery_decision.allowed
-    if device.recovery_blocked_reason != recovery_decision.reason:
-        await _record_field_change(
-            db,
-            device_id,
-            "recovery_blocked_reason",
-            device.recovery_blocked_reason,
-            recovery_decision.reason,
-            recovery_decision.reason,
-        )
-        device.recovery_blocked_reason = recovery_decision.reason
+    await _apply_recovery_decision(db, device, device_id, recovery_decision)
 
     await _apply_reservation_decision(db, device_id, reservation_decision)
 
@@ -536,6 +518,34 @@ async def reconcile_device(
         )
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
+
+
+async def _apply_recovery_decision(
+    db: AsyncSession,
+    device: Device,
+    device_id: uuid.UUID,
+    recovery_decision: RecoveryDecision,
+) -> None:
+    if device.recovery_allowed != recovery_decision.allowed:
+        await _record_field_change(
+            db,
+            device_id,
+            "recovery_allowed",
+            device.recovery_allowed,
+            recovery_decision.allowed,
+            recovery_decision.reason,
+        )
+        device.recovery_allowed = recovery_decision.allowed
+    if device.recovery_blocked_reason != recovery_decision.reason:
+        await _record_field_change(
+            db,
+            device_id,
+            "recovery_blocked_reason",
+            device.recovery_blocked_reason,
+            recovery_decision.reason,
+            recovery_decision.reason,
+        )
+        device.recovery_blocked_reason = recovery_decision.reason
 
 
 async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:

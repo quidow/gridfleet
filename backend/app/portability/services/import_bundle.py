@@ -29,6 +29,7 @@ from app.portability.schemas import (
     ImportCommitRequest,
     ImportCommitResult,
     ImportCommitSkippedRow,
+    ImportMapping,
     ImportPreview,
     ImportPreviewRow,
     ImportRowStatus,
@@ -74,12 +75,11 @@ def _pick_host_suggestion(device: ExportedDevice, hosts: Sequence[Host]) -> Host
     return HostSuggestion(id=matches[0].id, hostname=matches[0].hostname)
 
 
-async def _classify_row(
+async def _classify_pack_runnable(
     session: AsyncSession,
     device: ExportedDevice,
-    hosts: Sequence[Host],
-    duplicate_keys: set[tuple[str, str, str]],
-) -> tuple[ImportRowStatus, list[str]]:
+) -> tuple[ImportRowStatus, list[str]] | None:
+    """Return an INVALID classification if the pack/platform is not runnable, else None."""
     try:
         await pack_platform_resolver.assert_runnable(session, pack_id=device.pack_id, platform_id=device.platform_id)
     except PackUnavailableError:
@@ -90,9 +90,15 @@ async def _classify_row(
         return (ImportRowStatus.INVALID, [f"pack not runnable: pack {device.pack_id} is draining"])
     except PlatformRemovedError:
         return (ImportRowStatus.INVALID, [f"pack/platform not installed: {device.pack_id}/{device.platform_id}"])
-    if _identity_key(device) in duplicate_keys:
-        return (ImportRowStatus.DUPLICATE_IN_BUNDLE, ["identity duplicated within bundle"])
-    suggestion = _pick_host_suggestion(device, hosts)
+    return None
+
+
+async def _classify_existing_identity(
+    session: AsyncSession,
+    device: ExportedDevice,
+    suggestion: HostSuggestion | None,
+) -> tuple[ImportRowStatus, list[str]] | None:
+    """Return a CONFLICT_SKIP classification if the identity already exists, else None."""
     if device.identity_scope == "global":
         existing = await session.execute(
             select(Device.id).where(
@@ -114,6 +120,24 @@ async def _classify_row(
         )
         if existing.first() is not None:
             return (ImportRowStatus.CONFLICT_SKIP, ["identity already exists on suggested host"])
+    return None
+
+
+async def _classify_row(
+    session: AsyncSession,
+    device: ExportedDevice,
+    hosts: Sequence[Host],
+    duplicate_keys: set[tuple[str, str, str]],
+) -> tuple[ImportRowStatus, list[str]]:
+    pack_invalid = await _classify_pack_runnable(session, device)
+    if pack_invalid is not None:
+        return pack_invalid
+    if _identity_key(device) in duplicate_keys:
+        return (ImportRowStatus.DUPLICATE_IN_BUNDLE, ["identity duplicated within bundle"])
+    suggestion = _pick_host_suggestion(device, hosts)
+    conflict = await _classify_existing_identity(session, device, suggestion)
+    if conflict is not None:
+        return conflict
     return (ImportRowStatus.VALID_NEW, [])
 
 
@@ -224,29 +248,41 @@ class PortabilityImportService:
                 failed.append(ImportCommitFailedRow(index=idx, reason="host not found"))
                 continue
 
-            savepoint = await session.begin_nested()
-            savepoint_released = False
-            try:
-                payload = _build_create_payload(row.device, mapping.target_host_id)
-                device = device_write.stage_device_record(session, payload)
-                await session.flush()
-                await self._verification_enqueuer.enqueue_for_device(session, device)
-                await savepoint.commit()
-                savepoint_released = True
-                await session.commit()
-                created.append(ImportCommitCreatedRow(index=idx, device_id=device.id))
-            except IntegrityError as exc:
-                if not savepoint_released:
-                    await savepoint.rollback()
-                failed.append(ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}"))
-            except Exception as exc:  # noqa: BLE001
-                if not savepoint_released:
-                    await savepoint.rollback()
-                reason = str(exc) or exc.__class__.__name__
-                lower = reason.lower()
-                if "verification" in lower or "create_job" in lower:
-                    failed.append(ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}"))
-                else:
-                    failed.append(ImportCommitFailedRow(index=idx, reason=reason))
+            result = await self._insert_row_with_savepoint(session, idx, row, mapping)
+            if isinstance(result, ImportCommitCreatedRow):
+                created.append(result)
+            else:
+                failed.append(result)
 
         return ImportCommitResult(created=created, skipped=skipped, failed=failed)
+
+    async def _insert_row_with_savepoint(
+        self,
+        session: AsyncSession,
+        idx: int,
+        row: ImportPreviewRow,
+        mapping: ImportMapping,
+    ) -> ImportCommitCreatedRow | ImportCommitFailedRow:
+        savepoint = await session.begin_nested()
+        savepoint_released = False
+        try:
+            payload = _build_create_payload(row.device, mapping.target_host_id)
+            device = device_write.stage_device_record(session, payload)
+            await session.flush()
+            await self._verification_enqueuer.enqueue_for_device(session, device)
+            await savepoint.commit()
+            savepoint_released = True
+            await session.commit()
+            return ImportCommitCreatedRow(index=idx, device_id=device.id)
+        except IntegrityError as exc:
+            if not savepoint_released:
+                await savepoint.rollback()
+            return ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}")
+        except Exception as exc:  # noqa: BLE001
+            if not savepoint_released:
+                await savepoint.rollback()
+            reason = str(exc) or exc.__class__.__name__
+            lower = reason.lower()
+            if "verification" in lower or "create_job" in lower:
+                return ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}")
+            return ImportCommitFailedRow(index=idx, reason=reason)

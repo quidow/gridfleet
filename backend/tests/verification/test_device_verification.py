@@ -32,7 +32,11 @@ from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.packs.models import DriverPack
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService, get_session_viability
-from app.verification.services.execution import VerificationExecutionService, _health_failure_detail
+from app.verification.services.execution import (
+    AgentCallContext,
+    VerificationExecutionService,
+    _health_failure_detail,
+)
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
@@ -175,8 +179,7 @@ async def _wait_for_job(
                 execution=VerificationExecutionService(
                     review=build_review_service(),
                     publisher=_publisher_mock(),
-                    settings=settings_service,
-                    circuit_breaker=_noop_circuit_breaker(),
+                    agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
                     crud=DeviceCrudService(
                         settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
                     ),
@@ -1624,8 +1627,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 execution=VerificationExecutionService(
                     review=build_review_service(),
                     publisher=_publisher_mock(),
-                    settings=settings_service,
-                    circuit_breaker=_noop_circuit_breaker(),
+                    agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
                     crud=DeviceCrudService(
                         settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
                     ),

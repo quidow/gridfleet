@@ -20,6 +20,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     RunActivePrecondition,
 )
+from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs.models import TERMINAL_STATES, TestRun
 from app.runs.service_reservation import get_reservation_entry_for_device, get_run
 
@@ -158,12 +159,14 @@ class RunFailureService:
             db,
             device,
             event_type=DeviceEventType.lifecycle_run_excluded,
-            summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=reason,
-            detail=incident_detail,
-            source=source,
-            run_id=run.id,
-            run_name=run.name,
+            incident=LifecycleIncidentDetails(
+                summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                reason=reason,
+                detail=incident_detail,
+                source=source,
+                run_id=run.id,
+                run_name=run.name,
+            ),
         )
         await db.commit()
 
@@ -241,12 +244,14 @@ class RunFailureService:
                 db,
                 device,
                 event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
-                summary_state=DeviceLifecyclePolicySummaryState.excluded,
-                reason=clean_reason,
-                detail=detail,
-                source="testkit",
-                run_id=run.id,
-                run_name=run.name,
+                incident=LifecycleIncidentDetails(
+                    summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                    reason=clean_reason,
+                    detail=detail,
+                    source="testkit",
+                    run_id=run.id,
+                    run_name=run.name,
+                ),
             )
             await db.commit()
             await deliver_agent_reconfigures(
@@ -271,14 +276,16 @@ class RunFailureService:
             db,
             device,
             event_type=DeviceEventType.lifecycle_run_cooldown_set,
-            summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=clean_reason,
-            detail=f"Cooldown set for {ttl_seconds}s",
-            source="testkit",
-            run_id=run.id,
-            run_name=run.name,
-            ttl_seconds=ttl_seconds,
-            expires_at=excluded_until,
+            incident=LifecycleIncidentDetails(
+                summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                reason=clean_reason,
+                detail=f"Cooldown set for {ttl_seconds}s",
+                source="testkit",
+                run_id=run.id,
+                run_name=run.name,
+                ttl_seconds=ttl_seconds,
+                expires_at=excluded_until,
+            ),
         )
 
         await IntentService(db).register_intents_and_reconcile(

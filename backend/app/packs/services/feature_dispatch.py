@@ -14,6 +14,7 @@ treated as degraded.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
@@ -60,6 +61,17 @@ class _AgentDispatchError(Exception):
         self.detail = detail
 
 
+@dataclass(frozen=True, slots=True)
+class FeatureActionTarget:
+    """The (host, pack, feature, action) identity for a feature-action dispatch."""
+
+    host_id: uuid.UUID
+    pack_id: str
+    feature_id: str
+    action_id: str
+    args: dict[str, Any]
+
+
 class FeatureService:
     """Service class for feature-action dispatch and feature status recording."""
 
@@ -71,11 +83,7 @@ class FeatureService:
         self,
         session: AsyncSession,
         *,
-        host_id: uuid.UUID,
-        pack_id: str,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
+        target: FeatureActionTarget,
         http_client_factory: AgentClientFactory = httpx.AsyncClient,
         timeout: float | int = _DEFAULT_TIMEOUT_SEC,
         agent_auth: httpx.BasicAuth | None = None,
@@ -88,39 +96,39 @@ class FeatureService:
                 replied with malformed JSON. The status row is still recorded as
                 ``ok=False`` so subscribers see a ``pack_feature.degraded`` event.
         """
-        host = await session.get(Host, host_id)
+        host = await session.get(Host, target.host_id)
         if host is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Host {host_id} not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Host {target.host_id} not found")
 
         pack = (
             await session.execute(
                 select(DriverPack)
-                .where(DriverPack.id == pack_id)
+                .where(DriverPack.id == target.pack_id)
                 .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.features))
             )
         ).scalar_one_or_none()
         if pack is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack {pack_id} not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack {target.pack_id} not found")
 
         release = selected_release(list(pack.releases), pack.current_release)
         if release is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pack {pack_id} has no releases",
+                detail=f"Pack {target.pack_id} has no releases",
             )
 
         feature_ids = {feat.manifest_feature_id for feat in release.features}
-        if feature_id not in feature_ids:
+        if target.feature_id not in feature_ids:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Feature {feature_id} not found in pack {pack_id} release {release.release}",
+                detail=f"Feature {target.feature_id} not found in pack {target.pack_id} release {release.release}",
             )
 
         agent_url = (
             f"http://{host.ip}:{host.agent_port}"
-            f"/agent/pack/features/{quote(feature_id, safe='')}/actions/{quote(action_id, safe='')}"
+            f"/agent/pack/features/{quote(target.feature_id, safe='')}/actions/{quote(target.action_id, safe='')}"
         )
-        body = {"pack_id": pack_id, "args": dict(args)}
+        body = {"pack_id": target.pack_id, "args": dict(target.args)}
 
         try:
             result = await self._call_agent(
@@ -136,9 +144,9 @@ class FeatureService:
             # outage immediately, then convert to 502 for the caller.
             await self.record_feature_status(
                 session,
-                host_id=host_id,
-                pack_id=pack_id,
-                feature_id=feature_id,
+                host_id=target.host_id,
+                pack_id=target.pack_id,
+                feature_id=target.feature_id,
                 ok=False,
                 detail=exc.detail,
             )
@@ -146,9 +154,9 @@ class FeatureService:
 
         await self.record_feature_status(
             session,
-            host_id=host_id,
-            pack_id=pack_id,
-            feature_id=feature_id,
+            host_id=target.host_id,
+            pack_id=target.pack_id,
+            feature_id=target.feature_id,
             ok=result.ok,
             detail=result.detail,
         )

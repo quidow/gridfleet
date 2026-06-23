@@ -28,6 +28,7 @@ from app.devices.services.lifecycle_policy_state import (
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.live_session_predicate import live_session_predicate
@@ -214,12 +215,14 @@ class LifecyclePolicyActionsService:
                 db,
                 device,
                 DeviceEventType.lifecycle_run_excluded,
-                summary_state=DeviceLifecyclePolicySummaryState.excluded,
-                reason=reason,
-                detail=f"Excluded from {run.name}",
-                source=source,
-                run_id=run.id,
-                run_name=run.name,
+                LifecycleIncidentDetails(
+                    summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                    reason=reason,
+                    detail=f"Excluded from {run.name}",
+                    source=source,
+                    run_id=run.id,
+                    run_name=run.name,
+                ),
             )
         return run, entry
 
@@ -266,12 +269,14 @@ class LifecyclePolicyActionsService:
                 db,
                 device,
                 DeviceEventType.lifecycle_run_restored,
-                summary_state=DeviceLifecyclePolicySummaryState.idle,
-                reason=reason,
-                detail=f"Restored to {run.name}",
-                source=source,
-                run_id=run.id,
-                run_name=run.name,
+                LifecycleIncidentDetails(
+                    summary_state=DeviceLifecyclePolicySummaryState.idle,
+                    reason=reason,
+                    detail=f"Restored to {run.name}",
+                    source=source,
+                    run_id=run.id,
+                    run_name=run.name,
+                ),
             )
         return run, entry
 
@@ -323,12 +328,14 @@ class LifecyclePolicyActionsService:
             db,
             device,
             DeviceEventType.lifecycle_recovery_suppressed,
-            summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-            reason=suppression_reason,
-            detail=reason,
-            source=source,
-            run_id=run.id if run is not None else None,
-            run_name=run.name if run is not None else None,
+            LifecycleIncidentDetails(
+                summary_state=DeviceLifecyclePolicySummaryState.suppressed,
+                reason=suppression_reason,
+                detail=reason,
+                source=source,
+                run_id=run.id if run is not None else None,
+                run_name=run.name if run is not None else None,
+            ),
         )
         await db.commit()
         return False
@@ -389,16 +396,18 @@ class LifecyclePolicyActionsService:
             db,
             device,
             DeviceEventType.lifecycle_auto_stopped,
-            summary_state=(
-                DeviceLifecyclePolicySummaryState.excluded
-                if run is not None
-                else DeviceLifecyclePolicySummaryState.recoverable
+            LifecycleIncidentDetails(
+                summary_state=(
+                    DeviceLifecyclePolicySummaryState.excluded
+                    if run is not None
+                    else DeviceLifecyclePolicySummaryState.recoverable
+                ),
+                reason=reason,
+                detail=detail,
+                source=source,
+                run_id=run.id if run is not None else None,
+                run_name=run.name if run is not None else None,
             ),
-            reason=reason,
-            detail=detail,
-            source=source,
-            run_id=run.id if run is not None else None,
-            run_name=run.name if run is not None else None,
         )
 
     async def record_run_escalation_failure(

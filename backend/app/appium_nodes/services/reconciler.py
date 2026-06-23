@@ -30,6 +30,7 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.appium_nodes.services.desired_state_writer import write_desired_state
 from app.appium_nodes.services.reconciler_agent import (
+    NodeStartDetails,
     _start_for_node,
     mark_node_started,
     mark_node_stopped,
@@ -961,9 +962,11 @@ class ReconcilerService:
                         device,
                         port=port or row.port or 0,
                         pid=pid,
-                        active_connection_target=active_connection_target,
-                        allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
-                        clear_transition=clear_transition,
+                        details=NodeStartDetails(
+                            active_connection_target=active_connection_target,
+                            allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
+                            clear_transition=clear_transition,
+                        ),
                         publisher=self._publisher,
                         settings=self._settings,
                     )

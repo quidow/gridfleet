@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.packs.adapter import FeatureActionResult
     from app.packs.models import DriverPack, PackState
     from app.packs.schemas import PackCatalog, PackOut, PackReleasesOut, RuntimePolicy
+    from app.packs.services.feature_dispatch import FeatureActionTarget
 
 
 @runtime_checkable
@@ -49,11 +50,7 @@ class FeatureProtocol(FeatureStatusRecorder, Protocol):
         self,
         db: AsyncSession,
         *,
-        host_id: uuid.UUID,
-        pack_id: str,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
+        target: FeatureActionTarget,
         agent_auth: httpx.BasicAuth | None = None,
     ) -> FeatureActionResult: ...
 

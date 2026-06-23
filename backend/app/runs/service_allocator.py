@@ -137,6 +137,67 @@ async def _find_matching_devices(
     return [locked_ready_by_id[device.id] for device in ready_candidates if device.id in locked_ready_by_id]
 
 
+async def _classify_shortfall_gates(
+    db: AsyncSession,
+    requirement: DeviceRequirement,
+    devices: list[Device],
+    reserved_run_by_device: dict[uuid.UUID, uuid.UUID],
+) -> tuple[Counter[str], Counter[str], set[uuid.UUID]]:
+    """Bucket each device by the first allocator gate it fails.
+
+    Classification mirrors the gate order of ``_find_matching_devices``. Returns
+    ``(state_counts, gate_counts, blocking_runs)``.
+    """
+    state_counts: Counter[str] = Counter()
+    gate_counts: Counter[str] = Counter()
+    blocking_runs: set[uuid.UUID] = set()
+    for device in devices:
+        if device.operational_state != DeviceOperationalState.available:
+            state_counts[device.operational_state.value] += 1
+        elif device.review_required:
+            gate_counts["review"] += 1
+        elif not device_node_is_viable(device):
+            gate_counts["node"] += 1
+        elif device.id in reserved_run_by_device:
+            gate_counts["reserved"] += 1
+            blocking_runs.add(reserved_run_by_device[device.id])
+        elif not _device_matches_requirement_tags(device, requirement.tags):
+            gate_counts["tags"] += 1
+        elif not await _readiness_for_match(db, device):
+            gate_counts["readiness"] += 1
+        else:
+            gate_counts["eligible"] += 1
+    return state_counts, gate_counts, blocking_runs
+
+
+def _format_shortfall_parts(
+    device_count: int,
+    state_counts: Counter[str],
+    gate_counts: Counter[str],
+    blocking_runs: set[uuid.UUID],
+) -> str:
+    """Render the per-gate counters into the actionable 409 message."""
+    parts: list[str] = []
+    if gate_counts["reserved"]:
+        named_runs = ", ".join(sorted(str(run_id) for run_id in blocking_runs)[:3])
+        plural = "s" if len(blocking_runs) > 1 else ""
+        parts.append(f"{gate_counts['reserved']} held by active reservation (run{plural} {named_runs})")
+    for state, count in sorted(state_counts.items()):
+        parts.append(f"{count} in state {state}")
+    if gate_counts["node"]:
+        parts.append(f"{gate_counts['node']} with Appium node not viable (stopped or mid-transition)")
+    if gate_counts["review"]:
+        parts.append(f"{gate_counts['review']} flagged review_required")
+    if gate_counts["tags"]:
+        parts.append(f"{gate_counts['tags']} not matching requested tags")
+    if gate_counts["readiness"]:
+        parts.append(f"{gate_counts['readiness']} not ready or health-blocked")
+    if gate_counts["eligible"]:
+        parts.append(f"{gate_counts['eligible']} eligible at re-check (transient contention; retry)")
+    plural = "s" if device_count != 1 else ""
+    return f"{device_count} candidate device{plural}: " + ", ".join(parts)
+
+
 async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceRequirement) -> str:
     """Per-gate breakdown of why the requirement's candidates were excluded.
 
@@ -173,45 +234,10 @@ async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceR
         .all()
     )
 
-    state_counts: Counter[str] = Counter()
-    gate_counts: Counter[str] = Counter()
-    blocking_runs: set[uuid.UUID] = set()
-    for device in devices:
-        if device.operational_state != DeviceOperationalState.available:
-            state_counts[device.operational_state.value] += 1
-        elif device.review_required:
-            gate_counts["review"] += 1
-        elif not device_node_is_viable(device):
-            gate_counts["node"] += 1
-        elif device.id in reserved_run_by_device:
-            gate_counts["reserved"] += 1
-            blocking_runs.add(reserved_run_by_device[device.id])
-        elif not _device_matches_requirement_tags(device, requirement.tags):
-            gate_counts["tags"] += 1
-        elif not await _readiness_for_match(db, device):
-            gate_counts["readiness"] += 1
-        else:
-            gate_counts["eligible"] += 1
-
-    parts: list[str] = []
-    if gate_counts["reserved"]:
-        named_runs = ", ".join(sorted(str(run_id) for run_id in blocking_runs)[:3])
-        plural = "s" if len(blocking_runs) > 1 else ""
-        parts.append(f"{gate_counts['reserved']} held by active reservation (run{plural} {named_runs})")
-    for state, count in sorted(state_counts.items()):
-        parts.append(f"{count} in state {state}")
-    if gate_counts["node"]:
-        parts.append(f"{gate_counts['node']} with Appium node not viable (stopped or mid-transition)")
-    if gate_counts["review"]:
-        parts.append(f"{gate_counts['review']} flagged review_required")
-    if gate_counts["tags"]:
-        parts.append(f"{gate_counts['tags']} not matching requested tags")
-    if gate_counts["readiness"]:
-        parts.append(f"{gate_counts['readiness']} not ready or health-blocked")
-    if gate_counts["eligible"]:
-        parts.append(f"{gate_counts['eligible']} eligible at re-check (transient contention; retry)")
-    plural = "s" if len(devices) != 1 else ""
-    return f"{len(devices)} candidate device{plural}: " + ", ".join(parts)
+    state_counts, gate_counts, blocking_runs = await _classify_shortfall_gates(
+        db, requirement, devices, reserved_run_by_device
+    )
+    return _format_shortfall_parts(len(devices), state_counts, gate_counts, blocking_runs)
 
 
 def _build_device_info(device: Device, *, platform_label: str | None) -> ReservedDeviceInfo:

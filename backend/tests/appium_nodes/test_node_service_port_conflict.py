@@ -11,7 +11,7 @@ import pytest_asyncio
 
 from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodePortConflictError
-from app.appium_nodes.services.reconciler_agent import start_remote_node
+from app.appium_nodes.services.reconciler_agent import AgentTransport, start_remote_node
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -87,9 +87,8 @@ async def test_port_conflict_detected_via_code(
             port=4723,
             allocated_caps={},
             agent_base="http://host:5100",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )
 
 
@@ -127,7 +126,6 @@ async def test_already_running_mapped_to_already_running_error(
             port=4723,
             allocated_caps={},
             agent_base="http://host:5100",
-            http_client_factory=httpx.AsyncClient,
+            transport=AgentTransport(http_client_factory=httpx.AsyncClient, circuit_breaker=Mock()),
             settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )

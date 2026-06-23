@@ -24,6 +24,23 @@ class ObservationReason(StrEnum):
     session_ended = "session_ended"
 
 
+def _map_offline_event(
+    reason: ObservationReason,
+) -> tuple[DeviceEventType | None, EventSeverity] | None:
+    """Map the reason for a transition to offline, or ``None`` if the reason has no offline event."""
+    if reason is ObservationReason.disconnected:
+        return DeviceEventType.connectivity_lost, "warning"
+    if reason is ObservationReason.auto_stopped:
+        return DeviceEventType.auto_stopped, "info"
+    if reason is ObservationReason.operator_stopped:
+        return DeviceEventType.auto_stopped, "info"
+    if reason is ObservationReason.node_crashed:
+        return DeviceEventType.node_crash, "warning"
+    if reason is ObservationReason.verification_failed:
+        return DeviceEventType.health_check_fail, "warning"
+    return None
+
+
 def map_transition_event(
     to: DeviceOperationalState,
     reason: ObservationReason,
@@ -39,16 +56,9 @@ def map_transition_event(
     bus event for unmapped transitions.
     """
     if to is DeviceOperationalState.offline:
-        if reason is ObservationReason.disconnected:
-            return DeviceEventType.connectivity_lost, "warning"
-        if reason is ObservationReason.auto_stopped:
-            return DeviceEventType.auto_stopped, "info"
-        if reason is ObservationReason.operator_stopped:
-            return DeviceEventType.auto_stopped, "info"
-        if reason is ObservationReason.node_crashed:
-            return DeviceEventType.node_crash, "warning"
-        if reason is ObservationReason.verification_failed:
-            return DeviceEventType.health_check_fail, "warning"
+        offline_event = _map_offline_event(reason)
+        if offline_event is not None:
+            return offline_event
 
     if to is DeviceOperationalState.available and reason is ObservationReason.recovered:
         return DeviceEventType.connectivity_restored, "success"

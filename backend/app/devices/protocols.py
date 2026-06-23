@@ -16,22 +16,18 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.sentinels import UnsetType
     from app.devices.models import (
-        ConnectionType,
         Device,
         DeviceGroup,
         DeviceOperationalState,
         DeviceReservation,
-        DeviceType,
-        HardwareHealthStatus,
     )
     from app.devices.models.test_data_audit import DeviceTestDataAuditLog
     from app.devices.schemas.device import (
         DevicePatch,
         DeviceVerificationCreate,
         DeviceVerificationUpdate,
-        HardwareTelemetryState,
     )
-    from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
+    from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.devices.services.serialization_types import DeviceSerializationContext
     from app.events.protocols import EventPublisher
@@ -192,26 +188,7 @@ class DeviceCrudProtocol(Protocol):
         mark_verified: bool = ...,
         initial_operational_state: DeviceOperationalState = ...,
     ) -> Device: ...
-    async def list_devices(
-        self,
-        db: AsyncSession,
-        *,
-        pack_id: str | None = ...,
-        platform_id: str | None = ...,
-        status: ChipStatus | None = ...,
-        host_id: uuid.UUID | None = ...,
-        identity_value: str | None = ...,
-        connection_target: str | None = ...,
-        device_type: DeviceType | None = ...,
-        connection_type: ConnectionType | None = ...,
-        os_version: str | None = ...,
-        search: str | None = ...,
-        hardware_health_status: HardwareHealthStatus | None = ...,
-        hardware_telemetry_state: HardwareTelemetryState | None = ...,
-        tags: dict[str, str] | None = ...,
-        sort_by: str = ...,
-        sort_dir: str = ...,
-    ) -> list[Device]: ...
+    async def list_devices(self, db: AsyncSession, filters: DeviceQueryFilters | None = ...) -> list[Device]: ...
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]: ...
     async def list_devices_paginated(
         self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int

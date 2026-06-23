@@ -546,12 +546,24 @@ class ConnectivityService:
         if not success:
             return False
 
+        return await self._reprobe_after_repair(db, device, claimed_ports=claimed_ports, has_live_session=fresh_live)
+
+    async def _reprobe_after_repair(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        claimed_ports: dict[str, int] | None,
+        has_live_session: bool,
+    ) -> bool:
+        """Re-probe a device after a successful repair dispatch and report whether
+        it now shows healthy (caller should then take the healthy path)."""
         reprobe = await _get_device_health(
             device,
             ip_ping_timeout_sec=None,
             ip_ping_count=None,
             claimed_ports=claimed_ports,
-            has_live_session=fresh_live,
+            has_live_session=has_live_session,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
             pool=self._pool,
@@ -739,25 +751,14 @@ class ConnectivityService:
         await self._lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
         await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)
 
-    async def check_connectivity(self, db: AsyncSession) -> None:
-        ip_ping_threshold = self._settings.get_int("device_checks.ip_ping.consecutive_fail_threshold")
-        ip_ping_timeout = self._settings.get_float("device_checks.ip_ping.timeout_sec")
-        ip_ping_count = self._settings.get_int("device_checks.ip_ping.count_per_cycle")
-        probe_unanswered_threshold = int(
-            self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
-        )
-        probe_failed_threshold = self._settings.get_int("device_checks.probe_failed.consecutive_fail_threshold")
-
-        stmt = select(Host).where(Host.status == HostStatus.online)
-        result = await db.execute(stmt)
-        hosts = result.scalars().all()
-
+    async def _collect_prepass_devices(
+        self, db: AsyncSession, hosts: Sequence[Host]
+    ) -> tuple[list[Device], set[uuid.UUID], dict[uuid.UUID, dict[str, int]], dict[uuid.UUID, bool]]:
         # Phase 1 — sequential DB pre-pass over ALL online hosts (on the shared
         # session, before the concurrent probe phase). Collects the devices to
         # probe plus the driver-agnostic facts the adapters need. Device.host and
         # Device.appium_node are eager-loaded so the gather below never lazy-loads
         # on the shared session (an AsyncSession is not safe for concurrent use).
-        prepass_started = perf_counter()
         all_devices: list[Device] = []
         lifecycle_capable: set[uuid.UUID] = set()
         claimed_ports_by_id: dict[uuid.UUID, dict[str, int]] = {}
@@ -802,6 +803,149 @@ class ConnectivityService:
         # lock may be held across an agent HTTP round-trip (measured holds reached
         # seconds and starved the allocator's SKIP LOCKED matching).
         await db.commit()
+        return all_devices, lifecycle_capable, claimed_ports_by_id, live_flag_by_id
+
+    async def _resolve_device_verdict(
+        self,
+        db: AsyncSession,
+        device: Device,
+        host: Host,
+        *,
+        health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]],
+        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
+        ip_ping_threshold: int,
+        probe_failed_threshold: int,
+        probe_unanswered_threshold: int,
+    ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None] | None:
+        """Derive this device's health verdict, applying emulator-state, unanswered-probe
+        and repair side effects. Returns ``None`` when the unanswered-probe note flipped
+        (the caller skips the device this cycle); otherwise ``(healthy, ip_ping_entry,
+        health_result)``.
+        """
+        health_result, lifecycle_state = health_by_device_id[device.id]
+        if lifecycle_state is not None:
+            await self._health.update_emulator_state(db, device, lifecycle_state)
+        if health_result is None:
+            flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
+            if flipped:
+                return None
+        else:
+            await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+        healthy = False
+        ip_ping_entry: dict[str, Any] | None = None
+        if health_result is not None:
+            healthy, ip_ping_entry = await self._evaluate_health_result(
+                db,
+                device,
+                host,
+                health_result,
+                ip_ping_threshold=ip_ping_threshold,
+                probe_failed_threshold=probe_failed_threshold,
+            )
+
+        if not healthy and health_result is not None:
+            repaired = await self._maybe_dispatch_repair(
+                db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
+            )
+            if repaired:
+                healthy = True
+                ip_ping_entry = None
+        return healthy, ip_ping_entry, health_result
+
+    async def _handle_unhealthy_device(
+        self,
+        db: AsyncSession,
+        device: Device,
+        host: Host,
+        *,
+        health_result: dict[str, Any] | None,
+        connected_targets_by_host: dict[uuid.UUID, set[str] | None],
+    ) -> None:
+        """Resolve a device that did not confirm healthy: agent enumeration (cached per
+        host), then either escalate a present-but-failing device or record a disconnect.
+        """
+        if host.id not in connected_targets_by_host:
+            connected_targets_by_host[host.id] = await _get_agent_devices(
+                host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+            )
+            # Re-fence after the enumeration agent round-trip (another slow I/O).
+            await assert_current_leader(db, settings=self._settings)
+        connected_targets = connected_targets_by_host[host.id]
+        if connected_targets is None:
+            # Agent enumeration unreachable — skip this device (and every other
+            # device on this host, which hits the cached None and skips too).
+            # Heartbeat handles host status; already-committed writes for earlier
+            # devices came from successful direct probes and stand on their own.
+            logger.warning(
+                "Agent enumeration unreachable for host %s; skipping device this cycle",
+                host.hostname,
+            )
+            return
+
+        if _device_expected_aliases(device) & connected_targets:
+            # Present but failing — keep the health-failure path.
+            if health_result is None:
+                # Probe unanswered (e.g. no connection_target): preserve the
+                # recovery-only behavior of the old presence gate.
+                await self._maybe_auto_recover(db, device)
+                return
+            await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
+            await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+        else:
+            # Device disconnected.
+            # Maintenance devices are placed there by operators; transient
+            # disconnects are not actionable — skip silently.
+            if device.operational_state == DeviceOperationalState.maintenance:
+                return
+            # Transition gate: this disconnect was already recorded (health failed
+            # and the node already stopped), so re-running the stop / health-write
+            # / reconcile would only re-enqueue the device every cycle while it
+            # stays disconnected. Skip it; the full scan re-derives if state drifts.
+            node = device.appium_node
+            if device.device_checks_healthy is False and (node is None or not node.observed_running):
+                return
+            await assert_current_leader(db, settings=self._settings)
+            await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
+            if device.operational_state == DeviceOperationalState.offline:
+                return
+            if device.operational_state in (
+                DeviceOperationalState.busy,
+                DeviceOperationalState.maintenance,
+            ) or await device_is_reserved(db, device.id):
+                logger.warning(
+                    "Device %s (%s) appears disconnected on host %s but is %s",
+                    device.name,
+                    device.identity_value,
+                    host.hostname,
+                    _audit_label(device),
+                )
+                await self._record_disconnect_if_stable(db, device, held=True)
+                return
+            logger.warning(
+                "Device %s (%s) disconnected from host %s",
+                device.name,
+                device.identity_value,
+                host.hostname,
+            )
+            await self._record_disconnect_if_stable(db, device, held=False)
+
+    async def check_connectivity(self, db: AsyncSession) -> None:
+        ip_ping_threshold = self._settings.get_int("device_checks.ip_ping.consecutive_fail_threshold")
+        ip_ping_timeout = self._settings.get_float("device_checks.ip_ping.timeout_sec")
+        ip_ping_count = self._settings.get_int("device_checks.ip_ping.count_per_cycle")
+        probe_unanswered_threshold = int(
+            self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
+        )
+        probe_failed_threshold = self._settings.get_int("device_checks.probe_failed.consecutive_fail_threshold")
+
+        stmt = select(Host).where(Host.status == HostStatus.online)
+        result = await db.execute(stmt)
+        hosts = result.scalars().all()
+
+        prepass_started = perf_counter()
+        all_devices, lifecycle_capable, claimed_ports_by_id, live_flag_by_id = await self._collect_prepass_devices(
+            db, hosts
+        )
         prepass_sec = perf_counter() - prepass_started
 
         # Phase 2 — probe every device's health concurrently across ALL hosts in
@@ -842,34 +986,19 @@ class ConnectivityService:
             # after the locked write window). Without it the first written device row
             # stays locked across every later device's agent HTTP call.
             await db.commit()
-            health_result, lifecycle_state = health_by_device_id[device.id]
-            if lifecycle_state is not None:
-                await self._health.update_emulator_state(db, device, lifecycle_state)
-            if health_result is None:
-                flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
-                if flipped:
-                    continue
-            else:
-                await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
-            healthy = False
-            ip_ping_entry: dict[str, Any] | None = None
-            if health_result is not None:
-                healthy, ip_ping_entry = await self._evaluate_health_result(
-                    db,
-                    device,
-                    host,
-                    health_result,
-                    ip_ping_threshold=ip_ping_threshold,
-                    probe_failed_threshold=probe_failed_threshold,
-                )
-
-            if not healthy and health_result is not None:
-                repaired = await self._maybe_dispatch_repair(
-                    db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
-                )
-                if repaired:
-                    healthy = True
-                    ip_ping_entry = None
+            verdict = await self._resolve_device_verdict(
+                db,
+                device,
+                host,
+                health_by_device_id=health_by_device_id,
+                claimed_ports_by_id=claimed_ports_by_id,
+                ip_ping_threshold=ip_ping_threshold,
+                probe_failed_threshold=probe_failed_threshold,
+                probe_unanswered_threshold=probe_unanswered_threshold,
+            )
+            if verdict is None:
+                continue
+            healthy, ip_ping_entry, health_result = verdict
 
             if healthy:
                 # A device answering its own health probe is present — no discovery
@@ -879,70 +1008,13 @@ class ConnectivityService:
                 )
                 continue
 
-            if host.id not in connected_targets_by_host:
-                connected_targets_by_host[host.id] = await _get_agent_devices(
-                    host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
-                )
-                # Re-fence after the enumeration agent round-trip (another slow I/O).
-                await assert_current_leader(db, settings=self._settings)
-            connected_targets = connected_targets_by_host[host.id]
-            if connected_targets is None:
-                # Agent enumeration unreachable — skip this device (and every other
-                # device on this host, which hits the cached None and skips too).
-                # Heartbeat handles host status; already-committed writes for earlier
-                # devices came from successful direct probes and stand on their own.
-                logger.warning(
-                    "Agent enumeration unreachable for host %s; skipping device this cycle",
-                    host.hostname,
-                )
-                continue
-
-            if _device_expected_aliases(device) & connected_targets:
-                # Present but failing — keep the health-failure path.
-                if health_result is None:
-                    # Probe unanswered (e.g. no connection_target): preserve the
-                    # recovery-only behavior of the old presence gate.
-                    await self._maybe_auto_recover(db, device)
-                    continue
-                await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
-                await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
-            else:
-                # Device disconnected.
-                # Maintenance devices are placed there by operators; transient
-                # disconnects are not actionable — skip silently.
-                if device.operational_state == DeviceOperationalState.maintenance:
-                    continue
-                # Transition gate: this disconnect was already recorded (health failed
-                # and the node already stopped), so re-running the stop / health-write
-                # / reconcile would only re-enqueue the device every cycle while it
-                # stays disconnected. Skip it; the full scan re-derives if state drifts.
-                node = device.appium_node
-                if device.device_checks_healthy is False and (node is None or not node.observed_running):
-                    continue
-                await assert_current_leader(db, settings=self._settings)
-                await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
-                if device.operational_state == DeviceOperationalState.offline:
-                    continue
-                if device.operational_state in (
-                    DeviceOperationalState.busy,
-                    DeviceOperationalState.maintenance,
-                ) or await device_is_reserved(db, device.id):
-                    logger.warning(
-                        "Device %s (%s) appears disconnected on host %s but is %s",
-                        device.name,
-                        device.identity_value,
-                        host.hostname,
-                        _audit_label(device),
-                    )
-                    await self._record_disconnect_if_stable(db, device, held=True)
-                    continue
-                logger.warning(
-                    "Device %s (%s) disconnected from host %s",
-                    device.name,
-                    device.identity_value,
-                    host.hostname,
-                )
-                await self._record_disconnect_if_stable(db, device, held=False)
+            await self._handle_unhealthy_device(
+                db,
+                device,
+                host,
+                health_result=health_result,
+                connected_targets_by_host=connected_targets_by_host,
+            )
 
         apply_sec = perf_counter() - apply_started
 

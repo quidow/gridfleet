@@ -24,7 +24,7 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.service import DeviceCrudService
 from app.verification.services import execution, preparation
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import PreparedVerificationContext, VerificationPreparationService
 from app.verification.services.service import VerificationService
@@ -91,8 +91,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
     svc = VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -113,8 +112,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
     detail = await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -133,8 +131,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
             crud=DeviceCrudService(
                 settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
             ),
@@ -155,8 +152,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
             crud=DeviceCrudService(
                 settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
             ),
@@ -201,8 +197,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     detail = await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -219,8 +214,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     started, error = await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -245,8 +239,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     started, error = await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -282,8 +275,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     started, error = await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -355,8 +347,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     await VerificationExecutionService(
         review=build_review_service(),
         publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -449,8 +440,7 @@ async def test_run_probe_swallows_transient_converge_kick_failure(
     _node, error = await VerificationExecutionService(
         review=build_review_service(),
         publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -517,8 +507,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
     await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -578,8 +567,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         await VerificationExecutionService(
             review=build_review_service(),
             publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
+            agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
             crud=DeviceCrudService(
                 settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
             ),
@@ -766,8 +754,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     svc = VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
@@ -842,8 +829,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     svc2 = VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),

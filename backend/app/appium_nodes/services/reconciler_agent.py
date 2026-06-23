@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -97,6 +98,24 @@ AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 appium_status = agent_operations.appium_status
 
 
+@dataclass(frozen=True, slots=True)
+class AgentTransport:
+    """Plumbing forwarded verbatim to the agent HTTP call (``appium_start``)."""
+
+    http_client_factory: AgentClientFactory
+    circuit_breaker: CircuitBreakerProtocol
+    pool: AgentHttpPool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NodeStartDetails:
+    """Optional refinements applied when recording a node start beyond port/pid."""
+
+    active_connection_target: str | None = None
+    allocated_caps: dict[str, Any] | None = None
+    clear_transition: bool = False
+
+
 def _short_session_factory(db: AsyncSession) -> async_sessionmaker[AsyncSession]:
     if db.bind is None:
         return async_session
@@ -107,8 +126,10 @@ __all__ = [
     "AVD_LAUNCH_HTTP_TIMEOUT_SECS",
     "RESTART_BACKOFF_BASE",
     "RESTART_MAX_RETRIES",
+    "AgentTransport",
     "NodeManagerError",
     "NodePortConflictError",
+    "NodeStartDetails",
     "ReconcilerAgentService",
     "RemoteStartResult",
     "agent_url",
@@ -162,20 +183,18 @@ async def mark_node_started(
     *,
     port: int,
     pid: int | None,
-    active_connection_target: str | None = None,
-    allocated_caps: dict[str, Any] | None = None,
-    clear_transition: bool = False,
+    details: NodeStartDetails = NodeStartDetails(),
     publisher: EventPublisher,
     settings: SettingsReader,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    active_connection_target = active_connection_target or appium_connection_target(device)
+    active_connection_target = details.active_connection_target or appium_connection_target(device)
     node = upsert_node(db, device, port, pid, active_connection_target, settings=settings)
     await db.flush()
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot promote Appium resource claims")
-    for key, value in (allocated_caps or {}).items():
+    for key, value in (details.allocated_caps or {}).items():
         if isinstance(value, int):
             continue
         await appium_node_resource_service.set_node_extra_capability(
@@ -197,7 +216,7 @@ async def mark_node_started(
         mark_offline=False,
     )
     reset_reconciler_start_failure_state(device)
-    if clear_transition:
+    if details.clear_transition:
         node.transition_token = None
         node.transition_deadline = None
     # Re-deliver the drain/stop state to the freshly restarted process. A new
@@ -371,10 +390,8 @@ async def start_remote_node(
     port: int,
     allocated_caps: dict[str, Any] | None,
     agent_base: str,
-    http_client_factory: AgentClientFactory,
+    transport: AgentTransport,
     settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    pool: AgentHttpPool | None = None,
 ) -> RemoteStartResult:
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
@@ -434,11 +451,11 @@ async def start_remote_node(
             host=host.ip,
             agent_port=host.agent_port,
             payload=payload,
-            http_client_factory=http_client_factory,
+            http_client_factory=transport.http_client_factory,
             timeout=_agent_start_timeout(device, settings=settings),
             settings=settings,
-            pool=pool,
-            circuit_breaker=circuit_breaker,
+            pool=transport.pool,
+            circuit_breaker=transport.circuit_breaker,
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -570,6 +587,44 @@ async def _start_for_node(
         # resource allocation. Devices without a pack still start, the
         # allocator simply gets no port/derived-data-path hints.
         pass
+    allocated_caps = await _reserve_node_resource_ports(
+        db,
+        device,
+        node=node,
+        excluded_port_caps=excluded_port_caps,
+        resource_ports=resource_ports,
+    )
+
+    if needs_derived_data_path and "appium:derivedDataPath" not in allocated_caps:
+        allocated_caps["appium:derivedDataPath"] = f"/tmp/gridfleet/derived-data/{uuid.uuid4().hex}"
+
+    agent_base = await agent_url(device)
+    handle = await _start_node_on_candidate_port(
+        db,
+        device,
+        node=node,
+        preferred_port=preferred_port,
+        settings=settings,
+        transport=AgentTransport(
+            http_client_factory=httpx.AsyncClient,
+            circuit_breaker=circuit_breaker,
+            pool=pool,
+        ),
+        allocated_caps=allocated_caps,
+        agent_base=agent_base,
+    )
+    handle.allocated_caps = allocated_caps
+    return handle
+
+
+async def _reserve_node_resource_ports(
+    db: AsyncSession,
+    device: Device,
+    *,
+    node: AppiumNode,
+    excluded_port_caps: set[str],
+    resource_ports: dict[str, int],
+) -> dict[str, Any]:
     allocated_caps: dict[str, Any] = await appium_node_resource_service.get_capabilities(db, node_id=node.id)
     stale_caps = [cap for cap in excluded_port_caps if cap in allocated_caps]
     try:
@@ -597,11 +652,20 @@ async def _start_for_node(
             await appium_node_resource_service.release_managed(cleanup_db, node_id=node.id)
             await cleanup_db.commit()
         raise
+    return allocated_caps
 
-    if needs_derived_data_path and "appium:derivedDataPath" not in allocated_caps:
-        allocated_caps["appium:derivedDataPath"] = f"/tmp/gridfleet/derived-data/{uuid.uuid4().hex}"
 
-    agent_base = await agent_url(device)
+async def _start_node_on_candidate_port(
+    db: AsyncSession,
+    device: Device,
+    *,
+    node: AppiumNode,
+    preferred_port: int | None,
+    settings: SettingsReader,
+    transport: AgentTransport,
+    allocated_caps: dict[str, Any],
+    agent_base: str,
+) -> RemoteStartResult:
     try:
         last_conflict: NodePortConflictError | None = None
         for port in await candidate_ports(db, host_id=device.host_id, preferred_port=preferred_port, settings=settings):
@@ -621,10 +685,8 @@ async def _start_for_node(
                     port=port,
                     allocated_caps=allocated_caps,
                     agent_base=agent_base,
-                    http_client_factory=httpx.AsyncClient,
+                    transport=transport,
                     settings=settings,
-                    pool=pool,
-                    circuit_breaker=circuit_breaker,
                 )
                 break
             except NodeAlreadyRunningError:
@@ -657,7 +719,6 @@ async def _start_for_node(
             await appium_node_resource_service.release_managed(cleanup_db, node_id=node.id)
             await cleanup_db.commit()
         raise
-    handle.allocated_caps = allocated_caps
     return handle
 
 

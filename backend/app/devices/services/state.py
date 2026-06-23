@@ -206,6 +206,18 @@ async def gather_device_state_facts(
     )
 
 
+def _available_reason(prev_op: DeviceOperationalState) -> ObservationReason:
+    """Split the ``available`` destination by where it came from.
+
+    Leaving ``busy`` is a session end, anything else recovering to ``available``
+    is a recovery (so ``offline → available`` maps to ``connectivity_restored``,
+    not ``session_ended``).
+    """
+    if prev_op is DeviceOperationalState.busy:
+        return ObservationReason.session_ended
+    return ObservationReason.recovered
+
+
 def _reason_for(
     prev_op: DeviceOperationalState,
     facts: DeviceStateFacts,
@@ -214,9 +226,7 @@ def _reason_for(
 
     Priority mirrors evaluate_operational_state: session > verification_lease >
     stop_in_flight / not_ready, then split the ``available`` destination by where
-    it came from: leaving ``busy`` is a session end, anything else recovering to
-    ``available`` is a recovery (so ``offline → available`` maps to
-    ``connectivity_restored``, not ``session_ended``).
+    it came from (see ``_available_reason``).
     """
     if facts.has_running_session:
         return ObservationReason.session
@@ -233,9 +243,7 @@ def _reason_for(
         return ObservationReason.auto_stopped
     if not facts.ready:
         return ObservationReason.disconnected
-    if prev_op is DeviceOperationalState.busy:
-        return ObservationReason.session_ended
-    return ObservationReason.recovered
+    return _available_reason(prev_op)
 
 
 async def apply_derived_state(

@@ -21,6 +21,7 @@ from app.agent_comm.dependencies import AgentCommServicesDep
 from app.auth.dependencies import AdminDep
 from app.core.dependencies import DbDep
 from app.packs.dependencies import PackServicesDep
+from app.packs.services.feature_dispatch import FeatureActionTarget
 
 router = APIRouter(prefix="/api/hosts", tags=["driver-pack-feature-actions"])
 
@@ -62,11 +63,13 @@ async def invoke_feature_action(
     """
     result = await packs.feature.dispatch_feature_action(
         session,
-        host_id=host_id,
-        pack_id=pack_id,
-        feature_id=feature_id,
-        action_id=action_id,
-        args=body.args,
+        target=FeatureActionTarget(
+            host_id=host_id,
+            pack_id=pack_id,
+            feature_id=feature_id,
+            action_id=action_id,
+            args=body.args,
+        ),
         agent_auth=agent_comm.http_pool.auth,
     )
     await session.commit()

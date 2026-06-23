@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.lifecycle.services import incidents
-from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.incidents import LifecycleIncidentDetails, LifecycleIncidentService
 
 if TYPE_CHECKING:
     import pytest
@@ -51,11 +51,13 @@ async def test_record_lifecycle_incident_serializes_optional_detail_branches(mon
         object(),  # type: ignore[arg-type]
         device,
         DeviceEventType.lifecycle_run_cooldown_set,
-        summary_state=incidents.DeviceLifecyclePolicySummaryState.backoff,
-        backoff_until=datetime(2026, 5, 13, tzinfo=UTC),
-        ttl_seconds=60,
-        worker_id="worker-1",
-        expires_at="later",
+        LifecycleIncidentDetails(
+            summary_state=incidents.DeviceLifecyclePolicySummaryState.backoff,
+            backoff_until=datetime(2026, 5, 13, tzinfo=UTC),
+            ttl_seconds=60,
+            worker_id="worker-1",
+            expires_at="later",
+        ),
     )
 
     details = record.await_args.args[3]
@@ -79,12 +81,14 @@ async def test_record_lifecycle_incident_publishes_sse_when_publisher_present(
         db,  # type: ignore[arg-type]
         device,
         DeviceEventType.lifecycle_recovery_failed,
-        summary_state=DeviceLifecyclePolicySummaryState.backoff,
-        reason="probe failed",
-        detail="auto-stopped",
-        source="session_viability",
-        run_id=run_id,
-        run_name="nightly",
+        LifecycleIncidentDetails(
+            summary_state=DeviceLifecyclePolicySummaryState.backoff,
+            reason="probe failed",
+            detail="auto-stopped",
+            source="session_viability",
+            run_id=run_id,
+            run_name="nightly",
+        ),
     )
 
     publisher.queue_for_session.assert_called_once()
@@ -114,7 +118,7 @@ async def test_record_lifecycle_incident_no_publish_without_publisher(
         object(),  # type: ignore[arg-type]
         device,
         DeviceEventType.lifecycle_recovered,
-        summary_state=DeviceLifecyclePolicySummaryState.idle,
+        LifecycleIncidentDetails(summary_state=DeviceLifecyclePolicySummaryState.idle),
     )
 
     record.assert_awaited_once()

@@ -8,20 +8,16 @@ from sqlalchemy.orm import selectinload
 from app.core.leader import state_store as control_plane_state_store
 from app.devices import locking as device_locking
 from app.devices.models import (
-    ConnectionType,
     Device,
     DeviceOperationalState,
-    DeviceType,
-    HardwareHealthStatus,
     device_search_vector_expression,
 )
 from app.devices.schemas.device import (
     DevicePatch,
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
-    HardwareTelemetryState,
 )
-from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
+from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
 from app.devices.services import link_repair
@@ -87,44 +83,8 @@ class DeviceCrudService:
             await self._identity.ensure_device_payload_identity_available(db, payload)
             raise
 
-    async def list_devices(
-        self,
-        db: AsyncSession,
-        *,
-        pack_id: str | None = None,
-        platform_id: str | None = None,
-        status: ChipStatus | None = None,
-        host_id: uuid.UUID | None = None,
-        identity_value: str | None = None,
-        connection_target: str | None = None,
-        device_type: DeviceType | None = None,
-        connection_type: ConnectionType | None = None,
-        os_version: str | None = None,
-        search: str | None = None,
-        hardware_health_status: HardwareHealthStatus | None = None,
-        hardware_telemetry_state: HardwareTelemetryState | None = None,
-        tags: dict[str, str] | None = None,
-        sort_by: str = "created_at",
-        sort_dir: str = "desc",
-    ) -> list[Device]:
-        filters = DeviceQueryFilters(
-            pack_id=pack_id,
-            platform_id=platform_id,
-            status=status,
-            host_id=host_id,
-            identity_value=identity_value,
-            connection_target=connection_target,
-            device_type=device_type,
-            connection_type=connection_type,
-            os_version=os_version,
-            hardware_health_status=hardware_health_status,
-            hardware_telemetry_state=hardware_telemetry_state,
-            search=search,
-            tags=tags,
-            sort_by=sort_by,
-            sort_dir=sort_dir,
-        )
-        return await self.list_devices_by_filters(db, filters)
+    async def list_devices(self, db: AsyncSession, filters: DeviceQueryFilters | None = None) -> list[Device]:
+        return await self.list_devices_by_filters(db, filters if filters is not None else DeviceQueryFilters())
 
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
         stmt = _build_device_list_stmt(filters)
@@ -272,26 +232,21 @@ class DeviceCrudService:
         return True
 
 
-def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
-    if filters.pack_id is not None:
-        stmt = stmt.where(Device.pack_id == filters.pack_id)
-    if filters.platform_id is not None:
-        stmt = stmt.where(Device.platform_id == filters.platform_id)
-    if filters.status is not None:
-        if filters.status == "available":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.available)
-        elif filters.status == "busy":
-            stmt = stmt.where(
-                Device.operational_state.in_([DeviceOperationalState.busy, DeviceOperationalState.verifying])
-            )
-        elif filters.status == "offline":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline)
-        elif filters.status == "maintenance":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.maintenance)
-        elif filters.status == "verifying":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.verifying)
-    if filters.reserved is not None:
-        stmt = stmt.where(active_reservation_exists() if filters.reserved else ~active_reservation_exists())
+def _apply_status_filter(stmt: DeviceQueryStatement, status: str) -> DeviceQueryStatement:
+    if status == "available":
+        return stmt.where(Device.operational_state == DeviceOperationalState.available)
+    if status == "busy":
+        return stmt.where(Device.operational_state.in_([DeviceOperationalState.busy, DeviceOperationalState.verifying]))
+    if status == "offline":
+        return stmt.where(Device.operational_state == DeviceOperationalState.offline)
+    if status == "maintenance":
+        return stmt.where(Device.operational_state == DeviceOperationalState.maintenance)
+    if status == "verifying":
+        return stmt.where(Device.operational_state == DeviceOperationalState.verifying)
+    return stmt
+
+
+def _apply_identity_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
     if filters.host_id is not None:
         stmt = stmt.where(Device.host_id == filters.host_id)
     if filters.identity_value is not None:
@@ -302,6 +257,10 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         stmt = stmt.where(Device.device_type == filters.device_type)
     if filters.connection_type is not None:
         stmt = stmt.where(Device.connection_type == filters.connection_type)
+    return stmt
+
+
+def _apply_version_and_text_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
     if filters.os_version is not None:
         stmt = stmt.where(Device.os_version == filters.os_version)
     if filters.os_version_display is not None:
@@ -313,6 +272,20 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
     if filters.search:
         query = func.websearch_to_tsquery("simple", filters.search)
         stmt = stmt.where(device_search_vector_expression().op("@@")(query))
+    return stmt
+
+
+def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
+    if filters.pack_id is not None:
+        stmt = stmt.where(Device.pack_id == filters.pack_id)
+    if filters.platform_id is not None:
+        stmt = stmt.where(Device.platform_id == filters.platform_id)
+    if filters.status is not None:
+        stmt = _apply_status_filter(stmt, filters.status)
+    if filters.reserved is not None:
+        stmt = stmt.where(active_reservation_exists() if filters.reserved else ~active_reservation_exists())
+    stmt = _apply_identity_filters(stmt, filters)
+    stmt = _apply_version_and_text_filters(stmt, filters)
     return stmt
 
 

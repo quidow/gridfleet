@@ -91,7 +91,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             MagicMock(),
             MagicMock(),
             _dead_result(),
-            guard_active=True,
+            guard=heartbeat._ResumeGuard(active=True),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
         )

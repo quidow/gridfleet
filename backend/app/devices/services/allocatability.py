@@ -29,6 +29,31 @@ from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import UnavailableReason
 
 
+def _available_unavailable_reason(
+    *,
+    reserved: bool,
+    accepting_new_sessions: bool,
+    node_viable: bool,
+) -> UnavailableReason | None:
+    """Gate an already-``available`` device, or ``None`` if allocatable.
+
+    Gate order mirrors allocation._claim's lock-time recheck: node viability,
+    then the warm soft-gate, then the reservation gate — so the badge cannot
+    claim allocatable where the gate would refuse.
+    """
+    if not node_viable:
+        # Node is warm (health OK, still ``available``) but mid-transition: a
+        # restart is in flight or the routable target is not yet settled.
+        return UnavailableReason.transitioning
+    if not accepting_new_sessions:
+        # cooldown is the only Stage-2 warm-park producer that lands on an
+        # ``available`` device (operator-stop derives ``offline``, maintenance
+        # derives ``maintenance``). A future warm-park producer that leaves the
+        # device ``available`` MUST extend this branch to report its own reason.
+        return UnavailableReason.cooldown
+    return UnavailableReason.reserved if reserved else None
+
+
 def unavailable_reason(
     operational_state: DeviceOperationalState,
     *,
@@ -56,18 +81,9 @@ def unavailable_reason(
         case DeviceOperationalState.offline:
             return UnavailableReason.offline
         case DeviceOperationalState.available:
-            # Gate order mirrors allocation._claim's lock-time recheck: node viability,
-            # then the warm soft-gate, then the reservation gate — so the badge cannot
-            # claim allocatable where the gate would refuse.
-            if not node_viable:
-                # Node is warm (health OK, still ``available``) but mid-transition: a
-                # restart is in flight or the routable target is not yet settled.
-                return UnavailableReason.transitioning
-            if not accepting_new_sessions:
-                # cooldown is the only Stage-2 warm-park producer that lands on an
-                # ``available`` device (operator-stop derives ``offline``, maintenance
-                # derives ``maintenance``). A future warm-park producer that leaves the
-                # device ``available`` MUST extend this branch to report its own reason.
-                return UnavailableReason.cooldown
-            return UnavailableReason.reserved if reserved else None
+            return _available_unavailable_reason(
+                reserved=reserved,
+                accepting_new_sessions=accepting_new_sessions,
+                node_viable=node_viable,
+            )
     assert_never(operational_state)

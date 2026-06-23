@@ -767,6 +767,18 @@ class AllocationService:
                     return True
         return False
 
+    async def _recheck_claimable_under_lock(self, db: DbSession, locked: Device) -> bool:
+        # Re-verify under the row lock: state, node viability, and absence of active
+        # sessions may have changed since _eligible_devices ran.
+        if locked.operational_state != DeviceOperationalState.available:
+            return False
+        if not device_node_is_viable(locked):
+            return False
+        if not device_node_accepting_new_sessions(locked):
+            return False
+        recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
+        return recheck.first() is None
+
     async def _claim(
         self,
         db: DbSession,
@@ -802,16 +814,7 @@ class AllocationService:
             )
             return None
         locked = await device_locking.lock_device(db, device.id)
-        # Re-verify under the row lock: state, node viability, and absence of active
-        # sessions may have changed since _eligible_devices ran.
-        if locked.operational_state != DeviceOperationalState.available:
-            return None
-        if not device_node_is_viable(locked):
-            return None
-        if not device_node_accepting_new_sessions(locked):
-            return None
-        recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
-        if recheck.first() is not None:
+        if not await self._recheck_claimable_under_lock(db, locked):
             return None
         target = node_target(locked)
         if target is None:

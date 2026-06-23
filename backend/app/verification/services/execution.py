@@ -64,31 +64,60 @@ class VerificationExecutionOutcome:
     device_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AgentCallContext:
+    """Transport plumbing the verification flow forwards to agent-comm operations.
+
+    ``settings``, ``circuit_breaker`` and ``pool`` travel together into every
+    direct-to-agent call (e.g. ``fetch_pack_device_health``), so they are bundled
+    as one cohesive collaborator on the execution service.
+    """
+
+    settings: SettingsReader
+    circuit_breaker: CircuitBreakerProtocol
+    pool: AgentHttpPool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FailureFinalizers:
+    """Collaborators the verification failure-finalization path drives together."""
+
+    publisher: EventPublisher
+    crud: DeviceCrudProtocol
+    node_manager: RemoteNodeManager
+    review: ReviewProtocol
+
+
 class VerificationExecutionService:
     def __init__(
         self,
         *,
         publisher: EventPublisher,
-        settings: SettingsReader,
-        circuit_breaker: CircuitBreakerProtocol,
+        agent: AgentCallContext,
         crud: DeviceCrudProtocol,
         viability: SessionViabilityProbe,
         capability: DeviceCapabilityProtocol,
         reconciler: NodeConvergence,
         node_manager: RemoteNodeManager,
         review: ReviewProtocol,
-        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
-        self._settings = settings
-        self._circuit_breaker = circuit_breaker
+        self._agent = agent
         self._crud = crud
         self._viability = viability
         self._capability = capability
         self._reconciler = reconciler
         self._node_manager = node_manager
         self._review = review
-        self._pool = pool
+
+    @property
+    def _failure_finalizers(self) -> FailureFinalizers:
+        return FailureFinalizers(
+            publisher=self._publisher,
+            crud=self._crud,
+            node_manager=self._node_manager,
+            review=self._review,
+        )
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -120,10 +149,10 @@ class VerificationExecutionService:
                 allow_boot=True,
                 headless=headless,
                 http_client_factory=http_client_factory,
-                timeout=_device_health_timeout(device, settings=self._settings),
-                settings=self._settings,
-                circuit_breaker=self._circuit_breaker,
-                pool=self._pool,
+                timeout=_device_health_timeout(device, settings=self._agent.settings),
+                settings=self._agent.settings,
+                circuit_breaker=self._agent.circuit_breaker,
+                pool=self._agent.pool,
             )
         except AgentCallError as exc:
             detail = f"Agent health check failed: {exc}"
@@ -179,7 +208,7 @@ class VerificationExecutionService:
         self, job: dict[str, Any], db: AsyncSession, device: Device, *, probe_session_fn: ProbeSessionFn
     ) -> tuple[AppiumNode | None, str | None]:
         await set_stage(job, "node_start", "running")
-        await _register_verification_node_intent(db, device, settings=self._settings, publisher=self._publisher)
+        await _register_verification_node_intent(db, device, settings=self._agent.settings, publisher=self._publisher)
         await db.commit()
         try:
             try:
@@ -202,7 +231,7 @@ class VerificationExecutionService:
             except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
                 logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
-            timeout = self._settings.get_int("appium.startup_timeout_sec")
+            timeout = self._agent.settings.get_int("appium.startup_timeout_sec")
             started_node = await self._node_manager.wait_for_node_running(db, node.id, timeout_sec=timeout)
             if started_node is None:
                 detail = "Verification node did not reach running state within timeout"
@@ -219,7 +248,7 @@ class VerificationExecutionService:
             )
 
             await set_stage(job, "session_probe", "running")
-            timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
+            timeout_sec = self._agent.settings.get_int("general.session_viability_timeout_sec")
             capabilities = await self._capability.get_device_capabilities(
                 db,
                 device,
@@ -280,7 +309,9 @@ class VerificationExecutionService:
                 # during the device-health stage could clobber the direct write.
                 # run_probe's later registration is an idempotent upsert that
                 # refreshes expires_at.
-                await _register_verification_node_intent(db, locked, settings=self._settings, publisher=self._publisher)
+                await _register_verification_node_intent(
+                    db, locked, settings=self._agent.settings, publisher=self._publisher
+                )
                 await db.commit()
                 device = locked
                 original_fields = {
@@ -299,11 +330,8 @@ class VerificationExecutionService:
                     context,
                     error=health_error,
                     job=job,
+                    finalizers=self._failure_finalizers,
                     original_fields=original_fields,
-                    publisher=self._publisher,
-                    crud=self._crud,
-                    node_manager=self._node_manager,
-                    review=self._review,
                 )
 
             node, probe_error = await self.run_probe(
@@ -318,12 +346,9 @@ class VerificationExecutionService:
                     context,
                     error=probe_error,
                     job=job,
+                    finalizers=self._failure_finalizers,
                     node=node,
                     original_fields=original_fields,
-                    publisher=self._publisher,
-                    crud=self._crud,
-                    node_manager=self._node_manager,
-                    review=self._review,
                 )
 
             return await _finalize_success(
@@ -341,12 +366,9 @@ class VerificationExecutionService:
                 context,
                 error="Verification crashed unexpectedly",
                 job=job,
+                finalizers=self._failure_finalizers,
                 node=node,
                 original_fields=original_fields,
-                publisher=self._publisher,
-                crud=self._crud,
-                node_manager=self._node_manager,
-                review=self._review,
             )
             raise
 
@@ -613,20 +635,20 @@ async def _finalize_failure(
     *,
     error: str,
     job: dict[str, Any],
+    finalizers: FailureFinalizers,
     node: AppiumNode | None = None,
     original_fields: dict[str, Any] | None = None,
-    publisher: EventPublisher,
-    crud: DeviceCrudProtocol,
-    node_manager: RemoteNodeManager,
-    review: ReviewProtocol,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
+    publisher = finalizers.publisher
     if context.mode == "create":
-        cleanup_error = await _stop_verification_node_if_running(job, db, context.transient_device, node, node_manager)
+        cleanup_error = await _stop_verification_node_if_running(
+            job, db, context.transient_device, node, finalizers.node_manager
+        )
         # Device deletion cascades to DeviceIntent rows, so no explicit
         # verification intent revoke is needed on the create-mode failure
         # path.
-        await crud.delete_device(db, context.save_device_id)
+        await finalizers.crud.delete_device(db, context.save_device_id)
         await db.commit()
         if cleanup_error is not None:
             return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
@@ -635,13 +657,13 @@ async def _finalize_failure(
     with db.no_autoflush:
         locked = await device_locking.lock_device(db, context.save_device_id)
     _restore_update_original_fields(locked, original_fields)
-    await _stop_verification_node_if_running(job, db, locked, node, node_manager)
+    await _stop_verification_node_if_running(job, db, locked, node, finalizers.node_manager)
     # Reconciler-authoritative terminal: no direct set_operational_state push. Shelve the device
     # (review_required) BEFORE the revoke so the reconcile the revoke triggers reads the durable
     # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
     # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the
     # derived ``offline`` emits.
-    await review.mark_review_required(
+    await finalizers.review.mark_review_required(
         db,
         locked,
         reason=f"verification failed: {error}",

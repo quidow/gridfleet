@@ -102,7 +102,7 @@ from app.sessions import protocols as session_viability_protocols
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.settings.service_config import SettingsConfigService
-from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.webhooks.schemas import WebhookUpdate
@@ -334,7 +334,7 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
 
 
 async def test_device_verification_runner_missing_job_branches() -> None:
-    from app.verification.services.execution import VerificationExecutionService
+    from app.verification.services.execution import AgentCallContext, VerificationExecutionService
     from app.verification.services.preparation import VerificationPreparationService
     from app.verification.services.runner import VerificationRunnerService
 
@@ -359,8 +359,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
     exec_svc = VerificationExecutionService(
         review=build_review_service(),
         publisher=publisher,
-        settings=settings,
-        circuit_breaker=cb,
+        agent=AgentCallContext(settings=settings, circuit_breaker=cb),
         crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
@@ -857,8 +856,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
+                agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
                 crud=DeviceCrudService(
                     settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
                 ),

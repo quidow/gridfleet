@@ -195,15 +195,13 @@ class SessionViabilityService:
 
         return True, None
 
-    async def run_session_viability_probe(
+    async def _claim_viability_lock(
         self,
         db: AsyncSession,
-        device: Device,
+        device_key: str,
         *,
         checked_by: SessionViabilityCheckedBy,
-    ) -> dict[str, Any]:
-        device_key = str(device.id)
-        previous_state: DeviceOperationalState | None = None
+    ) -> None:
         acquired = await control_plane_state_store.try_claim_value(
             db,
             SESSION_VIABILITY_RUNNING_NAMESPACE,
@@ -229,6 +227,75 @@ class SessionViabilityService:
         if not acquired:
             raise SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
         await db.commit()
+
+    async def _acquire_probe_lock_and_revalidate(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> DeviceOperationalState:
+        locked = await device_locking.lock_device(db, device.id)
+        # Re-validate can_probe under the row lock. The pre-lock check
+        # ran on an unlocked snapshot, so a concurrent allocation (a new
+        # reservation) or a writer of ``Device.operational_state``
+        # may have changed the state between the gate and this lock.
+        # Raise to match the pre-lock branch's contract: manual callers
+        # surface as HTTP 409, recovery callers retry via the policy
+        # loop. Writing a ``failed`` viability record here would bump
+        # ``consecutive_failures`` on a race the device is not
+        # responsible for and could push a healthy device closer to the
+        # escalation threshold.
+        locked_reserved = await device_is_reserved(db, locked.id)
+        locked_can_probe = (locked.operational_state == DeviceOperationalState.available and not locked_reserved) or (
+            checked_by == SessionViabilityCheckedBy.recovery
+            and locked.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+        )
+        if not locked_can_probe:
+            raise SessionViabilityProbeNotPermittedError(
+                "Session viability checks only run for available devices (state changed concurrently)"
+            )
+        previous_state = locked.operational_state
+        await db.commit()
+        return previous_state
+
+    async def _escalate_probe_failure(
+        self,
+        db: AsyncSession,
+        device: Device,
+        state: dict[str, Any],
+        *,
+        result: tuple[bool, str | None],
+        checked_by: SessionViabilityCheckedBy,
+    ) -> None:
+        ok, error = result
+        if not ok and checked_by != SessionViabilityCheckedBy.recovery and self._health_failure_handler is not None:
+            threshold = max(1, self._settings.get_int("general.session_viability_failure_threshold"))
+            if int(state.get("consecutive_failures") or 0) >= threshold:
+                await self._health_failure_handler(
+                    db,
+                    device,
+                    source="session_viability",
+                    reason=error or "Appium session viability probe failed",
+                )
+            else:
+                logger.info(
+                    "session_viability probe failed for device %s (%d/%d) — holding before escalation",
+                    device.id,
+                    state.get("consecutive_failures"),
+                    threshold,
+                )
+
+    async def run_session_viability_probe(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> dict[str, Any]:
+        device_key = str(device.id)
+        previous_state: DeviceOperationalState | None = None
+        await self._claim_viability_lock(db, device_key, checked_by=checked_by)
         # Once the lock is claimed, EVERY exit path — gate rejection, readiness
         # failure, probe exception, success, or task cancellation (a client
         # disconnect cancels the request task) — must reach the ``finally`` that
@@ -271,30 +338,7 @@ class SessionViabilityService:
                     await db.commit()
                 return state
 
-            locked = await device_locking.lock_device(db, device.id)
-            # Re-validate can_probe under the row lock. The pre-lock check
-            # ran on an unlocked snapshot, so a concurrent allocation (a new
-            # reservation) or a writer of ``Device.operational_state``
-            # may have changed the state between the gate and this lock.
-            # Raise to match the pre-lock branch's contract: manual callers
-            # surface as HTTP 409, recovery callers retry via the policy
-            # loop. Writing a ``failed`` viability record here would bump
-            # ``consecutive_failures`` on a race the device is not
-            # responsible for and could push a healthy device closer to the
-            # escalation threshold.
-            locked_reserved = await device_is_reserved(db, locked.id)
-            locked_can_probe = (
-                locked.operational_state == DeviceOperationalState.available and not locked_reserved
-            ) or (
-                checked_by == SessionViabilityCheckedBy.recovery
-                and locked.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
-            )
-            if not locked_can_probe:
-                raise SessionViabilityProbeNotPermittedError(
-                    "Session viability checks only run for available devices (state changed concurrently)"
-                )
-            previous_state = locked.operational_state
-            await db.commit()
+            previous_state = await self._acquire_probe_lock_and_revalidate(db, device, checked_by=checked_by)
 
             capabilities = build_probe_capabilities(await self._capability.get_device_capabilities(db, device))
             # Register the device as having an in-flight probe so the session_sync
@@ -351,22 +395,7 @@ class SessionViabilityService:
             await db.commit()
             if config_changed:
                 await db.commit()
-            if not ok and checked_by != SessionViabilityCheckedBy.recovery and self._health_failure_handler is not None:
-                threshold = max(1, self._settings.get_int("general.session_viability_failure_threshold"))
-                if int(state.get("consecutive_failures") or 0) >= threshold:
-                    await self._health_failure_handler(
-                        db,
-                        device,
-                        source="session_viability",
-                        reason=error or "Appium session viability probe failed",
-                    )
-                else:
-                    logger.info(
-                        "session_viability probe failed for device %s (%d/%d) — holding before escalation",
-                        device.id,
-                        state.get("consecutive_failures"),
-                        threshold,
-                    )
+            await self._escalate_probe_failure(db, device, state, result=(ok, error), checked_by=checked_by)
             return state
         except Exception:
             if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
@@ -474,14 +503,18 @@ async def _is_probe_running(db: AsyncSession, device_key: str) -> bool:
     return await control_plane_state_store.get_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key) is not None
 
 
-async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval_sec: int) -> bool:
+async def _is_device_probe_eligible(db: AsyncSession, device: Device, interval_sec: int) -> bool:
     if interval_sec <= 0:
         return False
     if device.operational_state != DeviceOperationalState.available or await device_is_reserved(db, device.id):
         return False
     if not await is_ready_for_use_async(db, device):
         return False
-    if await _is_probe_running(db, str(device.id)):
+    return not await _is_probe_running(db, str(device.id))
+
+
+async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval_sec: int) -> bool:
+    if not await _is_device_probe_eligible(db, device, interval_sec):
         return False
 
     previous = await get_session_viability(db, device)

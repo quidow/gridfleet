@@ -82,6 +82,40 @@ ClearToken = Callable[..., Awaitable[None]]
 ResetStartFailure = Callable[..., Awaitable[None]]
 
 
+def _decide_running_action(
+    row: DesiredRow,
+    *,
+    observed: ObservedEntry | None,
+    token_active: bool,
+    token_expired: bool,
+) -> ConvergenceAction:
+    """Convergence action when the desired state is ``running``."""
+    if token_expired:
+        return ConvergenceAction(kind="clear_expired_token")
+    if token_active:
+        return ConvergenceAction(
+            kind="restart",
+            stop_port=observed.port if observed is not None else None,
+            start_port=_positive_or_none(row.desired_port) or _positive_or_none(row.port),
+        )
+    if observed is None:
+        return ConvergenceAction(kind="start", port=row.desired_port)
+    if row.desired_port is None or observed.port == row.desired_port:
+        if (
+            row.port != observed.port
+            or row.pid != observed.pid
+            or row.active_connection_target != observed.connection_target
+        ):
+            return ConvergenceAction(
+                kind="db_mark_running",
+                port=observed.port,
+                pid=observed.pid,
+                active_connection_target=observed.connection_target,
+            )
+        return ConvergenceAction(kind="confirm_running")
+    return ConvergenceAction(kind="stop", port=observed.port, clear_desired_port=True)
+
+
 def decide_convergence_action(
     row: DesiredRow,
     *,
@@ -97,30 +131,7 @@ def decide_convergence_action(
     )
 
     if row.desired_state == "running":
-        if token_expired:
-            return ConvergenceAction(kind="clear_expired_token")
-        if token_active:
-            return ConvergenceAction(
-                kind="restart",
-                stop_port=observed.port if observed is not None else None,
-                start_port=_positive_or_none(row.desired_port) or _positive_or_none(row.port),
-            )
-        if observed is None:
-            return ConvergenceAction(kind="start", port=row.desired_port)
-        if row.desired_port is None or observed.port == row.desired_port:
-            if (
-                row.port != observed.port
-                or row.pid != observed.pid
-                or row.active_connection_target != observed.connection_target
-            ):
-                return ConvergenceAction(
-                    kind="db_mark_running",
-                    port=observed.port,
-                    pid=observed.pid,
-                    active_connection_target=observed.connection_target,
-                )
-            return ConvergenceAction(kind="confirm_running")
-        return ConvergenceAction(kind="stop", port=observed.port, clear_desired_port=True)
+        return _decide_running_action(row, observed=observed, token_active=token_active, token_expired=token_expired)
 
     if observed is not None:
         if row.stop_pending:
@@ -219,7 +230,7 @@ def rows_needing_stale_clear(
     ]
 
 
-async def _execute_action(
+async def _execute_agent_action(
     *,
     host_id: uuid.UUID,
     row: DesiredRow,
@@ -227,38 +238,8 @@ async def _execute_action(
     start_agent: StartAgent,
     stop_agent: StopAgent,
     write_observed: WriteObserved,
-    clear_token: ClearToken,
-    reset_start_failure: ResetStartFailure,
 ) -> None:
-    APPIUM_RECONCILER_CONVERGENCE_ACTIONS.labels(action=action.kind).inc()
-    logger.info(
-        "appium_reconciler_convergence_action",
-        host_id=str(host_id),
-        device_id=str(row.device_id),
-        action=action.kind,
-    )
-
-    if action.kind == "no_op":
-        return
-    if action.kind == "confirm_running":
-        await reset_start_failure(row=row)
-        return
-    if action.kind == "clear_expired_token":
-        APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED.inc()
-        await clear_token(row=row)
-        return
-    if action.kind == "db_clear_stale_running":
-        await write_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
-        return
-    if action.kind == "db_mark_running":
-        await write_observed(
-            row=row,
-            state="running",
-            port=action.port,
-            pid=action.pid,
-            active_connection_target=action.active_connection_target,
-        )
-        return
+    """Execute the agent-touching legs (start/stop/restart) of a convergence action."""
     if action.kind == "start":
         try:
             result = await start_agent(row=row, port=action.port)
@@ -307,6 +288,56 @@ async def _execute_action(
             clear_desired_port=_uses_fallback_port(requested=action.start_port, actual=result_port),
             clear_transition=True,
         )
+
+
+async def _execute_action(
+    *,
+    host_id: uuid.UUID,
+    row: DesiredRow,
+    action: ConvergenceAction,
+    start_agent: StartAgent,
+    stop_agent: StopAgent,
+    write_observed: WriteObserved,
+    clear_token: ClearToken,
+    reset_start_failure: ResetStartFailure,
+) -> None:
+    APPIUM_RECONCILER_CONVERGENCE_ACTIONS.labels(action=action.kind).inc()
+    logger.info(
+        "appium_reconciler_convergence_action",
+        host_id=str(host_id),
+        device_id=str(row.device_id),
+        action=action.kind,
+    )
+
+    if action.kind == "no_op":
+        return
+    if action.kind == "confirm_running":
+        await reset_start_failure(row=row)
+        return
+    if action.kind == "clear_expired_token":
+        APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED.inc()
+        await clear_token(row=row)
+        return
+    if action.kind == "db_clear_stale_running":
+        await write_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
+        return
+    if action.kind == "db_mark_running":
+        await write_observed(
+            row=row,
+            state="running",
+            port=action.port,
+            pid=action.pid,
+            active_connection_target=action.active_connection_target,
+        )
+        return
+    await _execute_agent_action(
+        host_id=host_id,
+        row=row,
+        action=action,
+        start_agent=start_agent,
+        stop_agent=stop_agent,
+        write_observed=write_observed,
+    )
 
 
 def _int_or_none(value: object) -> int | None:
