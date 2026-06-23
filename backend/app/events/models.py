@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves Mapped annotations at runtime.
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, Index, String, func, text

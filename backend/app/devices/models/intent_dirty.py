@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import uuid  # noqa: TC003 - SQLAlchemy default factories need this at runtime.
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String

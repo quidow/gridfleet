@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import enum
-import uuid  # noqa: TC003 - SQLAlchemy default factories need this at runtime.
-from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves mapped annotations at runtime.
+import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, func, text

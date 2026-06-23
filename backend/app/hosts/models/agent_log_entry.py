@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves Mapped annotations at runtime.
-from uuid import UUID  # noqa: TC003 - SQLAlchemy resolves Mapped annotations at runtime.
+from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID

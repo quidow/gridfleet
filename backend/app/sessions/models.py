@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime  # noqa: TC003 - SQLAlchemy evaluates Mapped[datetime] at runtime.
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, func, text

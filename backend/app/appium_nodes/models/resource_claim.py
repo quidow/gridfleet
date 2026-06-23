@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves mapped annotations at runtime.
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
@@ -49,4 +49,4 @@ class AppiumNodeResourceClaim(Base):
     )
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    node: Mapped[AppiumNode] = relationship("AppiumNode", back_populates="resource_claims")
+    node: Mapped["AppiumNode"] = relationship("AppiumNode", back_populates="resource_claims")
