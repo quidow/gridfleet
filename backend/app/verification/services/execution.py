@@ -109,14 +109,11 @@ class VerificationExecutionService:
         self._reconciler = reconciler
         self._node_manager = node_manager
         self._review = review
-
-    @property
-    def _failure_finalizers(self) -> FailureFinalizers:
-        return FailureFinalizers(
-            publisher=self._publisher,
-            crud=self._crud,
-            node_manager=self._node_manager,
-            review=self._review,
+        self._failure_finalizers = FailureFinalizers(
+            publisher=publisher,
+            crud=crud,
+            node_manager=node_manager,
+            review=review,
         )
 
     async def run_device_health(

@@ -288,55 +288,41 @@ class DataCleanupService:
         await self._cleanup_events_and_telemetry(db, now, counts)
         await self._cleanup_runs_and_jobs(db, now, counts)
 
-        sessions_deleted = counts.sessions_deleted
-        probe_sessions_deleted = counts.probe_sessions_deleted
-        grid_queue_tickets_deleted = counts.grid_queue_tickets_deleted
-        audit_deleted = counts.audit_deleted
-        agent_reconfigure_outbox_deleted = counts.agent_reconfigure_outbox_deleted
-        test_data_audit_deleted = counts.test_data_audit_deleted
-        events_deleted = counts.events_deleted
-        host_resource_samples_deleted = counts.host_resource_samples_deleted
-        agent_log_entries_deleted = counts.agent_log_entries_deleted
-        capacity_snapshots_deleted = counts.capacity_snapshots_deleted
-        system_events_deleted = counts.system_events_deleted
-        test_runs_deleted = counts.test_runs_deleted
-        jobs_deleted = counts.jobs_deleted
-
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
             "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
             "agent_reconfigure_outbox=%d, grid_queue_tickets=%d"
             ", system_events=%d, test_runs=%d, jobs=%d",
-            sessions_deleted,
-            probe_sessions_deleted,
-            audit_deleted,
-            test_data_audit_deleted,
-            events_deleted,
-            host_resource_samples_deleted,
-            agent_log_entries_deleted,
-            capacity_snapshots_deleted,
-            agent_reconfigure_outbox_deleted,
-            grid_queue_tickets_deleted,
-            system_events_deleted,
-            test_runs_deleted,
-            jobs_deleted,
+            counts.sessions_deleted,
+            counts.probe_sessions_deleted,
+            counts.audit_deleted,
+            counts.test_data_audit_deleted,
+            counts.events_deleted,
+            counts.host_resource_samples_deleted,
+            counts.agent_log_entries_deleted,
+            counts.capacity_snapshots_deleted,
+            counts.agent_reconfigure_outbox_deleted,
+            counts.grid_queue_tickets_deleted,
+            counts.system_events_deleted,
+            counts.test_runs_deleted,
+            counts.jobs_deleted,
         )
         await self._publisher.publish(
             "system.cleanup_completed",
             {
-                "sessions_deleted": sessions_deleted,
-                "probe_sessions_deleted": probe_sessions_deleted,
-                "audit_entries_deleted": audit_deleted,
-                "test_data_audit_entries_deleted": test_data_audit_deleted,
-                "device_events_deleted": events_deleted,
-                "host_resource_samples_deleted": host_resource_samples_deleted,
-                "agent_log_entries_deleted": agent_log_entries_deleted,
-                "capacity_snapshots_deleted": capacity_snapshots_deleted,
-                "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
-                "grid_queue_tickets_deleted": grid_queue_tickets_deleted,
-                "system_events_deleted": system_events_deleted,
-                "test_runs_deleted": test_runs_deleted,
-                "jobs_deleted": jobs_deleted,
+                "sessions_deleted": counts.sessions_deleted,
+                "probe_sessions_deleted": counts.probe_sessions_deleted,
+                "audit_entries_deleted": counts.audit_deleted,
+                "test_data_audit_entries_deleted": counts.test_data_audit_deleted,
+                "device_events_deleted": counts.events_deleted,
+                "host_resource_samples_deleted": counts.host_resource_samples_deleted,
+                "agent_log_entries_deleted": counts.agent_log_entries_deleted,
+                "capacity_snapshots_deleted": counts.capacity_snapshots_deleted,
+                "agent_reconfigure_outbox_deleted": counts.agent_reconfigure_outbox_deleted,
+                "grid_queue_tickets_deleted": counts.grid_queue_tickets_deleted,
+                "system_events_deleted": counts.system_events_deleted,
+                "test_runs_deleted": counts.test_runs_deleted,
+                "jobs_deleted": counts.jobs_deleted,
                 "duration_seconds": round(time.monotonic() - started, 3),
             },
         )
