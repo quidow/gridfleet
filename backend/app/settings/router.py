@@ -4,10 +4,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.dependencies import DbDep
 from app.core.http_errors import convert_not_found
-from app.events.dependencies import EventServicesDep  # noqa: TC001
-from app.settings.dependencies import SettingsServicesDep  # noqa: TC001
+from app.events.dependencies import EventServicesDep
+from app.settings.dependencies import SettingsServicesDep
 from app.settings.schemas import SettingRead, SettingsBulkUpdate, SettingsGrouped, SettingUpdate
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])

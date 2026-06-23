@@ -1,10 +1,8 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import (
@@ -14,6 +12,10 @@ from app.events.protocols import EventPublisher
 from tests.helpers import create_device_record, create_host, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.db

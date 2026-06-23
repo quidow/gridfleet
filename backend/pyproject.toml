@@ -60,20 +60,28 @@ module = "app.agent_comm.generated"
 ignore_errors = true
 
 [tool.ruff]
-# Idiom floor pinned to py312 even though requires-python is >=3.14: py314's
-# PEP 649 deferred-annotation analysis triggers a large type-import refactor
-# (TC/UP rules) tracked as a separate effort. This only sets ruff's lint target;
-# the runtime is Python 3.14.
-target-version = "py312"
+target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TCH", "RUF", "ANN", "PLC0415"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0415"]
 ignore = ["B008"]
 
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic resolves model field annotations at runtime when building the schema,
+# so type-only imports used in BaseModel/BaseSettings field types must stay at
+# module scope. ruff's intended mechanism for this (instead of per-import noqas).
+# NOT including SQLAlchemy's DeclarativeBase here on purpose: this codebase keeps
+# relationship-target imports inside `if TYPE_CHECKING:` (registry-resolved string
+# forward refs), and exempting the base would wrongly flag those as TC004. SQLAlchemy
+# Mapped[<concrete type>] column imports stay handled by per-import `# noqa: TC003`.
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
+
 [tool.ruff.lint.per-file-ignores]
-"app/models/*.py" = ["TCH003"]  # SQLAlchemy Mapped[] needs runtime types even with PEP 563
-"app/routers/*.py" = ["TC001"]  # FastAPI inspects Annotated deps at runtime; TC001 is a false positive
+# FastAPI resolves endpoint Annotated deps and response types at runtime via
+# get_type_hints, so type-only imports in router modules can't move to TYPE_CHECKING.
+"app/**/router*.py" = ["TC001", "TC002", "TC003"]
+"app/**/routers/*.py" = ["TC001", "TC002", "TC003"]
 "tests/**" = ["PLC0415"]  # tests often need lazy imports for fixture and patch ordering
 "tests/packs/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
 "app/agent_comm/generated.py" = ["ALL"]  # auto-generated — do not lint

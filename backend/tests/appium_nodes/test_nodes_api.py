@@ -1,14 +1,12 @@
 import uuid
-from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx2 import AsyncClient, HTTPStatusError, Request, Response
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -27,6 +25,11 @@ from app.devices.services.lifecycle_policy_state import (
 from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 DEVICE_PAYLOAD = {
     "identity_value": "emulator-5554",
@@ -93,7 +96,7 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
 
 
 @pytest.fixture
-def remote_manager_client() -> Generator[AsyncMock, None, None]:
+def remote_manager_client() -> Generator[AsyncMock]:
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)

@@ -1,10 +1,7 @@
-import uuid
-from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Select, and_, asc, desc, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices.models import DeviceReservation
@@ -14,6 +11,13 @@ from app.runs.schemas import (
     SessionCounts,
 )
 from app.sessions.models import Session, SessionStatus
+
+if TYPE_CHECKING:
+    import uuid
+    from datetime import datetime
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ColumnElement
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:

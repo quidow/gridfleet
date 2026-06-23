@@ -1,8 +1,7 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import (
@@ -12,6 +11,10 @@ from app.devices.services.state import (
 )
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _BASELINE = dict(
     has_running_session=False,

@@ -1,10 +1,8 @@
 import contextlib
 import os
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -48,7 +46,6 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
-from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
 from app.grid.allocation import AllocationService, device_match_surface
@@ -116,6 +113,12 @@ from app.webhooks.service import WebhookCrudService
 from app.webhooks.services_container import WebhookServices
 from tests.fakes import build_review_service
 from tests.helpers import create_host, reset_event_bus, test_event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, AsyncIterator
+    from pathlib import Path
+
+    from app.events.event_bus import EventBus
 
 settings_service = SettingsService()
 test_http_pool = AgentHttpPool()
@@ -788,7 +791,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
 @pytest_asyncio.fixture
 async def populated_hosts_4_slow(
     db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession], None]:
+) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession]]:
     """Yield an async context manager that opens a session seeded with 4 online hosts.
 
     IPs: 10.10.10.1 through 10.10.10.4. Intended for parallelism timing tests.
@@ -827,7 +830,7 @@ async def populated_hosts_4_slow(
 @pytest_asyncio.fixture
 async def populated_hosts_one_slow_one_fast(
     db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession], None]:
+) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession]]:
     """Yield an async context manager seeded with 2 hosts: slow (1.1.1.1) and fast (2.2.2.2).
 
     Used for testing that parallel execution logs the fast host before the slow one.

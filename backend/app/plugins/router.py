@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID  # noqa: TC003 - FastAPI inspects UUID parameter type at runtime.
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.dependencies import DbDep
 from app.core.http_errors import found_or_404
-from app.hosts.dependencies import HostServicesDep  # noqa: TC001
-from app.plugins.dependencies import PluginServicesDep  # noqa: TC001
-from app.plugins.models import AppiumPlugin  # noqa: TC001 - used in return type annotations
+from app.hosts.dependencies import HostServicesDep
+from app.plugins.dependencies import PluginServicesDep
+from app.plugins.models import AppiumPlugin
 from app.plugins.schemas import (
     FleetPluginSyncResult,
     HostPluginStatus,

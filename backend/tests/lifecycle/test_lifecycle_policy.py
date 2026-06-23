@@ -2,11 +2,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import (
@@ -34,7 +34,6 @@ from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy_summary,
 )
 from app.devices.services.reservation_query import device_is_reserved
-from app.hosts.models import Host
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -45,6 +44,11 @@ from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

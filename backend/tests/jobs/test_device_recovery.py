@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -17,7 +18,6 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
 from app.jobs.queue import DurableJobService
@@ -33,6 +33,9 @@ from tests.conftest import settings_service
 from tests.fakes import build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

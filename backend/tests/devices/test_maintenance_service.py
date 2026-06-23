@@ -1,18 +1,22 @@
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services.maintenance import MaintenanceService
 from app.events.protocols import EventPublisher
-from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

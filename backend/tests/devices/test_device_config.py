@@ -1,12 +1,14 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings.service_config import SettingsConfigService
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

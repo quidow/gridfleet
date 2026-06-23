@@ -1,10 +1,12 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest_asyncio
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.helpers import create_device_record, create_host
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 HOST_PAYLOAD = {
     "hostname": "bulk-host",

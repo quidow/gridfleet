@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -7,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.state import set_operational_state
-from app.hosts.models import Host
 from app.jobs.models import Job
 from app.sessions.models import Session, SessionStatus
 from app.verification.services.service import VerificationService
@@ -23,6 +23,9 @@ from tests.helpers import (
     track_previously_offline_device,
 )
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from app.hosts.models import Host
 
 
 async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncSession, db_host: Host) -> None:

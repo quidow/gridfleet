@@ -1,7 +1,11 @@
-import pytest
+from typing import TYPE_CHECKING
+
 from fastapi import FastAPI
 
 from app import main as app_main
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_docs_visible_in_local_environment(monkeypatch: pytest.MonkeyPatch) -> None:

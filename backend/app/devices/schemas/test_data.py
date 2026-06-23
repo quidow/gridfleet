@@ -14,7 +14,7 @@ class TestDataPayload(RootModel[dict[str, Any]]):
     __test__ = False
 
     @model_validator(mode="after")
-    def _validate(self) -> "TestDataPayload":
+    def _validate(self) -> TestDataPayload:
         if not isinstance(self.root, dict):
             raise ValueError("test_data must be a JSON object at the root")
         encoded = json.dumps(self.root).encode("utf-8")

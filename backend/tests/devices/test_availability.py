@@ -1,16 +1,20 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
-from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

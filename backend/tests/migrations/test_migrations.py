@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def test_alembic_migrations_have_single_head() -> None:

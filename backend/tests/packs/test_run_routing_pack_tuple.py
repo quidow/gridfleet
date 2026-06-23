@@ -1,13 +1,17 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.hosts.models import Host
 from app.runs.schemas import DeviceRequirement
 from app.runs.service_allocator import _find_matching_devices
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

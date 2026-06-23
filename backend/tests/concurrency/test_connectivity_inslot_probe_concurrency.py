@@ -7,10 +7,10 @@ peaks at concurrency 1; the in-slot gather peaks at 2.
 
 import asyncio
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
@@ -18,6 +18,9 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

@@ -1,14 +1,11 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
-
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -19,6 +16,12 @@ from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 _settings = FakeSettingsReader({})
 

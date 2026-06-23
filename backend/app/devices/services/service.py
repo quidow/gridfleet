@@ -1,14 +1,11 @@
-import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, asc, case, desc, func, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.leader import state_store as control_plane_state_store
-from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
@@ -36,11 +33,18 @@ from app.devices.services.connectivity import (
     PROBE_FAILED_NAMESPACE,
     PROBE_UNANSWERED_NAMESPACE,
 )
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.reservation_query import active_reservation_exists
-from app.events.protocols import EventPublisher
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
+    from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+    from app.events.protocols import EventPublisher
 
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]

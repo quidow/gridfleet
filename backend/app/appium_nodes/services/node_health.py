@@ -227,7 +227,7 @@ class NodeHealthService:
                 circuit_breaker=self._circuit_breaker,
             )
             return from_status_response(payload)
-        except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
+        except AgentUnreachableError, AgentResponseError, CircuitOpenError:
             return ProbeResult(status="indeterminate", detail="agent transport error")
 
     async def _attempt_node_restart(self, db: AsyncSession, *, device: Device) -> None:

@@ -7,11 +7,14 @@ Two shapes, one helper each:
   response bodies.
 """
 
-from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.exc import NoResultFound
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def found_or_404[T](value: T | None, detail: str) -> T:

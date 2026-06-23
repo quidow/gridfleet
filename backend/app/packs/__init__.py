@@ -1,7 +1,10 @@
 import importlib
-from types import ModuleType
+from typing import TYPE_CHECKING
 
 from app.packs.config import PacksConfig
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 packs_settings = PacksConfig()
 

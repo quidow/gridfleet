@@ -1,16 +1,18 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy import inspect
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 
 @pytest.fixture(autouse=True)

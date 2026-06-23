@@ -7,9 +7,9 @@ the verification pipeline after a device is re-imported.
 """
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
@@ -19,6 +19,9 @@ from app.portability.schemas import (
     ExportedDevice,
     OriginalHost,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class PortabilityExportService:

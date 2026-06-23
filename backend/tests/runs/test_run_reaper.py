@@ -1,11 +1,10 @@
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle import RunLifecycleService
@@ -13,6 +12,11 @@ from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_reaper import RunReaperLoop
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _settings = FakeSettingsReader({})
 _release_svc = RunReleaseService(

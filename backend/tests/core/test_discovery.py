@@ -1,11 +1,12 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
-
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AgentUnreachableError
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 HOST_PAYLOAD = {
     "hostname": "mac-lab-01",

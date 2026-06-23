@@ -1,13 +1,11 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Callable, Coroutine
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.probe_result import ProbeResult
@@ -28,6 +26,11 @@ from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Callable, Coroutine
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 def _ok_result(payload: dict[str, Any]) -> HeartbeatPingResult:

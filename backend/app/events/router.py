@@ -64,7 +64,7 @@ async def event_stream(
 
     queue = events.subscriber.subscribe()
 
-    async def generate() -> AsyncGenerator[dict[str, str], None]:
+    async def generate() -> AsyncGenerator[dict[str, str]]:
         try:
             while True:
                 try:

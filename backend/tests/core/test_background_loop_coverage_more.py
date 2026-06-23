@@ -46,12 +46,12 @@ if TYPE_CHECKING:
 
 class _Observation:
     @asynccontextmanager
-    async def cycle(self) -> AsyncGenerator[AsyncMock, None]:
+    async def cycle(self) -> AsyncGenerator[AsyncMock]:
         yield AsyncMock()
 
 
 @asynccontextmanager
-async def _fake_session() -> AsyncGenerator[AsyncMock, None]:
+async def _fake_session() -> AsyncGenerator[AsyncMock]:
     yield AsyncMock()
 
 

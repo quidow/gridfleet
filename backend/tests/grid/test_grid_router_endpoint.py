@@ -1,12 +1,16 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.db
 

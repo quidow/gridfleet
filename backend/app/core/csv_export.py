@@ -1,9 +1,13 @@
 import csv
 import io
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pydantic import BaseModel
 
 
 def to_csv_response(rows: Sequence[BaseModel], filename: str) -> StreamingResponse:

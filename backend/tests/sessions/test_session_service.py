@@ -1,10 +1,9 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import (
@@ -17,7 +16,6 @@ from app.devices.models import (
     DeviceType,
 )
 from app.devices.services import state_write_guard
-from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -32,6 +30,11 @@ from tests.helpers import test_event_bus as event_bus
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 from tests.fakes import FakeSettingsReader  # noqa: E402
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 
 def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:

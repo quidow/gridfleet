@@ -1,13 +1,16 @@
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceReservation, DeviceType
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.packs.services.lifecycle import PackLifecycleService
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _lifecycle = PackLifecycleService()
 count_active_work_for_pack = _lifecycle.count_active_work_for_pack

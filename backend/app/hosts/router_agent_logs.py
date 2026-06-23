@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import uuid  # noqa: TC003 - FastAPI inspects path parameter annotations at runtime.
+import uuid
 
 from fastapi import APIRouter, status
 
-from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI resolves dependency aliases at runtime.
+from app.core.dependencies import DbDep
 from app.core.http_errors import found_or_404
-from app.hosts.dependencies import HostServicesDep  # noqa: TC001 - FastAPI resolves dependency aliases at runtime.
+from app.hosts.dependencies import HostServicesDep
 from app.hosts.models import Host
 from app.hosts.schemas import AgentLogBatchIngest, AgentLogIngestResult
 

@@ -423,11 +423,11 @@ async def test_poll_host_resource_telemetry_commits_successful_samples() -> None
 async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> None:
     class _Observation:
         @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[None, None]:
+        async def cycle(self) -> AsyncGenerator[None]:
             yield None
 
     @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[FlushSession, None]:
+    async def fake_session() -> AsyncGenerator[FlushSession]:
         yield FlushSession()
 
     resource_telemetry_svc = HostResourceTelemetryService(

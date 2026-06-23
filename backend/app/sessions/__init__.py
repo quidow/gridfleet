@@ -1,5 +1,4 @@
 import importlib
-from types import ModuleType
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
@@ -9,6 +8,8 @@ from app.core.metrics_recorders import ACTIVE_SESSIONS
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 _SUBMODULES = frozenset(
@@ -36,7 +37,7 @@ __all__ = [
 ]
 
 
-async def _refresh_sessions_gauges(db: "AsyncSession") -> None:
+async def _refresh_sessions_gauges(db: AsyncSession) -> None:
     result = await db.execute(
         select(func.count())
         .select_from(Session)

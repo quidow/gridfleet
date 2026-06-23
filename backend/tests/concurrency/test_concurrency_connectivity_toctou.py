@@ -1,11 +1,11 @@
 """Verify device_connectivity availability re-checks after row locks."""
 
 import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -15,6 +15,9 @@ from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 

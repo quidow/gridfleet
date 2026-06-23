@@ -1,10 +1,10 @@
 import asyncio
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
@@ -17,6 +17,9 @@ from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 

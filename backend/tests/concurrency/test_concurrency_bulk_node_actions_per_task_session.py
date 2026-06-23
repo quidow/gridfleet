@@ -1,10 +1,10 @@
 import asyncio
 import contextlib
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
@@ -14,11 +14,15 @@ from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 

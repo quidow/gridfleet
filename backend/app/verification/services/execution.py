@@ -195,7 +195,7 @@ class VerificationExecutionService:
             # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
             try:
                 await self._reconciler.converge_device_now(device.id, db=db)
-            except (NodeAlreadyRunningError, NodeStopNotAcknowledgedError):
+            except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
                 # Expected, self-healing transient in the relay re-register
                 # window — the reconciler tick converges. Debug, not warning.
                 logger.debug("verification_converge_kick_transient", exc_info=True, extra={"device_id": str(device.id)})

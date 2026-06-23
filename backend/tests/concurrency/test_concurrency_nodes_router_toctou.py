@@ -1,11 +1,10 @@
 import asyncio
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx2 import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.dependencies import get_appium_node_services
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
@@ -15,7 +14,6 @@ from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.maintenance import MaintenanceService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
-from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.main import app
@@ -34,6 +32,13 @@ from tests.conftest import settings_service, test_circuit_breaker
 from tests.fakes import build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 

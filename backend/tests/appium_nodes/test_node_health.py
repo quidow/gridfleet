@@ -1,13 +1,12 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.exceptions import NodeManagerError
@@ -27,6 +26,11 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -1332,11 +1336,11 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
 
     class Observation:
         @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[None, None]:
+        async def cycle(self) -> AsyncGenerator[None]:
             yield None
 
     @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[AsyncMock, None]:
+    async def fake_session() -> AsyncGenerator[AsyncMock]:
         yield AsyncMock()
 
     from tests.fakes import FakeSettingsReader

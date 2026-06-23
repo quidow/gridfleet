@@ -1,6 +1,7 @@
+from typing import TYPE_CHECKING
+
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import PackDisabledError, PackUnavailableError, PlatformRemovedError
 from app.packs.models import DriverPack
@@ -11,6 +12,9 @@ from app.packs.services.platform_resolver import (
     resolve_pack_platform,
 )
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.asyncio

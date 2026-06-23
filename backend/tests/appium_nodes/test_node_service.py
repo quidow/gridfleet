@@ -1,10 +1,9 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError
@@ -25,6 +24,9 @@ from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
 
 _crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus)
 

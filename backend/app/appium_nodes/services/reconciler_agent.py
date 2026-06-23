@@ -531,7 +531,7 @@ async def stop_remote_node(
         )
         resp.raise_for_status()
         return True
-    except (AgentCallError, httpx.HTTPError):
+    except AgentCallError, httpx.HTTPError:
         return False
 
 

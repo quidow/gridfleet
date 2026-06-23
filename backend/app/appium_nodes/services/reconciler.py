@@ -409,7 +409,7 @@ async def _fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=UTC)
             backoff[device_id] = parsed
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return backoff
 
@@ -809,7 +809,7 @@ class ReconcilerService:
                     clear_token=clear_token,
                     reset_start_failure=reset_start_failure,
                 )
-            except (NodeAlreadyRunningError, NodeStopNotAcknowledgedError):
+            except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
                 # Expected, self-healing transients during the Appium process
                 # restart / sidecar-respawn window: a node already runs for the
                 # target, or the agent hasn't acknowledged a stop yet. The next

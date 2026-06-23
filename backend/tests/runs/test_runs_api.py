@@ -1,12 +1,11 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
-from httpx2 import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -14,7 +13,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
-from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
@@ -26,6 +24,11 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+
+    from app.hosts.models import Host
 
 _settings = FakeSettingsReader({})
 _query_svc = RunQueryService()

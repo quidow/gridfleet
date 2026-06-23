@@ -1,8 +1,6 @@
-from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.schemas import (
     DeviceReliabilityRow,
@@ -15,6 +13,11 @@ from app.analytics.schemas import (
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.sessions.filters import exclude_non_success_metric_sessions, exclude_non_test_sessions
 from app.sessions.models import Session, SessionStatus
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_session_summary(

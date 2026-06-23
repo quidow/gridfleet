@@ -1,11 +1,7 @@
 import logging
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
@@ -26,7 +22,12 @@ from app.devices.services.lifecycle_policy_state import (
 from app.devices.services.reservation_query import device_is_reserved
 
 if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.core.protocols import SettingsReader
+    from app.devices.models import Device
     from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
@@ -80,7 +81,7 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class MaintenanceService:
-    def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher", review: "ReviewProtocol") -> None:
+    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher, review: ReviewProtocol) -> None:
         self._settings = settings
         # Publisher is needed so the reconciler's derived maintenance enter/exit
         # emits device.operational_state_changed (SSE/webhooks).

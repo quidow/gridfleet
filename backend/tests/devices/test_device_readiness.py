@@ -1,16 +1,19 @@
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
-from httpx2 import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.services import readiness as device_readiness
 from app.packs.models import DriverPackPlatform
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.asyncio

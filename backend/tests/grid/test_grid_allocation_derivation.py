@@ -6,10 +6,9 @@ allocatable pool immediately, exactly like ``running``.
 
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import apply_derived_state
@@ -17,6 +16,10 @@ from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.db

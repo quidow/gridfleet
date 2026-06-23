@@ -51,7 +51,7 @@ class StaticPathsAuthMiddleware(BaseHTTPMiddleware):
             if scheme.lower() == "basic" and encoded:
                 try:
                     decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
-                except (ValueError, UnicodeDecodeError, binascii.Error):
+                except ValueError, UnicodeDecodeError, binascii.Error:
                     decoded = ""
                 user, sep, password = decoded.partition(":")
                 if sep and _auth_service.check_machine_credentials(user, password):

@@ -22,7 +22,7 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
             self.host = host
             self.fail_get = fail_get
 
-        async def __aenter__(self) -> "FakeSession":
+        async def __aenter__(self) -> FakeSession:
             return self
 
         async def __aexit__(self, *args: object) -> None:
@@ -180,17 +180,17 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
     set_value.assert_not_awaited()
 
     class Cycle:
-        def cycle(self) -> "Cycle":
+        def cycle(self) -> Cycle:
             return self
 
-        async def __aenter__(self) -> "Cycle":
+        async def __aenter__(self) -> Cycle:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
             return None
 
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

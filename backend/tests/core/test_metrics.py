@@ -1,14 +1,17 @@
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
 from prometheus_client import REGISTRY
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import refresh_system_gauges
 from app.core.metrics_recorders import DEVICES_IN_COOLDOWN
 from app.devices.models import DeviceReservation
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device_record
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.db

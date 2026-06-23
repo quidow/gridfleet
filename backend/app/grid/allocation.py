@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy import ColumnElement, or_, select, update
@@ -26,12 +26,10 @@ from app.appium_nodes.services.node_viability import (
     node_accepting_new_sessions_predicate,
     node_viable_predicate,
 )
-from app.core.protocols import SettingsReader
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
-from app.events.protocols import EventPublisher
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -50,6 +48,10 @@ from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_inflight import viability_probe_lock_active
+
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 

@@ -1,13 +1,10 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator
-from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx2 as httpx
-import pytest
 import pytest_asyncio
 from httpx2 import AsyncClient
 from sqlalchemy import select
@@ -23,7 +20,6 @@ from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
@@ -46,6 +42,14 @@ from tests.fakes import build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+    from contextlib import AbstractContextManager
+
+    import pytest
+
+    from app.hosts.models import Host
 
 
 def _noop_circuit_breaker() -> Mock:

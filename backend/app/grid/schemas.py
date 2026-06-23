@@ -2,7 +2,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.appium_nodes.services.effective_state import EffectiveNodeStateValue
+from app.appium_nodes.services.effective_state import (
+    EffectiveNodeStateValue,
+)
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import UnavailableReason
 

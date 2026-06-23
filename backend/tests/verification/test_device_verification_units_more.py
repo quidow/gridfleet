@@ -1,9 +1,9 @@
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
@@ -23,7 +23,6 @@ from app.devices.services.intent_types import (
     verification_intent_source,
 )
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from app.verification.services import execution as execution
 from app.verification.services import preparation as preparation
 from app.verification.services.execution import VerificationExecutionService
@@ -33,6 +32,11 @@ from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -67,7 +71,7 @@ async def test_device_verification_job_lookup_guards() -> None:
     assert await svc.get_verification_job("not-a-uuid", session_factory=AsyncMock()) is None
 
     class Session:
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

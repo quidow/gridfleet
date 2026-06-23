@@ -1,13 +1,18 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

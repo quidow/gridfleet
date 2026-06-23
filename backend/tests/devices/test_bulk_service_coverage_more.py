@@ -287,7 +287,7 @@ async def test_bulk_per_device_action_records_lock_and_action_errors(monkeypatch
             self.rollback = AsyncMock()
             self.commit = AsyncMock()
 
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

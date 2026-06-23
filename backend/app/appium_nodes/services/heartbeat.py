@@ -93,7 +93,7 @@ def _heartbeat_client_mode(*, settings: SettingsReader) -> ClientMode:
     try:
         pool_enabled = bool(settings.get("agent.http_pool_enabled"))
         return ClientMode.pooled if pool_enabled else ClientMode.fresh
-    except (KeyError, RuntimeError):
+    except KeyError, RuntimeError:
         return ClientMode.fresh
 
 

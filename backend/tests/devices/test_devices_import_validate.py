@@ -1,14 +1,18 @@
-import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from httpx2 import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.portability.schemas import ExportBundle, ExportedDevice, OriginalHost
 from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
+
+if TYPE_CHECKING:
+    import uuid
+
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _bundle(devices: list[ExportedDevice]) -> ExportBundle:

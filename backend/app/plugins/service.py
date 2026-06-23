@@ -151,7 +151,7 @@ class PluginService:
             online_hosts.append(host.id)
             try:
                 await self.sync_host_plugins(host, plugins)
-            except (AgentCallError, httpx.HTTPError):
+            except AgentCallError, httpx.HTTPError:
                 failed_hosts.append(host.id)
             else:
                 synced_hosts.append(host.id)

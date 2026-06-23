@@ -2,13 +2,12 @@
 
 import uuid
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -26,10 +25,14 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 
 def _reconnect_device(**overrides: object) -> SimpleNamespace:

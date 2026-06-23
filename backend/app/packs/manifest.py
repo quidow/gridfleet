@@ -37,7 +37,7 @@ class AppiumInstallable(BaseModel):
     github_repo: str | None = None
 
     @model_validator(mode="after")
-    def _recommended_satisfies_version(self) -> "AppiumInstallable":
+    def _recommended_satisfies_version(self) -> AppiumInstallable:
         """Ensure ``recommended`` (when set) satisfies the ``version`` range."""
         if self.recommended is None:
             return self
@@ -57,7 +57,7 @@ class AppiumInstallable(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _check_github_repo(self) -> "AppiumInstallable":
+    def _check_github_repo(self) -> AppiumInstallable:
         if self.source == "github" and not self.github_repo:
             raise ValueError("github_repo is required when source is 'github'")
         if self.source == "npm" and self.github_repo is not None:
@@ -154,7 +154,7 @@ class HealthCheckAppliesWhen(BaseModel):
     requires_ip_address: bool = False
 
     @model_validator(mode="after")
-    def _non_empty_connection_types(self) -> "HealthCheckAppliesWhen":
+    def _non_empty_connection_types(self) -> HealthCheckAppliesWhen:
         if not self.connection_types:
             raise ValueError("applies_when.connection_types must not be empty")
         return self
@@ -176,7 +176,7 @@ class HealthCheckLabel(BaseModel):
     debounce: bool = False
 
     @model_validator(mode="after")
-    def _non_empty(self) -> "HealthCheckLabel":
+    def _non_empty(self) -> HealthCheckLabel:
         if not self.id.strip():
             raise ValueError("health check id must not be empty")
         if not self.label.strip():
@@ -204,7 +204,7 @@ class PlatformDeviceTypeOverride(BaseModel):
     connection_behavior: ConnectionBehavior | None = None
 
     @model_validator(mode="after")
-    def _check_default_capability_templates(self) -> "PlatformDeviceTypeOverride":
+    def _check_default_capability_templates(self) -> PlatformDeviceTypeOverride:
         for key, value in (self.default_capabilities or {}).items():
             if not isinstance(value, str):
                 continue
@@ -245,7 +245,7 @@ class Platform(BaseModel):
     ] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _check_default_capability_templates(self) -> "Platform":
+    def _check_default_capability_templates(self) -> Platform:
         for key, value in self.default_capabilities.items():
             if not isinstance(value, str):
                 continue
@@ -361,7 +361,7 @@ class Manifest(BaseModel):
     features: dict[str, FeatureManifest] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _gate_keys_reference_known_fields(self) -> "Manifest":
+    def _gate_keys_reference_known_fields(self) -> Manifest:
         """Reject device_config gate keys that don't name a declared device field
         — a typo'd key would otherwise silently never match (always-apply for
         appium_env, never-required for required_for_session_when)."""

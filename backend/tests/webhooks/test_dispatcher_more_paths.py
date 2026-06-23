@@ -21,7 +21,7 @@ class _Db:
         self.refresh = AsyncMock()
         self.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
 
-    async def __aenter__(self) -> "_Db":
+    async def __aenter__(self) -> _Db:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -78,7 +78,7 @@ async def test_list_deliveries_counts_rows() -> None:
     second = SimpleNamespace(id=uuid.uuid4())
 
     class ItemsResult:
-        def scalars(self) -> "ItemsResult":
+        def scalars(self) -> ItemsResult:
             return self
 
         def all(self) -> list[object]:
@@ -123,7 +123,7 @@ async def test_webhook_delivery_loop_logs_and_sleeps_on_error(monkeypatch: pytes
             yield None
 
     class Client:
-        async def __aenter__(self) -> "Client":
+        async def __aenter__(self) -> Client:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
@@ -153,7 +153,7 @@ async def test_webhook_delivery_loop_sleeps_when_no_work(monkeypatch: pytest.Mon
             yield None
 
     class Client:
-        async def __aenter__(self) -> "Client":
+        async def __aenter__(self) -> Client:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
@@ -257,7 +257,7 @@ async def test_handle_system_event_no_matching_webhooks() -> None:
         def scalar_one_or_none(self) -> SimpleNamespace:
             return SimpleNamespace(id=uuid.uuid4(), type="device.created")
 
-        def scalars(self) -> "_ScalarResult":
+        def scalars(self) -> _ScalarResult:
             return self
 
         def all(self) -> list[object]:

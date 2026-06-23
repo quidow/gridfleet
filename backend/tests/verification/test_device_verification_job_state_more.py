@@ -10,7 +10,7 @@ async def test_device_verification_job_state_persist_and_stage_resolution_branch
             self.row = row
             self.commit = AsyncMock()
 
-        async def __aenter__(self) -> "Session":
+        async def __aenter__(self) -> Session:
             return self
 
         async def __aexit__(self, *_args: object) -> None:

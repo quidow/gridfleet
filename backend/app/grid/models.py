@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves Mapped annotations at runtime.
 from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, func

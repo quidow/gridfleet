@@ -1,16 +1,20 @@
 import asyncio
-from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.packs.models import DriverPack, PackState
 from app.packs.services import drain as pack_drain
 from app.packs.services.drain import PackDrainLoop
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services_container import PackServices
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.asyncio
 

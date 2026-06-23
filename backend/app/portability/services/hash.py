@@ -1,8 +1,10 @@
 import hashlib
 import json
 from datetime import UTC
+from typing import TYPE_CHECKING
 
-from app.portability.schemas import ExportBundle
+if TYPE_CHECKING:
+    from app.portability.schemas import ExportBundle
 
 
 def canonical_bundle_json(bundle: ExportBundle) -> bytes:

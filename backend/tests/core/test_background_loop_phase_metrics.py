@@ -7,11 +7,11 @@ so a slow cycle can be pinned to a phase instead of guessed at.
 
 import asyncio
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from prometheus_client import REGISTRY
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics_recorders import record_background_loop_phase
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -20,6 +20,9 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

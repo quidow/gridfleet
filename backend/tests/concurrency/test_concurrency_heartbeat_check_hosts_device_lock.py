@@ -1,10 +1,10 @@
 import asyncio
 import contextlib
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.services import heartbeat as heartbeat
 from app.appium_nodes.services.heartbeat import HeartbeatService
@@ -12,10 +12,14 @@ from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOu
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
-from app.hosts.models import Host
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
