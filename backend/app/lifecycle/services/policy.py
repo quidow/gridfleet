@@ -14,7 +14,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy_summary as lifecycle_policy_summary
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device

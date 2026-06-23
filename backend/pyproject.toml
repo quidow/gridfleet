@@ -64,7 +64,7 @@ target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0415", "PLR0402", "PLR2004", "PLW0108"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "PLC0414", "PLC0415", "PLR0402", "PLR2004", "PLW0108"]
 ignore = ["B008"]
 
 [tool.ruff.lint.flake8-type-checking]

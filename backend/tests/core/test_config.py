@@ -1,7 +1,7 @@
 import pytest
 
 from app.agent_comm.config import AgentCommConfig
-from app.core import config as config
+from app.core import config
 
 
 def test_agent_auth_pair_required_together(monkeypatch: pytest.MonkeyPatch) -> None:

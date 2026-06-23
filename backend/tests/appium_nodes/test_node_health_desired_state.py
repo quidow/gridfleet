@@ -46,7 +46,6 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
 
     from unittest.mock import Mock
 
-    from app.appium_nodes.services import node_health as node_health
     from app.appium_nodes.services.node_health import NodeHealthService
 
     svc = NodeHealthService(

@@ -10,7 +10,7 @@ from app.devices.models import ConnectionType, DeviceType
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from app.verification.services import execution as execution
+from app.verification.services import execution
 from app.verification.services.execution import VerificationExecutionService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus

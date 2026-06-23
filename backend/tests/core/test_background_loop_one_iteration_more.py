@@ -3,14 +3,14 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services import heartbeat
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
-from app.devices.services import fleet_capacity as fleet_capacity
+from app.devices.services import fleet_capacity
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService

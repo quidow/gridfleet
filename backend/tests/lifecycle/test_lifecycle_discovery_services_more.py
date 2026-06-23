@@ -9,7 +9,6 @@ from app.devices.services.presenter import DevicePresenterService
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.lifecycle.services import incidents
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from app.packs.services import discovery as discovery
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record

@@ -15,7 +15,7 @@ from app.appium_nodes.services import (
     common as node_service_common,
 )
 from app.appium_nodes.services import (
-    desired_state_writer as desired_state_writer,
+    desired_state_writer,
 )
 from app.appium_nodes.services import (
     reconciler as appium_reconciler,
@@ -39,7 +39,8 @@ from app.devices.services import (
     capability as capability_service,
 )
 from app.devices.services import (
-    data_cleanup as data_cleanup,
+    data_cleanup,
+    state_write_guard,
 )
 from app.devices.services import (
     groups as device_group_service,
@@ -53,7 +54,6 @@ from app.devices.services import (
 from app.devices.services import (
     state as device_state,
 )
-from app.devices.services import state_write_guard
 from app.devices.services import test_data as test_data_service
 from app.devices.services import (
     write as device_write,

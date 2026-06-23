@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services import node_health as node_health
+from app.appium_nodes.services import node_health
 from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
 from tests.fakes import FakeSettingsReader

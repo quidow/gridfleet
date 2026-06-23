@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_state
-from app.core import metrics_recorders as metrics_recorders
+from app.core import metrics_recorders
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from tests.helpers import create_device

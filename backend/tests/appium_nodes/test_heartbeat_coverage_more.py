@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services import heartbeat
 from app.appium_nodes.services.heartbeat import HeartbeatLoop, HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.appium_nodes.services_container import AppiumNodeServices

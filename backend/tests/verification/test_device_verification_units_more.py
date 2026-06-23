@@ -23,8 +23,7 @@ from app.devices.services.intent_types import (
     verification_intent_source,
 )
 from app.devices.services.service import DeviceCrudService
-from app.verification.services import execution as execution
-from app.verification.services import preparation as preparation
+from app.verification.services import execution, preparation
 from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import PreparedVerificationContext, VerificationPreparationService
