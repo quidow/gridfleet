@@ -1,32 +1,28 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.dependencies import AgentCommServicesDep
-from app.agent_comm.http_pool import AgentHttpPool
-from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.http_errors import found_or_404
-from app.core.protocols import SettingsReader
-from app.core.type_defs import AsyncTaskFactory
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
 from app.events.dependencies import EventServicesDep
-from app.events.protocols import EventPublisher
 from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning
 from app.hosts.dependencies import HostServicesDep
 from app.hosts.models import Host
-from app.hosts.protocols import HostCrudProtocol
 from app.hosts.schemas import (
     AgentLogPage,
     DiscoveryConfirm,
@@ -46,9 +42,17 @@ from app.hosts.schemas import (
 )
 from app.packs import schemas as pack_schemas
 from app.packs.dependencies import PackServicesDep
-from app.packs.protocols import PackDiscoveryProtocol
 from app.plugins.service import PluginService
 from app.settings.dependencies import SettingsServicesDep
+
+if TYPE_CHECKING:
+    from app.agent_comm.http_pool import AgentHttpPool
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.core.type_defs import AsyncTaskFactory
+    from app.events.protocols import EventPublisher
+    from app.hosts.protocols import HostCrudProtocol
+    from app.packs.protocols import PackDiscoveryProtocol
 
 HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 

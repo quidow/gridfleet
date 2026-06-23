@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from typing import Annotated, Any
 
@@ -7,7 +9,11 @@ from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
-from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
+
+# build_device_query_filters is a FastAPI dependency (not a route handler, so it is not
+# covered by runtime-evaluated-decorators); FastAPI resolves its Query-param enum
+# annotations at runtime via get_type_hints, so these must stay at module scope.
+from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus  # noqa: TC001
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.device import (
     DeviceDetail,

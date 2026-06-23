@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves mapped annotations at runtime.
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, UniqueConstraint, func
@@ -53,4 +53,4 @@ class DeviceGroupMembership(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     group: Mapped[DeviceGroup] = relationship("DeviceGroup", back_populates="memberships")
-    device: Mapped[Device] = relationship("Device")
+    device: Mapped["Device"] = relationship("Device")

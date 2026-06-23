@@ -10,15 +10,16 @@ inside the long-poll is the deliberate v1 simplification — same observable
 behavior within 1 s, no cross-worker wake needed.
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
 import uuid
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.db_retry import retry_on_serialization_failure
@@ -50,6 +51,9 @@ from app.grid.schemas_internal import (
     RoutesResponse,
 )
 from app.sessions.models import Session, SessionStatus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
 

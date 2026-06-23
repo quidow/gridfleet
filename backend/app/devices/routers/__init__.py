@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 import importlib
-from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 __all__ = [
     "bulk",
