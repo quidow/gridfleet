@@ -13,7 +13,7 @@ Thanks for taking the time to improve GridFleet. This project spans a FastAPI ba
 
 System prerequisites:
 
-- Python 3.12+
+- Python 3.14 (backend), Python 3.12 (agent)
 - `uv`
 - Node.js 24
 - Docker with `docker compose`

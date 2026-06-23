@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GridFleet is a control plane for Appium device labs. It is a multi-component monorepo, **not** a single application. Each component has its own toolchain and dependency manifest:
 
-- `backend/` — FastAPI manager, async SQLAlchemy + Postgres, Alembic migrations, leader-owned background loops. Python 3.12, managed by `uv`.
+- `backend/` — FastAPI manager, async SQLAlchemy + Postgres, Alembic migrations, leader-owned background loops. Python 3.14, managed by `uv`.
 - `agent/` — FastAPI host agent that runs on each device host. Spawns Appium processes per device. Python 3.12, managed by `uv`.
 - `router/` — Pingora-based Rust W3C WebDriver router that listens on `:4444`, allocates a device via the backend internal grid API, and proxies session commands directly to Appium on the allocated host. Replaces the Selenium Grid hub.
 - `frontend/` — React 19 + TypeScript + Vite + Tailwind v4 operator dashboard. Node 24, managed by `npm`.
