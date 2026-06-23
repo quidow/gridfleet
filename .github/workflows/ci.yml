@@ -14,6 +14,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      global: ${{ steps.filter.outputs.global }}
+      backend: ${{ steps.filter.outputs.backend }}
+      agent: ${{ steps.filter.outputs.agent }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      testkit: ${{ steps.filter.outputs.testkit }}
+      router: ${{ steps.filter.outputs.router }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        run: |
+          set -euo pipefail
+          zero="0000000000000000000000000000000000000000"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          fi
+
+          if [ -z "${base}" ] || [ "${base}" = "${zero}" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "Base commit unavailable; treating every component as changed."
+            files="__ALL__"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            files="$(git diff --name-only "${base}...${head}")"
+          else
+            files="$(git diff --name-only "${base}" "${head}")"
+          fi
+
+          echo "Changed files:"
+          echo "${files}"
+
+          emit() {
+            if [ "${files}" = "__ALL__" ] || echo "${files}" | grep -qE "$2"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          # global: the CI workflow itself or the shared Node toolchain pin changed
+          emit global   '^\.github/workflows/ci\.yml$|^\.node-version$'
+          emit backend  '^backend/'
+          emit agent    '^agent/'
+          emit frontend '^frontend/'
+          emit testkit  '^testkit/'
+          emit router   '^router/'
+          emit docker   '^docker/'
+
   commitlint:
     name: Commit Messages
     if: github.event_name == 'pull_request'
@@ -27,7 +87,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .node-version
 
       - name: Install commitlint
         run: npm install --save-dev @commitlint/{cli,config-conventional}
@@ -38,6 +98,11 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      needs.changes.outputs.global == 'true' ||
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.agent == 'true'
     services:
       postgres:
         image: postgres:18
@@ -64,7 +129,6 @@ jobs:
         with:
           enable-cache: true
           cache-suffix: backend
-          python-version: "3.12"
           cache-dependency-glob: |
             backend/pyproject.toml
             backend/uv.lock
@@ -99,6 +163,10 @@ jobs:
   agent:
     name: Agent
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      needs.changes.outputs.global == 'true' ||
+      needs.changes.outputs.agent == 'true'
     env:
       UV_LINK_MODE: copy
     steps:
@@ -110,7 +178,6 @@ jobs:
         with:
           enable-cache: true
           cache-suffix: agent-v2
-          python-version: "3.12"
           cache-dependency-glob: |
             agent/pyproject.toml
             agent/uv.lock
@@ -157,6 +224,10 @@ jobs:
   testkit:
     name: Testkit
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      needs.changes.outputs.global == 'true' ||
+      needs.changes.outputs.testkit == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -219,6 +290,11 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      needs.changes.outputs.global == 'true' ||
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.backend == 'true'
     env:
       UV_LINK_MODE: copy
     steps:
@@ -228,7 +304,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -241,7 +317,6 @@ jobs:
         with:
           enable-cache: true
           cache-suffix: frontend
-          python-version: "3.12"
           cache-dependency-glob: |
             backend/pyproject.toml
             backend/uv.lock
@@ -310,6 +385,14 @@ jobs:
   compose-smoke:
     name: Compose Smoke Test
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      needs.changes.outputs.global == 'true' ||
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.agent == 'true' ||
+      needs.changes.outputs.router == 'true' ||
+      needs.changes.outputs.docker == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -342,7 +425,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
