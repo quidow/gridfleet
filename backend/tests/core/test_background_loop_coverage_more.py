@@ -56,7 +56,7 @@ async def _fake_session() -> AsyncGenerator[AsyncMock]:
 
 
 async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
@@ -117,7 +117,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
 
 
 async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
@@ -183,7 +183,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
 
 async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(NodeHealthService, "check_nodes", AsyncMock(side_effect=LeadershipLost("stale leader")))
@@ -249,7 +249,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
 
 async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(ConnectivityService, "check_expired_cooldowns", AsyncMock())
@@ -313,7 +313,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
 async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
@@ -337,7 +337,7 @@ async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pyt
 async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
@@ -362,7 +362,7 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
 
 
 async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(data_cleanup, "schedule_background_loop", AsyncMock())
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))

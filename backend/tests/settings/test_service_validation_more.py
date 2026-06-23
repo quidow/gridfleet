@@ -48,7 +48,7 @@ async def test_settings_service_event_refresh_and_cancel_paths(monkeypatch: pyte
         async def __aexit__(self, *args: object) -> None:
             return None
 
-    service._session_factory = lambda: _Session()
+    service._session_factory = _Session
     init = AsyncMock()
     monkeypatch.setattr(service, "initialize", init)
     await service.refresh_from_store()

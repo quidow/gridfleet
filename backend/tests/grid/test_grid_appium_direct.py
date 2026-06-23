@@ -136,7 +136,7 @@ async def test_terminate_session_transport_error_increments_counter(monkeypatch:
         async def delete(self, *args: object, **kwargs: object) -> object:
             raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr(appium_direct, "_get_client", lambda: _FailingClient())
+    monkeypatch.setattr(appium_direct, "_get_client", _FailingClient)
     before = metrics_recorders.APPIUM_TERMINATE_FAILED_TOTAL._value.get()
 
     ok = await appium_direct.terminate_session("http://10.0.0.1:4723", "sess-transport-1")

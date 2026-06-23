@@ -195,7 +195,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             ),
             publisher=_pr_publisher,
             settings=_pr_settings,
-            session_factory=lambda: _fake_session(),
+            session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
         )

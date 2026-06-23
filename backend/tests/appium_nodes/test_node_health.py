@@ -1332,7 +1332,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     class Observation:
         @asynccontextmanager

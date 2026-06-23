@@ -196,7 +196,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
@@ -208,7 +208,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         reconciler_agent=Mock(),
         node_health=Mock(),
         heartbeat=heartbeat_svc,
-        session_factory=lambda: Session(),
+        session_factory=Session,
     )
 
     with pytest.raises(asyncio.CancelledError):

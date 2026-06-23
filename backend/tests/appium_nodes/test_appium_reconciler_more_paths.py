@@ -240,7 +240,7 @@ async def test_reconcile_all_stop_callback_raises_for_agent_http_error(monkeypat
 
 
 async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     class Cycle:
         def cycle(self) -> Cycle:
@@ -260,7 +260,7 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
             return None
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
-    monkeypatch.setattr(appium_reconciler, "async_session", lambda: Session())
+    monkeypatch.setattr(appium_reconciler, "async_session", Session)
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
@@ -272,7 +272,7 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
         reconciler_agent=Mock(),
         node_health=Mock(),
         heartbeat=Mock(),
-        session_factory=lambda: Session(),
+        session_factory=Session,
     )
 
     with pytest.raises(asyncio.CancelledError):
@@ -301,7 +301,7 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
         active_connection_target=None,
         stop_pending=False,
     )
-    monkeypatch.setattr(appium_reconciler, "async_session", lambda: Session())
+    monkeypatch.setattr(appium_reconciler, "async_session", Session)
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"appium_processes": "bad"}))
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())

@@ -170,7 +170,7 @@ async def test_get_db_uses_async_session_context(monkeypatch: MonkeyPatch) -> No
 
 
 async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     class _Observation:
         @asynccontextmanager

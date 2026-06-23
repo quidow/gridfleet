@@ -49,7 +49,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
         sync=svc,
         viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
-        session_factory=lambda: _NullCtx(),
+        session_factory=_NullCtx,
         publisher=event_bus,
     )
     task = asyncio.create_task(SessionSyncLoop(services=services).run())
@@ -95,7 +95,7 @@ async def test_running_loop_registers_module_wake_hook() -> None:
         sync=svc,
         viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
-        session_factory=lambda: _NullCtx(),
+        session_factory=_NullCtx,
         publisher=event_bus,
     )
     task = asyncio.create_task(SessionSyncLoop(services=services).run())
@@ -142,7 +142,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
         sync=svc,
         viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
-        session_factory=lambda: _NullCtx(),
+        session_factory=_NullCtx,
         publisher=event_bus,
     )
     task = asyncio.create_task(SessionSyncLoop(services=services).run())

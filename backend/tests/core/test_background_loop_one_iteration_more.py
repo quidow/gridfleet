@@ -59,7 +59,7 @@ class _Session:
 
 
 async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", _Session)
@@ -85,7 +85,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
@@ -109,7 +109,7 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
@@ -131,7 +131,7 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
@@ -153,7 +153,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
 
 
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
@@ -173,7 +173,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 
 
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(
@@ -284,7 +284,7 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.core.background_loop as background_loop
+    from app.core import background_loop
 
     def fake_exit(code: int) -> None:
         raise RuntimeError(f"exit {code}")

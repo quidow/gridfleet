@@ -152,7 +152,7 @@ async def test_flush_background_loop_snapshots_writes_set_many_once() -> None:
         async def __aexit__(self, *_: object) -> bool:
             return False
 
-    factory = lambda: _Ctx()  # noqa: E731 — plain callable returning the CM
+    factory = _Ctx  # plain callable returning the CM
 
     with patch("app.core.observability._control_plane_state_store", return_value=store):
         written = await observability.flush_background_loop_snapshots(factory)
@@ -197,7 +197,7 @@ async def test_flush_skips_when_no_changes_since_last_flush() -> None:
         async def __aexit__(self, *_: object) -> bool:
             return False
 
-    factory = lambda: _Ctx()  # noqa: E731 — plain callable returning the CM
+    factory = _Ctx  # plain callable returning the CM
 
     with patch("app.core.observability._control_plane_state_store", return_value=store):
         first = await observability.flush_background_loop_snapshots(factory)
@@ -222,7 +222,7 @@ async def test_flush_remains_dirty_on_failure() -> None:
         async def __aexit__(self, *_: object) -> bool:
             return False
 
-    factory = lambda: _Ctx()  # noqa: E731 — plain callable returning the CM
+    factory = _Ctx  # plain callable returning the CM
 
     with patch("app.core.observability._control_plane_state_store", return_value=store):
         with pytest.raises(RuntimeError):
