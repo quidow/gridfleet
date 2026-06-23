@@ -17,8 +17,9 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
+from app.sessions.filters import SessionFilters
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service import SessionCrudService, SessionFilters
+from app.sessions.service import SessionCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus

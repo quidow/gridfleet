@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +17,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.devices.services.observation_reason import ObservationReason
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
-from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
+from app.sessions.filters import SessionFilters, exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
@@ -252,25 +251,6 @@ async def _has_session_rows(
 ) -> bool:
     result = await db.execute(stmt.where(predicate).order_by(None).limit(1))
     return result.scalar_one_or_none() is not None
-
-
-@dataclass(frozen=True, slots=True)
-class SessionFilters:
-    """Shared session-list filter parameters.
-
-    Bundles the where-clause inputs common to ``list_sessions`` and
-    ``list_sessions_cursor`` so each signature stays under the argument limit;
-    purely a parameter container — it carries no behavior.
-    """
-
-    device_id: uuid.UUID | None = None
-    status: SessionStatus | None = None
-    pack_id: str | None = None
-    platform_id: str | None = None
-    started_after: datetime | None = None
-    started_before: datetime | None = None
-    run_id: uuid.UUID | None = None
-    active: bool = False
 
 
 def _apply_session_filters(

@@ -14,8 +14,8 @@ from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
 from app.sessions import service_kill
 from app.sessions.dependencies import SessionServicesDep
+from app.sessions.filters import SessionFilters
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service import SessionFilters
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

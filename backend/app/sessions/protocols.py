@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
     from app.core.pagination import CursorPage
     from app.devices.models import Device
+    from app.sessions.filters import SessionFilters
     from app.sessions.models import Session, SessionStatus
-    from app.sessions.service import SessionFilters
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
 

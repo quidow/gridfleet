@@ -7,9 +7,10 @@ import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.sessions.filters import SessionFilters
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
-from app.sessions.service import SessionCrudService, SessionFilters
+from app.sessions.service import SessionCrudService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
