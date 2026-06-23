@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
@@ -20,6 +21,9 @@ from app.devices.schemas.group import (
     DeviceGroupUpdate,
     GroupMembershipUpdate,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 DEVICE_GROUP_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 

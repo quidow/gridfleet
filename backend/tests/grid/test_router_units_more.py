@@ -47,6 +47,7 @@ from app.devices.schemas.device import (
 )
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.devices.services.intent import IntentService
+from app.events import Event
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
@@ -439,7 +440,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         _queue: object,
         *,
         timeout: float | None = None,
-    ) -> devices_verification_router.Event:
+    ) -> Event:
         nonlocal wait_calls
         wait_calls += 1
         if wait_calls == 1:
@@ -464,8 +465,8 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
 
 async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    queue: asyncio.Queue[devices_verification_router.Event] = asyncio.Queue()
-    await queue.put(devices_verification_router.Event(type="other.event", data={}, id="ignored"))
+    queue: asyncio.Queue[Event] = asyncio.Queue()
+    await queue.put(Event(type="other.event", data={}, id="ignored"))
     request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=[False, True]))
     initial_job = {"job_id": "job-stream", "status": "running", "current_stage": "probe"}
 
@@ -505,8 +506,8 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
 
     class FakeTask:
         def __await__(self) -> object:
-            async def done() -> devices_verification_router.Event:
-                return devices_verification_router.Event(type="x", data={}, id="1")
+            async def done() -> Event:
+                return Event(type="x", data={}, id="1")
 
             return done().__await__()
 

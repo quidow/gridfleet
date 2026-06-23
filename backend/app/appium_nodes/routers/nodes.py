@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.dependencies import AppiumNodeServicesDep
 from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
@@ -9,12 +11,16 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
 from app.core.observability import get_logger
-from app.devices.models import Device
 from app.devices.routers.helpers import get_device_for_update_or_404
 from app.devices.schemas.device import AppiumNodeRead
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
 from app.runs import service as run_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.models import Device
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
 logger = get_logger(__name__)

@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 import json
-from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
@@ -16,6 +17,9 @@ from app.events.catalog import ALL_SEVERITIES
 from app.events.dependencies import EventServicesDep
 from app.events.schemas import NotificationListRead
 from app.events.schemas_catalog import EventCatalogRead
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 router = APIRouter(prefix="/api", tags=["events"])
 

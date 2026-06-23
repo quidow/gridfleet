@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,13 +18,17 @@ from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
-from app.events import Event
 from app.events.dependencies import EventServicesDep
 from app.lifecycle.services.operator_node import operator_stop_active
 from app.sessions.service import device_has_running_session
 from app.verification.dependencies import VerificationServicesDep
 from app.verification.schemas import DeviceVerificationJobRead
 from app.verification.services.job_state import public_snapshot
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from app.events import Event
 
 DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
 

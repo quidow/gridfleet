@@ -82,12 +82,23 @@ runtime-evaluated-base-classes = [
     "pydantic_settings.BaseSettings",
     "app.core.database.Base",
 ]
+# FastAPI evaluates endpoint signatures (Annotated deps, response types) at runtime via
+# get_type_hints, so imports used in route-handler annotations must stay at module scope.
+# Listing the APIRouter route decorators here is ruff's intended mechanism for this,
+# instead of a blanket per-file TC ignore on router modules — it keeps TC checking active
+# for genuinely type-only imports (protocols, helpers) elsewhere in those files.
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.delete",
+    "fastapi.APIRouter.websocket",
+    "fastapi.APIRouter.head",
+    "fastapi.APIRouter.options",
+]
 
 [tool.ruff.lint.per-file-ignores]
-# FastAPI resolves endpoint Annotated deps and response types at runtime via
-# get_type_hints, so type-only imports in router modules can't move to TYPE_CHECKING.
-"app/**/router*.py" = ["TC001", "TC002", "TC003"]
-"app/**/routers/*.py" = ["TC001", "TC002", "TC003"]
 "tests/**" = ["PLC0415"]  # tests often need lazy imports for fixture and patch ordering
 "tests/packs/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
 "app/agent_comm/generated.py" = ["ALL"]  # auto-generated — do not lint

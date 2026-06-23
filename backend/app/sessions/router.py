@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
@@ -14,6 +15,9 @@ from app.devices.services import platform_label as platform_label_service
 from app.sessions import service_kill
 from app.sessions.dependencies import SessionServicesDep
 from app.sessions.models import Session, SessionStatus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 SessionDetail = device_schemas.SessionDetail
 SessionListRead = device_schemas.SessionListRead
