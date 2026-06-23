@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "GridFleet backend — FastAPI + SQLAlchemy"
 license = "Apache-2.0"
 authors = [{ name = "GridFleet contributors" }]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.138.0",
     "uvicorn[standard]==0.49.0",
@@ -60,6 +60,10 @@ module = "app.agent_comm.generated"
 ignore_errors = true
 
 [tool.ruff]
+# Idiom floor pinned to py312 even though requires-python is >=3.14: py314's
+# PEP 649 deferred-annotation analysis triggers a large type-import refactor
+# (TC/UP rules) tracked as a separate effort. This only sets ruff's lint target;
+# the runtime is Python 3.14.
 target-version = "py312"
 line-length = 120
 

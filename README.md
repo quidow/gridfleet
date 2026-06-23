@@ -120,7 +120,7 @@ are in [docs/guides/deployment.md](docs/guides/deployment.md).
 
 Prerequisites:
 
-- Python 3.12+
+- Python 3.14 (backend), Python 3.12 (agent)
 - `uv`
 - Node.js 24
 - Docker with `docker compose`
