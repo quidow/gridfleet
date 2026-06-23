@@ -1,5 +1,5 @@
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.6
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+ARG PYTHON_IMAGE=python:3.14-slim-bookworm
 
 FROM ${UV_IMAGE} AS uv
 
