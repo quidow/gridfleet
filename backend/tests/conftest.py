@@ -136,7 +136,13 @@ def _test_database_url(base_database_url: str, worker_id: str | None = None) -> 
 state_write_guard.register()
 
 TEST_DATABASE_URL = _test_database_url(settings.database_url, os.getenv("PYTEST_XDIST_WORKER"))
-_TEST_DATABASE_READY = False
+
+
+class _TestDatabaseState:
+    ready = False
+
+
+_test_database = _TestDatabaseState()
 
 DB_FIXTURE_NAMES = frozenset(
     {
@@ -207,12 +213,10 @@ async def ensure_test_database() -> None:
 
 @pytest_asyncio.fixture(autouse=True)
 async def ensure_test_database_for_db_tests(request: pytest.FixtureRequest) -> None:
-    global _TEST_DATABASE_READY
-
-    if request.node.get_closest_marker("db") is None or _TEST_DATABASE_READY:
+    if request.node.get_closest_marker("db") is None or _test_database.ready:
         return
     await _ensure_test_database_exists()
-    _TEST_DATABASE_READY = True
+    _test_database.ready = True
 
 
 @pytest_asyncio.fixture

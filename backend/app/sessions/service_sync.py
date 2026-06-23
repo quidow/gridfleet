@@ -172,19 +172,23 @@ async def _terminate_for_close(session: Session, target: str | None, *, reap_rea
 # ``request_session_sync_wake`` to ring the doorbell after they free a device, so the
 # sweep runs immediately instead of waiting up to one poll interval. In-process only:
 # the reaper and the leader session_sync loop are co-located on the leader, so a direct
-# in-memory hook is sufficient and avoids a bus round trip.
-_WAKE_HOOK: Callable[[], None] | None = None
+# in-memory hook is sufficient and avoids a bus round trip. The hook lives on a
+# never-rebound holder so the setter mutates an attribute rather than a module global.
+class _WakeDoorbell:
+    fn: Callable[[], None] | None = None
+
+
+_wake_doorbell = _WakeDoorbell()
 
 
 def register_session_sync_wake_hook(hook: Callable[[], None]) -> None:
-    global _WAKE_HOOK
-    _WAKE_HOOK = hook
+    _wake_doorbell.fn = hook
 
 
 def request_session_sync_wake() -> None:
     """Ring the session_sync doorbell if a loop is registered; no-op otherwise."""
-    if _WAKE_HOOK is not None:
-        _WAKE_HOOK()
+    if _wake_doorbell.fn is not None:
+        _wake_doorbell.fn()
 
 
 class SessionSyncService:

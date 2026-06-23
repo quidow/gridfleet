@@ -23,6 +23,7 @@ protected set — do not assume the ALLOWLIST protects a Core write.
 
 from __future__ import annotations
 
+import functools
 import inspect
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -203,19 +204,15 @@ def _make_listener(table: str, column: str, allowlist: frozenset[str]) -> Callab
     return _listener
 
 
-_registered = False
-
-
+@functools.cache
 def register() -> None:
     """Wire the listeners onto each protected mapped attribute.
 
-    Idempotent: safe to call multiple times across tests. Tests may import this
-    module before the FastAPI lifespan runs, so registration is also triggered
-    lazily from ``backend/tests/conftest.py``.
+    Idempotent via ``functools.cache``: the body runs once per process no matter
+    how many times it is called. Tests may import this module before the FastAPI
+    lifespan runs, so registration is also triggered lazily from
+    ``backend/tests/conftest.py``.
     """
-    global _registered
-    if _registered:
-        return
     from app.appium_nodes.models import AppiumNode  # noqa: PLC0415
     from app.devices.models import Device  # noqa: PLC0415
 
@@ -226,4 +223,3 @@ def register() -> None:
     for (table, column), allowlist in ALLOWLIST.items():
         attr = getattr(model_by_table[table], column)
         event.listen(attr, "set", _make_listener(table, column, allowlist), retval=True)
-    _registered = True

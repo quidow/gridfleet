@@ -70,7 +70,6 @@ BACKGROUND_LOOP_NAMES = (
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
 _GRIDFLEET_BACKEND_HANDLER_ATTR = "_gridfleet_backend_logging_handler"
-_configured: bool = False
 
 
 def _now() -> datetime:
@@ -105,12 +104,8 @@ def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
 
 
 def configure_logging(*, force: bool = False) -> None:
-    global _configured
-    if force:
-        _configured = False
     root_logger = logging.getLogger()
     if structlog.is_configured() and _has_gridfleet_logging_handler(root_logger) and not force:
-        _configured = True
         return
 
     shared_processors = _shared_processors()
@@ -157,12 +152,10 @@ def configure_logging(*, force: bool = False) -> None:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    _configured = True
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
-    if not _configured:
-        configure_logging()
+    configure_logging()  # idempotent; cheap early-return when already set up
     return structlog.stdlib.get_logger(name)
 
 

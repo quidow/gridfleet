@@ -65,7 +65,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "BLE", "SIM", "TC", "RUF", "ANN", "FAST", "PL", "PERF"]
-ignore = ["B008", "PLW0603"]  # PLW0603: module-level run-once/singleton guards (logging init, lazy clients, registration) use `global` by design
+ignore = ["B008"]
 
 [tool.ruff.lint.flake8-type-checking]
 # Pydantic resolves model field annotations at runtime when building the schema, and

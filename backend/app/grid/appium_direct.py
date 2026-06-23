@@ -1,5 +1,6 @@
 """Direct Appium HTTP operations (spec §6) — the only backend->Appium call site."""
 
+import functools
 import logging
 from http import HTTPStatus
 from typing import Any
@@ -11,9 +12,8 @@ from app.core import metrics_recorders
 
 logger = logging.getLogger(__name__)
 
-_client: httpx.AsyncClient | None = None
 
-
+@functools.cache
 def _get_client() -> httpx.AsyncClient:
     """Return a shared, connection-pooled client.
 
@@ -21,21 +21,21 @@ def _get_client() -> httpx.AsyncClient:
     time — pathological here because the session-observation sweep hits this module
     on every tick for every running session. Per-call ``timeout=`` arguments stay on
     each request; the shared client carries no default timeout that would fight them.
+    The cache is the process-lifetime singleton; ``aclose`` clears it.
     """
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-        )
-    return _client
+    return httpx.AsyncClient(
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    )
 
 
 async def aclose() -> None:
     """Close the shared client (app lifespan shutdown; tests)."""
-    global _client
-    if _client is not None and not _client.is_closed:
-        await _client.aclose()
-    _client = None
+    if _get_client.cache_info().currsize == 0:
+        return
+    client = _get_client()
+    if not client.is_closed:
+        await client.aclose()
+    _get_client.cache_clear()
 
 
 async def terminate_session(target: str, session_id: str, *, timeout: float = 10.0) -> bool:

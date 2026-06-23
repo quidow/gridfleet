@@ -155,7 +155,7 @@ async def test_get_client_pools_and_aclose_resets() -> None:
 
     await appium_direct.aclose()
     assert first.is_closed
-    assert appium_direct._client is None
+    assert appium_direct._get_client.cache_info().currsize == 0
 
     # A new client is minted on demand after reset.
     third = appium_direct._get_client()
