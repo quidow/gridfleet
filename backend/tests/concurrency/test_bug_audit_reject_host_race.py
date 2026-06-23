@@ -95,10 +95,9 @@ async def test_reject_host_races_concurrent_approve(
     crud = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
     db_session.execute = _approve_between_select_and_commit  # type: ignore[assignment, method-assign]
     try:
-        try:
-            rejected = await crud.reject_host(db_session, host_id)
-        except Exception as exc:  # noqa: BLE001
-            pytest.fail(f"reject_host leaked exception under concurrent approve race: {exc!r}")
+        # A leaked exception here is itself the failure: reject_host must stay
+        # crash-free when a concurrent approve commits between SELECT and commit.
+        rejected = await crud.reject_host(db_session, host_id)
     finally:
         db_session.execute = original_execute  # type: ignore[method-assign]
 

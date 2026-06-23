@@ -278,7 +278,7 @@ class PortabilityImportService:
             if not savepoint_released:
                 await savepoint.rollback()
             return ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — per-row import: any staging/enqueue failure becomes a failed row, never aborts the bundle
             if not savepoint_released:
                 await savepoint.rollback()
             reason = str(exc) or exc.__class__.__name__

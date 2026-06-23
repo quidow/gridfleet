@@ -102,13 +102,10 @@ async def test_approve_host_races_concurrent_reject(
     crud = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
     db_session.execute = _delete_between_select_and_commit  # type: ignore[assignment, method-assign]
     try:
-        try:
-            approved = await crud.approve_host(db_session, host_id)
-        except Exception as exc:  # noqa: BLE001
-            pytest.fail(
-                f"approve_host leaked exception under concurrent reject race: {exc!r} — "
-                "row was deleted between the SELECT and the UPDATE/refresh"
-            )
+        # A leaked exception here is itself the failure: approve_host must stay
+        # crash-free when a concurrent reject deletes the row between the SELECT
+        # and the UPDATE/refresh.
+        approved = await crud.approve_host(db_session, host_id)
     finally:
         db_session.execute = original_execute  # type: ignore[method-assign]
 
