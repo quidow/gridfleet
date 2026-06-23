@@ -48,9 +48,7 @@ def _iter_files() -> list[Path]:
         if root.is_file():
             files.append(root)
             continue
-        for path in root.rglob("*"):
-            if path.suffix in {".py", ".ts", ".tsx", ".md"}:
-                files.append(path)
+        files.extend(path for path in root.rglob("*") if path.suffix in {".py", ".ts", ".tsx", ".md"})
     return files
 
 

@@ -105,10 +105,7 @@ async def _find_matching_devices(
     candidates = list((await db.execute(candidate_stmt)).scalars().all())
     candidates = [device for device in candidates if _device_matches_requirement_tags(device, requirement.tags)]
 
-    ready_candidates: list[Device] = []
-    for device in candidates:
-        if await _readiness_for_match(db, device):
-            ready_candidates.append(device)
+    ready_candidates: list[Device] = [device for device in candidates if await _readiness_for_match(db, device)]
 
     if not ready_candidates:
         return []
@@ -452,14 +449,13 @@ class RunAllocatorService:
             ((device.pack_id, device.platform_id) for device in all_matched),
         )
 
-        device_infos: list[ReservedDeviceInfo] = []
-        for device in all_matched:
-            device_infos.append(
-                _build_device_info(
-                    device,
-                    platform_label=label_map.get((device.pack_id, device.platform_id)),
-                )
+        device_infos: list[ReservedDeviceInfo] = [
+            _build_device_info(
+                device,
+                platform_label=label_map.get((device.pack_id, device.platform_id)),
             )
+            for device in all_matched
+        ]
 
         run = TestRun(
             name=data.name,

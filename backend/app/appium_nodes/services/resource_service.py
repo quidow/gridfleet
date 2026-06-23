@@ -106,8 +106,7 @@ async def get_capabilities(db: AsyncSession, *, node_id: uuid.UUID) -> dict[str,
     extras_row = (await db.execute(select(AppiumNode.live_capabilities).where(AppiumNode.id == node_id))).first()
     extras: dict[str, JsonValue] = dict(extras_row[0]) if extras_row and extras_row[0] else {}
     merged: dict[str, JsonValue] = dict(extras)
-    for key, port in port_rows:
-        merged[key] = port
+    merged.update({key: port for key, port in port_rows})
     return merged
 
 

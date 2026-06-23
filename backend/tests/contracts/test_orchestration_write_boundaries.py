@@ -73,7 +73,5 @@ def test_derived_orchestration_fields_are_reconciler_owned() -> None:
         if rel in DIRECT_ASSIGN_ALLOWED or rel.startswith("alembic/"):
             continue
         text = path.read_text()
-        for field in fields:
-            if f".{field} =" in text:
-                offenders.append(f"{rel}: {field}")
+        offenders.extend(f"{rel}: {field}" for field in fields if f".{field} =" in text)
     assert offenders == []

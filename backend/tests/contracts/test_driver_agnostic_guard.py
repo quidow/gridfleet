@@ -68,9 +68,9 @@ def test_no_platform_prefix_patterns_in_backend() -> None:
     for path in _production_python_files(BACKEND_ROOT):
         content = path.read_text()
         for lineno, line in enumerate(content.splitlines(), 1):
-            for pattern in DISALLOWED_PATTERNS:
-                if pattern.search(line):
-                    violations.append(f"{path}:{lineno}: {line.strip()}")
+            violations.extend(
+                f"{path}:{lineno}: {line.strip()}" for pattern in DISALLOWED_PATTERNS if pattern.search(line)
+            )
     assert violations == [], "Platform-prefix patterns found in backend production code:\n" + "\n".join(violations)
 
 
@@ -125,9 +125,7 @@ def test_agent_pack_core_has_no_named_pack_sniffing() -> None:
     violations = []
     for path, needles in forbidden.items():
         text = path.read_text()
-        for needle in needles:
-            if needle in text:
-                violations.append(f"{path}: contains {needle}")
+        violations.extend(f"{path}: contains {needle}" for needle in needles if needle in text)
     assert violations == []
 
 
@@ -139,7 +137,7 @@ def test_no_platform_prefix_patterns_in_agent() -> None:
             continue
         content = path.read_text()
         for lineno, line in enumerate(content.splitlines(), 1):
-            for pattern in DISALLOWED_PATTERNS:
-                if pattern.search(line):
-                    violations.append(f"{path}:{lineno}: {line.strip()}")
+            violations.extend(
+                f"{path}:{lineno}: {line.strip()}" for pattern in DISALLOWED_PATTERNS if pattern.search(line)
+            )
     assert violations == [], "Platform-prefix patterns found in agent production code:\n" + "\n".join(violations)

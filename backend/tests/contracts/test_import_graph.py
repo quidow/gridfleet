@@ -46,9 +46,7 @@ def _imports_from(path: Path) -> list[str]:
         if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("app."):
             names.append(node.module)
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("app."):
-                    names.append(alias.name)
+            names.extend(alias.name for alias in node.names if alias.name.startswith("app."))
     return names
 
 

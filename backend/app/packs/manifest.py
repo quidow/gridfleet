@@ -369,9 +369,11 @@ class Manifest(BaseModel):
         schemas: list[list[FieldSchema]] = []
         for plat in self.platforms:
             schemas.append(plat.device_fields_schema)
-            for override in plat.device_type_overrides.values():
-                if override.device_fields_schema:
-                    schemas.append(override.device_fields_schema)
+            schemas.extend(
+                override.device_fields_schema
+                for override in plat.device_type_overrides.values()
+                if override.device_fields_schema
+            )
         for schema in schemas:
             all_ids.update(field.id for field in schema)
         self._check_appium_env_gate_keys(all_ids)

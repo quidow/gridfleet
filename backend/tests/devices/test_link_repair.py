@@ -79,9 +79,7 @@ async def test_dispatch_merges_extra_args(monkeypatch: pytest.MonkeyPatch) -> No
 @pytest.mark.asyncio
 async def test_attempt_budget_increments_then_exhausts(db_session: AsyncSession) -> None:
     identity = "192.168.1.254:5555"
-    seen = []
-    for _ in range(REPAIR_MAX_ATTEMPTS + 1):
-        seen.append(await next_repair_attempt(db_session, identity))
+    seen = [await next_repair_attempt(db_session, identity) for _ in range(REPAIR_MAX_ATTEMPTS + 1)]
     # First REPAIR_MAX_ATTEMPTS return an attempt number; the last returns None (exhausted).
     assert seen[:REPAIR_MAX_ATTEMPTS] == list(range(1, REPAIR_MAX_ATTEMPTS + 1))
     assert seen[REPAIR_MAX_ATTEMPTS] is None

@@ -337,16 +337,17 @@ class BulkOperationsService:
                     lifecycle_cache[key] = []
             return platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
 
-        eligible = []
-        for d in devices:
+        eligible = [
+            d
+            for d in devices
             if (
                 await _supports_reconnect(d)
                 and d.connection_type
                 and d.connection_type.value == "network"
                 and d.ip_address
                 and d.host
-            ):
-                eligible.append(d)
+            )
+        ]
         for d in devices:
             if d not in eligible:
                 errors[str(d.id)] = "Not a network-connected Android device"

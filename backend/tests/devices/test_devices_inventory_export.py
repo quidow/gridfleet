@@ -81,13 +81,14 @@ def test_default_inventory_columns_is_subset_of_enum() -> None:
 @pytest.mark.db
 async def test_iter_inventory_json_emits_selected_columns(db_session: AsyncSession) -> None:
     host, device = await seed_host_and_device(db_session, identity="INV-1")
-    chunks: list[str] = []
-    async for chunk in InventoryExportService().iter_inventory_json(
-        db_session,
-        columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME, InventoryColumn.IDENTITY_VALUE],
-        filters=None,
-    ):
-        chunks.append(chunk)
+    chunks: list[str] = [
+        chunk
+        async for chunk in InventoryExportService().iter_inventory_json(
+            db_session,
+            columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME, InventoryColumn.IDENTITY_VALUE],
+            filters=None,
+        )
+    ]
     body = "".join(chunks)
     payload = json.loads(body)
     assert isinstance(payload, list)
@@ -101,13 +102,14 @@ async def test_iter_inventory_json_emits_selected_columns(db_session: AsyncSessi
 @pytest.mark.db
 async def test_iter_inventory_csv_emits_header_and_rows(db_session: AsyncSession) -> None:
     host, _ = await seed_host_and_device(db_session, identity="INV-2")
-    chunks: list[str] = []
-    async for chunk in InventoryExportService().iter_inventory_csv(
-        db_session,
-        columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME],
-        filters=None,
-    ):
-        chunks.append(chunk)
+    chunks: list[str] = [
+        chunk
+        async for chunk in InventoryExportService().iter_inventory_csv(
+            db_session,
+            columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME],
+            filters=None,
+        )
+    ]
     body = "".join(chunks)
     lines = body.strip().splitlines()
     assert lines[0] == "name,host.hostname"
@@ -120,13 +122,14 @@ async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: As
     _, device = await seed_host_and_device(db_session, identity="INV-3")
     device.tags = {"team": "qa"}
     await db_session.commit()
-    chunks: list[str] = []
-    async for chunk in InventoryExportService().iter_inventory_csv(
-        db_session,
-        columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
-        filters=None,
-    ):
-        chunks.append(chunk)
+    chunks: list[str] = [
+        chunk
+        async for chunk in InventoryExportService().iter_inventory_csv(
+            db_session,
+            columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+            filters=None,
+        )
+    ]
     body = "".join(chunks)
     assert "{" in body
     assert "team" in body
@@ -136,13 +139,14 @@ async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: As
 @pytest.mark.db
 async def test_iter_inventory_json_serializes_uuid_id(db_session: AsyncSession) -> None:
     _, device = await seed_host_and_device(db_session, identity="INV-4")
-    chunks: list[str] = []
-    async for chunk in InventoryExportService().iter_inventory_json(
-        db_session,
-        columns=[InventoryColumn.ID],
-        filters=None,
-    ):
-        chunks.append(chunk)
+    chunks: list[str] = [
+        chunk
+        async for chunk in InventoryExportService().iter_inventory_json(
+            db_session,
+            columns=[InventoryColumn.ID],
+            filters=None,
+        )
+    ]
     payload = json.loads("".join(chunks))
     assert payload[0]["id"] == str(device.id)
 
@@ -197,13 +201,14 @@ async def test_iter_inventory_csv_escapes_formula_injection(db_session: AsyncSes
     device.tags = {"k": "=evil"}
     await db_session.commit()
 
-    chunks: list[str] = []
-    async for chunk in InventoryExportService().iter_inventory_csv(
-        db_session,
-        columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
-        filters=None,
-    ):
-        chunks.append(chunk)
+    chunks: list[str] = [
+        chunk
+        async for chunk in InventoryExportService().iter_inventory_csv(
+            db_session,
+            columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+            filters=None,
+        )
+    ]
     body = "".join(chunks)
     # Name cell should be defanged to '=CMD()
     assert "'=CMD()" in body or '"\'=CMD()"' in body  # csv may quote the cell
