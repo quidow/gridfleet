@@ -69,8 +69,6 @@ class RunQueryService:
         created_to: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
-        sort_by: str = "created_at",
-        sort_dir: str = "desc",
     ) -> tuple[list[TestRun], int]:
         stmt = select(TestRun).options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
         if state is not None:
@@ -83,30 +81,7 @@ class RunQueryService:
         count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
         total = int((await db.execute(count_stmt)).scalar_one())
 
-        reservation_count = (
-            select(func.count(DeviceReservation.id)).where(DeviceReservation.run_id == TestRun.id).scalar_subquery()
-        )
-        duration_expr = func.coalesce(TestRun.completed_at, func.now()) - TestRun.created_at
-        order_map = {
-            "name": func.lower(TestRun.name),
-            "state": TestRun.state,
-            "devices": reservation_count,
-            "created_by": func.lower(func.coalesce(TestRun.created_by, "")),
-            "created_at": TestRun.created_at,
-            "duration": duration_expr,
-        }
-        order_expr = order_map.get(sort_by, TestRun.created_at)
-        order_fn = asc if sort_dir == "asc" else desc
-
-        stmt = (
-            stmt.order_by(
-                order_fn(order_expr),
-                order_fn(TestRun.created_at),
-                order_fn(TestRun.id),
-            )
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = stmt.order_by(desc(TestRun.created_at), desc(TestRun.id)).limit(limit).offset(offset)
         result = await db.execute(stmt)
         return list(result.scalars().all()), total
 
