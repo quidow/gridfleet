@@ -12,7 +12,6 @@ import { HostDetailStatusPills } from './hostDetail/HostDetailStatusPills';
 import { HostOverviewPanel } from '../components/hostDetail/HostOverviewPanel';
 import { HostDevicesPanel } from '../components/hostDetail/HostDevicesPanel';
 import { HostDriversPanel } from '../components/hostDetail/HostDriversPanel';
-import { HostPluginsPanel } from '../components/hostDetail/HostPluginsPanel';
 import { HostAgentLogPanel } from '../components/hostDetail/HostAgentLogPanel';
 import { HostEventsPanel } from '../components/hostDetail/HostEventsPanel';
 import { HostToolEnvPanel } from '../components/hostDetail/HostToolEnvPanel';
@@ -23,7 +22,6 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'devices', label: 'Devices' },
   { id: 'drivers', label: 'Drivers' },
-  { id: 'plugins', label: 'Plugins' },
   { id: 'environment', label: 'Environment' },
   { id: 'agent-logs', label: 'Agent Logs' },
   { id: 'events', label: 'Events' },
@@ -120,11 +118,6 @@ export function HostDetail() {
         </SectionErrorBoundary>
       )}
 
-      {tab === 'plugins' && (
-        <SectionErrorBoundary scope="host-plugins">
-          <HostPluginsPanel hostId={id!} />
-        </SectionErrorBoundary>
-      )}
       </div>
 
       <HostDiscoveryModal

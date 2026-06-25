@@ -1387,40 +1387,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/hosts/{host_id}/plugins": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Host Plugins */
-        get: operations["host_plugins_api_hosts__host_id__plugins_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/hosts/{host_id}/plugins/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Sync Host Plugins */
-        post: operations["sync_host_plugins_api_hosts__host_id__plugins_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/hosts/{host_id}/reject": {
         parameters: {
             query?: never;
@@ -1522,59 +1488,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/plugins": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Plugins */
-        get: operations["list_plugins_api_plugins_get"];
-        put?: never;
-        /** Create Plugin */
-        post: operations["create_plugin_api_plugins_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/plugins/sync-all": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Sync All Plugins */
-        post: operations["sync_all_plugins_api_plugins_sync_all_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/plugins/{plugin_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Plugin */
-        delete: operations["delete_plugin_api_plugins__plugin_id__delete"];
-        options?: never;
-        head?: never;
-        /** Update Plugin */
-        patch: operations["update_plugin_api_plugins__plugin_id__patch"];
         trace?: never;
     };
     "/api/portability/export": {
@@ -3430,19 +3343,6 @@ export interface components {
             /** Pass Rate Pct */
             pass_rate_pct: number | null;
         };
-        /** FleetPluginSyncResult */
-        FleetPluginSyncResult: {
-            /** Failed Hosts */
-            failed_hosts?: string[];
-            /** Online Hosts */
-            online_hosts?: string[];
-            /** Skipped Hosts */
-            skipped_hosts?: string[];
-            /** Synced Hosts */
-            synced_hosts?: string[];
-            /** Total Hosts */
-            total_hosts: number;
-        };
         /** GridQueueRead */
         GridQueueRead: {
             /** Queue Size */
@@ -3910,30 +3810,6 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** HostPluginStatus */
-        HostPluginStatus: {
-            /** Enabled */
-            enabled: boolean;
-            /** Installed Version */
-            installed_version: string | null;
-            /** Name */
-            name: string;
-            /** Required Version */
-            required_version: string;
-            /** Status */
-            status: string;
-        };
-        /** HostPluginStatusOut */
-        HostPluginStatusOut: {
-            /** Blocked Reason */
-            blocked_reason?: string | null;
-            /** Name */
-            name: string;
-            /** Status */
-            status: string;
-            /** Version */
-            version: string;
-        };
         /** HostRead */
         HostRead: {
             /** Agent Port */
@@ -4115,12 +3991,6 @@ export interface components {
             driver_specs: {
                 [key: string]: unknown;
             }[];
-            /** Plugin Specs */
-            plugin_specs: {
-                [key: string]: unknown;
-            }[];
-            /** Plugins */
-            plugins?: components["schemas"]["HostPluginStatusOut"][];
             /** Runtime Id */
             runtime_id: string;
             /** Status */
@@ -4595,85 +4465,6 @@ export interface components {
             parallel_resources?: {
                 [key: string]: unknown;
             };
-        };
-        /** PluginCreate */
-        PluginCreate: {
-            /**
-             * Enabled
-             * @default true
-             */
-            enabled: boolean;
-            /** Name */
-            name: string;
-            /**
-             * Notes
-             * @default
-             */
-            notes: string;
-            /** Package */
-            package?: string | null;
-            /** Source */
-            source: string;
-            /** Version */
-            version: string;
-        };
-        /** PluginRead */
-        PluginRead: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Enabled */
-            enabled: boolean;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Name */
-            name: string;
-            /** Notes */
-            notes: string;
-            /** Package */
-            package: string | null;
-            /** Source */
-            source: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** Version */
-            version: string;
-        };
-        /** PluginSyncResult */
-        PluginSyncResult: {
-            /** Errors */
-            errors?: {
-                [key: string]: string;
-            };
-            /** Installed */
-            installed?: string[];
-            /** Removed */
-            removed?: string[];
-            /** Updated */
-            updated?: string[];
-        };
-        /** PluginUpdate */
-        PluginUpdate: {
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Name */
-            name?: string | null;
-            /** Notes */
-            notes?: string | null;
-            /** Package */
-            package?: string | null;
-            /** Source */
-            source?: string | null;
-            /** Version */
-            version?: string | null;
         };
         /** ReservedDeviceInfo */
         ReservedDeviceInfo: {
@@ -10258,68 +10049,6 @@ export interface operations {
             };
         };
     };
-    host_plugins_api_hosts__host_id__plugins_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                host_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HostPluginStatus"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sync_host_plugins_api_hosts__host_id__plugins_sync_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                host_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginSyncResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     reject_host_api_hosts__host_id__reject_post: {
         parameters: {
             query?: never;
@@ -10736,143 +10465,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotificationListRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_plugins_api_plugins_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginRead"][];
-                };
-            };
-        };
-    };
-    create_plugin_api_plugins_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PluginCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sync_all_plugins_api_plugins_sync_all_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FleetPluginSyncResult"];
-                };
-            };
-        };
-    };
-    delete_plugin_api_plugins__plugin_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                plugin_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_plugin_api_plugins__plugin_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                plugin_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PluginUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginRead"];
                 };
             };
             /** @description Validation Error */

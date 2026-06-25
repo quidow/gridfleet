@@ -8,7 +8,6 @@ describe('queryKeys', () => {
     expect(qk.deviceHealth.byDevice('d1').slice(0, 1)).toEqual([...qk.deviceHealth.root]);
     expect(qk.runs.cursorList(undefined).slice(0, 1)).toEqual([...qk.runs.root]);
     expect(qk.sessions.cursorList(undefined).slice(0, 1)).toEqual([...qk.sessions.root]);
-    expect(qk.hostPlugins.byHost('h1').slice(0, 1)).toEqual([...qk.hostPlugins.root]);
   });
 
   it('cursor lists keep the literal "cursor" segment (useEventStream newest-page predicate depends on it)', () => {

@@ -110,10 +110,5 @@ export const qk = {
     list: (params: unknown) => ['notifications', params] as const,
   },
   settings: { root: ['settings'] as const },
-  plugins: { root: ['plugins'] as const },
-  hostPlugins: {
-    root: ['host-plugins'] as const,
-    byHost: (hostId: string) => ['host-plugins', hostId] as const,
-  },
   eventCatalog: { root: ['event-catalog'] as const },
 } as const;

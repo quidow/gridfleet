@@ -125,7 +125,6 @@ async function mockDefaultHostsSurface(page: Page) {
         appium_server_package: 'appium',
         appium_server_version: '2.11.5',
         driver_specs: [{ package: 'appium-uiautomator2-driver', version: '3.6.0' }],
-        plugin_specs: [],
         appium_home: '/tmp/appium/runtime-android',
         status: 'installed',
         blocked_reason: null,
@@ -553,7 +552,6 @@ test.describe('Hosts page', () => {
           appium_server_package: 'appium',
           appium_server_version: '2.11.5',
           driver_specs: [{ package: 'appium-uiautomator2-driver', version: '3.6.0' }],
-          plugin_specs: [],
           appium_home: '/tmp/appium/runtime-android',
           status: 'installed',
           blocked_reason: null,
@@ -663,10 +661,6 @@ test.describe('Hosts page', () => {
     await expect(page.getByRole('heading', { name: 'lab-mac-mini' })).toBeVisible({ timeout: 15_000 });
     // Deep-linked Drivers tab should show the drivers table
     await expect(page.getByText('Driver', { exact: true })).toBeVisible();
-
-    // Switch to Plugins tab
-    await page.getByRole('button', { name: 'Plugins', exact: true }).click();
-    await expect(page).toHaveURL(/tab=plugins/);
 
     // Unknown tab falls back to Overview
     await page.goto('/hosts/host-1?tab=bogus');

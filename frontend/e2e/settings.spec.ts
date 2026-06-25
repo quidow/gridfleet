@@ -300,7 +300,6 @@ async function mockSettingsPageApis(page: Page) {
         appium_server_package: 'appium',
         appium_server_version: '2.11.5',
         driver_specs: [{ package: 'appium-uiautomator2-driver', version: '3.6.0' }],
-        plugin_specs: [],
         appium_home: '/tmp/appium/runtime-android',
         status: 'installed',
         blocked_reason: null,
@@ -342,7 +341,6 @@ test.describe('Settings Page', () => {
       'Data Retention',
       'Backup & Restore',
       'Notifications',
-      'Appium Plugins',
     ]) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }

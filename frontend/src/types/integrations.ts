@@ -2,32 +2,6 @@ import type { components } from '../api/openapi';
 
 type Schemas = components['schemas'];
 
-export type AppiumPlugin = Schemas['PluginRead'];
-export type AppiumPluginCreate = Omit<Schemas['PluginCreate'], 'enabled' | 'notes'> & {
-  enabled?: boolean;
-  notes?: string;
-};
-export type AppiumPluginUpdate = Schemas['PluginUpdate'];
-
-export type HostPluginStatus = Omit<Schemas['HostPluginStatus'], 'status'> & {
-  status: 'ok' | 'mismatch' | 'missing';
-};
-export type PluginSyncResult = Omit<Schemas['PluginSyncResult'], 'errors' | 'installed' | 'removed' | 'updated'> & {
-  installed: string[];
-  updated: string[];
-  removed: string[];
-  errors: Record<string, string>;
-};
-export type FleetPluginSyncResult = Omit<
-  Schemas['FleetPluginSyncResult'],
-  'failed_hosts' | 'online_hosts' | 'skipped_hosts' | 'synced_hosts'
-> & {
-  online_hosts: string[];
-  synced_hosts: string[];
-  failed_hosts: string[];
-  skipped_hosts: string[];
-};
-
 export type LifecycleIncidentRead = Omit<
   Schemas['LifecycleIncidentRead'],
   'backoff_until' | 'detail' | 'reason' | 'run_id' | 'run_name' | 'source'

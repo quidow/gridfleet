@@ -62,13 +62,12 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
     {
       id: 'appium-nodes',
       title: 'Appium Node Pool',
-      description: 'Port allocation, startup timing, and shared plugin defaults.',
+      description: 'Port allocation and startup timing.',
       settingKeys: [
         'appium.port_range_start',
         'appium.port_range_end',
         'appium.startup_timeout_sec',
         'appium.session_override',
-        'appium.default_plugins',
       ],
     },
   ],
