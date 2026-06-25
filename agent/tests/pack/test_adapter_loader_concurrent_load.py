@@ -36,7 +36,6 @@ async def test_concurrent_load_adapter_for_same_key_serializes_install(
     first caller extracts + installs; the second caller observes the cache
     hit and skips the install.
     """
-    adapter_loader._adapter_cache_clear()
     tarball = await _build_minimal_tarball(tmp_path)
     runtime_dir = tmp_path / "runtime"
 

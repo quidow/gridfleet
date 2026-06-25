@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 from agent_app.pack import adapter_loader
 from agent_app.pack.adapter_loader import (
     AdapterLoadError,
-    _adapter_cache_clear,
     load_adapter,
 )
 
@@ -138,7 +137,6 @@ def _build_named_tarball_with_adapter_wheel(
 
 @pytest.mark.asyncio
 async def test_load_adapter_extracts_and_imports(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     tarball = _build_tarball_with_adapter_wheel(tmp_path)
     runtime_dir = tmp_path / "runtime"
 
@@ -161,7 +159,6 @@ async def test_load_adapter_extracts_and_imports(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_load_adapter_stamps_pack_identity_from_load_context(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     body = _ADAPTER_PY.replace('pack_id = "vendor-foo"', 'pack_id = ""').replace(
         'pack_release = "0.1.0"',
         'pack_release = ""',
@@ -181,7 +178,6 @@ async def test_load_adapter_stamps_pack_identity_from_load_context(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_load_adapter_uses_cache(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     tarball = _build_tarball_with_adapter_wheel(tmp_path)
     runtime_dir = tmp_path / "runtime"
 
@@ -202,7 +198,6 @@ async def test_load_adapter_uses_cache(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_load_adapter_drops_stale_adapter_submodules_between_packs(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     body = """\
 from typing import Any
 
@@ -249,7 +244,6 @@ async def test_load_adapter_does_not_reactivate_site_during_in_flight_hook(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _adapter_cache_clear()
     original_path = list(sys.path)
     original_modules = {name: sys.modules[name] for name in _adapter_module_names()}
     pack_a_dir = (tmp_path / "runtime-a" / "site").resolve()
@@ -323,7 +317,6 @@ PACK_LABEL = "pack_b"
 
 @pytest.mark.asyncio
 async def test_missing_adapter_wheel_raises(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     bare = tmp_path / "bare.tar.gz"
     with tarfile.open(bare, mode="w:gz") as tar:
         manifest = tmp_path / "manifest.yaml"
@@ -341,7 +334,6 @@ async def test_missing_adapter_wheel_raises(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_multiple_wheels_raise(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     wheel_a = _build_handcrafted_wheel(tmp_path / "a")
     wheel_b = _build_handcrafted_wheel(tmp_path / "b")
     tarball = tmp_path / "pack.tar.gz"
@@ -360,7 +352,6 @@ async def test_multiple_wheels_raise(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_adapter_module_without_class_raises(tmp_path: Path) -> None:
-    _adapter_cache_clear()
     body = "marker = 'no-class-here'\n"
     wheel = _build_handcrafted_wheel(tmp_path / "dist", body=body)
     tarball = tmp_path / "pack.tar.gz"
@@ -374,31 +365,6 @@ async def test_adapter_module_without_class_raises(tmp_path: Path) -> None:
             tarball_path=tarball,
             runtime_dir=tmp_path / "runtime",
         )
-
-
-@pytest.mark.asyncio
-async def test_cache_clear_drops_stale_sys_path_entries(tmp_path: Path) -> None:
-    _adapter_cache_clear()
-    tarball = _build_tarball_with_adapter_wheel(tmp_path)
-    runtime_dir = tmp_path / "runtime"
-    await load_adapter(
-        pack_id="vendor-foo",
-        release="0.1.0",
-        tarball_path=tarball,
-        runtime_dir=runtime_dir,
-    )
-    site_dir = (runtime_dir / "site").resolve()
-    assert str(site_dir) in sys.path
-
-    # Inject a stale path entry pointing at a now-deleted directory.
-    stale = tmp_path / "stale-site"
-    stale.mkdir()
-    sys.path.insert(0, str(stale))
-    stale.rmdir()
-
-    _adapter_cache_clear()
-
-    assert str(stale) not in sys.path
 
 
 def _tarball_with_member(name: str, data: bytes = b"x", *, member_type: bytes | None = None) -> bytes:
