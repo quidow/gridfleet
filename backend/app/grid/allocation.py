@@ -159,16 +159,12 @@ def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, re
     ticket.status = to
 
 
-# Bulk Core UPDATE paths only ever terminalize a ``claimed`` ticket to ``expired``
-# (session ended / orphan reaped). The per-row ``_legal_ticket_transition`` table
-# deliberately omits ``claimed -> expired`` — that terminalization is bulk-only — so
-# the bulk seam carries its own small legal set rather than widening the per-row table
-# (which would also relax what the single-ticket seam permits).
-_LEGAL_BULK_TRANSITIONS = frozenset({(GridQueueStatus.claimed, GridQueueStatus.expired)})
-
-
 def _legal_bulk_ticket_transition(from_status: GridQueueStatus, to: GridQueueStatus) -> bool:
-    return (from_status, to) in _LEGAL_BULK_TRANSITIONS
+    # Bulk Core UPDATE paths only ever terminalize a ``claimed`` ticket to ``expired``
+    # (session ended / orphan reaped). The per-row ``_legal_ticket_transition`` table
+    # deliberately omits ``claimed -> expired`` — that terminalization is bulk-only — so
+    # the bulk seam keeps its own explicit rule rather than widening the per-row table.
+    return from_status == GridQueueStatus.claimed and to == GridQueueStatus.expired
 
 
 async def transition_tickets_bulk(
