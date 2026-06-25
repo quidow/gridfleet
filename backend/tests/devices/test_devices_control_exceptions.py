@@ -99,7 +99,6 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="health failure",
         intents=[
             IntentRegistration(
                 source=f"connectivity:{device.id}",

@@ -143,7 +143,6 @@ class RunReleaseService:
                 continue
             await IntentService(db).mark_dirty_and_reconcile(
                 device.id,
-                reason=f"Run '{run.name}' ended ({run.state.value})",
                 publisher=self._publisher,
             )
             devices_pending_lifecycle_cleanup.append(device.id)
@@ -187,14 +186,12 @@ class RunReleaseService:
                             precondition={"kind": "run_active", "run_id": str(run.id)},
                         )
                     ],
-                    reason=reason or f"force release run {run.id}",
                     publisher=self._publisher,
                 )
                 metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL.inc()
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=sources,
-                reason=reason or f"clear run {run.id} intents",
                 publisher=self._publisher,
             )
 

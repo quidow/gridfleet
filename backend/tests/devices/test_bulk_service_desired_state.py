@@ -71,7 +71,6 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
                 payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": 4723},
             ),
         ],
-        reason="seed baseline",
     )
     await db_session.commit()
     assert node.transition_token is None

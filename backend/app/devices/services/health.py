@@ -105,12 +105,12 @@ class DeviceHealthService:
         # behavior: a healthy device_checks signal alone does not restore an
         # offline device — the node must also be observed running.
         if not healthy:
-            await IntentService(db).mark_dirty_and_reconcile(locked.id, reason=summary, publisher=self._publisher)
+            await IntentService(db).mark_dirty_and_reconcile(locked.id, publisher=self._publisher)
         elif _verdict_changed(previous, locked):
             # Steady-state healthy re-marks are the dominant reconciler churn — only
             # enqueue when the public verdict actually transitions. The full scan is
             # the backstop for any drift that has no observation transition.
-            await IntentService(db).mark_dirty(locked.id, reason="device checks healthy")
+            await IntentService(db).mark_dirty(locked.id)
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_session_viability(
@@ -126,11 +126,9 @@ class DeviceHealthService:
         # Same asymmetry as update_device_checks: reconcile immediately on failure
         # (device goes offline), defer on success (rely on apply_node_state_transition).
         if status == "failed":
-            await IntentService(db).mark_dirty_and_reconcile(
-                locked.id, reason=error or "session viability failed", publisher=self._publisher
-            )
+            await IntentService(db).mark_dirty_and_reconcile(locked.id, publisher=self._publisher)
         elif _verdict_changed(previous, locked):
-            await IntentService(db).mark_dirty(locked.id, reason="session viability passed")
+            await IntentService(db).mark_dirty(locked.id)
 
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
@@ -192,13 +190,11 @@ class DeviceHealthService:
         if should_act and should_reconcile:
             await IntentService(db).mark_dirty_and_reconcile(
                 locked.id,
-                reason=reason or f"node: {_node_reason_label(locked_node)}",
                 publisher=self._publisher,
             )
         elif should_act:
             await IntentService(db).mark_dirty(
                 locked.id,
-                reason=reason or f"node: {_node_reason_label(locked_node)}",
             )
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 

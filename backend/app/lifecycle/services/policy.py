@@ -224,7 +224,6 @@ class LifecyclePolicyService:
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=failure_stop_sources(device.id),
-                reason=reason,
                 publisher=self._publisher,
             )
             return True
@@ -343,7 +342,6 @@ class LifecyclePolicyService:
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=failure_stop_sources(device.id),
-            reason=reason,
             publisher=self._publisher,
         )
 
@@ -403,7 +401,6 @@ class LifecyclePolicyService:
                     expires_at=recovery_intent_expiry,
                 ),
             ],
-            reason=reason,
             publisher=self._publisher,
         )
         await db.commit()
@@ -588,9 +585,7 @@ class LifecyclePolicyService:
                 {"recovered_from": source, "reason": reason},
             )
             if device.operational_state != DeviceOperationalState.available:
-                await IntentService(db).mark_dirty_and_reconcile(
-                    device.id, reason=f"Recovery ({source}): {reason}", publisher=self._publisher
-                )
+                await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
             await db.commit()
 
         await db.commit()

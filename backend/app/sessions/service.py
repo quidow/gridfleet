@@ -225,7 +225,6 @@ async def close_running_session(
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=session.device_id,
             sources=[f"active_session:{sid}"],
-            reason=f"Session {sid} ended",
             publisher=publisher,
         )
 
@@ -460,7 +459,6 @@ class SessionCrudService:
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=session.device_id,
                 sources=[f"active_session:{session_id}"],
-                reason=f"Session {session_id} ended",
                 publisher=self._publisher,
                 observed_reason=ObservationReason.session_ended,
             )
@@ -483,7 +481,6 @@ class SessionCrudService:
                 if locked_device.operational_state == DeviceOperationalState.busy:
                     await IntentService(db).mark_dirty_and_reconcile(
                         locked_device.id,
-                        reason="Session ended",
                         publisher=self._publisher,
                         observed_reason=ObservationReason.session_ended,
                     )

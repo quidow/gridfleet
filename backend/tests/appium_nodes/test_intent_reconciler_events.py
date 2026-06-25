@@ -31,7 +31,6 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="block sessions",
         intents=[
             IntentRegistration(
                 source="grid:block",
@@ -42,7 +41,6 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
     )
     await service.register_intents(
         device_id=device.id,
-        reason="block recovery",
         intents=[
             IntentRegistration(
                 source="recovery:block",
@@ -108,7 +106,6 @@ async def test_operator_stop_records_auto_stopped_device_event(db_session: Async
     await IntentService(db_session).register_intents_and_reconcile(
         device_id=device.id,
         intents=operator_stop_intents(device.id),
-        reason="operator stop",
         publisher=event_bus,
         observed_reason=ObservationReason.operator_stopped,
     )

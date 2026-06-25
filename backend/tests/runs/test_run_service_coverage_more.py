@@ -1362,7 +1362,6 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
     # Seed all five intent sources that release_device_from_run must revoke.
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="seed full intent set",
         intents=[
             IntentRegistration(
                 source=f"run:{run.id}",

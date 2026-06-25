@@ -212,10 +212,9 @@ async def _mark_device_available(
     *,
     device_id: object,
     intents: object,
-    reason: str,
     **kwargs: object,
 ) -> None:
-    del intents, reason, kwargs
+    del intents, kwargs
     from app.devices.models import Device as _Device
 
     device = await db.get(_Device, device_id)  # type: ignore[attr-defined]

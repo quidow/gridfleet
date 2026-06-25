@@ -206,7 +206,6 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="seed",
         intents=[
             IntentRegistration(
                 source=f"health_failure:reservation:{device.id}",

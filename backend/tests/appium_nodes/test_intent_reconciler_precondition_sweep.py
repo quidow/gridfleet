@@ -46,7 +46,6 @@ async def test_sweep_deletes_intent_when_run_terminal(db_session: AsyncSession, 
     run = await create_reserved_run(db_session, name="sweep-run", devices=[device])
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="cooldown",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -75,7 +74,6 @@ async def test_sweep_leaves_satisfied_intents_intact(db_session: AsyncSession, d
     run.state = RunState.active
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="cooldown",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -101,7 +99,6 @@ async def test_sweep_is_noop_when_no_precondition_intents(db_session: AsyncSessi
     await _seed_node(db_session, device.id)
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="plain",
         intents=[
             IntentRegistration(
                 source="baseline:start",
@@ -132,7 +129,6 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
     run.state = RunState.active
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="hybrid",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -169,7 +165,6 @@ async def test_sweep_returns_affected_device_only(
     run = await create_reserved_run(db_session, name="run-a", devices=[device_a])
     await IntentService(db_session).register_intents(
         device_id=device_a.id,
-        reason="cooldown",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -197,7 +192,6 @@ async def test_sweep_emits_desired_state_changed_event(db_session: AsyncSession,
     run = await create_reserved_run(db_session, name="sweep-event-run", devices=[device])
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="cooldown",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -274,7 +268,6 @@ async def test_forced_release_registers_run_active_precondition(
         *,
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
-        reason: str,
         publisher: object,
     ) -> None:
         captured.extend(intents)
@@ -284,7 +277,6 @@ async def test_forced_release_registers_run_active_precondition(
         *,
         device_id: uuid.UUID,
         sources: list[str],
-        reason: str,
         publisher: object,
     ) -> None:
         return None
@@ -329,7 +321,6 @@ async def test_allocator_registers_reservation_active_precondition(
         *,
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
-        reason: str,
         publisher: object,
     ) -> None:
         captured.extend(intents)
@@ -383,7 +374,6 @@ async def test_node_health_registers_node_running_precondition(
         *,
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
-        reason: str,
         publisher: object,
     ) -> None:
         captured.extend(intents)
@@ -438,7 +428,6 @@ async def test_sweep_deletes_operator_start_intent_when_node_observed_running(
 
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="operator start",
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",
@@ -502,7 +491,6 @@ async def test_verification_node_not_stopped_when_operator_start_intent_swept(
     # verification:{device_id} guard.
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="verification start",
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",

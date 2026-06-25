@@ -295,7 +295,6 @@ class RunFailureService:
                 count=cooldown_count_after,
                 expires_at=excluded_until,
             ),
-            reason=f"Cooldown: {clean_reason}",
             publisher=self._publisher,
         )
 

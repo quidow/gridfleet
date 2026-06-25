@@ -397,7 +397,6 @@ async def test_register_verification_node_intent_revokes_blocking_health_failure
                 payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE},
             )
         ],
-        reason="health failure",
         publisher=event_bus,
     )
 

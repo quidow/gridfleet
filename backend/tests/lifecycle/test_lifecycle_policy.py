@@ -92,10 +92,9 @@ async def _mark_device_available(
     *,
     device_id: object,
     intents: object,
-    reason: str,
     **kwargs: object,
 ) -> None:
-    del intents, reason, kwargs
+    del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
     with state_write_guard.bypass():
@@ -439,7 +438,6 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="health failure",
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
@@ -622,7 +620,6 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
                 payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
             )
         ],
-        reason="node crash",
         publisher=event_bus,
     )
     await db_session.commit()
@@ -932,7 +929,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     _real_register = IntentService.register_intents_and_reconcile
 
     async def _suppress_auto_recovery_only(
-        _self: IntentService, *, device_id: object, intents: object, reason: str, publisher: object = None
+        _self: IntentService, *, device_id: object, intents: object, publisher: object = None
     ) -> None:
         from app.devices.services.intent_types import IntentRegistration as IntentReg
 
@@ -940,7 +937,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
             isinstance(i, IntentReg) and i.source.startswith("auto_recovery:") for i in intents
         ):
             return
-        await _real_register(_self, device_id=device_id, intents=intents, reason=reason, publisher=publisher)
+        await _real_register(_self, device_id=device_id, intents=intents, publisher=publisher)
 
     probe_mock = AsyncMock(
         return_value={
@@ -1652,7 +1649,6 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="held intent integration",
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
@@ -2362,7 +2358,6 @@ async def _exclude_reservation(
     res.excluded_until = excluded_until
     await IntentService(db_session).register_intents(
         device_id=device_id,
-        reason="seed health failure exclusion",
         intents=[
             IntentRegistration(
                 source=f"health_failure:reservation:{device_id}",

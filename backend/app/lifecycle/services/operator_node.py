@@ -192,13 +192,11 @@ class OperatorNodeLifecycleService:
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=revoke_sources,
-            reason=reason,
             publisher=self._publisher,
         )
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[operator_start_intent(device, desired_port)],
-            reason=reason,
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
@@ -236,7 +234,6 @@ class OperatorNodeLifecycleService:
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=operator_stop_intents(device.id),
-            reason=reason,
             publisher=self._publisher,
             # Verification-driven stops carry their own reason via the verification
             # flow; only label genuine operator calls (same caller set request_start
@@ -263,7 +260,6 @@ class OperatorNodeLifecycleService:
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[operator_restart_intent(device, node.port, settings=self._settings)],
-            reason=reason,
             publisher=self._publisher,
         )
         if caller == "operator_restart":

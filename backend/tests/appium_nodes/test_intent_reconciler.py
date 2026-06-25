@@ -91,7 +91,6 @@ async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
     expires_at = datetime.now(UTC) + timedelta(minutes=5)
     await service.register_intents(
         device_id=device.id,
-        reason="cooldown",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -155,7 +154,6 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="expired",
         intents=[
             IntentRegistration(
                 source="expired",
@@ -201,7 +199,6 @@ async def test_expired_running_metadata_change_is_delivered(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="expired block",
         intents=[
             IntentRegistration(
                 source="expired:grid:block",
@@ -300,7 +297,6 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     service = IntentService(db_session)
     [intent] = await service.register_intents(
         device_id=device.id,
-        reason="expired block",
         intents=[
             IntentRegistration(
                 source="expired:grid:block",
@@ -364,7 +360,6 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="maintenance",
         intents=[
             IntentRegistration(
                 source="maintenance:node",
@@ -418,7 +413,6 @@ async def test_hard_stop_on_idle_device_stages_agent_drain(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="operator stop",
         intents=[
             IntentRegistration(
                 source="operator:node",
@@ -471,7 +465,6 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="health failure",
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
@@ -516,7 +509,6 @@ async def test_graceful_stop_holds_node_running_while_session_pending(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="health failure",
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
@@ -561,7 +553,6 @@ async def test_graceful_stop_applies_once_session_ends(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="health failure",
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
@@ -600,7 +591,6 @@ async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSessi
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="block",
         intents=[
             IntentRegistration(
                 source="grid:block",
@@ -874,7 +864,6 @@ async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
     await db_session.commit()
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="operator start",
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",

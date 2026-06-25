@@ -339,7 +339,6 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
 
     await IntentService(db_session).register_intents(
         device_id=device.id,
-        reason="held graceful stop",
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",

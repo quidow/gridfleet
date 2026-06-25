@@ -2226,9 +2226,9 @@ async def test_disconnected_already_recorded_device_skips_reconcile(
     calls: list[str] = []
     original = IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(IntentService, "mark_dirty", _spy)
 
@@ -2267,9 +2267,9 @@ async def test_disconnected_first_observation_still_reconciles(
     calls: list[str] = []
     original = IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(IntentService, "mark_dirty", _spy)
 

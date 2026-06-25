@@ -44,7 +44,7 @@ async def test_inline_reconcile_does_not_deadlock_with_dirty_scan_delete(
         device = await create_device(setup, host_id=db_host.id, name="dirty-deadlock-target")
         # Pre-seed the dirty row so the dirty-scan side has a row to delete and the
         # inline side upserts (locks) the same row.
-        await IntentService(setup).mark_dirty(device.id, reason="seed")
+        await IntentService(setup).mark_dirty(device.id)
         await setup.commit()
         device_id = device.id
 
@@ -63,7 +63,7 @@ async def test_inline_reconcile_does_not_deadlock_with_dirty_scan_delete(
 
     async def inline_reconcile_side() -> None:
         async with db_session_maker() as session, session.begin():
-            await IntentService(session).mark_dirty_and_reconcile(device_id, reason="inline", publisher=event_bus)
+            await IntentService(session).mark_dirty_and_reconcile(device_id, publisher=event_bus)
 
     scan = asyncio.create_task(dirty_scan_side())
     await asyncio.wait_for(device_locked_by_scan.wait(), timeout=5.0)

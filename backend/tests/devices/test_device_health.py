@@ -168,9 +168,9 @@ async def test_update_device_checks_healthy_steady_state_skips_mark_dirty(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
@@ -193,15 +193,15 @@ async def test_update_device_checks_healthy_transition_marks_dirty_once(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="Healthy")
     await db.commit()
-    assert calls == ["device checks healthy"]
+    assert calls == ["called"]
 
 
 @pytest.mark.db
@@ -453,9 +453,9 @@ async def test_update_session_viability_passed_steady_state_skips_mark_dirty(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
@@ -477,15 +477,15 @@ async def test_update_session_viability_transition_marks_dirty_once(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
     await DeviceHealthService(publisher=event_bus).update_session_viability(db, device, status="passed", error=None)
     await db.commit()
-    assert calls == ["session viability passed"]
+    assert calls == ["called"]
 
 
 @pytest.mark.db
@@ -517,9 +517,9 @@ async def test_apply_node_state_transition_steady_healthy_skips_mark_dirty(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
@@ -558,9 +558,9 @@ async def test_apply_node_state_transition_recovery_marks_dirty(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
@@ -600,9 +600,9 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
@@ -640,9 +640,9 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
     calls: list[str] = []
     original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object, *, reason: str) -> int:
-        calls.append(reason)
-        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+    async def _spy(self: object, device_id: object) -> int:
+        calls.append("called")
+        return await original(self, device_id)
 
     monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
 
