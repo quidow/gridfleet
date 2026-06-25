@@ -59,12 +59,11 @@ async def test_stop_disconnected_node_locks_device_and_node(
         *,
         device_id: object,
         intents: object,
-        reason: str,
         publisher: object,
     ) -> None:
         stomper_can_go.set()
         await asyncio.sleep(0.15)
-        await real_register(self, device_id=device_id, intents=intents, reason=reason, publisher=publisher)
+        await real_register(self, device_id=device_id, intents=intents, publisher=publisher)
 
     async def runner() -> None:
         async with db_session_maker() as session:

@@ -34,13 +34,12 @@ async def _mark_device_available(
     *,
     device_id: object,
     intents: object,
-    reason: str,
     **kwargs: object,
 ) -> None:
     """Marks the device available and simulates the reconciler bringing the
     node up so wait_for_node_running in attempt_auto_recovery exits on its
     first poll instead of blocking for its full 60s timeout."""
-    del intents, reason, kwargs
+    del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
     with state_write_guard.bypass():
