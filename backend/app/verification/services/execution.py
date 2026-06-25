@@ -165,11 +165,11 @@ class VerificationExecutionService:
                 resolved_serial: str = avd_info["serial"]
                 device.connection_target = resolved_serial
 
-            await set_stage(job, "device_health", "passed", detail="Device health checks passed", data=result)
+            await set_stage(job, "device_health", "passed", detail="Device health checks passed")
             return None
 
         detail = _health_failure_detail(result)
-        await set_stage(job, "device_health", "failed", detail=detail, data=result)
+        await set_stage(job, "device_health", "failed", detail=detail)
         return detail
 
     async def stop_existing_managed_node_for_update(
@@ -241,7 +241,6 @@ class VerificationExecutionService:
                 "node_start",
                 "passed",
                 detail="Verification node started",
-                data={"port": started_node.port, "pid": started_node.pid},
             )
 
             await set_stage(job, "session_probe", "running")
@@ -596,13 +595,11 @@ async def _finalize_success(
     else:
         locked = await device_locking.lock_device(db, context.save_device_id)
         _restore_create_payload_fields(locked, context.save_payload)
-    data = {"port": node.port, "pid": node.pid} if node is not None else None
     await set_stage(
         job,
         "cleanup",
         "passed",
         detail="Verified node retained as the managed Appium node",
-        data=data,
     )
 
     locked.verified_at = datetime.now(UTC)
@@ -622,7 +619,7 @@ async def _finalize_success(
     )
     await db.commit()
     detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"
-    await set_stage(job, "save_device", "passed", detail=detail, data={"device_id": str(locked.id)})
+    await set_stage(job, "save_device", "passed", detail=detail)
     return VerificationExecutionOutcome(status="completed", device_id=str(locked.id))
 
 

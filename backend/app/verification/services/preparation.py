@@ -123,11 +123,6 @@ class VerificationPreparationService:
             "validation",
             "passed",
             detail="Device input normalized successfully",
-            data={
-                "platform_id": payload.get("platform_id"),
-                "host_id": str(payload["host_id"]) if payload.get("host_id") else None,
-                "device_id": str(saved_device.id),
-            },
         )
         return (
             PreparedVerificationContext(
@@ -210,11 +205,6 @@ class VerificationPreparationService:
             "validation",
             "passed",
             detail="Setup payload normalized successfully",
-            data={
-                "platform_id": verification_payload.get("platform_id"),
-                "host_id": str(verification_payload["host_id"]) if verification_payload.get("host_id") else None,
-                "device_id": str(existing.id),
-            },
         )
         return (
             PreparedVerificationContext(

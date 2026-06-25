@@ -48,7 +48,7 @@ def now_iso() -> str:
 
 
 def new_stage(name: str) -> dict[str, Any]:
-    return {"name": name, "status": "pending", "detail": None, "data": None}
+    return {"name": name, "status": "pending", "detail": None}
 
 
 def new_job(job_id: str) -> dict[str, Any]:
@@ -145,12 +145,10 @@ async def set_stage(
     status: str,
     *,
     detail: str | None = None,
-    data: dict[str, Any] | None = None,
 ) -> None:
     current_stage = stage(job, name)
     current_stage["status"] = status
     current_stage["detail"] = detail
-    current_stage["data"] = data
     job["current_stage"] = name
     if job["status"] == "pending":
         job["status"] = "running"

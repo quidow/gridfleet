@@ -395,7 +395,6 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
         cleanup_stage = next(s for s in job_row.snapshot["stages"] if s["name"] == "cleanup")
         node = (await verify_db.execute(select(AppiumNode))).scalar_one()
     assert cleanup_stage["status"] == "passed"
-    assert cleanup_stage["data"] == {"port": 4723, "pid": 12345}
     assert node.port == 4723
     assert node.pid == 12345
     assert node.active_connection_target == DEVICE_PAYLOAD["identity_value"]
