@@ -5,9 +5,7 @@ import binascii
 import hmac
 from typing import TYPE_CHECKING
 
-from pydantic import SecretStr
-
-from agent_app.config import agent_settings
+from agent_app.config import agent_settings, secret_value
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
@@ -26,7 +24,7 @@ class BasicAuthMiddleware:
             return
 
         username = agent_settings.api_auth.api_auth_username
-        password = _secret_value(agent_settings.api_auth.api_auth_password)
+        password = secret_value(agent_settings.api_auth.api_auth_password)
         if not username or not password:
             await self.app(scope, receive, send)
             return
@@ -41,12 +39,6 @@ class BasicAuthMiddleware:
             return
 
         await _send_unauthorized(send)
-
-
-def _secret_value(value: SecretStr | str | None) -> str | None:
-    if isinstance(value, SecretStr):
-        return value.get_secret_value()
-    return value
 
 
 def _credentials_match(scope: Scope, expected_username: str, expected_password: str) -> bool:
