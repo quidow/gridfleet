@@ -29,7 +29,6 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions import probe_inflight, service_sync
 from app.sessions.models import Session, SessionStatus
-from app.sessions.protocols import SessionSyncProtocol
 from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
@@ -1000,10 +999,6 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-
-
-def test_session_sync_service_satisfies_protocol() -> None:
-    assert issubclass(SessionSyncService, SessionSyncProtocol)
 
 
 async def test_write_phase_drops_when_leadership_lost_after_probes(

@@ -10,14 +10,16 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.sessions.protocols import SessionCrudProtocol, SessionSyncProtocol, SessionViabilityProtocol
+    from app.sessions.protocols import SessionCrudProtocol
+    from app.sessions.service_sync import SessionSyncService
+    from app.sessions.service_viability import SessionViabilityService
 
 
 @dataclass(frozen=True, slots=True)
 class SessionServices:
     crud: SessionCrudProtocol
-    sync: SessionSyncProtocol
-    viability: SessionViabilityProtocol
+    sync: SessionSyncService
+    viability: SessionViabilityService
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
     publisher: EventPublisher

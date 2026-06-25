@@ -19,7 +19,6 @@ from unittest.mock import Mock
 
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
-from app.packs.protocols import PackStatusProtocol
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
@@ -27,10 +26,6 @@ from tests.packs.factories import seed_test_packs
 
 _feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
 _status_svc = PackStatusService(feature=_feature_svc)
-
-
-def test_pack_status_service_satisfies_protocol() -> None:
-    assert isinstance(PackStatusService.__new__(PackStatusService), PackStatusProtocol)
 
 
 @pytest.mark.asyncio

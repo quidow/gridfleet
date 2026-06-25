@@ -10,24 +10,21 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.events.protocols import EventPublisher
-    from app.packs.protocols import (
-        FeatureProtocol,
-        PackCatalogProtocol,
-        PackDiscoveryProtocol,
-        PackLifecycleProtocol,
-        PackReleaseProtocol,
-        PackStatusProtocol,
-    )
+    from app.packs.protocols import PackDiscoveryProtocol, PackLifecycleProtocol
+    from app.packs.services.feature_dispatch import FeatureService
+    from app.packs.services.release import PackReleaseService
+    from app.packs.services.service import PackCatalogService
+    from app.packs.services.status import PackStatusService
     from app.packs.services.storage import PackStorageService
 
 
 @dataclass(frozen=True, slots=True)
 class PackServices:
-    catalog: PackCatalogProtocol
-    release: PackReleaseProtocol
-    status: PackStatusProtocol
+    catalog: PackCatalogService
+    release: PackReleaseService
+    status: PackStatusService
     lifecycle: PackLifecycleProtocol
-    feature: FeatureProtocol
+    feature: FeatureService
     discovery: PackDiscoveryProtocol
     storage: PackStorageService
     publisher: EventPublisher

@@ -6,15 +6,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.portability.protocols import (
-        InventoryExportProtocol,
-        PortabilityExportProtocol,
-        PortabilityImportProtocol,
-    )
+    from app.portability.services.export import PortabilityExportService
+    from app.portability.services.import_bundle import PortabilityImportService
+    from app.portability.services.inventory import InventoryExportService
 
 
 @dataclass(frozen=True, slots=True)
 class PortabilityServices:
-    export: PortabilityExportProtocol
-    import_: PortabilityImportProtocol
-    inventory: InventoryExportProtocol
+    export: PortabilityExportService
+    import_: PortabilityImportService
+    inventory: InventoryExportService

@@ -25,18 +25,6 @@ class ReconcilerProtocol(Protocol):
 
 
 @runtime_checkable
-class NodeHealthProtocol(Protocol):
-    async def check_nodes(self, db: AsyncSession) -> None: ...
-    def wake(self) -> None: ...
-    async def wait_for_wake(self, timeout: float) -> bool: ...
-
-
-@runtime_checkable
-class HeartbeatProtocol(Protocol):
-    async def run_cycle(self, db: AsyncSession) -> None: ...
-
-
-@runtime_checkable
 class DeviceRecoveryControl(Protocol):
     async def record_control_action(
         self,
@@ -59,18 +47,6 @@ class DeviceRecoveryControl(Protocol):
         action: str | None = None,
         record_incident: bool = True,
     ) -> bool: ...
-
-
-@runtime_checkable
-class ReconcilerAgentProtocol(Protocol):
-    async def start_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
-    async def stop_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
-    async def restart_node(
-        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...
-    ) -> AppiumNode: ...
-    async def wait_for_node_running(
-        self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = ...
-    ) -> AppiumNode | None: ...
 
 
 @runtime_checkable

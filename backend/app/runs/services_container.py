@@ -9,23 +9,20 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
-    from app.runs.protocols import (
-        RunAllocatorProtocol,
-        RunFailureProtocol,
-        RunLifecycleProtocol,
-        RunQueryProtocol,
-        RunReleaseProtocol,
-        RunReservationProtocol,
-    )
+    from app.runs.protocols import RunReleaseProtocol, RunReservationProtocol
+    from app.runs.service_allocator import RunAllocatorService
+    from app.runs.service_lifecycle import RunLifecycleService
+    from app.runs.service_lifecycle_failures import RunFailureService
+    from app.runs.service_query import RunQueryService
 
 
 @dataclass(frozen=True, slots=True)
 class RunServices:
-    allocator: RunAllocatorProtocol
-    lifecycle: RunLifecycleProtocol
+    allocator: RunAllocatorService
+    lifecycle: RunLifecycleService
     release: RunReleaseProtocol
-    failure: RunFailureProtocol
+    failure: RunFailureService
     reservation: RunReservationProtocol
-    query: RunQueryProtocol
+    query: RunQueryService
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
