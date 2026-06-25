@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import cast, func, literal, select, union
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
@@ -14,6 +14,13 @@ from app.sessions.models import Session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _pack_with_releases_options() -> tuple[Any, ...]:
+    return (
+        selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+        selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+    )
 
 
 VALID_TRANSITIONS: dict[PackState, set[PackState]] = {
@@ -98,14 +105,7 @@ class PackLifecycleService:
         override: bool = False,
     ) -> DriverPack:
         pack = (
-            await db.execute(
-                select(DriverPack)
-                .where(DriverPack.id == pack_id)
-                .options(
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                )
-            )
+            await db.execute(select(DriverPack).where(DriverPack.id == pack_id).options(*_pack_with_releases_options()))
         ).scalar_one_or_none()
         if pack is None:
             raise LookupError(f"pack {pack_id!r} not found")
@@ -119,12 +119,7 @@ class PackLifecycleService:
             await db.commit()
             result = (
                 await db.execute(
-                    select(DriverPack)
-                    .where(DriverPack.id == pack_id)
-                    .options(
-                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                    )
+                    select(DriverPack).where(DriverPack.id == pack_id).options(*_pack_with_releases_options())
                 )
             ).scalar_one()
             return result
@@ -135,14 +130,7 @@ class PackLifecycleService:
         pack.state = target
         await db.commit()
         result = (
-            await db.execute(
-                select(DriverPack)
-                .where(DriverPack.id == pack_id)
-                .options(
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                )
-            )
+            await db.execute(select(DriverPack).where(DriverPack.id == pack_id).options(*_pack_with_releases_options()))
         ).scalar_one()
         return result
 
