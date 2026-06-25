@@ -13,11 +13,21 @@ paths-ignore:
   # protocols.py files are pure Protocol/interface stubs; CodeQL flags their
   # ellipsis/annotation idioms as py/ineffectual-statement (false positive).
   - "backend/app/**/protocols.py"
-  # Alembic migrations carry load-bearing module globals (revision,
-  # down_revision, branch_labels, depends_on) that CodeQL reports as unused.
-  - backend/alembic/versions
+  # Alembic carries load-bearing module globals (revision, down_revision,
+  # branch_labels, depends_on) and side-effect model imports (env.py, for
+  # autogenerate) that CodeQL reports as unused.
+  - backend/alembic
   - frontend/e2e
   - "frontend/**/*.test.ts"
   - "frontend/**/*.test.tsx"
   - "frontend/**/*.spec.ts"
   - "frontend/**/*.spec.tsx"
+
+# The domain packages deliberately break real import cycles with deferred
+# (function-level / TYPE_CHECKING) imports; CodeQL cannot model the deferral
+# and reports the intentional pattern as py/cyclic-import / py/unsafe-cyclic-import.
+query-filters:
+  - exclude:
+      id: py/cyclic-import
+  - exclude:
+      id: py/unsafe-cyclic-import
