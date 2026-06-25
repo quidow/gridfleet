@@ -98,7 +98,6 @@ export const qk = {
   hostDiagnostics: { byHost: (id: string) => ['host-diagnostics', id] as const },
   hostResourceTelemetry: { byHost: (id: string) => ['host-resource-telemetry', id] as const },
   hostToolsStatus: { byHost: (id: string) => ['host-tools-status', id] as const },
-  hostAgentLogs: { list: (hostId: string, filters: unknown) => ['host-agent-logs', hostId, filters] as const },
   hostEvents: { list: (hostId: string, filters: unknown) => ['host-events', hostId, filters] as const },
   intakeCandidates: {
     root: ['intake-candidates'] as const,

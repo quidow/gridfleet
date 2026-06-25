@@ -315,9 +315,6 @@ test.describe('Accessibility', () => {
         bucket_minutes: 5,
       });
     });
-    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/agent-logs', async (route) => {
-      await fulfillJson(route, { lines: [], total: 0, limit: 500, offset: 0 });
-    });
     await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/events', async (route) => {
       await fulfillJson(route, { events: [], total: 0, limit: 50, offset: 0 });
     });

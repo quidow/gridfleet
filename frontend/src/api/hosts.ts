@@ -1,6 +1,5 @@
 import api from './client';
 import type {
-  AgentLogPage,
   DiscoveryConfirm,
   DiscoveryConfirmResult,
   DiscoveryResult,
@@ -14,15 +13,6 @@ import type {
   HostToolStatus,
   IntakeCandidate,
 } from '../types';
-
-export interface AgentLogQuery {
-  level?: 'INFO' | 'WARNING' | 'ERROR';
-  q?: string;
-  since?: string;
-  until?: string;
-  limit?: number;
-  offset?: number;
-}
 
 export interface HostEventsQuery {
   types?: string[];
@@ -63,11 +53,6 @@ export async function fetchHostResourceTelemetry(
 
 export async function fetchHostToolStatus(id: string): Promise<HostToolStatus> {
   const { data } = await api.get(`/hosts/${id}/tools/status`);
-  return data;
-}
-
-export async function fetchHostAgentLogs(hostId: string, params: AgentLogQuery = {}): Promise<AgentLogPage> {
-  const { data } = await api.get<AgentLogPage>(`/hosts/${hostId}/agent-logs`, { params });
   return data;
 }
 

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { vi } from 'vitest';
 import { HostDetail } from './HostDetail';
@@ -92,10 +92,6 @@ vi.mock('../components/hostDetail/HostResourceTelemetryPanel', () => ({
   HostResourceTelemetryPanel: () => <section>Resource Telemetry</section>,
 }));
 
-vi.mock('../components/hostDetail/HostAgentLogPanel', () => ({
-  HostAgentLogPanel: ({ hostId }: { hostId: string }) => <section>Agent logs for {hostId}</section>,
-}));
-
 vi.mock('../components/hostDetail/HostEventsPanel', () => ({
   HostEventsPanel: ({ hostId }: { hostId: string }) => <section>Host events for {hostId}</section>,
 }));
@@ -131,22 +127,9 @@ test('renders hardware fields on the overview tab', () => {
   expect(screen.getByText('12')).toBeInTheDocument();
 });
 
-test('renders agent logs tab', () => {
-  renderHostDetail('/hosts/host-1?tab=agent-logs');
-
-  expect(screen.getByText('Agent logs for host-1')).toBeInTheDocument();
-});
-
 test('renders events tab', () => {
   renderHostDetail('/hosts/host-1?tab=events');
 
   expect(screen.getByText('Host events for host-1')).toBeInTheDocument();
 });
 
-test('switches to the agent logs tab', () => {
-  renderHostDetail('/hosts/host-1');
-
-  fireEvent.click(screen.getByRole('button', { name: 'Agent Logs' }));
-
-  expect(screen.getByText('Agent logs for host-1')).toBeInTheDocument();
-});
