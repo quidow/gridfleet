@@ -39,15 +39,6 @@ Environment variables control the base credentials and routing strings. These sh
 - `GRIDFLEET_AUTH_SESSION_SECRET`: Signing secret for stateless browser sessions.
 - `GRIDFLEET_MACHINE_AUTH_PASSWORD`: Password for machine Basic-auth clients such as agents, CI helpers, and metrics scrapers.
 
-## Host Agent Logs
-
-Host agents ship their own process logs back to the manager for the Host Detail Logs tab. These records are operator diagnostics, not an audit log, and they are retained according to `retention.agent_log_days`.
-
-Treat shipped log lines as sensitive operational data:
-
-- Keep backend auth enabled before exposing the operator UI outside a trusted lab network.
-- Do not log credentials, tokens, customer identifiers, or private device data from agent code or driver-pack adapters.
-
 ### Backend → agent authentication (optional)
 
 When `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set on each agent and the matching `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` are set on the backend, the agent enforces HTTP Basic on every `/agent/*` HTTP route. Without matching credentials the backend receives 401 and surfaces an agent call failure (circuit breaker tracks consecutive 5xx; 401 is recorded as an agent response error per the existing handling). Leave all four unset for local dev or trusted networks.
