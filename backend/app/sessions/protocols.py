@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from app.devices.models import Device
     from app.sessions.filters import SessionFilters
     from app.sessions.models import Session, SessionStatus
-    from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
 @runtime_checkable
@@ -56,13 +55,6 @@ class SessionCrudProtocol(Protocol):
 
 
 @runtime_checkable
-class SessionSyncProtocol(Protocol):
-    async def sync(self, db: AsyncSession) -> None: ...
-    def wake(self) -> None: ...
-    async def wait_for_wake(self, timeout: float) -> bool: ...
-
-
-@runtime_checkable
 class DeviceSessionLifecycle(Protocol):
     async def handle_session_finished(self, db: AsyncSession, device: Device) -> object: ...
     async def complete_deferred_stop_if_session_ended(self, db: AsyncSession, device: Device) -> object: ...
@@ -71,16 +63,6 @@ class DeviceSessionLifecycle(Protocol):
 @runtime_checkable
 class HealthFailureHandler(Protocol):
     async def __call__(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> object: ...
-
-
-@runtime_checkable
-class SessionViabilityProtocol(Protocol):
-    async def get_session_viability(self, db: AsyncSession, device: Device) -> dict[str, Any] | None: ...
-    async def run_session_viability_probe(
-        self, db: AsyncSession, device: Device, *, checked_by: SessionViabilityCheckedBy
-    ) -> dict[str, Any]: ...
-    async def check_due_devices(self, db: AsyncSession) -> None: ...
-    def configure_health_failure_handler(self, handler: HealthFailureHandler | None) -> None: ...
 
 
 @runtime_checkable
