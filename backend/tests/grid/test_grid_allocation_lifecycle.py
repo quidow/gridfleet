@@ -323,7 +323,7 @@ async def test_reap_expired_pending_and_tickets(
 
     reaped = await allocation_service.reap_expired(db_session)
 
-    assert reaped == {"pending_failed": 1, "tickets_expired": 1}
+    assert reaped == {"pending_failed": 1, "tickets_expired": 1, "orphan_claims_reaped": 0}
     await db_session.refresh(allocated_pending)
     assert allocated_pending.status == SessionStatus.error
     await db_session.refresh(stale_ticket)

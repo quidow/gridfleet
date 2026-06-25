@@ -207,10 +207,10 @@ async def test_reap_orphaned_claims_expires_abandoned_claim_on_ended_session(
     ticket.last_polled_at = datetime.now(UTC) - timedelta(seconds=60)  # abandoned
     await db_session.flush()
 
-    reaped = await allocation_service.reap_orphaned_claims(db_session)
+    result = await allocation_service.reap_expired(db_session)
 
     await db_session.refresh(ticket)
-    assert reaped == 1
+    assert result["orphan_claims_reaped"] == 1
     assert ticket.status == GridQueueStatus.expired
 
 
@@ -225,10 +225,10 @@ async def test_reap_orphaned_claims_expires_abandoned_claim_with_null_session(
     ticket.last_polled_at = datetime.now(UTC) - timedelta(seconds=60)  # abandoned
     await db_session.flush()
 
-    reaped = await allocation_service.reap_orphaned_claims(db_session)
+    result = await allocation_service.reap_expired(db_session)
 
     await db_session.refresh(ticket)
-    assert reaped == 1
+    assert result["orphan_claims_reaped"] == 1
     assert ticket.status == GridQueueStatus.expired
 
 
@@ -243,10 +243,10 @@ async def test_reap_orphaned_claims_spares_claim_on_live_session(
     ticket.last_polled_at = datetime.now(UTC) - timedelta(seconds=60)  # abandoned, but session live
     await db_session.flush()
 
-    reaped = await allocation_service.reap_orphaned_claims(db_session)
+    result = await allocation_service.reap_expired(db_session)
 
     await db_session.refresh(ticket)
-    assert reaped == 0
+    assert result["orphan_claims_reaped"] == 0
     assert ticket.status == GridQueueStatus.claimed
 
 
@@ -263,10 +263,10 @@ async def test_reap_orphaned_claims_spares_freshly_polled_claim_on_ended_session
     ticket.last_polled_at = datetime.now(UTC)  # client still polling
     await db_session.flush()
 
-    reaped = await allocation_service.reap_orphaned_claims(db_session)
+    result = await allocation_service.reap_expired(db_session)
 
     await db_session.refresh(ticket)
-    assert reaped == 0
+    assert result["orphan_claims_reaped"] == 0
     assert ticket.status == GridQueueStatus.claimed
 
 
