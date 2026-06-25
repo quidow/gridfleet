@@ -17,7 +17,6 @@ class AppiumReconfigureRequest(BaseModel):
 class AppiumStartRequest(BaseModel):
     connection_target: str = Field(min_length=1, max_length=512)
     port: int = Field(ge=1024, le=65535)
-    plugins: list[str] | None = None
     extra_caps: dict[str, Any] | None = None
     accepting_new_sessions: bool = True
     stop_pending: bool = False

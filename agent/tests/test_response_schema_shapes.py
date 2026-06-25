@@ -18,7 +18,6 @@ from agent_app.pack.schemas import (
     PackDevicesResponse,
     PackDeviceTelemetryResponse,
 )
-from agent_app.plugins.schemas import PluginListItem, PluginSyncResponse
 from agent_app.tools.schemas import ToolsStatusResponse
 
 
@@ -103,14 +102,6 @@ def test_pack_device_lifecycle_response_accepts_route_shape() -> None:
 
 def test_feature_action_response_accepts_route_shape() -> None:
     FeatureActionResponse.model_validate({"ok": True, "detail": "done", "data": {}})
-
-
-def test_plugin_list_item_accepts_route_shape() -> None:
-    PluginListItem.model_validate({"name": "appium-some-plugin", "version": "1.2.3"})
-
-
-def test_plugin_sync_response_accepts_arbitrary_dict() -> None:
-    PluginSyncResponse.model_validate({"installed": [], "updated": [], "removed": [], "errors": {}})
 
 
 def test_tools_status_response_accepts_structured_dict() -> None:

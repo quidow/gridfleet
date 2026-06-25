@@ -17,7 +17,6 @@ class RuntimeSpec:
     server_package: str
     server_version: str
     drivers: tuple[tuple[str, str, str, str | None], ...]  # (name, version, source, github_repo)
-    plugins: tuple[tuple[str, str, str, str | None], ...]  # (name, version, source, package)
     node_major: int | None
     runtime_packages: tuple[tuple[str, str], ...] = ()  # (package, version) extra npm installs
 
@@ -30,7 +29,6 @@ class RuntimeEnv:
     server_package: str
     server_version: str
     driver_versions: dict[str, str] = field(default_factory=dict)
-    plugin_statuses: list[dict[str, str | None]] = field(default_factory=list)
     runtime_packages: list[list[str]] = field(default_factory=list)  # [[package, version], ...]
 
 
@@ -50,16 +48,6 @@ class NpmRunner(Protocol):
         *,
         source: str = "npm",
         github_repo: str | None = None,
-    ) -> None:
-        raise NotImplementedError
-
-    async def install_plugin(
-        self,
-        name: str,
-        version: str,
-        source: str,
-        package: str | None,
-        appium_home: str,
     ) -> None:
         raise NotImplementedError
 
@@ -118,35 +106,10 @@ class RealNpmRunner:
                 )
                 raise RuntimeError(f"driver install failed: {output}")
 
-    async def install_plugin(
-        self,
-        name: str,
-        version: str,
-        source: str,
-        package: str | None,
-        appium_home: str,
-    ) -> None:
-        env = {**dict(os.environ), "APPIUM_HOME": appium_home}
-        appium_bin = str(Path(appium_home) / "node_modules" / ".bin" / "appium")
-        cmd = plugin_install_command(appium_bin, name, version, source, package)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _out, err = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(err.decode(errors="replace"))
-
 
 def _is_driver_already_installed_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "driver named" in message and "already installed" in message
-
-
-def versioned(value: str, version: str) -> str:
-    return value if "@" in value.rsplit("/", 1)[-1] else f"{value}@{version}"
 
 
 def _github_ref(version: str) -> str:
@@ -204,26 +167,6 @@ def _driver_install_commands(
     return [[appium_bin, "driver", "install", f"--source={source}", f"{package}@{version}"]]
 
 
-def plugin_install_command(appium: str, name: str, version: str, source: str, package: str | None) -> list[str]:
-    if source.startswith("npm:"):
-        package_name = source.removeprefix("npm:")
-        return [appium, "plugin", "install", versioned(package_name, version), "--source=npm"]
-    if source.startswith("github:"):
-        install_spec = source.removeprefix("github:")
-        cmd = [appium, "plugin", "install", install_spec, "--source=github"]
-    elif source.startswith("git:"):
-        install_spec = source.removeprefix("git:")
-        cmd = [appium, "plugin", "install", install_spec, "--source=git"]
-    elif source.startswith("local:"):
-        install_spec = source.removeprefix("local:")
-        cmd = [appium, "plugin", "install", install_spec, "--source=local"]
-    else:
-        return [appium, "plugin", "install", versioned(name, version)]
-    if package:
-        cmd.append(f"--package={package}")
-    return cmd
-
-
 _RUNTIME_COMPLETE_MARKER = ".runtime-complete"
 
 
@@ -249,10 +192,9 @@ def _adopt_runtime_from_disk(rid: str, appium_home: str) -> RuntimeEnv | None:
     server_package = data.get("server_package")
     server_version = data.get("server_version")
     driver_versions = data.get("driver_versions")
-    plugin_statuses = data.get("plugin_statuses")
     if not isinstance(server_package, str) or not isinstance(server_version, str):
         return None
-    if not isinstance(driver_versions, dict) or not isinstance(plugin_statuses, list):
+    if not isinstance(driver_versions, dict):
         return None
     runtime_packages = data.get("runtime_packages") or []
     if not isinstance(runtime_packages, list):
@@ -272,7 +214,6 @@ def _adopt_runtime_from_disk(rid: str, appium_home: str) -> RuntimeEnv | None:
         server_package=server_package,
         server_version=server_version,
         driver_versions=driver_versions,
-        plugin_statuses=plugin_statuses,
         runtime_packages=runtime_packages,
     )
 
@@ -293,7 +234,6 @@ class AppiumRuntimeManager:
         payload = {
             "server": f"{spec.server_package}@{spec.server_version}",
             "drivers": sorted([f"{n}@{v}:{s}:{g}" for n, v, s, g in spec.drivers]),
-            "plugins": sorted([f"{n}@{v}:{s}:{p}" for n, v, s, p in spec.plugins]),
             "node_major": spec.node_major,
         }
         # Only add the key when non-empty so existing packs keep their runtime id
@@ -343,32 +283,6 @@ class AppiumRuntimeManager:
                     # env; an explicit install can't be skipped (it installs or errors).
                     for pkg_name, pkg_version in spec.runtime_packages:
                         await self._runner.install_package(pkg_name, pkg_version, appium_home)
-                    plugin_statuses: list[dict[str, str | None]] = []
-                    for name, version, source, package in spec.plugins:
-                        try:
-                            await self._runner.install_plugin(name, version, source, package, appium_home)
-                        except Exception as exc:
-                            plugin_statuses.append(
-                                {
-                                    "name": name,
-                                    "version": version,
-                                    "source": source,
-                                    "package": package,
-                                    "status": "blocked",
-                                    "blocked_reason": f"plugin_install_failed: {exc}",
-                                }
-                            )
-                        else:
-                            plugin_statuses.append(
-                                {
-                                    "name": name,
-                                    "version": version,
-                                    "source": source,
-                                    "package": package,
-                                    "status": "installed",
-                                    "blocked_reason": None,
-                                }
-                            )
                     env = RuntimeEnv(
                         runtime_id=rid,
                         appium_home=appium_home,
@@ -380,7 +294,6 @@ class AppiumRuntimeManager:
                             drv_name: _installed_package_version(appium_home, drv_name) or drv_version
                             for drv_name, drv_version, _drv_source, _drv_github_repo in spec.drivers
                         },
-                        plugin_statuses=plugin_statuses,
                         runtime_packages=[[pkg_name, pkg_version] for pkg_name, pkg_version in spec.runtime_packages],
                     )
                     _write_runtime_marker(env)

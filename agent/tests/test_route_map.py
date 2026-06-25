@@ -35,8 +35,6 @@ EXPECTED_HTTP_ROUTES = {
     ("POST", "/agent/pack/devices/normalize"),
     ("POST", "/agent/pack/features/{feature_id}/actions/{action_id}"),
     ("POST", "/agent/pack/{pack_id}/doctor"),
-    ("GET", "/agent/plugins"),
-    ("POST", "/agent/plugins/sync"),
     ("GET", "/agent/tools/status"),
 }
 

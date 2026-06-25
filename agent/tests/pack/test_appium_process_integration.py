@@ -102,7 +102,6 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
     await mgr.start(
         connection_target="ABCD1234",
         port=4723,
-        plugins=None,
         extra_caps=None,
         device_type="real_device",
         ip_address=None,

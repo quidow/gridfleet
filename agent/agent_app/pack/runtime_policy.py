@@ -131,7 +131,6 @@ def resolve_runtime_spec(
             server_package=appium_server.package,
             server_version=server_version,
             drivers=((appium_driver.package, driver_version, appium_driver.source, appium_driver.github_repo),),
-            plugins=(),
             node_major=None,
         ),
         error=None,

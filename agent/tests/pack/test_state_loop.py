@@ -113,7 +113,6 @@ async def test_loop_posts_installed_status_after_reconcile() -> None:
     assert payload["runtimes"][0]["status"] == "installed"
     assert "appium_server" in payload["runtimes"][0]
     assert "appium_driver" in payload["runtimes"][0]
-    assert "appium_plugins" in payload["runtimes"][0]
 
 
 @pytest.mark.asyncio

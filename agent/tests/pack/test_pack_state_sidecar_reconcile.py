@@ -41,7 +41,6 @@ class _RuntimeMgr:
                 appium_bin=f"/tmp/{pack_id}/node_modules/.bin/appium",
                 server_package="appium",
                 server_version="2.19.0",
-                plugin_statuses=[],
             )
             for pack_id in desired_by_pack
         }, {}

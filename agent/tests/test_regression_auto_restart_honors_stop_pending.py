@@ -31,7 +31,6 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
     spec = AppiumLaunchSpec(
         connection_target="udid-test",
         port=port,
-        plugins=None,
         extra_caps=None,
         session_override=False,
         device_type="real_device",

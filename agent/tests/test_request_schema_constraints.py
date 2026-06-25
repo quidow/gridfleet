@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from agent_app.appium.schemas import AppiumStartRequest, AppiumStopRequest
 from agent_app.pack.schemas import FeatureActionRequest, NormalizeDeviceRequest
-from agent_app.plugins.schemas import PluginConfig
 
 
 def _valid_start_payload() -> dict[str, object]:
@@ -194,31 +193,3 @@ def test_feature_action_rejects_pack_id_with_double_slash() -> None:
 def test_appium_start_accepts_three_dot_pack_id_segment() -> None:
     _valid_start_payload_with_three_dots = _valid_start_payload() | {"pack_id": "..."}
     AppiumStartRequest(**_valid_start_payload_with_three_dots)
-
-
-def test_plugin_config_rejects_path_traversal() -> None:
-    with pytest.raises(ValidationError):
-        PluginConfig(name="../etc/passwd", version="1.0.0", source="npm")
-
-
-def test_plugin_config_rejects_double_dot() -> None:
-    with pytest.raises(ValidationError):
-        PluginConfig(name="..", version="1.0.0", source="npm")
-
-
-def test_plugin_config_rejects_uppercase() -> None:
-    with pytest.raises(ValidationError):
-        PluginConfig(name="UPPERCASE-PLUGIN", version="1.0.0", source="npm")
-
-
-def test_plugin_config_rejects_leading_underscore() -> None:
-    with pytest.raises(ValidationError):
-        PluginConfig(name="_hidden", version="1.0.0", source="npm")
-
-
-def test_plugin_config_accepts_scoped_name() -> None:
-    PluginConfig(name="@appium/plugin-name", version="1.0.0", source="npm")
-
-
-def test_plugin_config_accepts_plain_name() -> None:
-    PluginConfig(name="appium-uiautomator2-driver", version="1.0.0", source="npm")

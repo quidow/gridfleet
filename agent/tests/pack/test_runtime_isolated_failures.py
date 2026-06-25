@@ -28,16 +28,6 @@ class _FakeRunner:
         if package in self.fail_packs:
             raise RuntimeError(f"driver install failed for {package}")
 
-    async def install_plugin(
-        self,
-        name: str,
-        version: str,
-        source: str,
-        package: str | None,
-        appium_home: str,
-    ) -> None:
-        return None
-
 
 @pytest.mark.asyncio
 async def test_reconcile_returns_envs_for_packs_that_installed(tmp_path: Path) -> None:
@@ -47,14 +37,12 @@ async def test_reconcile_returns_envs_for_packs_that_installed(tmp_path: Path) -
             server_package="appium",
             server_version="2.19.0",
             drivers=(("uiautomator2-driver", "5.0.0", "npm", None),),
-            plugins=(),
             node_major=24,
         ),
         "appium-roku": RuntimeSpec(
             server_package="appium",
             server_version="2.19.0",
             drivers=(("roku-driver", "0.1.1", "npm", None),),
-            plugins=(),
             node_major=24,
         ),
     }
@@ -75,7 +63,6 @@ async def test_reconcile_shared_rid_failure_blocks_all_sharing_packs(tmp_path: P
         server_package="appium",
         server_version="2.19.0",
         drivers=(("bad-driver", "1.0.0", "npm", None),),
-        plugins=(),
         node_major=None,
     )
     desired = {
@@ -100,7 +87,6 @@ async def test_reconcile_failed_rid_not_added_to_refcounts(tmp_path: Path) -> No
         server_package="appium",
         server_version="2.19.0",
         drivers=(("bad-driver", "1.0.0", "npm", None),),
-        plugins=(),
         node_major=None,
     )
     rid = AppiumRuntimeManager.runtime_id_for(spec)

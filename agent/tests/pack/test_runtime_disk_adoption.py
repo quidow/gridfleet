@@ -45,23 +45,12 @@ class _CountingRunner:
     ) -> None:
         return None
 
-    async def install_plugin(
-        self,
-        name: str,
-        version: str,
-        source: str,
-        package: str | None,
-        appium_home: str,
-    ) -> None:
-        return None
-
 
 def _spec() -> RuntimeSpec:
     return RuntimeSpec(
         server_package="appium",
         server_version="2.19.0",
         drivers=(("uiautomator2-driver", "5.0.0", "npm", None),),
-        plugins=(),
         node_major=24,
     )
 
@@ -80,7 +69,6 @@ def _seed_completed_runtime(root: Path, rid: str) -> Path:
         "server_package": "appium",
         "server_version": "2.19.0",
         "driver_versions": {"uiautomator2-driver": "5.0.0"},
-        "plugin_statuses": [],
     }
     (appium_home / ".runtime-complete").write_text(json.dumps(marker))
     return appium_home

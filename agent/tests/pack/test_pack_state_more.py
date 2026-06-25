@@ -153,7 +153,6 @@ async def test_stale_sidecar_dropped_when_adapter_missing() -> None:
         server_package = "appium"
         server_version = "2.11.5"
         driver_versions: ClassVar[dict[str, str]] = {}
-        plugin_statuses: ClassVar[list[object]] = []
         appium_home = "/tmp"
 
     class _Mgr:
@@ -209,7 +208,6 @@ async def test_stale_sidecar_stopped_when_adapter_present() -> None:
         server_package = "appium"
         server_version = "2.11.5"
         driver_versions: ClassVar[dict[str, str]] = {}
-        plugin_statuses: ClassVar[list[object]] = []
         appium_home = "/tmp"
 
     class _Mgr:

@@ -34,7 +34,6 @@ def _preload(mgr: AppiumProcessManager, port: int, pack_id: str) -> None:
     mgr._launch_specs[port] = AppiumLaunchSpec(
         connection_target="udid-stop",
         port=port,
-        plugins=None,
         extra_caps=None,
         session_override=False,
         device_type="real_device",
