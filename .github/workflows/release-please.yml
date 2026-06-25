@@ -43,7 +43,7 @@ jobs:
       UV_LINK_MODE: copy
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.agent--tag_name }}
 
@@ -110,7 +110,7 @@ jobs:
       UV_LINK_MODE: copy
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.testkit--tag_name }}
 
