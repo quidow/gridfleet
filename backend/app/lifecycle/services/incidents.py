@@ -107,9 +107,6 @@ class LifecycleIncidentDetails:
     run_id: uuid.UUID | str | None = None
     run_name: str | None = None
     backoff_until: str | datetime | None = None
-    ttl_seconds: int | None = None
-    worker_id: str | None = None
-    expires_at: str | datetime | None = None
 
 
 class LifecycleIncidentService:
@@ -142,14 +139,6 @@ class LifecycleIncidentService:
             details["backoff_until"] = incident.backoff_until.isoformat()
         elif incident.backoff_until is not None:
             details["backoff_until"] = incident.backoff_until
-        if incident.ttl_seconds is not None:
-            details["ttl_seconds"] = incident.ttl_seconds
-        if incident.worker_id is not None:
-            details["worker_id"] = incident.worker_id
-        if isinstance(incident.expires_at, datetime):
-            details["expires_at"] = incident.expires_at.isoformat()
-        elif incident.expires_at is not None:
-            details["expires_at"] = incident.expires_at
 
         event = await record_event(db, device.id, event_type, details)
 

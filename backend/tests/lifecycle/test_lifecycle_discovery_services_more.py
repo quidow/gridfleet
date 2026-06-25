@@ -44,9 +44,6 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
             run_id=run_id,
             run_name="run",
             backoff_until=datetime.now(UTC) + timedelta(minutes=5),
-            ttl_seconds=30,
-            worker_id="worker-1",
-            expires_at=datetime.now(UTC) + timedelta(minutes=1),
         ),
     )
     await db_session.commit()

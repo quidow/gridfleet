@@ -54,15 +54,11 @@ async def test_record_lifecycle_incident_serializes_optional_detail_branches(mon
         LifecycleIncidentDetails(
             summary_state=incidents.DeviceLifecyclePolicySummaryState.backoff,
             backoff_until=datetime(2026, 5, 13, tzinfo=UTC),
-            ttl_seconds=60,
-            worker_id="worker-1",
-            expires_at="later",
         ),
     )
 
     details = record.await_args.args[3]
     assert details["backoff_until"].startswith("2026-05-13")
-    assert details["expires_at"] == "later"
 
 
 async def test_record_lifecycle_incident_publishes_sse_when_publisher_present(
