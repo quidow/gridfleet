@@ -12,7 +12,7 @@ from app.devices.models import Device
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import PackReleaseOut, PackReleasesOut
 from app.packs.services.export import _read_artifact, _synthesise_tarball
-from app.packs.services.ingest import ingest_pack_tarball, record_pack_upload
+from app.packs.services.ingest import ingest_pack_tarball
 from app.packs.services.release_ordering import parse_release_key, selected_release
 from app.packs.services.storage import PackStorageError
 
@@ -175,22 +175,3 @@ class PackReleaseService:
 
         sha256 = hashlib.sha256(data).hexdigest()
         return data, sha256
-
-    async def record_pack_upload(
-        self,
-        db: AsyncSession,
-        *,
-        username: str,
-        pack_id: str,
-        release: str,
-        artifact_sha256: str,
-        origin_filename: str,
-    ) -> None:
-        await record_pack_upload(
-            db,
-            username=username,
-            pack_id=pack_id,
-            release=release,
-            artifact_sha256=artifact_sha256,
-            origin_filename=origin_filename,
-        )
