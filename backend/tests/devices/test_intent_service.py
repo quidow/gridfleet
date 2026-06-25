@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -216,3 +218,49 @@ async def test_register_intents_upsert_overwrites_precondition(db_session: Async
     )
     await db_session.commit()
     assert intent.precondition is None
+
+
+async def test_mark_dirty_and_reconcile_flushes_before_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mark_dirty_and_reconcile must flush before locking; the other two reconcile
+    helpers must not. Pins the one asymmetry the dedup helper has to preserve."""
+    device_id = uuid.uuid4()
+    call_log: list[str] = []
+
+    fake_db = AsyncMock()
+    fake_db.flush.side_effect = lambda: call_log.append("flush")
+
+    async def fake_lock_device(db: object, did: object) -> None:
+        call_log.append("lock")
+
+    async def fake_reconcile(db: object, did: object, **kwargs: object) -> None:
+        pass
+
+    async def fake_mark_dirty(did: object, *, reason: object) -> int:
+        return 1
+
+    monkeypatch.setattr("app.devices.services.intent.device_locking.lock_device", fake_lock_device)
+    monkeypatch.setattr("app.devices.services.intent.reconcile_device", fake_reconcile)
+
+    service = IntentService(fake_db)
+    monkeypatch.setattr(service, "mark_dirty", fake_mark_dirty)
+
+    publisher = AsyncMock()
+
+    # mark_dirty_and_reconcile: flush must precede lock
+    call_log.clear()
+    await service.mark_dirty_and_reconcile(device_id, reason="test", publisher=publisher)
+    assert call_log == ["flush", "lock"], f"expected flush then lock, got {call_log}"
+
+    # register_intents_and_reconcile: no flush at all
+    call_log.clear()
+    monkeypatch.setattr(service, "register_intents", AsyncMock(return_value=[]))
+    await service.register_intents_and_reconcile(device_id=device_id, intents=[], reason="test", publisher=publisher)
+    assert "flush" not in call_log, f"unexpected flush in register path: {call_log}"
+    assert "lock" in call_log
+
+    # revoke_intents_and_reconcile: no flush at all
+    call_log.clear()
+    monkeypatch.setattr(service, "revoke_intents", AsyncMock(return_value=0))
+    await service.revoke_intents_and_reconcile(device_id=device_id, sources=[], reason="test", publisher=publisher)
+    assert "flush" not in call_log, f"unexpected flush in revoke path: {call_log}"
+    assert "lock" in call_log
