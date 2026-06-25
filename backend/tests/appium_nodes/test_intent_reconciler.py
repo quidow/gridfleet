@@ -225,6 +225,7 @@ async def test_expired_running_metadata_change_is_delivered(
         accepting_new_sessions=True,
         stop_pending=False,
         grid_run_id=None,
+        timeout=10,
         settings=settings,
         pool=None,
         circuit_breaker=ANY,
