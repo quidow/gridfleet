@@ -39,13 +39,6 @@ Environment variables control the base credentials and routing strings. These sh
 - `GRIDFLEET_AUTH_SESSION_SECRET`: Signing secret for stateless browser sessions.
 - `GRIDFLEET_MACHINE_AUTH_PASSWORD`: Password for machine Basic-auth clients such as agents, CI helpers, and metrics scrapers.
 
-## Webhook Security
-
-The Backend provides event-based webhooks configured by Operators via the UI. When creating webhook endpoints:
-- Use HTTPS endpoints to protect payload transmission.
-- Webhook payloads are delivered as unsigned JSON POSTs (the same event envelope used for SSE and notifications). There is no per-webhook secret and no payload signing — GridFleet does not compute an HMAC signature or send an `x-gridfleet-signature` header.
-- Because deliveries are unauthenticated, receivers must rely on network controls for authenticity: terminate on an HTTPS endpoint and restrict or allow-list the GridFleet egress so only your instance can reach the target.
-
 ## Host Agent Logs
 
 Host agents ship their own process logs back to the manager for the Host Detail Logs tab. These records are operator diagnostics, not an audit log, and they are retained according to `retention.agent_log_days`.

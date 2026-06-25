@@ -6,7 +6,7 @@ Use `docs/reference/` for material such as:
 
 - API route and payload reference
 - settings keys, defaults, and operational meaning
-- events and webhooks
+- events
 - glossary and core data-model terms
 - testing-surface support expectations
 
@@ -20,8 +20,8 @@ Reference pages should optimize for exactness and fast lookup. Put task narrativ
   - Supported `/api` routes grouped by domain, with the main inputs and response shapes.
 - `settings.md`
   - Registry-backed settings keys, defaults, validation, env fallbacks, and operational meaning.
-- `events-and-webhooks.md`
-  - SSE, notifications, webhook routes, emitted event names, and event-envelope shape.
+- `events.md`
+  - SSE, notifications, emitted event names, and event-envelope shape.
 - `glossary.md`
   - Core fleet terms used across the product contract.
 - `testkit.md`

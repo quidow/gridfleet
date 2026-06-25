@@ -185,9 +185,6 @@ test.describe('Accessibility', () => {
     await page.route((url) => new URL(url).pathname === '/api/settings', async (route) => {
       await fulfillJson(route, SETTINGS_GROUPED);
     });
-    await page.route((url) => new URL(url).pathname === '/api/webhooks', async (route) => {
-      await fulfillJson(route, []);
-    });
     await page.route((url) => {
       const path = new URL(url).pathname;
       return /^\/api\/hosts\/[^/]+\/intake-candidates$/.test(path);

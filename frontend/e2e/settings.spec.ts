@@ -74,7 +74,6 @@ function createSettingsState(): MockSetting[] {
           'session.started',
           'run.created',
           'run.expired',
-          'webhook.test',
         ],
       },
     },
@@ -163,38 +162,6 @@ async function mockSettingsPageApis(page: Page) {
       created_at: '2026-03-30T10:00:00Z',
     },
   ];
-  const webhooks = [
-    {
-      id: 'wh-1',
-      name: 'Slack Alerts',
-      url: 'https://hooks.slack.test/services/abc',
-      event_types: ['device.operational_state_changed', 'session.started'],
-      enabled: true,
-      created_at: '2026-03-30T10:00:00Z',
-      updated_at: '2026-03-30T10:00:00Z',
-    },
-  ];
-  const webhookDeliveries: Record<string, { items: unknown[]; total: number }> = {
-    'wh-1': {
-      items: [
-        {
-          id: 'delivery-1',
-          webhook_id: 'wh-1',
-          event_type: 'device.operational_state_changed',
-          status: 'exhausted',
-          attempts: 3,
-          max_attempts: 3,
-          last_attempt_at: '2026-03-30T10:04:00Z',
-          next_retry_at: null,
-          last_error: '500 Internal Server Error',
-          last_http_status: 500,
-          created_at: '2026-03-30T10:00:10Z',
-          updated_at: '2026-03-30T10:04:00Z',
-        },
-      ],
-      total: 1,
-    },
-  };
   const eventCatalog = [
     {
       name: 'device.operational_state_changed',
@@ -230,13 +197,6 @@ async function mockSettingsPageApis(page: Page) {
       category_display_name: 'Sessions And Runs',
       description: 'Run expired.',
       typical_data_fields: ['run_id'],
-    },
-    {
-      name: 'webhook.test',
-      category: 'operations_and_settings',
-      category_display_name: 'Operations And Settings',
-      description: 'Synthetic webhook test event.',
-      typical_data_fields: ['webhook_id'],
     },
   ];
 
@@ -357,50 +317,6 @@ async function mockSettingsPageApis(page: Page) {
     await fulfillJson(route, hosts);
   });
 
-  await page.route('**/api/webhooks', async (route) => {
-    if (route.request().method() !== 'GET') {
-      await route.fallback();
-      return;
-    }
-    await fulfillJson(route, webhooks);
-  });
-
-  await page.route(/\/api\/webhooks\/[^/]+\/deliveries(\?.*)?$/, async (route) => {
-    const request = route.request();
-    if (request.method() !== 'GET') {
-      await route.fallback();
-      return;
-    }
-    const parts = new URL(request.url()).pathname.split('/');
-    const webhookId = parts[3];
-    await fulfillJson(route, webhookDeliveries[webhookId] ?? { items: [], total: 0 });
-  });
-
-  await page.route(/\/api\/webhooks\/[^/]+\/deliveries\/[^/]+\/retry$/, async (route) => {
-    const request = route.request();
-    if (request.method() !== 'POST') {
-      await route.fallback();
-      return;
-    }
-    const parts = new URL(request.url()).pathname.split('/');
-    const webhookId = parts[3];
-    const deliveryId = parts[5];
-    const current = webhookDeliveries[webhookId]?.items.find(
-      (item) => typeof item === 'object' && item !== null && (item as { id: string }).id === deliveryId,
-    ) as Record<string, unknown> | undefined;
-    const updated = {
-      ...current,
-      status: 'pending',
-      attempts: 0,
-      last_attempt_at: null,
-      next_retry_at: '2026-03-30T10:05:00Z',
-      last_error: null,
-      last_http_status: null,
-    };
-    webhookDeliveries[webhookId] = { items: [updated], total: 1 };
-    await fulfillJson(route, updated);
-  });
-
 }
 
 function keyInObject(key: string, value: Record<string, unknown>): boolean {
@@ -412,7 +328,7 @@ test.describe('Settings Page', () => {
     await mockSettingsPageApis(page);
   });
 
-  test('loads with all 10 tabs visible in grouped tab strip', async ({ page }) => {
+  test('loads with all 9 tabs visible in grouped tab strip', async ({ page }) => {
     await page.goto('/settings');
 
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
@@ -426,7 +342,6 @@ test.describe('Settings Page', () => {
       'Data Retention',
       'Backup & Restore',
       'Notifications',
-      'Webhooks',
       'Appium Plugins',
     ]) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
@@ -475,29 +390,6 @@ test.describe('Settings Page', () => {
 
     await page.getByRole('button', { name: 'Backup & Restore' }).click();
     await expect(page.getByText('Export configuration')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Webhooks' }).click();
-    await expect(page.getByRole('button', { name: 'Add Webhook' })).toBeVisible();
-    await expect(page.getByRole('table')).toBeVisible();
-    await page.getByRole('button', { name: 'Add Webhook' }).click();
-    await expect(page.getByLabel('run.created')).toBeVisible();
-    await expect(page.getByLabel('webhook.test')).toBeVisible();
-    await expect(page.getByLabel('device.health_changed')).toHaveCount(0);
-  });
-
-  test('webhook recent deliveries are visible and retryable', async ({ page }) => {
-    await page.goto('/settings');
-
-    await page.getByRole('button', { name: 'Webhooks' }).click();
-    await page.getByRole('button', { name: 'Recent Deliveries' }).click();
-
-    await expect(page.getByText('device.operational_state_changed').nth(1)).toBeVisible();
-    await expect(page.getByText('500 Internal Server Error')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Retry' }).click();
-
-    await expect(page.getByText('pending')).toBeVisible();
-    await expect(page.getByText('Attempt 0 of 3')).toBeVisible();
   });
 
   test('settings fields are grouped into labeled cards', async ({ page }) => {
@@ -552,9 +444,9 @@ test.describe('Settings Page', () => {
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Export configuration')).toBeVisible();
 
-    // Switch to Webhooks and URL should update
-    await page.getByRole('button', { name: 'Webhooks', exact: true }).click();
-    await expect(page).toHaveURL(/tab=webhooks/);
-    await expect(page.getByRole('heading', { name: 'Webhooks' })).toBeVisible();
+    // Switch to Notifications and URL should update
+    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+    await expect(page).toHaveURL(/tab=notifications/);
+    await expect(page.getByRole('heading', { name: 'Toast Events' })).toBeVisible();
   });
 });

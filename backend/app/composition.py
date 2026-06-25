@@ -94,9 +94,6 @@ from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.verification.services.service import VerificationService
 from app.verification.services_container import VerificationServices
-from app.webhooks.dispatcher import WebhookDispatchService
-from app.webhooks.service import WebhookCrudService
-from app.webhooks.services_container import WebhookServices
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +113,6 @@ class AppServices:
     grid: GridServices
     appium_nodes: AppiumNodeServices
     jobs: DurableJobWorkerLoop
-    webhooks: WebhookServices
     background_loop_flush: BackgroundLoopFlushLoop
     leader_keepalive: LeaderKeepaliveLoop
     leader_watcher: LeaderWatcherLoop
@@ -419,10 +415,6 @@ def compose_app(
                 verification_runner=verification_runner_svc,
                 recovery_runner=recovery_runner_svc,
             )
-        ),
-        webhooks=WebhookServices(
-            crud=WebhookCrudService(),
-            dispatch=WebhookDispatchService(session_factory=session_factory),
         ),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
         leader_keepalive=LeaderKeepaliveLoop(settings=settings_svc),

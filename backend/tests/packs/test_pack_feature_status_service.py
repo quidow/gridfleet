@@ -4,7 +4,7 @@ The service tracks per-feature health for each (host, pack, feature) tuple in a
 ``host_pack_feature_status`` row. Whenever ``ok`` flips relative to the prior
 recorded state — including the initial transition into a degraded state — the
 service publishes a ``pack_feature.degraded`` or ``pack_feature.recovered``
-SystemEvent so existing webhook subscribers receive an alert automatically.
+SystemEvent so existing event subscribers receive an alert automatically.
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession
 
 @pytest.mark.asyncio
 async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host) -> None:
-    """Re-recording the same ``ok`` value is a noop for the webhook."""
+    """Re-recording the same ``ok`` value is a noop for the event."""
     await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,

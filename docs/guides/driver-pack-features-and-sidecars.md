@@ -106,12 +106,12 @@ CREATE TABLE host_pack_feature_status (
 
 Status is updated after each feature action call and from the sidecar snapshot the agent POSTs to the backend's status-ingest endpoint. The backend's `PackStatusService.apply_status` calls `FeatureService.record_feature_status`, which upserts the row and, on a transition, queues the event. (The agent's sidecar supervisor only surfaces sidecar status in that snapshot; it has no DB access and emits no events.) When the `ok` flag transitions:
 
-| Transition | Webhook event |
+| Transition | Event |
 |-----------|--------------|
 | `ok` → `not ok` | `pack_feature.degraded` |
 | `not ok` → `ok` | `pack_feature.recovered` |
 
-Both events appear in the System Event stream (category `operations_and_settings`) and are delivered to any webhooks subscribed to those event kinds. The webhook payload carries `host_id`, `pack_id`, `feature_id`, `ok`, and `detail` fields.
+Both events appear in the System Event stream (category `operations_and_settings`). The event payload carries `host_id`, `pack_id`, `feature_id`, `ok`, and `detail` fields.
 
 ### Lifecycle action names are platform-specific
 
@@ -244,7 +244,7 @@ To import the exported tarball on another instance, use the standard upload endp
 
 ### Feature action returns `{"ok": false, "detail": "..."}`
 
-This is an adapter-level response, not an HTTP error. The adapter ran but reported failure. Check the `detail` field and the host's system log for more context. The `host_pack_feature_status` row for this host/pack/feature will be updated with `ok=false` and the detail, and a `pack_feature.degraded` webhook event will fire.
+This is an adapter-level response, not an HTTP error. The adapter ran but reported failure. Check the `detail` field and the host's system log for more context. The `host_pack_feature_status` row for this host/pack/feature will be updated with `ok=false` and the detail, and a `pack_feature.degraded` event will fire.
 
 ### Feature action returns HTTP 404
 

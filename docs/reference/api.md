@@ -309,21 +309,13 @@ For CI jobs that should consume the currently available matching fleet slice, us
 | `POST` | `/api/settings/reset/{key}` | Reset one setting to its default | path `key` | `SettingRead` |
 | `POST` | `/api/settings/reset-all` | Reset every setting to defaults | none | status object |
 
-## Events And Webhooks
+## Events
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/events/catalog` | Read the canonical emitted-event catalog | none | event catalog object |
 | `GET` | `/api/events` | Subscribe to live SSE events | optional `types`, `device_ids` | SSE stream |
 | `GET` | `/api/notifications` | Read recent notification history in newest-first order | `limit`, `offset`, optional `types`, optional `severity` | `{ items: SystemEventRead[], total, limit, offset }` |
-| `GET` | `/api/webhooks` | List configured webhooks | none | `WebhookRead[]` |
-| `POST` | `/api/webhooks` | Create a webhook | `WebhookCreate` with valid `event_types` | `WebhookRead` |
-| `GET` | `/api/webhooks/{webhook_id}` | Read one webhook | path `webhook_id` | `WebhookRead` |
-| `PATCH` | `/api/webhooks/{webhook_id}` | Update a webhook | `WebhookUpdate` with valid `event_types` | `WebhookRead` |
-| `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
-| `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic `webhook.test` event | path `webhook_id` | status object |
-| `GET` | `/api/webhooks/{webhook_id}/deliveries` | List recent delivery attempts for a webhook | `limit` | `WebhookDeliveryListRead` |
-| `POST` | `/api/webhooks/{webhook_id}/deliveries/{delivery_id}/retry` | Retry a single webhook delivery | path `webhook_id`, `delivery_id` | `WebhookDeliveryRead` |
 
 `GET /api/notifications` returns a paginated list of `SystemEventRead` objects. Each object includes a top-level `severity` field alongside `id`, `type`, `timestamp`, and `data`:
 
@@ -438,5 +430,5 @@ Supported dynamic group filters:
 
 - The API contract is currently owned by the backend code and FastAPI schemas, not by a separate versioned OpenAPI publishing pipeline.
 - Backend responses include `X-Request-ID` so operators can correlate logs and backend-to-agent calls.
-- `/api/events` and webhook delivery share the same event envelope. See [events-and-webhooks.md](events-and-webhooks.md) for the emitted event names.
+- See [events.md](events.md) for the `/api/events` envelope and the emitted event names.
 - The current product keeps add-device and re-verification flows behind verification-job routes instead of exposing a general-purpose `POST /api/devices` create route.

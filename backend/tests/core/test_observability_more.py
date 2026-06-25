@@ -17,9 +17,8 @@ _NOT_READINESS_GATED = frozenset({"background_loop_flush"})
 
 
 def _normalize(name: str) -> str:
-    # main.py task names carry a "_loop" suffix and occasional dotted prefixes
-    # (e.g. "webhook_dispatcher.webhook_delivery_loop"); BACKGROUND_LOOP_NAMES uses
-    # bare base names (e.g. "webhook_delivery").
+    # main.py task names carry a "_loop" suffix and occasional dotted prefixes;
+    # BACKGROUND_LOOP_NAMES uses bare base names (e.g. "heartbeat").
     base = name.rsplit(".", 1)[-1]
     return base[:-5] if base.endswith("_loop") else base
 

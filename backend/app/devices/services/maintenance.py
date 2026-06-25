@@ -85,7 +85,7 @@ class MaintenanceService:
     def __init__(self, *, settings: SettingsReader, publisher: EventPublisher, review: ReviewProtocol) -> None:
         self._settings = settings
         # Publisher is needed so the reconciler's derived maintenance enter/exit
-        # emits device.operational_state_changed (SSE/webhooks).
+        # emits device.operational_state_changed (SSE).
         self._publisher = publisher
         self._review = review
 

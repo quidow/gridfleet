@@ -39,7 +39,6 @@ test.describe('Navigation', () => {
     await page.getByRole('link', { name: 'Settings' }).click();
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible({ timeout: 10_000 });
     expect(page.url()).toContain('/settings');
-    await expect(page.getByRole('link', { name: 'Webhooks' })).toHaveCount(0);
 
     // Navigate back to Dashboard
     await page.getByRole('link', { name: 'Dashboard' }).click();

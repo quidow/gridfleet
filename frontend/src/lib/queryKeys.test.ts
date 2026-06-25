@@ -8,7 +8,6 @@ describe('queryKeys', () => {
     expect(qk.deviceHealth.byDevice('d1').slice(0, 1)).toEqual([...qk.deviceHealth.root]);
     expect(qk.runs.cursorList(undefined).slice(0, 1)).toEqual([...qk.runs.root]);
     expect(qk.sessions.cursorList(undefined).slice(0, 1)).toEqual([...qk.sessions.root]);
-    expect(qk.webhooks.deliveries('w1', 10).slice(0, 1)).toEqual([...qk.webhooks.root]);
     expect(qk.hostPlugins.byHost('h1').slice(0, 1)).toEqual([...qk.hostPlugins.root]);
   });
 

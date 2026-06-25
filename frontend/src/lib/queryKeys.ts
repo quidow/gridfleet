@@ -79,10 +79,6 @@ export const qk = {
     list: (params: unknown) => ['lifecycle', 'incidents', params] as const,
     recent: (params: unknown) => ['lifecycle', 'incidents', 'recent', params] as const,
   },
-  webhooks: {
-    root: ['webhooks'] as const,
-    deliveries: (id: string, limit: number) => ['webhooks', id, 'deliveries', limit] as const,
-  },
   analytics: {
     root: ['analytics'] as const,
     sessionsSummary: (params: unknown) => ['analytics', 'sessions-summary', params] as const,

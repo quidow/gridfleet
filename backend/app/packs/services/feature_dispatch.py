@@ -8,7 +8,7 @@ release, then forwards the call to the host agent's feature-action endpoint.
 
 It always records the result via :meth:`FeatureService.record_feature_status`
 so the existing ``pack_feature.degraded`` / ``pack_feature.recovered`` SystemEvent
-webhook fires on transitions — including transient agent failures, which are
+fires on transitions — including transient agent failures, which are
 treated as degraded.
 """
 
@@ -140,7 +140,7 @@ class FeatureService:
                 agent_auth=agent_auth,
             )
         except _AgentDispatchError as exc:
-            # Record the degraded state so webhook subscribers learn about the
+            # Record the degraded state so event subscribers learn about the
             # outage immediately, then convert to 502 for the caller.
             await self.record_feature_status(
                 session,
@@ -172,7 +172,7 @@ class FeatureService:
         ok: bool,
         detail: str,
     ) -> bool:
-        """Upsert the (host, pack, feature) status row and emit a webhook on transition.
+        """Upsert the (host, pack, feature) status row and emit an event on transition.
 
         Returns ``True`` when the persisted ``ok`` flipped (or was newly recorded
         as degraded), otherwise ``False``.

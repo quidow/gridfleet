@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "analytics": ("models", "router", "schemas", "service"),
     "settings": ("models", "registry", "router", "schemas", "service", "service_config"),
-    "webhooks": ("dispatcher", "models", "router", "schemas", "service"),
     "events": ("catalog", "event_bus", "models", "router", "schemas", "schemas_catalog"),
     "jobs": ("kinds", "models", "queue", "statuses"),
     "grid": ("models", "router", "schemas"),

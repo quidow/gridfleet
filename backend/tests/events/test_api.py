@@ -70,7 +70,6 @@ async def test_event_catalog_lists_public_emitted_events(client: AsyncClient) ->
     assert "host.discovery_completed" in names
     assert "run.created" in names
     assert "system.cleanup_completed" in names
-    assert "webhook.test" in names
     assert "run.failed" not in names
 
 

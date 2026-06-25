@@ -13,7 +13,6 @@ from app.events.models import SystemEvent
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.runs.models import RunState, TestRun
-from app.webhooks.models import Webhook, WebhookDelivery
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_reservation, seed_host_and_device
 
@@ -30,23 +29,12 @@ async def _run_cleanup(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_old_system_events_pruned_and_webhook_deliveries_cascade(db_session: AsyncSession) -> None:
+async def test_old_system_events_pruned(db_session: AsyncSession) -> None:
     now = datetime.now(UTC)
     old_event = SystemEvent(type="system.test", data={}, created_at=now - timedelta(days=40))
     new_event = SystemEvent(type="system.test", data={}, created_at=now - timedelta(days=1))
-    webhook = Webhook(name="t", url="https://example.test/hook", event_types=["system.test"], enabled=True)
-    db_session.add_all([old_event, new_event, webhook])
+    db_session.add_all([old_event, new_event])
     await db_session.flush()
-    db_session.add_all(
-        [
-            WebhookDelivery(
-                webhook_id=webhook.id, system_event_id=old_event.id, event_type="system.test", status="delivered"
-            ),
-            WebhookDelivery(
-                webhook_id=webhook.id, system_event_id=new_event.id, event_type="system.test", status="delivered"
-            ),
-        ]
-    )
     await db_session.commit()
     old_event_id, new_event_id = old_event.id, new_event.id
 
@@ -58,16 +46,6 @@ async def test_old_system_events_pruned_and_webhook_deliveries_cascade(db_sessio
         ).scalars()
     )
     assert remaining_events == {new_event_id}
-    remaining_deliveries = set(
-        (
-            await db_session.execute(
-                select(WebhookDelivery.system_event_id).where(
-                    WebhookDelivery.system_event_id.in_([old_event_id, new_event_id])
-                )
-            )
-        ).scalars()
-    )
-    assert remaining_deliveries == {new_event_id}
 
 
 @pytest.mark.asyncio

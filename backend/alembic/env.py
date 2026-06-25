@@ -40,7 +40,6 @@ from app.plugins.models import AppiumPlugin  # noqa: F401
 from app.runs.models import RunState, TestRun  # noqa: F401
 from app.sessions.models import Session, SessionStatus  # noqa: F401
 from app.settings.models import ConfigAuditLog, Setting  # noqa: F401
-from app.webhooks.models import Webhook, WebhookDelivery  # noqa: F401
 
 config = context.config
 

@@ -10,7 +10,7 @@ Validation cases:
 - 404 when the pack is missing.
 - 404 when the requested feature_id is not present in the pack release.
 - 502 when the agent surface returns 5xx / is unreachable; status row is still
-  recorded as ``ok=False`` so the existing ``pack_feature.degraded`` webhook fires.
+  recorded as ``ok=False`` so the existing ``pack_feature.degraded`` event fires.
 """
 
 from __future__ import annotations

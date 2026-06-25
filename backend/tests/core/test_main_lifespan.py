@@ -161,7 +161,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
     monkeypatch.setattr(_ss, "shutdown", AsyncMock())
     monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -201,7 +200,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
             "hardware_telemetry_loop",
             "host_resource_telemetry_loop",
             "durable_job_worker_loop",
-            "webhook_dispatcher.webhook_delivery_loop",
             "run_reaper_loop",
             "data_cleanup_loop",
             "session_viability_loop",
@@ -309,7 +307,6 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
     monkeypatch.setattr(_ss, "shutdown", AsyncMock())
     monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())

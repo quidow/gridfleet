@@ -230,5 +230,4 @@ For the supported pytest/plugin/testkit workflow, continue to:
 - [../runbooks/slow-system.md](../runbooks/slow-system.md)
 - [../runbooks/agent-not-connecting.md](../runbooks/agent-not-connecting.md)
 - [../runbooks/stuck-devices.md](../runbooks/stuck-devices.md)
-- [../runbooks/webhook-delivery-failures.md](../runbooks/webhook-delivery-failures.md)
 - [../runbooks/backend-deploy-restart-rollback.md](../runbooks/backend-deploy-restart-rollback.md)

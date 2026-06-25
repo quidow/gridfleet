@@ -131,7 +131,7 @@ done
 curl -fsS "${health_url}" >/dev/null
 
 echo "Backend is ready. Current verification counts:"
-for table_name in devices hosts sessions test_runs runtime_events webhooks webhook_deliveries; do
+for table_name in devices hosts sessions test_runs runtime_events; do
     current_count="$(query_scalar "SELECT COUNT(*) FROM ${table_name};")"
     echo "  ${table_name}: ${current_count}"
 done

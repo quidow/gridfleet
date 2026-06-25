@@ -1,7 +1,6 @@
 import contextlib
 import os
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -46,7 +45,6 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
-from app.events.models import SystemEvent
 from app.events.services_container import EventServices
 from app.grid.allocation import AllocationService, device_match_surface
 from app.grid.dependencies import get_grid_services
@@ -106,11 +104,6 @@ from app.settings.services_container import SettingsServices
 from app.verification.dependencies import get_verification_services
 from app.verification.services.service import VerificationService
 from app.verification.services_container import VerificationServices
-from app.webhooks.dependencies import get_webhook_services
-from app.webhooks.dispatcher import WebhookDispatchService
-from app.webhooks.models import Webhook, WebhookDelivery
-from app.webhooks.service import WebhookCrudService
-from app.webhooks.services_container import WebhookServices
 from tests.fakes import build_review_service
 from tests.helpers import create_host, reset_event_bus, test_event_bus
 
@@ -308,9 +301,9 @@ async def reset_process_config() -> AsyncGenerator[None]:
 async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     """Yield a configured async_sessionmaker bound to the test engine.
 
-    Wires the same control-plane services (event_bus, settings_service,
-    WebhookDispatchService) as db_session so ORM insertions that trigger
-    event-bus side effects work correctly.
+    Wires the same control-plane services (event_bus, settings_service) as
+    db_session so ORM insertions that trigger event-bus side effects work
+    correctly.
     """
     await settings_service.shutdown()
     session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -320,9 +313,6 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
     test_circuit_breaker._session_factory = session_factory
     settings_service.configure_store_refresh(session_factory)
     test_event_bus.register_handler(settings_service.handle_system_event)
-    test_event_bus.register_handler(
-        lambda event: WebhookDispatchService(session_factory=session_factory).handle_system_event(event)
-    )
     settings_service._cache.clear()
     settings_service._overrides.clear()
     settings_service._defaults.clear()
@@ -713,16 +703,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             session_factory=sf,
         )
 
-    def override_get_webhook_services() -> WebhookServices:
-        assert db_session.bind is not None
-        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            db_session.bind, class_=AsyncSession, expire_on_commit=False
-        )
-        return WebhookServices(
-            crud=WebhookCrudService(),
-            dispatch=WebhookDispatchService(session_factory=sf),
-        )
-
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_event_services] = override_get_event_services
     app.dependency_overrides[get_settings_services] = override_get_settings_services
@@ -738,7 +718,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_pack_services] = override_get_pack_services
     app.dependency_overrides[get_plugin_services] = override_get_plugin_services
     app.dependency_overrides[get_appium_node_services] = override_get_appium_node_services
-    app.dependency_overrides[get_webhook_services] = override_get_webhook_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
@@ -858,37 +837,3 @@ async def populated_hosts_one_slow_one_fast(
             if h is not None:
                 await cleanup_db.delete(h)
         await cleanup_db.commit()
-
-
-@pytest_asyncio.fixture
-async def test_session_factory(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> async_sessionmaker[AsyncSession]:
-    """Alias for db_session_maker, used by webhook_dispatcher unit tests."""
-    return db_session_maker
-
-
-@pytest_asyncio.fixture
-async def seeded_pending_delivery(
-    test_session_factory: async_sessionmaker[AsyncSession],
-) -> AsyncIterator[WebhookDelivery]:
-    async with test_session_factory() as db:
-        webhook = Webhook(name="t", url="https://example.test/hook", event_types=["system.test"], enabled=True)
-        db.add(webhook)
-        await db.flush()
-        event = SystemEvent(type="system.test", data={"x": 1})
-        db.add(event)
-        await db.flush()
-        delivery = WebhookDelivery(
-            webhook_id=webhook.id,
-            system_event_id=event.id,
-            event_type="system.test",
-            status="pending",
-            attempts=0,
-            max_attempts=3,
-            next_retry_at=datetime.now(UTC),
-        )
-        db.add(delivery)
-        await db.commit()
-        await db.refresh(delivery)
-        yield delivery

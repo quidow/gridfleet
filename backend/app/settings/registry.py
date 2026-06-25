@@ -796,7 +796,7 @@ _DEFINITIONS: list[SettingDefinition] = [
         category="retention",
         setting_type="int",
         default=30,
-        description="Delete system events older than N days (their webhook delivery records cascade)",
+        description="Delete system events older than N days",
         min_value=1,
         max_value=3650,
     ),

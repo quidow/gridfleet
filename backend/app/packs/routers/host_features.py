@@ -6,7 +6,7 @@ Endpoint:
 Body: ``{"args": {...}}``. Response: ``FeatureActionResultOut``.
 
 Admin-only (``Depends(require_admin)``). Pack feature lookups, agent HTTP
-forwarding, and webhook recording all live in
+forwarding, and status recording all live in
 :mod:`app.packs.services.feature_dispatch` so this router stays a thin
 HTTP shim.
 """

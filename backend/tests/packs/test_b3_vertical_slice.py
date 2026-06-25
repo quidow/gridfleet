@@ -390,7 +390,7 @@ async def test_b3_feature_action_degraded_and_recovered(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Steps 2-5: feature-action route → status row → webhook events.
+    """Steps 2-5: feature-action route → status row → events.
 
     - First call: agent returns ok=False → status row ok=False → pack_feature.degraded emitted.
     - Second call: agent returns ok=True → status row ok=True → pack_feature.recovered emitted.

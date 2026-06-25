@@ -58,7 +58,6 @@ async def test_get_toast_events_setting_includes_catalog_validation(client: Asyn
         "run.expired",
     ]
     assert data["validation"]["item_type"] == "string"
-    assert "webhook.test" in data["validation"]["item_allowed_values"]
     assert "run.failed" not in data["validation"]["item_allowed_values"]
 
 

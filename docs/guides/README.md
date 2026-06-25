@@ -29,7 +29,7 @@ Guide pages should explain:
 - `lifecycle-maintenance-and-recovery.md`
   - Lifecycle summaries, maintenance, reconnect, and automatic/manual recovery behavior.
 - `settings-and-operational-controls.md`
-  - Settings categories, control-loop impact, driver-page handoff, and webhook operations.
+  - Settings categories, control-loop impact, and driver-page handoff.
 - `runs-and-reservations.md`
   - Reservation lifecycle, run inspection, and operator actions for stuck reservations.
 - `dashboard-and-triage.md`

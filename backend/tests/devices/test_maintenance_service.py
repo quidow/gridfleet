@@ -25,7 +25,7 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Entering maintenance must emit device.operational_state_changed (SSE/webhooks) and record a
+    """Entering maintenance must emit device.operational_state_changed (SSE) and record a
     maintenance_entered audit row — maintenance now lives on the operational axis, derived by the
     reconciler, which carries both."""
     device = await create_device(
@@ -56,7 +56,7 @@ async def test_enter_maintenance_bus_event_reason_is_maintenance_entered(
 ) -> None:
     """F4: the device.operational_state_changed bus event for a maintenance entry must carry a
     ``maintenance_entered`` reason — not the stop-intent's ``auto_stopped`` (or a not-ready
-    ``disconnected``). The live SSE/webhook signal must agree with the durable
+    ``disconnected``). The live SSE signal must agree with the durable
     ``maintenance_entered`` audit row, otherwise real-time consumers see a node-stop where an
     operator entered maintenance."""
     device = await create_device(

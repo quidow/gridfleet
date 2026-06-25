@@ -57,7 +57,6 @@ BACKGROUND_LOOP_NAMES = (
     "hardware_telemetry",
     "host_resource_telemetry",
     "durable_job_worker",
-    "webhook_delivery",
     "run_reaper",
     "grid_allocation_reaper",
     "data_cleanup",
