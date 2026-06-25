@@ -375,6 +375,13 @@ class SessionDetail(SessionRead):
         )
 
 
+class DeviceListPage(BaseModel):
+    items: list[DeviceRead]
+    total: int
+    limit: int
+    offset: int
+
+
 class SessionListRead(BaseModel):
     items: list[SessionDetail]
     total: int | None = None

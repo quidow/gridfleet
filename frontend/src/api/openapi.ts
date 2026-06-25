@@ -2719,6 +2719,17 @@ export interface components {
          * @enum {string}
          */
         DeviceLifecyclePolicySummaryState: "idle" | "deferred_stop" | "backoff" | "excluded" | "suppressed" | "recoverable";
+        /** DeviceListPage */
+        DeviceListPage: {
+            /** Items */
+            items: components["schemas"]["DeviceRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** DeviceMaintenanceUpdate */
         DeviceMaintenanceUpdate: Record<string, never>;
         /**
@@ -6982,11 +6993,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[] | {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DeviceRead"][] | components["schemas"]["DeviceListPage"];
                 };
             };
             /** @description Validation error */

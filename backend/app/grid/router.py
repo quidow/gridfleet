@@ -12,6 +12,7 @@ from app.appium_nodes.services.node_viability import (
 from app.core.dependencies import DbDep
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import DeviceOperationalState
+from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services.allocatability import unavailable_reason
 from app.grid.allocation import StereotypeTemplateCache, device_match_surface
 from app.grid.matching import CapabilityMergeError, merge_candidates
@@ -79,7 +80,7 @@ async def _waiting_tickets(db: DbDep) -> list[GridSessionQueueTicket]:
 
 @router.get("/status", response_model=GridStatusRead)
 async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    devices = await device_services.crud.list_devices(db)
+    devices = await device_services.crud.list_devices_by_filters(db, DeviceQueryFilters())
     sessions_by_device = await _live_sessions_by_device(db)
     waiting = await _waiting_tickets(db)
 
@@ -125,7 +126,7 @@ async def grid_queue(db: DbDep) -> dict[str, Any]:
 
 @router.get("/router", response_model=GridRouterRead)
 async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    devices = await device_services.crud.list_devices(db)
+    devices = await device_services.crud.list_devices_by_filters(db, DeviceQueryFilters())
     sessions_by_device = await _live_sessions_by_device(db)
     waiting = await _waiting_tickets(db)
 

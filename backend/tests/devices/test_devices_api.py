@@ -11,7 +11,7 @@ from sqlalchemy import event
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
+from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -211,6 +211,15 @@ async def test_list_devices(client: AsyncClient, db_session: AsyncSession, defau
     assert all("lifecycle_policy_summary" in item for item in data)
     assert all("hardware_health_status" in item for item in data)
     assert all("hardware_telemetry_state" in item for item in data)
+    # Contract pin: bare-list items must be valid DeviceRead
+    assert DeviceRead.model_validate(data[0])
+
+    # Contract pin: paginated response must be a DeviceListPage envelope
+    resp2 = await client.get("/api/devices?limit=1&offset=0")
+    assert resp2.status_code == 200
+    body = resp2.json()
+    assert set(body) == {"items", "total", "limit", "offset"}
+    assert DeviceRead.model_validate(body["items"][0])
 
 
 @contextlib.contextmanager

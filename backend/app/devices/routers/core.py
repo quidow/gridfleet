@@ -17,6 +17,7 @@ from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus 
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.device import (
     DeviceDetail,
+    DeviceListPage,
     DevicePatch,
     DeviceRead,
     HardwareTelemetryState,
@@ -108,7 +109,7 @@ def build_device_query_filters(
 DeviceFiltersDep = Annotated[DeviceQueryFilters, Depends(build_device_query_filters)]
 
 
-@router.get("")
+@router.get("", response_model=list[DeviceRead] | DeviceListPage)
 async def list_devices(
     filters: DeviceFiltersDep,
     db: DbDep,
