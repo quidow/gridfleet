@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
-    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.models import Device, HardwareHealthStatus
-    from app.hosts.models import Host, HostResourceSample
+    from app.hosts.models import Host
     from app.hosts.schemas import (
-        AgentLogBatchIngest,
-        AgentLogIngestResult,
-        AgentLogPage,
         HostCreate,
-        HostDiagnosticsRead,
-        HostEventsPage,
         HostRegister,
-        HostResourceTelemetryResponse,
     )
 
 
@@ -33,67 +25,3 @@ class HostCrudProtocol(Protocol):
     async def list_hosts(self, db: AsyncSession) -> list[Host]: ...
     async def get_host(self, db: AsyncSession, host_id: uuid.UUID) -> Host | None: ...
     async def delete_host(self, db: AsyncSession, host_id: uuid.UUID) -> bool: ...
-
-
-@runtime_checkable
-class HardwareTelemetryProtocol(Protocol):
-    async def apply_telemetry_sample(
-        self, db: AsyncSession, device: Device, sample: dict[str, Any]
-    ) -> HardwareHealthStatus: ...
-    async def poll_once(self, db: AsyncSession) -> None: ...
-
-
-@runtime_checkable
-class HostResourceTelemetryProtocol(Protocol):
-    async def poll_once(self, db: AsyncSession) -> None: ...
-    async def fetch_host_resource_telemetry(
-        self,
-        db: AsyncSession,
-        host_id: uuid.UUID,
-        *,
-        since: datetime,
-        until: datetime,
-        bucket_minutes: int,
-    ) -> HostResourceTelemetryResponse | None: ...
-    async def apply_host_resource_sample(
-        self, db: AsyncSession, host: Host, sample: dict[str, Any]
-    ) -> HostResourceSample: ...
-
-
-@runtime_checkable
-class HostDiagnosticsProtocol(Protocol):
-    async def get_host_diagnostics(self, db: AsyncSession, host: Host | uuid.UUID) -> HostDiagnosticsRead | None: ...
-
-
-@runtime_checkable
-class AgentLogsProtocol(Protocol):
-    async def write_batch(
-        self, db: AsyncSession, *, host_id: uuid.UUID, batch: AgentLogBatchIngest
-    ) -> AgentLogIngestResult: ...
-    async def query_logs(
-        self,
-        db: AsyncSession,
-        *,
-        host_id: uuid.UUID,
-        levels: list[str] | None = ...,
-        since: datetime | None = ...,
-        until: datetime | None = ...,
-        q: str | None = ...,
-        limit: int = ...,
-        offset: int = ...,
-    ) -> AgentLogPage: ...
-
-
-@runtime_checkable
-class HostEventsProtocol(Protocol):
-    async def query_host_events(
-        self,
-        db: AsyncSession,
-        *,
-        host_id: uuid.UUID,
-        types: list[str] | None = ...,
-        since: datetime | None = ...,
-        until: datetime | None = ...,
-        limit: int = ...,
-        offset: int = ...,
-    ) -> HostEventsPage: ...
