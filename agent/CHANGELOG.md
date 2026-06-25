@@ -2,6 +2,28 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.28.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.2...gridfleet-agent-v0.28.0) (2026-06-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** the /agent/plugins and /agent/plugins/sync endpoints are removed and AppiumStartRequest no longer accepts a plugins field.
+
+### Features
+
+* **agent:** remove appium plugins endpoints and runtime wiring ([45b78f6](https://github.com/quidow/gridfleet/commit/45b78f6f95add5bf32d0bd85c92bf48794b3fb79))
+
+
+### Bug Fixes
+
+* **agent:** wire adapter post_session hook into appium stop teardown ([51dfb21](https://github.com/quidow/gridfleet/commit/51dfb21861e2ae02342a9833fda1fc27f42fa54d))
+
+
+### Dependencies
+
+* **deps:** bump ruff in /agent in the python-dependencies group ([#673](https://github.com/quidow/gridfleet/issues/673)) ([b0c0809](https://github.com/quidow/gridfleet/commit/b0c080961a622bf4ba8a3d366a5dd804109de31d))
+* **deps:** bump the python-dependencies group in /agent with 2 updates ([#654](https://github.com/quidow/gridfleet/issues/654)) ([6dfa3dc](https://github.com/quidow/gridfleet/commit/6dfa3dc829a07edf55907dd1e1415401dda74e11))
+
 ## [0.27.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.1...gridfleet-agent-v0.27.2) (2026-06-21)
 
 
