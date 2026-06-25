@@ -124,18 +124,7 @@ class SessionViabilityService:
         self._health_failure_handler = handler
 
     async def get_session_viability(self, db: AsyncSession, device: Device) -> dict[str, Any] | None:
-        state = await control_plane_state_store.get_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id))
-        if state is None:
-            return None
-        return {
-            "status": state.get("status"),
-            "last_attempted_at": state.get("last_attempted_at"),
-            "last_succeeded_at": state.get("last_succeeded_at"),
-            "error": state.get("error"),
-            "checked_by": state.get("checked_by"),
-            "consecutive_failures": state.get("consecutive_failures") or 0,
-            "error_category": state.get("error_category"),
-        }
+        return await get_session_viability(db, device)
 
     async def record_session_viability_result(
         self,

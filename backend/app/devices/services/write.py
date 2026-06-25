@@ -161,7 +161,6 @@ def _validate_device_shape(
     ip_address: str | None,
     host_id: uuid.UUID | None,
     connection_behavior: dict[str, Any] | None = None,
-    allow_transport_identity_resolution: bool = False,
 ) -> None:
     behavior = connection_behavior or {}
 
@@ -194,10 +193,8 @@ def _validate_device_shape(
     elif not identity_value:
         raise ValueError("Identity value is required")
 
-    if (
-        not behavior.get("allow_transport_identity_until_host_resolution", False)
-        and not allow_transport_identity_resolution
-        and _is_transport_identity(identity_value, connection_target, ip_address)
+    if not behavior.get("allow_transport_identity_until_host_resolution", False) and _is_transport_identity(
+        identity_value, connection_target, ip_address
     ):
         raise ValueError("Device requires a stable identity before save")
 
@@ -274,7 +271,6 @@ def _resolve_identity(
 def _resolve_create_payload_fields(
     data: DeviceVerificationCreate,
     *,
-    allow_transport_identity_resolution: bool = False,
     connection_behavior: dict[str, Any] | None = None,
     resolved_identity_scheme: str | None = None,
     resolved_identity_scope: str | None = None,
@@ -331,7 +327,6 @@ def _resolve_create_payload_fields(
         ip_address=ip_address,
         host_id=payload.get("host_id"),
         connection_behavior=connection_behavior,
-        allow_transport_identity_resolution=allow_transport_identity_resolution,
     )
 
     payload["identity_scheme"] = identity_scheme
@@ -420,7 +415,6 @@ def _resolve_update_payload_fields(
     device: Device,
     data: DeviceVerificationUpdate | DevicePatch,
     *,
-    allow_transport_identity_resolution: bool = False,
     connection_behavior: dict[str, Any] | None = None,
     resolved_identity_scheme: str | None = None,
 ) -> dict[str, Any]:
@@ -462,7 +456,6 @@ def _resolve_update_payload_fields(
         ip_address=next_ip_address,
         host_id=payload.get("host_id", device.host_id),
         connection_behavior=connection_behavior,
-        allow_transport_identity_resolution=allow_transport_identity_resolution,
     )
 
     payload["identity_scheme"] = next_identity_scheme

@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         DeviceVerificationUpdate,
     )
     from app.devices.schemas.filters import DeviceQueryFilters
-    from app.events.protocols import EventPublisher
     from app.hosts.models import Host
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -119,7 +118,6 @@ class RunReservationWriter(Protocol):
         device_id: uuid.UUID,
         *,
         reason: str,
-        publisher: EventPublisher,
         commit: bool = ...,
     ) -> TestRun | None: ...
     async def restore_device_to_run(

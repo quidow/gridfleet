@@ -167,7 +167,6 @@ class RunReservationService:
         device_id: uuid.UUID,
         *,
         reason: str,
-        publisher: EventPublisher,
         commit: bool = True,
     ) -> TestRun | None:
         run, entry = await get_device_reservation_with_entry(db, device_id)

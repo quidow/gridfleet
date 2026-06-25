@@ -1,13 +1,15 @@
-"""Internal allocation endpoints for the grid router component (spec §4).
+"""Internal allocation endpoints for the grid router component.
 
-Dark surface: nothing calls these in production until the router (Plan B)
-ships. The allocate handler owns the long-poll; each attempt runs in a fresh
-transaction via the services' ``session_factory`` so device row locks and
-commits never pin one request-scoped session.
+The Rust router on :4444 calls these to allocate a device, confirm/fail/end
+its Appium session, and fetch the live route table. Mounted under
+``/internal/grid`` and auth-gated in ``app.main``. The allocate handler owns
+the long-poll; each attempt runs in a fresh transaction via the services'
+``session_factory`` so device row locks and commits never pin one
+request-scoped session.
 
-The spec named the doorbell pattern for queue wakeups; the 1 s re-attempt
-inside the long-poll is the deliberate v1 simplification — same observable
-behavior within 1 s, no cross-worker wake needed.
+The 1 s re-attempt inside the long-poll is the deliberate v1 simplification
+for queue wakeups — same observable behavior within 1 s, no cross-worker wake
+needed.
 """
 
 from __future__ import annotations

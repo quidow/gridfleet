@@ -9,10 +9,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.models import Device, DeviceEvent, DeviceEventType
+    from app.devices.models import Device
     from app.devices.models.reservation import DeviceReservation
     from app.events.protocols import EventPublisher
-    from app.lifecycle.services.incidents import LifecycleIncidentDetails
     from app.runs.models import TestRun
 
 
@@ -77,7 +76,6 @@ class RunReservationProtocol(Protocol):
         device_id: uuid.UUID,
         *,
         reason: str,
-        publisher: EventPublisher,
         commit: bool = ...,
     ) -> TestRun | None: ...
     async def restore_device_to_run(
@@ -92,14 +90,3 @@ class RunReservationProtocol(Protocol):
         publisher: EventPublisher,
         commit: bool = ...,
     ) -> TestRun | None: ...
-
-
-@runtime_checkable
-class LifecycleIncidentRecorder(Protocol):
-    async def record_lifecycle_incident(
-        self,
-        db: AsyncSession,
-        device: Device,
-        event_type: DeviceEventType,
-        incident: LifecycleIncidentDetails,
-    ) -> DeviceEvent: ...

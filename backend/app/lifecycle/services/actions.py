@@ -138,7 +138,7 @@ class LifecyclePolicyActionsService:
         if node is not None and node.observed_running:
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
-                intents=_crash_intents(device, source=source, reason=reason),
+                intents=_crash_intents(device, source=source),
                 reason=reason,
                 publisher=self._publisher,
             )
@@ -147,7 +147,7 @@ class LifecyclePolicyActionsService:
             if node is not None:
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
-                    intents=_crash_intents(device, source=source, reason=reason),
+                    intents=_crash_intents(device, source=source),
                     reason=reason,
                     publisher=self._publisher,
                 )
@@ -185,9 +185,7 @@ class LifecyclePolicyActionsService:
             return None, entry
 
         was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
-        run = await self._reservation.exclude_device_from_run(
-            db, device.id, reason=reason, commit=False, publisher=self._publisher
-        )
+        run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             await IntentService(db).register_intents_and_reconcile(
@@ -284,7 +282,6 @@ class LifecyclePolicyActionsService:
         self,
         db: AsyncSession,
         device: Device,
-        next_state: dict[str, Any],
         *,
         source: str,
         reason: str,
@@ -481,8 +478,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRegistration]:
-    del reason
+def _crash_intents(device: Device, *, source: str) -> list[IntentRegistration]:
     if source == "connectivity":
         return [
             IntentRegistration(

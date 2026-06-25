@@ -148,7 +148,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
             return SettingsServices(
                 service=settings_service,
                 config=SettingsConfigService(publisher=event_bus),
-                session_factory=db_session_maker,
             )
 
         def _override_run_services() -> RunServices:

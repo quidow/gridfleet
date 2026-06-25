@@ -152,7 +152,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             return SettingsServices(
                 service=settings_service,
                 config=SettingsConfigService(publisher=event_bus),
-                session_factory=db_session_maker,
             )
 
         def _override_run_services() -> RunServices:

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
 from app.events.models import SystemEvent
-from tests.helpers import recent_events, set_webhook_queue
+from tests.helpers import recent_events
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -193,19 +193,15 @@ async def test_dispatch_handlers_logs_and_continues_on_handler_error() -> None:
     assert received == ["demo"]
 
 
-async def test_remember_and_dispatch_handles_full_subscriber_and_webhook_queues() -> None:
+async def test_remember_and_dispatch_drops_event_for_full_subscriber_queue() -> None:
     bus = EventBus(max_queue_size=1)
     subscriber = bus.subscribe()
     await subscriber.put(Event(type="existing", data={}))
-    webhook_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=1)
-    await webhook_queue.put(Event(type="existing", data={}))
-    set_webhook_queue(bus, webhook_queue)
 
     bus._remember_and_dispatch(Event(type="demo", data={}))
     await bus._shutdown_handler_tasks(timeout=1)
 
     assert subscriber.qsize() == 1
-    assert webhook_queue.qsize() == 1
 
 
 async def test_listen_for_notifications_dispatches_valid_payload_and_removes_listener() -> None:

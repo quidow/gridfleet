@@ -48,6 +48,15 @@ def _bulk_severity(total: int, succeeded: int, failed: int) -> EventSeverity:
     return "warning"
 
 
+def _completion_payload(
+    operation: str, total: int, succeeded: int, failed: int
+) -> tuple[dict[str, Any], EventSeverity]:
+    return (
+        {"operation": operation, "total": total, "succeeded": succeeded, "failed": failed},
+        _bulk_severity(total, succeeded, failed),
+    )
+
+
 async def _load_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[Device]:
     return await device_locking.lock_devices(db, device_ids)
 
@@ -128,16 +137,8 @@ async def _run_per_device_node_action(
     succeeded = len(existing_device_ids) - len(errors)
     total = len(existing_device_ids)
     failed = len(errors)
-    await publisher.publish(
-        "bulk.operation_completed",
-        {
-            "operation": operation,
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed,
-        },
-        severity=_bulk_severity(total, succeeded, failed),
-    )
+    data, severity = _completion_payload(operation, total, succeeded, failed)
+    await publisher.publish("bulk.operation_completed", data, severity=severity)
     return _result(len(existing_device_ids), succeeded, errors)
 
 
@@ -207,17 +208,8 @@ class BulkOperationsService:
                 device.tags = merged
             else:
                 device.tags = tags
-        self._publisher.queue_for_session(
-            db,
-            "bulk.operation_completed",
-            {
-                "operation": "update_tags",
-                "total": len(devices),
-                "succeeded": len(devices),
-                "failed": 0,
-            },
-            severity=_bulk_severity(len(devices), len(devices), 0),
-        )
+        data, severity = _completion_payload("update_tags", len(devices), len(devices), 0)
+        self._publisher.queue_for_session(db, "bulk.operation_completed", data, severity=severity)
         await db.commit()
         return _result(len(devices), len(devices), {})
 
@@ -233,16 +225,8 @@ class BulkOperationsService:
         succeeded = len(device_ids) - len(errors)
         total = len(device_ids)
         failed = len(errors)
-        await self._publisher.publish(
-            "bulk.operation_completed",
-            {
-                "operation": "delete",
-                "total": total,
-                "succeeded": succeeded,
-                "failed": failed,
-            },
-            severity=_bulk_severity(total, succeeded, failed),
-        )
+        data, severity = _completion_payload("delete", total, succeeded, failed)
+        await self._publisher.publish("bulk.operation_completed", data, severity=severity)
         return _result(len(device_ids), succeeded, errors)
 
     async def bulk_enter_maintenance(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
@@ -258,17 +242,8 @@ class BulkOperationsService:
         succeeded = len(ordered_ids) - len(errors)
         failed = len(errors)
         total = len(ordered_ids)
-        self._publisher.queue_for_session(
-            db,
-            "bulk.operation_completed",
-            {
-                "operation": "enter_maintenance",
-                "total": total,
-                "succeeded": succeeded,
-                "failed": failed,
-            },
-            severity=_bulk_severity(total, succeeded, failed),
-        )
+        data, severity = _completion_payload("enter_maintenance", total, succeeded, failed)
+        self._publisher.queue_for_session(db, "bulk.operation_completed", data, severity=severity)
         await db.commit()
         return _result(len(ordered_ids), succeeded, errors)
 
@@ -287,17 +262,8 @@ class BulkOperationsService:
         succeeded = len(devices) - len(errors)
         failed = len(errors)
         total = len(devices)
-        self._publisher.queue_for_session(
-            db,
-            "bulk.operation_completed",
-            {
-                "operation": "exit_maintenance",
-                "total": total,
-                "succeeded": succeeded,
-                "failed": failed,
-            },
-            severity=_bulk_severity(total, succeeded, failed),
-        )
+        data, severity = _completion_payload("exit_maintenance", total, succeeded, failed)
+        self._publisher.queue_for_session(db, "bulk.operation_completed", data, severity=severity)
         await db.commit()
 
         # Enqueue recovery jobs after the bulk transaction commits to avoid
@@ -381,14 +347,6 @@ class BulkOperationsService:
         succeeded = len(devices) - len(errors)
         total = len(devices)
         failed = len(errors)
-        await self._publisher.publish(
-            "bulk.operation_completed",
-            {
-                "operation": "reconnect",
-                "total": total,
-                "succeeded": succeeded,
-                "failed": failed,
-            },
-            severity=_bulk_severity(total, succeeded, failed),
-        )
+        data, severity = _completion_payload("reconnect", total, succeeded, failed)
+        await self._publisher.publish("bulk.operation_completed", data, severity=severity)
         return _result(len(devices), succeeded, errors)

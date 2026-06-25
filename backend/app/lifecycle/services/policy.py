@@ -24,6 +24,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     RESERVATION,
     IntentRegistration,
+    failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import (
     CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
@@ -183,7 +184,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason=device.review_reason or "Device shelved — operator review required",
@@ -194,7 +194,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason=device.recovery_blocked_reason or "Recovery is blocked by orchestration intent",
@@ -224,11 +223,7 @@ class LifecyclePolicyService:
             # already fires in the start-node branch below.
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
-                sources=[
-                    f"connectivity:{device.id}",
-                    f"health_failure:node:{device.id}",
-                    f"health_failure:recovery:{device.id}",
-                ],
+                sources=failure_stop_sources(device.id),
                 reason=reason,
                 publisher=self._publisher,
             )
@@ -250,7 +245,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason="Device setup or verification is incomplete",
@@ -260,7 +254,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
@@ -270,7 +263,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason="Device is in active cooldown",
@@ -280,7 +272,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason="Waiting for active client session to finish",
@@ -290,7 +281,6 @@ class LifecyclePolicyService:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason=CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
@@ -352,11 +342,7 @@ class LifecyclePolicyService:
             device.appium_node = new_node
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
-            sources=[
-                f"connectivity:{device.id}",
-                f"health_failure:node:{device.id}",
-                f"health_failure:recovery:{device.id}",
-            ],
+            sources=failure_stop_sources(device.id),
             reason=reason,
             publisher=self._publisher,
         )
@@ -711,7 +697,6 @@ class LifecyclePolicyService:
             await self._actions.record_recovery_suppressed(
                 db,
                 device,
-                current_state,
                 source=source,
                 reason=reason,
                 suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,

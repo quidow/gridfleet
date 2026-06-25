@@ -12,8 +12,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.sentinels import UnsetType
-    from app.devices.models import Device, DeviceEvent, DeviceEventType
-    from app.lifecycle.services.incidents import LifecycleIncidentDetails
+    from app.devices.models import Device
 
 
 @runtime_checkable
@@ -76,14 +75,3 @@ class DeviceNodeHealthWriter(Protocol):
         mark_offline: bool = ...,
         reason: str | None = ...,
     ) -> None: ...
-
-
-@runtime_checkable
-class LifecycleIncidentRecorder(Protocol):
-    async def record_lifecycle_incident(
-        self,
-        db: AsyncSession,
-        device: Device,
-        event_type: DeviceEventType,
-        incident: LifecycleIncidentDetails,
-    ) -> DeviceEvent: ...
