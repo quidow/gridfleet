@@ -137,7 +137,7 @@ async def test_webhook_delivery_loop_logs_and_sleeps_on_error(monkeypatch: pytes
 
     mock_dispatch = AsyncMock(spec=WebhookDispatchService)
     mock_dispatch.run_pending_once = AsyncMock(side_effect=RuntimeError("boom"))
-    services = WebhookServices(crud=WebhookCrudService(), dispatch=mock_dispatch, session_factory=_Factory(_Db()))
+    services = WebhookServices(crud=WebhookCrudService(), dispatch=mock_dispatch)
 
     with pytest.raises(asyncio.CancelledError):
         loop = webhook_dispatcher.WebhookDeliveryLoop(services=services)
@@ -165,7 +165,7 @@ async def test_webhook_delivery_loop_sleeps_when_no_work(monkeypatch: pytest.Mon
 
     mock_dispatch = AsyncMock(spec=WebhookDispatchService)
     mock_dispatch.run_pending_once = AsyncMock(return_value=False)
-    services = WebhookServices(crud=WebhookCrudService(), dispatch=mock_dispatch, session_factory=_Factory(_Db()))
+    services = WebhookServices(crud=WebhookCrudService(), dispatch=mock_dispatch)
 
     with pytest.raises(asyncio.CancelledError):
         loop = webhook_dispatcher.WebhookDeliveryLoop(services=services)
