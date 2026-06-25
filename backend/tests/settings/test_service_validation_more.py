@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.settings import service as settings_module
-from app.settings.registry import SettingDefinition
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -97,23 +96,6 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
 
     assert "JSON-serializable" in (service._validate_value("notifications.toast_events", [object()]) or "")
     assert "Unknown item" in (service._validate_value("notifications.toast_events", ["../private.event"]) or "")
-    monkeypatch.setitem(
-        settings_module.SETTINGS_REGISTRY,
-        "test.json_string_list",
-        SettingDefinition(
-            key="test.json_string_list",
-            category="test",
-            setting_type="json",
-            default=[],
-            description="test only",
-            json_list_item_type="string",
-            reject_item_prefixes=["../"],
-        ),
-    )
-    service._cache["test.json_string_list"] = ["ok"]
-    assert "Expected list" in (service._validate_value("test.json_string_list", "bad") or "")
-    assert "Invalid item" in (service._validate_value("test.json_string_list", [""]) or "")
-    assert "../bad" in (service._validate_value("test.json_string_list", ["../bad"]) or "")
 
     row = SimpleNamespace(value=None)
 
@@ -144,4 +126,3 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
 
     validation = service.get_setting_response("notifications.toast_events")["validation"]
     assert validation["item_allowed_values"]
-    assert service.get_setting_response("test.json_string_list")["validation"] == {"item_type": "string"}

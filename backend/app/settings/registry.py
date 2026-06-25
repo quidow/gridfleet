@@ -26,8 +26,6 @@ class SettingDefinition:
     max_value: int | float | None = None
     allowed_values: list[str] | None = field(default=None)
     item_allowed_values: list[str] | None = field(default=None)
-    json_list_item_type: str | None = None
-    reject_item_prefixes: list[str] | None = field(default=None)
 
 
 # Ordered display names for UI tabs
