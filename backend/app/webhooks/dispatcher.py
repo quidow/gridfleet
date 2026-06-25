@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -8,8 +9,6 @@ from typing import TYPE_CHECKING
 import httpx2 as httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
-from tenacity import RetryCallState, Retrying
-from tenacity.wait import wait_exponential_jitter
 
 from app.core.metrics_recorders import record_webhook_delivery
 from app.core.observability import get_logger, observe_background_loop
@@ -27,13 +26,17 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-_RETRY_WAITER = wait_exponential_jitter(initial=1, exp_base=4, jitter=2, max=64)
+_RETRY_INITIAL = 1.0
+_RETRY_EXP_BASE = 4.0
+_RETRY_JITTER = 2.0
+_RETRY_MAX = 64.0
 
 
 def _compute_retry_delay(attempt_number: int) -> float:
-    state = RetryCallState(retry_object=Retrying(), fn=None, args=(), kwargs={})
-    state.attempt_number = attempt_number
-    return float(_RETRY_WAITER(state))
+    # Mirrors tenacity.wait_exponential_jitter(initial=1, exp_base=4, jitter=2, max=64):
+    # exponential backoff in the attempt number plus uniform jitter, capped at max.
+    backoff = _RETRY_INITIAL * _RETRY_EXP_BASE ** (attempt_number - 1) + random.uniform(0, _RETRY_JITTER)
+    return min(backoff, _RETRY_MAX)
 
 
 def _is_retryable_exception(exc: BaseException) -> bool:
