@@ -40,22 +40,9 @@ class DeviceReliabilityRow(BaseModel):
     total_incidents: int
 
 
-class FleetDeviceSummary(BaseModel):
-    device_id: str
-    device_name: str
-    platform_id: str
-    value: float
-
-
 class FleetOverview(BaseModel):
-    devices_by_platform: dict[str, int]
     avg_utilization_pct: float
-    most_used: list[FleetDeviceSummary]
-    least_used: list[FleetDeviceSummary]
-    most_reliable: list[FleetDeviceSummary]
-    least_reliable: list[FleetDeviceSummary]
     pass_rate_pct: float | None
-    devices_needing_attention: int
 
 
 class FleetCapacityTimelinePoint(BaseModel):

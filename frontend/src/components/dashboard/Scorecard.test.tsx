@@ -7,7 +7,7 @@ const mockHosts = vi.fn(() => ({ data: [{ id: 'host-1', status: 'online' }] }));
 const mockGrid = vi.fn(() => ({
   data: { active_sessions: 0, queue_size: 0, grid: { ready: true }, registry: { device_count: 0 } },
 }));
-const mockOverview = vi.fn(() => ({ data: { pass_rate_pct: 80, avg_utilization_pct: 1.34, devices_needing_attention: 0 } }));
+const mockOverview = vi.fn(() => ({ data: { pass_rate_pct: 80, avg_utilization_pct: 1.34 } }));
 
 vi.mock('../../hooks/useHosts', () => ({ useHosts: () => mockHosts() }));
 vi.mock('../../hooks/useGrid', () => ({

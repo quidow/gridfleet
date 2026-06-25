@@ -342,7 +342,7 @@ class DeviceRead(BaseModel):
 
 class DeviceDetail(DeviceRead):
     appium_node: AppiumNodeRead | None = None
-    orchestration: DeviceOrchestrationRead
+    orchestration: DeviceOrchestrationRead | None = None
 
 
 class SessionDetail(SessionRead):
@@ -373,6 +373,13 @@ class SessionDetail(SessionRead):
             device_platform_id=device.platform_id if device else None,
             device_platform_label=device_platform_label,
         )
+
+
+class DeviceListPage(BaseModel):
+    items: list[DeviceRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class SessionListRead(BaseModel):

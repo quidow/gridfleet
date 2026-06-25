@@ -17,6 +17,7 @@ from app.packs.models import (
     HostRuntimeInstallation,
     PackState,
 )
+from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
 from app.packs.services.host_compatibility import manifest_supports_host_os
 from app.packs.services.release_ordering import selected_release
 from app.plugins.models import AppiumPlugin
@@ -260,9 +261,17 @@ class PackStatusService:
                     "resolver_version": row.resolver_version,
                     "blocked_reason": row.blocked_reason,
                     "installed_at": row.installed_at,
-                    "desired_appium_driver_version": _desired_driver_version(row, pack_release_map),
-                    "installed_appium_driver_version": _installed_driver_version(row, runtime_map),
-                    "appium_driver_drift": _compute_drift(row, pack_release_map, runtime_map),
+                    "desired_appium_driver_version": desired_driver_version(
+                        row, pack_release_map.get((row.pack_id, row.pack_release))
+                    ),
+                    "installed_appium_driver_version": installed_driver_version(
+                        runtime_map.get(row.runtime_id) if row.runtime_id else None
+                    ),
+                    "appium_driver_drift": has_driver_drift(
+                        row,
+                        pack_release_map.get((row.pack_id, row.pack_release)),
+                        runtime_map.get(row.runtime_id) if row.runtime_id else None,
+                    ),
                 }
                 for row in packs
             ],
@@ -361,7 +370,6 @@ class PackStatusService:
             runtime = (
                 runtime_map.get((pack_row.host_id, pack_row.runtime_id)) if pack_row.runtime_id is not None else None
             )
-            runtime_by_id = {runtime.runtime_id: runtime} if runtime is not None else {}
             hosts.append(
                 {
                     "host_id": str(pack_row.host_id),
@@ -375,9 +383,13 @@ class PackStatusService:
                     "resolver_version": pack_row.resolver_version,
                     "blocked_reason": pack_row.blocked_reason,
                     "installed_at": pack_row.installed_at,
-                    "desired_appium_driver_version": _desired_driver_version(pack_row, pack_release_map),
-                    "installed_appium_driver_version": _installed_driver_version(pack_row, runtime_by_id),
-                    "appium_driver_drift": _compute_drift(pack_row, pack_release_map, runtime_by_id),
+                    "desired_appium_driver_version": desired_driver_version(
+                        pack_row, pack_release_map.get((pack_row.pack_id, pack_row.pack_release))
+                    ),
+                    "installed_appium_driver_version": installed_driver_version(runtime),
+                    "appium_driver_drift": has_driver_drift(
+                        pack_row, pack_release_map.get((pack_row.pack_id, pack_row.pack_release)), runtime
+                    ),
                     "appium_home": runtime.appium_home if runtime is not None else None,
                     "runtime_status": runtime.status if runtime is not None else None,
                     "runtime_blocked_reason": runtime.blocked_reason if runtime is not None else None,
@@ -492,45 +504,3 @@ def _pack_row_supports_host(
     if release is None:
         return True
     return manifest_supports_host_os(release.manifest_json, str(host.os_type))
-
-
-def _desired_driver_version(
-    pack_row: HostPackInstallation,
-    pack_release_map: dict[tuple[str, str], DriverPackRelease],
-) -> str | None:
-    if pack_row.resolved_install_spec and "appium_driver_version" in pack_row.resolved_install_spec:
-        version = pack_row.resolved_install_spec["appium_driver_version"]
-        return str(version) if version is not None else None
-    if pack_row.resolved_install_spec:
-        appium_driver = pack_row.resolved_install_spec.get("appium_driver")
-        if isinstance(appium_driver, dict) and appium_driver:
-            version = next(iter(appium_driver.values()))
-            return str(version) if version is not None else None
-    release = pack_release_map.get((pack_row.pack_id, pack_row.pack_release))
-    if release and release.manifest_json:
-        recommended = release.manifest_json.get("appium_driver", {}).get("recommended")
-        return str(recommended) if recommended is not None else None
-    return None
-
-
-def _installed_driver_version(
-    pack_row: HostPackInstallation,
-    runtime_map: dict[str, HostRuntimeInstallation],
-) -> str | None:
-    if not pack_row.runtime_id:
-        return None
-    runtime = runtime_map.get(pack_row.runtime_id)
-    if runtime and runtime.driver_specs:
-        version = runtime.driver_specs[0].get("version")
-        return str(version) if version is not None else None
-    return None
-
-
-def _compute_drift(
-    pack_row: HostPackInstallation,
-    pack_release_map: dict[tuple[str, str], DriverPackRelease],
-    runtime_map: dict[str, HostRuntimeInstallation],
-) -> bool:
-    desired = _desired_driver_version(pack_row, pack_release_map)
-    installed = _installed_driver_version(pack_row, runtime_map)
-    return desired is not None and installed is not None and desired != installed

@@ -85,12 +85,10 @@ from app.packs.services import (
 )
 from app.packs.services import release_ordering as pack_desired_state_service
 from app.packs.services import (
-    status as pack_status_service,
-)
-from app.packs.services import (
     storage as pack_storage_service,
 )
 from app.packs.services.discovery import PackDiscoveryService as _PackDiscoveryService
+from app.packs.services.driver_version import installed_driver_version as _installed_driver_version
 from app.packs.services.feature_dispatch import FeatureService as PackFeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
@@ -893,13 +891,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     )
     assert (await _PackStatusService(feature=Mock()).compute_desired(desired_db, uuid.uuid4()))["packs"] == []
 
-    assert (
-        pack_status_service._installed_driver_version(
-            SimpleNamespace(runtime_id="runtime-a"),
-            {"runtime-a": SimpleNamespace(driver_specs=[{"version": "1.2.3"}])},
-        )
-        == "1.2.3"
-    )
+    assert _installed_driver_version(SimpleNamespace(driver_specs=[{"version": "1.2.3"}])) == "1.2.3"
 
     label_db = AsyncMock()
     label_db.execute = AsyncMock(

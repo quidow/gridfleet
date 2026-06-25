@@ -17,7 +17,6 @@ from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
-from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
 from app.devices.services import link_repair
@@ -39,6 +38,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.services.identity_conflicts import DeviceIdentityConflictService
     from app.events.protocols import EventPublisher
 
@@ -82,9 +82,6 @@ class DeviceCrudService:
             await db.rollback()
             await self._identity.ensure_device_payload_identity_available(db, payload)
             raise
-
-    async def list_devices(self, db: AsyncSession, filters: DeviceQueryFilters | None = None) -> list[Device]:
-        return await self.list_devices_by_filters(db, filters if filters is not None else DeviceQueryFilters())
 
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
         stmt = _build_device_list_stmt(filters)

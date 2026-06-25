@@ -2493,7 +2493,7 @@ export interface components {
             /** Needs Attention */
             needs_attention: boolean;
             operational_state: components["schemas"]["DeviceOperationalState"];
-            orchestration: components["schemas"]["DeviceOrchestrationRead"];
+            orchestration?: components["schemas"]["DeviceOrchestrationRead"] | null;
             /** Os Version */
             os_version: string;
             /** Os Version Display */
@@ -2719,6 +2719,17 @@ export interface components {
          * @enum {string}
          */
         DeviceLifecyclePolicySummaryState: "idle" | "deferred_stop" | "backoff" | "excluded" | "suppressed" | "recoverable";
+        /** DeviceListPage */
+        DeviceListPage: {
+            /** Items */
+            items: components["schemas"]["DeviceRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** DeviceMaintenanceUpdate */
         DeviceMaintenanceUpdate: Record<string, never>;
         /**
@@ -3500,35 +3511,10 @@ export interface components {
             /** Total Capacity Slots */
             total_capacity_slots: number;
         };
-        /** FleetDeviceSummary */
-        FleetDeviceSummary: {
-            /** Device Id */
-            device_id: string;
-            /** Device Name */
-            device_name: string;
-            /** Platform Id */
-            platform_id: string;
-            /** Value */
-            value: number;
-        };
         /** FleetOverview */
         FleetOverview: {
             /** Avg Utilization Pct */
             avg_utilization_pct: number;
-            /** Devices By Platform */
-            devices_by_platform: {
-                [key: string]: number;
-            };
-            /** Devices Needing Attention */
-            devices_needing_attention: number;
-            /** Least Reliable */
-            least_reliable: components["schemas"]["FleetDeviceSummary"][];
-            /** Least Used */
-            least_used: components["schemas"]["FleetDeviceSummary"][];
-            /** Most Reliable */
-            most_reliable: components["schemas"]["FleetDeviceSummary"][];
-            /** Most Used */
-            most_used: components["schemas"]["FleetDeviceSummary"][];
             /** Pass Rate Pct */
             pass_rate_pct: number | null;
         };
@@ -6982,11 +6968,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[] | {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DeviceRead"][] | components["schemas"]["DeviceListPage"];
                 };
             };
             /** @description Validation error */
@@ -7590,7 +7572,9 @@ export interface operations {
     };
     get_device_api_devices__device_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                include?: string | null;
+            };
             header?: never;
             path: {
                 device_id: string;

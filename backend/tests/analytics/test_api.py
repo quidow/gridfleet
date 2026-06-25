@@ -352,10 +352,8 @@ async def test_fleet_overview_empty(client: AsyncClient) -> None:
     resp = await client.get("/api/analytics/fleet/overview")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["devices_by_platform"] == {}
     assert data["avg_utilization_pct"] == 0
     assert data["pass_rate_pct"] is None
-    assert data["devices_needing_attention"] == 0
 
 
 async def test_fleet_overview(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -364,13 +362,9 @@ async def test_fleet_overview(client: AsyncClient, db_session: AsyncSession, def
     assert resp.status_code == 200
     data = resp.json()
 
-    assert data["devices_by_platform"]["android_mobile"] == 1
-    assert data["devices_by_platform"]["firetv_real"] == 1
     assert data["avg_utilization_pct"] >= 0
     assert data["pass_rate_pct"] is not None
     assert data["pass_rate_pct"] == 50.0  # 2 passed out of 4
-    assert len(data["most_used"]) <= 5
-    assert len(data["least_used"]) <= 5
 
 
 async def test_fleet_overview_excludes_reserved_probe_and_manual_inspector_sessions(

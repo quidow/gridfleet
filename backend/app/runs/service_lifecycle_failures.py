@@ -283,8 +283,6 @@ class RunFailureService:
                 source="testkit",
                 run_id=run.id,
                 run_name=run.name,
-                ttl_seconds=ttl_seconds,
-                expires_at=excluded_until,
             ),
         )
 

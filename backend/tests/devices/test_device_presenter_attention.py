@@ -168,7 +168,7 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: 
     monkeypatch.setattr(svc, "serialize_device", AsyncMock(return_value={"id": "device"}))
     monkeypatch.setattr(device_presenter, "_serialize_orchestration", AsyncMock(return_value={"intents": []}))
 
-    payload = await svc.serialize_device_detail(AsyncMock(), device)
+    payload = await svc.serialize_device_detail(AsyncMock(), device, include_orchestration=True)
 
     assert payload["appium_node"]["port"] == 4723
     assert payload["orchestration"] == {"intents": []}

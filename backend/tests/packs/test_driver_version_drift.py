@@ -5,10 +5,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
+import pytest
+
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation, HostRuntimeInstallation
 from app.packs.schemas import HostPackStatusOut
 from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.service import PackCatalogService
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
 
@@ -122,3 +125,81 @@ async def test_drift_detected_when_installed_differs_from_desired(db_session: As
     assert pack_status["desired_appium_driver_version"] == "3.6.0"
     assert pack_status["installed_appium_driver_version"] == "3.5.0"
     assert pack_status["appium_driver_drift"] is True
+
+
+@pytest.mark.db
+async def test_catalog_and_per_host_drift_agree_on_manifest_fallback(db_session: AsyncSession) -> None:
+    """Regression: when resolved_install_spec is None, both surfaces must agree on drift."""
+    host_id = uuid.uuid4()
+    db_session.add(
+        Host(
+            id=host_id,
+            hostname="test-host-b1",
+            ip="127.0.0.2",
+            os_type=OSType.linux,
+            agent_port=5101,
+            status=HostStatus.online,
+        )
+    )
+    db_session.add(DriverPack(id="test-pack-b1", origin="uploaded", display_name="Test B1", state="enabled"))
+    await db_session.flush()
+    db_session.add(
+        DriverPackRelease(
+            pack_id="test-pack-b1",
+            release="1.0.0",
+            manifest_json={
+                "schema_version": 1,
+                "id": "test-pack-b1",
+                "release": "1.0.0",
+                "display_name": "Test B1",
+                "appium_server": {
+                    "source": "npm",
+                    "package": "appium",
+                    "version": ">=2.5,<3",
+                    "recommended": "2.11.5",
+                },
+                "appium_driver": {
+                    "source": "npm",
+                    "package": "appium-uiautomator2-driver",
+                    "version": ">=3,<5",
+                    "recommended": "3.6.0",
+                },
+                "platforms": [],
+            },
+        )
+    )
+    db_session.add(
+        HostRuntimeInstallation(
+            host_id=host_id,
+            runtime_id="rt-b1",
+            appium_server_package="appium",
+            appium_server_version="2.11.5",
+            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.5.0"}],
+            status="installed",
+        )
+    )
+    # resolved_install_spec=None forces the manifest recommended fallback
+    db_session.add(
+        HostPackInstallation(
+            host_id=host_id,
+            pack_id="test-pack-b1",
+            pack_release="1.0.0",
+            runtime_id="rt-b1",
+            status="installed",
+            resolved_install_spec=None,
+            installed_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+    # per-host surface
+    per_host = await _status_svc.get_host_driver_pack_status(db_session, host_id)
+    per_host_drift = per_host["packs"][0]["appium_driver_drift"]
+
+    # catalog surface
+    catalog_svc = PackCatalogService(lifecycle=Mock())
+    summaries = await catalog_svc._runtime_summaries_by_pack(db_session, ["test-pack-b1"])  # type: ignore[misc]
+    catalog_drift_hosts = summaries["test-pack-b1"].driver_drift_hosts
+
+    assert per_host_drift is True, "per-host surface must detect drift via manifest fallback"
+    assert catalog_drift_hosts == 1, "catalog surface must agree with per-host (was 0 before fix)"
