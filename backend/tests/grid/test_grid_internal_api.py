@@ -389,7 +389,7 @@ async def test_activity_updates_last_activity_at(
 
     resp = await client.post(
         "/internal/grid/activity",
-        json={"sessions": {"act-1": "2026-06-05T12:00:00Z", "unknown": "2026-06-05T12:00:00Z"}},
+        json={"sessions": ["act-1", "unknown"]},
     )
     assert resp.status_code == 204
     row = await db_session.get(Session, uuid.UUID(allocation_id))
@@ -430,7 +430,7 @@ async def test_activity_stamps_server_now_ignoring_caller_timestamps(
         "/internal/grid/activity",
         # Wildly skewed caller timestamps (one far past, one far future) must both be
         # ignored in favor of the server clock.
-        json={"sessions": {sid_a: "2000-01-01T00:00:00Z", sid_b: "2099-12-31T23:59:59Z"}},
+        json={"sessions": [sid_a, sid_b]},
     )
     assert resp.status_code == 204
 

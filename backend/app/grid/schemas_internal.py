@@ -6,7 +6,6 @@ router) — the contract is shared with the router process, not the frontend.
 
 import json
 import uuid
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
@@ -66,16 +65,9 @@ class RoutesResponse(BaseModel):
 class ActivityRequest(BaseModel):
     """``sessions``: which session ids saw traffic since the last router flush.
 
-    The backend stamps a server-side ``now()`` for every reported id, so the
-    values of the legacy id->timestamp map form were always ignored (router
-    clock skew must not extend or defeat idle reaping). Routers send a bare id
-    list (wave-5 #12); the map form stays accepted for deploy-order
-    compatibility with older routers — drop it once every deployed router is
-    past the list-form release.
+    The backend stamps a single server-side ``now()`` for every reported id
+    (router clock skew must not extend or defeat idle reaping), so only the id
+    list is needed.
     """
 
-    sessions: list[str] | dict[str, datetime]
-
-    @property
-    def session_ids(self) -> list[str]:
-        return self.sessions if isinstance(self.sessions, list) else list(self.sessions.keys())
+    sessions: list[str]

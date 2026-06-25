@@ -146,9 +146,7 @@ async def test_confirm_fail_ended_activity_routes_handlers(
     routes = await router_internal.routes(db_session)
     assert any(r.session_id == "appium-x" for r in routes.routes)
 
-    activity = await router_internal.activity(
-        ActivityRequest(sessions={"appium-x": "2026-06-06T00:00:00Z"}), db_session
-    )
+    activity = await router_internal.activity(ActivityRequest(sessions=["appium-x"]), db_session)
     assert activity.status_code == 204
 
     ended = await router_internal.ended(EndedRequest(session_id="appium-x"), db_session, services)
@@ -186,7 +184,7 @@ async def test_cancel_ticket_handler(services: GridServices, db_session: AsyncSe
 
 @pytest.mark.db
 async def test_activity_empty_is_noop(db_session: AsyncSession) -> None:
-    resp = await router_internal.activity(ActivityRequest(sessions={}), db_session)
+    resp = await router_internal.activity(ActivityRequest(sessions=[]), db_session)
     assert resp.status_code == 204
 
 

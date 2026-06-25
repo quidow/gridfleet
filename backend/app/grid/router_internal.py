@@ -219,7 +219,7 @@ async def activity(payload: ActivityRequest, db: DbDep) -> Response:
     now = now_utc()
     await db.execute(
         update(Session)
-        .where(Session.session_id.in_(payload.session_ids), Session.status == SessionStatus.running)
+        .where(Session.session_id.in_(payload.sessions), Session.status == SessionStatus.running)
         .values(last_activity_at=now)
     )
     await db.commit()
