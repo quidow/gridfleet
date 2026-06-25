@@ -12,35 +12,35 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.protocols import (
-        BulkOperationsProtocol,
-        ConnectivityProtocol,
-        DataCleanupProtocol,
         DeviceCapabilityProtocol,
         DeviceCrudProtocol,
-        DeviceGroupsProtocol,
         DeviceHealthProtocol,
-        DevicePresenterProtocol,
-        FleetCapacityProtocol,
         MaintenanceProtocol,
-        PropertyRefreshProtocol,
-        TestDataProtocol,
     )
+    from app.devices.services.bulk import BulkOperationsService
+    from app.devices.services.connectivity import ConnectivityService
+    from app.devices.services.data_cleanup import DataCleanupService
+    from app.devices.services.fleet_capacity import FleetCapacityService
+    from app.devices.services.groups import DeviceGroupsService
+    from app.devices.services.presenter import DevicePresenterService
+    from app.devices.services.property_refresh import PropertyRefreshService
+    from app.devices.services.test_data import TestDataService
     from app.events.protocols import EventPublisher
 
 
 @dataclass(frozen=True, slots=True)
 class DeviceServices:
-    fleet_capacity: FleetCapacityProtocol
-    data_cleanup: DataCleanupProtocol
-    property_refresh: PropertyRefreshProtocol
-    groups: DeviceGroupsProtocol
+    fleet_capacity: FleetCapacityService
+    data_cleanup: DataCleanupService
+    property_refresh: PropertyRefreshService
+    groups: DeviceGroupsService
     maintenance: MaintenanceProtocol
-    bulk: BulkOperationsProtocol
-    presenter: DevicePresenterProtocol
-    test_data: TestDataProtocol
+    bulk: BulkOperationsService
+    presenter: DevicePresenterService
+    test_data: TestDataService
     crud: DeviceCrudProtocol
     capability: DeviceCapabilityProtocol
-    connectivity: ConnectivityProtocol
+    connectivity: ConnectivityService
     health: DeviceHealthProtocol
     publisher: EventPublisher
     settings: SettingsReader
