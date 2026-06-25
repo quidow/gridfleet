@@ -1,8 +1,11 @@
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeSpec
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _FakeRunner:

@@ -12,7 +12,7 @@ from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import dispatch_doctor, dispatch_feature_action
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx
-from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
+from agent_app.pack.dependencies import (
     DesiredPlatformDep,
     HostIdDep,
     OptionalAdapterRegistryDep,
@@ -56,7 +56,7 @@ def _parse_claimed_ports(raw: str | None) -> dict[str, int] | None:
         if not isinstance(decoded, dict):
             return None
         return {str(k): int(v) for k, v in decoded.items()}
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 

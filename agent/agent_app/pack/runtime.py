@@ -134,7 +134,7 @@ def _installed_package_version(appium_home: str, package: str) -> str | None:
     package_json = Path(appium_home) / "node_modules" / package / "package.json"
     try:
         data = json.loads(package_json.read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     version = data.get("version")
     return version if isinstance(version, str) and version else None
@@ -184,7 +184,7 @@ def _adopt_runtime_from_disk(rid: str, appium_home: str) -> RuntimeEnv | None:
     construction. Returns None (→ reinstall) on any validation failure."""
     try:
         data = json.loads((Path(appium_home) / _RUNTIME_COMPLETE_MARKER).read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     appium_bin = data.get("appium_bin")
     if not isinstance(appium_bin, str) or not Path(appium_bin).is_file() or not os.access(appium_bin, os.X_OK):

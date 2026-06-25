@@ -255,5 +255,5 @@ class SidecarSupervisor:
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError, Exception:
             return

@@ -15,6 +15,6 @@ def _parse_node_version(path: str) -> tuple[int, ...]:
         for part in parts:
             if part.startswith("v") and "." in part:
                 return tuple(int(x) for x in part.lstrip("v").split("."))
-    except (ValueError, IndexError):
+    except ValueError, IndexError:
         logger.debug("Failed to parse node version from %r", path, exc_info=True)
     return (0,)

@@ -5,10 +5,11 @@ import pytest
 
 from agent_app.appium.process import AppiumLaunchSpec, AppiumProcessManager
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import SessionOutcome, SessionSpec
 
 if TYPE_CHECKING:
     import asyncio
+
+    from agent_app.pack.adapter_types import SessionOutcome, SessionSpec
 
 pytestmark = pytest.mark.asyncio
 

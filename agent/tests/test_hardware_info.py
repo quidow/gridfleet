@@ -1,9 +1,12 @@
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from agent_app.host import hardware_info
 from agent_app.host.hardware_info import host_disk_path
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _reset_cache() -> None:

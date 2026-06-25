@@ -187,7 +187,7 @@ def check_linger(*, run_command: Callable[[list[str]], str] | None = None) -> st
             output = result.stdout.strip()
         else:
             output = run_command(cmd).strip()
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+    except FileNotFoundError, OSError, subprocess.TimeoutExpired:
         return None  # loginctl missing — not a systemd host.
     if output == "Linger=yes":
         return None

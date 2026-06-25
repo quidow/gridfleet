@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx2 import ASGITransport, AsyncClient
@@ -11,6 +11,9 @@ from agent_app.observability import (
     clear_request_context,
     configure_logging,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 @pytest.fixture

@@ -55,7 +55,7 @@ def _credentials_match(scope: Scope, expected_username: str, expected_password: 
         return False
     try:
         decoded = base64.b64decode(encoded).decode("latin-1")
-    except (ValueError, UnicodeDecodeError, binascii.Error):
+    except ValueError, UnicodeDecodeError, binascii.Error:
         return False
     username, separator, password = decoded.partition(":")
     if not separator:

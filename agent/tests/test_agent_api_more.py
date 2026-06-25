@@ -1,7 +1,6 @@
 import asyncio
-from collections.abc import AsyncGenerator, Iterator
 from contextlib import contextmanager
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,8 +13,12 @@ from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
 from agent_app.pack.dependencies import _latest_desired
-from agent_app.pack.manifest import DesiredPack
 from agent_app.registration import RegistrationService
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Iterator
+
+    from agent_app.pack.manifest import DesiredPack
 
 
 class _AdapterContext(Protocol):
