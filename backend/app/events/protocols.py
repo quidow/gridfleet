@@ -33,21 +33,3 @@ class EventPublisher(Protocol):
         *,
         severity: EventSeverity | None = None,
     ) -> None: ...
-
-
-@runtime_checkable
-class EventSubscriber(Protocol):
-    def subscribe(self) -> asyncio.Queue[Any]: ...
-    def unsubscribe(self, q: asyncio.Queue[Any]) -> None: ...
-
-
-@runtime_checkable
-class EventReader(Protocol):
-    async def get_recent_events_persisted(
-        self,
-        *,
-        limit: int = 25,
-        offset: int = 0,
-        event_types: list[str] | None = None,
-        severities: list[str] | None = None,
-    ) -> tuple[list[dict[str, Any]], int]: ...
