@@ -178,28 +178,8 @@ def _decode_model_payload(
     return raw
 
 
-def _decode_model_payload_lenient(
-    response: httpx.Response,
-    *,
-    host: str,
-    action: str,
-    model: type[BaseModel],
-    none_on_404: bool = False,
-    require_200: bool = False,
-) -> dict[str, Any] | None:
-    """Lenient decode: invalid JSON or payload -> None.
-
-    ``require_200`` returns None for ANY non-200 status without raising.
-    ``none_on_404`` returns None for 404 and raises (via ``_raise_for_status``)
-    for other error statuses.
-    """
-    if require_200:
-        if response.status_code != HTTPStatus.OK:
-            return None
-    else:
-        if none_on_404 and response.status_code == HTTPStatus.NOT_FOUND:
-            return None
-        _raise_for_status(response, host=host, action=action)
+def _decode_validated_payload(response: httpx.Response, *, model: type[BaseModel]) -> dict[str, Any] | None:
+    """Decode JSON and validate against ``model``; return None on bad JSON or schema mismatch."""
     try:
         raw: dict[str, Any] = cast("dict[str, Any]", response.json())
     except ValueError:
@@ -209,6 +189,33 @@ def _decode_model_payload_lenient(
     except PydanticValidationError:
         return None
     return raw
+
+
+def decode_or_raise(
+    response: httpx.Response, *, host: str, action: str, model: type[BaseModel]
+) -> dict[str, Any] | None:
+    """Raise (via ``_raise_for_status``) on any error status; None on bad JSON / schema mismatch."""
+    _raise_for_status(response, host=host, action=action)
+    return _decode_validated_payload(response, model=model)
+
+
+def decode_or_none_unless_200(
+    response: httpx.Response, *, host: str, action: str, model: type[BaseModel]
+) -> dict[str, Any] | None:
+    """None on any non-200 status (never raises); None on bad JSON / schema mismatch."""
+    if response.status_code != HTTPStatus.OK:
+        return None
+    return _decode_validated_payload(response, model=model)
+
+
+def decode_or_none_on_404(
+    response: httpx.Response, *, host: str, action: str, model: type[BaseModel]
+) -> dict[str, Any] | None:
+    """None on 404; raise on other error statuses; None on bad JSON / schema mismatch."""
+    if response.status_code == HTTPStatus.NOT_FOUND:
+        return None
+    _raise_for_status(response, host=host, action=action)
+    return _decode_validated_payload(response, model=model)
 
 
 def _as_dict(payload: object) -> dict[str, Any] | None:
@@ -237,7 +244,7 @@ async def agent_health(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    return _decode_model_payload_lenient(response, host=host, action="health check", model=HealthResponse)
+    return decode_or_raise(response, host=host, action="health check", model=HealthResponse)
 
 
 async def agent_host_telemetry(
@@ -262,9 +269,7 @@ async def agent_host_telemetry(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    return _decode_model_payload_lenient(
-        response, host=host, action="fetch host telemetry", model=HostTelemetryResponse, require_200=True
-    )
+    return decode_or_none_unless_200(response, host=host, action="fetch host telemetry", model=HostTelemetryResponse)
 
 
 async def appium_logs(
@@ -318,9 +323,7 @@ async def appium_status(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    return _decode_model_payload_lenient(
-        response, host=host, action="fetch Appium status", model=AppiumStatusResponse, require_200=True
-    )
+    return decode_or_none_unless_200(response, host=host, action="fetch Appium status", model=AppiumStatusResponse)
 
 
 async def appium_start(
@@ -573,8 +576,8 @@ async def get_pack_device_properties(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    return _decode_model_payload_lenient(
-        response, host=host, action="fetch pack device properties", model=PackDevicePropertiesResponse, none_on_404=True
+    return decode_or_none_on_404(
+        response, host=host, action="fetch pack device properties", model=PackDevicePropertiesResponse
     )
 
 
@@ -714,8 +717,8 @@ async def pack_device_telemetry(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    return _decode_model_payload_lenient(
-        response, host=host, action="fetch pack device telemetry", model=PackDeviceTelemetryResponse, none_on_404=True
+    return decode_or_none_on_404(
+        response, host=host, action="fetch pack device telemetry", model=PackDeviceTelemetryResponse
     )
 
 

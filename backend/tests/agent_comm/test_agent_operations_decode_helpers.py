@@ -4,7 +4,12 @@ import httpx2 as httpx
 import pytest
 from pydantic import BaseModel
 
-from app.agent_comm.operations import _decode_model_payload, _decode_model_payload_lenient
+from app.agent_comm.operations import (
+    _decode_model_payload,
+    decode_or_none_on_404,
+    decode_or_none_unless_200,
+    decode_or_raise,
+)
 from app.core.errors import AgentResponseError, AgentUnreachableError
 
 
@@ -43,41 +48,32 @@ def test_strict_raises_unreachable_on_model_mismatch() -> None:
         )
 
 
-def test_lenient_returns_valid_payload() -> None:
-    raw = _decode_model_payload_lenient(
-        _response(200, json_body={"ok": True}), host="h1", action="health check", model=_Payload
-    )
+def test_decode_or_raise_returns_valid_payload() -> None:
+    raw = decode_or_raise(_response(200, json_body={"ok": True}), host="h", action="a", model=_Payload)
     assert raw == {"ok": True}
 
 
-def test_lenient_returns_none_on_invalid_json_and_model_mismatch() -> None:
-    assert _decode_model_payload_lenient(_response(200, text="not json"), host="h1", action="x", model=_Payload) is None
+def test_decode_or_raise_returns_none_on_invalid_json_and_model_mismatch() -> None:
+    assert decode_or_raise(_response(200, text="not json"), host="h", action="a", model=_Payload) is None
     assert (
-        _decode_model_payload_lenient(
-            _response(200, json_body={"ok": "not-a-bool-at-all"}), host="h1", action="x", model=_Payload
-        )
+        decode_or_raise(_response(200, json_body={"ok": "not-a-bool-at-all"}), host="h", action="a", model=_Payload)
         is None
     )
 
 
-def test_lenient_require_200_returns_none_on_other_status_without_raising() -> None:
-    assert (
-        _decode_model_payload_lenient(
-            _response(503, json_body={}), host="h1", action="x", model=_Payload, require_200=True
-        )
-        is None
-    )
-
-
-def test_lenient_none_on_404() -> None:
-    assert (
-        _decode_model_payload_lenient(
-            _response(404, json_body={}), host="h1", action="x", model=_Payload, none_on_404=True
-        )
-        is None
-    )
-
-
-def test_lenient_still_raises_on_http_failure_when_not_required_200() -> None:
+def test_decode_or_raise_raises_on_http_failure() -> None:
     with pytest.raises(AgentResponseError):
-        _decode_model_payload_lenient(_response(500, json_body={}), host="h1", action="x", model=_Payload)
+        decode_or_raise(_response(500, json_body={}), host="h", action="a", model=_Payload)
+
+
+def test_decode_or_none_unless_200_returns_none_on_other_status() -> None:
+    assert decode_or_none_unless_200(_response(503, json_body={}), host="h", action="a", model=_Payload) is None
+
+
+def test_decode_or_none_on_404_returns_none_on_404() -> None:
+    assert decode_or_none_on_404(_response(404, json_body={}), host="h", action="a", model=_Payload) is None
+
+
+def test_decode_or_none_on_404_still_raises_on_other_http_failure() -> None:
+    with pytest.raises(AgentResponseError):
+        decode_or_none_on_404(_response(500, json_body={}), host="h", action="a", model=_Payload)
