@@ -132,31 +132,18 @@ async def deliver_agent_reconfigures(
             await db.commit()
             continue
         try:
-            if agent_call_timeout is None:
-                await agent_operations.agent_appium_reconfigure(
-                    device.host.ip,
-                    device.host.agent_port,
-                    port=row.port,
-                    accepting_new_sessions=row.accepting_new_sessions,
-                    stop_pending=row.stop_pending,
-                    grid_run_id=row.grid_run_id,
-                    settings=settings,
-                    pool=pool,
-                    circuit_breaker=circuit_breaker,
-                )
-            else:
-                await agent_operations.agent_appium_reconfigure(
-                    device.host.ip,
-                    device.host.agent_port,
-                    port=row.port,
-                    accepting_new_sessions=row.accepting_new_sessions,
-                    stop_pending=row.stop_pending,
-                    grid_run_id=row.grid_run_id,
-                    timeout=agent_call_timeout,
-                    settings=settings,
-                    pool=pool,
-                    circuit_breaker=circuit_breaker,
-                )
+            await agent_operations.agent_appium_reconfigure(
+                device.host.ip,
+                device.host.agent_port,
+                port=row.port,
+                accepting_new_sessions=row.accepting_new_sessions,
+                stop_pending=row.stop_pending,
+                grid_run_id=row.grid_run_id,
+                timeout=agent_call_timeout if agent_call_timeout is not None else 10,
+                settings=settings,
+                pool=pool,
+                circuit_breaker=circuit_breaker,
+            )
         except (AgentUnreachableError, AgentResponseError) as exc:
             if isinstance(exc, AgentResponseError) and exc.http_status == HTTPStatus.NOT_FOUND:
                 # The reconfigure route's only 404 is DEVICE_NOT_FOUND: the agent
