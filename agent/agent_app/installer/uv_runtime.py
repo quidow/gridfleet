@@ -65,6 +65,11 @@ def build_upgrade_command(
         "install",
         "--python",
         str(venv_python),
+        # --upgrade re-resolves but still reads uv's cached package index, so a
+        # version published moments ago is invisible and the upgrade no-ops.
+        # --refresh-package forces a fresh index lookup for gridfleet-agent.
+        "--refresh-package",
+        "gridfleet-agent",
         "--upgrade",
         package_spec,
     ]

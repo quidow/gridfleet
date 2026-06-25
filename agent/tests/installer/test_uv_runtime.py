@@ -85,6 +85,8 @@ def test_build_upgrade_command_uses_dedicated_venv_python(tmp_path: Path) -> Non
         "install",
         "--python",
         str(tmp_path / "agent/venv/bin/python"),
+        "--refresh-package",
+        "gridfleet-agent",
         "--upgrade",
         "gridfleet-agent==0.4.0",
     ]
