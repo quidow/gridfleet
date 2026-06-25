@@ -48,7 +48,6 @@ from app.events.services_container import EventServices
 from app.grid.allocation import AllocationService, device_match_surface
 from app.grid.services_container import GridServices
 from app.hosts.service import HostCrudService
-from app.hosts.service_agent_logs import AgentLogsService
 from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
@@ -330,7 +329,6 @@ def compose_app(
                 settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
             ),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
-            agent_logs=AgentLogsService(),
             host_events=HostEventsService(),
             publisher=bus,
             settings=settings_svc,

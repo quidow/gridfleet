@@ -17,7 +17,7 @@ from app.core.timeutil import now_utc
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.events.models import SystemEvent
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.hosts.models import HostAgentLogEntry, HostResourceSample
+from app.hosts.models import HostResourceSample
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.runs.models import TERMINAL_STATES, TestRun
@@ -46,7 +46,6 @@ CleanupModel = (
     | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
     | type[HostResourceSample]
-    | type[HostAgentLogEntry]
     | type[AnalyticsCapacitySnapshot]
     | type[GridSessionQueueTicket]
     | type[SystemEvent]
@@ -94,7 +93,6 @@ class _CleanupCounts:
     test_data_audit_deleted: int = 0
     events_deleted: int = 0
     host_resource_samples_deleted: int = 0
-    agent_log_entries_deleted: int = 0
     capacity_snapshots_deleted: int = 0
     system_events_deleted: int = 0
     test_runs_deleted: int = 0
@@ -220,17 +218,6 @@ class DataCleanupService:
                 cutoff=cutoff,
             )
 
-        agent_log_days: int = self._settings.get("retention.agent_log_days")
-        if agent_log_days > 0:
-            cutoff = now - timedelta(days=agent_log_days)
-            # `received_at` is server-clock; `ts` is agent-reported and may be skewed.
-            counts.agent_log_entries_deleted = await _delete_in_batches(
-                db,
-                model=HostAgentLogEntry,
-                timestamp_column=HostAgentLogEntry.received_at,
-                cutoff=cutoff,
-            )
-
         capacity_snapshots_days: int = self._settings.get("retention.capacity_snapshots_days")
         if capacity_snapshots_days > 0:
             cutoff = now - timedelta(days=capacity_snapshots_days)
@@ -290,7 +277,7 @@ class DataCleanupService:
 
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
-            "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
+            "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d, "
             "agent_reconfigure_outbox=%d, grid_queue_tickets=%d"
             ", system_events=%d, test_runs=%d, jobs=%d",
             counts.sessions_deleted,
@@ -299,7 +286,6 @@ class DataCleanupService:
             counts.test_data_audit_deleted,
             counts.events_deleted,
             counts.host_resource_samples_deleted,
-            counts.agent_log_entries_deleted,
             counts.capacity_snapshots_deleted,
             counts.agent_reconfigure_outbox_deleted,
             counts.grid_queue_tickets_deleted,
@@ -316,7 +302,6 @@ class DataCleanupService:
                 "test_data_audit_entries_deleted": counts.test_data_audit_deleted,
                 "device_events_deleted": counts.events_deleted,
                 "host_resource_samples_deleted": counts.host_resource_samples_deleted,
-                "agent_log_entries_deleted": counts.agent_log_entries_deleted,
                 "capacity_snapshots_deleted": counts.capacity_snapshots_deleted,
                 "agent_reconfigure_outbox_deleted": counts.agent_reconfigure_outbox_deleted,
                 "grid_queue_tickets_deleted": counts.grid_queue_tickets_deleted,

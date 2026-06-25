@@ -766,16 +766,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=720,
     ),
     SettingDefinition(
-        key="retention.agent_log_days",
-        category="retention",
-        setting_type="int",
-        default=7,
-        description="Days of agent-process log entries kept before pruning",
-        env_var="GRIDFLEET_AGENT_LOG_RETENTION_DAYS",
-        min_value=1,
-        max_value=30,
-    ),
-    SettingDefinition(
         key="retention.capacity_snapshots_days",
         category="retention",
         setting_type="int",
