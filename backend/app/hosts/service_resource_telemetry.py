@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +11,7 @@ from app.agent_comm import operations as agent_operations
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger, parse_timestamp
+from app.core.timeutil import now_utc
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
 
@@ -32,10 +33,6 @@ agent_host_telemetry = agent_operations.agent_host_telemetry
 
 # Largest accepted telemetry bucket size: one day, expressed in minutes.
 _MAX_BUCKET_MINUTES = 1440
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _coerce_int(value: object) -> int | None:
@@ -90,7 +87,7 @@ class HostResourceTelemetryService:
         host: Host,
         sample: dict[str, Any],
     ) -> HostResourceSample:
-        recorded_at = parse_timestamp(sample.get("recorded_at")) or _now()
+        recorded_at = parse_timestamp(sample.get("recorded_at")) or now_utc()
         row = HostResourceSample(
             host_id=host.id,
             recorded_at=recorded_at,

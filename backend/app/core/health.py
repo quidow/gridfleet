@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
@@ -12,15 +11,12 @@ from app.core.observability import (
     loop_heartbeat_fresh,
 )
 from app.core.shutdown import shutdown_coordinator
+from app.core.timeutil import now_utc
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 async def check_liveness() -> dict[str, str]:
@@ -53,7 +49,7 @@ async def check_readiness(db: AsyncSession, *, settings: SettingsReader) -> tupl
         return payload, 503
 
     snapshots = await get_background_loop_snapshots(db)
-    current_time = _now()
+    current_time = now_utc()
     # Snapshots live in-memory on the leader and are batch-flushed every
     # `background_loop_flush_interval_sec`; allow that full window as extra
     # grace so a healthy loop is never reported stale during the flush gap.

@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -6,6 +5,7 @@ from starlette.responses import StreamingResponse
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.timeutil import now_utc
 from app.devices.routers.core import build_device_query_filters
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.portability.dependencies import PortabilityServicesDep
@@ -30,7 +30,7 @@ router = APIRouter(
 @router.get("/export", response_model=ExportBundle, summary="Export all registered devices as a portable JSON bundle")
 async def export_devices(db: DbDep, portability_services: PortabilityServicesDep, response: Response) -> ExportBundle:
     bundle = await portability_services.export.build_export_bundle(db)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
     response.headers["Content-Disposition"] = f'attachment; filename="gridfleet-devices-{stamp}.json"'
     return bundle
 
@@ -74,7 +74,7 @@ async def inventory(
     filters: Annotated[DeviceQueryFilters, Depends(build_device_query_filters)],
     fmt: Annotated[InventoryFormat, Query(alias="format")] = InventoryFormat.JSON,
 ) -> StreamingResponse:
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
     if fmt == InventoryFormat.CSV:
         media = "text/csv; charset=utf-8"
         filename = f"gridfleet-inventory-{stamp}.csv"

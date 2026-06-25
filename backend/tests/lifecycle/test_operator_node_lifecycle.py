@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
@@ -30,19 +30,6 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
-
-
-class _FrozenDatetime:
-    """Drop-in replacement for the ``datetime`` class that freezes ``now()``."""
-
-    def __init__(self, now: datetime) -> None:
-        self._now = now
-
-    def now(self, tz: timezone | None = None) -> datetime:
-        return self._now if tz is None else self._now.astimezone(tz)
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(datetime, name)
 
 
 class _FakeDevice:
@@ -155,7 +142,7 @@ def test_operator_restart_intent_sets_expires_at_and_preserves_precondition(
     from app.lifecycle.services.operator_node import operator_restart_intent
 
     fixed_now = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(mod, "datetime", _FrozenDatetime(fixed_now))
+    monkeypatch.setattr(mod, "now_utc", lambda: fixed_now)
 
     device_id = uuid.uuid4()
     device = _FakeDevice(device_id)

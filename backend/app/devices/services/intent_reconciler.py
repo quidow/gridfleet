@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import cast, delete, func, or_, select
@@ -19,6 +18,7 @@ from app.core import metrics_recorders
 from app.core.background_loop import BackgroundLoop
 from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import (
     Device,
@@ -219,7 +219,7 @@ async def _reconcile_expired_intents(
     publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
-    now = datetime.now(UTC)
+    now = now_utc()
     device_ids = (
         (
             await db.execute(
@@ -374,7 +374,7 @@ async def reconcile_device(
         # No Appium node — skip intent evaluation but still derive device state
         # so operational_state / hold stay consistent with durable facts.
         try:
-            now = datetime.now(UTC)
+            now = now_utc()
             await apply_derived_state(
                 db, device, now=now, publisher=publisher, observed_reason=observed_reason, packs=packs
             )
@@ -382,7 +382,7 @@ async def reconcile_device(
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return
 
-    now = datetime.now(UTC)
+    now = now_utc()
     intents = (
         (
             await db.execute(
@@ -606,7 +606,7 @@ async def _update_reservation_exclusion(
     reservation.excluded_until = decision.expires_at
     reservation.cooldown_count = next_cooldown_count
     if reservation.excluded_at is None:
-        reservation.excluded_at = datetime.now(UTC)
+        reservation.excluded_at = now_utc()
     await record_event(
         db,
         reservation.device_id,

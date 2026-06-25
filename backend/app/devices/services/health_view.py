@@ -14,13 +14,15 @@ Two distinct concerns live here, deliberately separated:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from app.appium_nodes.services.effective_state import compute_effective_state
+from app.core.timeutil import now_utc
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
 
@@ -77,7 +79,7 @@ def _node_verdict(device: Device) -> dict[str, Any]:
         transition_token=node.transition_token,
         transition_deadline=node.transition_deadline,
         lifecycle_policy_state=device.lifecycle_policy_state,
-        now=datetime.now(UTC),
+        now=now_utc(),
     )
     detail = node.health_state if node.health_state and node.health_state != effective else effective
     return _verdict(_NODE_STATE_TO_STATUS[effective], detail, node.last_health_checked_at)

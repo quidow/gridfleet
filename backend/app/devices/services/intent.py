@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceIntentDirty
 from app.devices.services.intent_reconciler import reconcile_device
@@ -44,7 +44,7 @@ class IntentService:
             sources = ", ".join(sorted(duplicate_sources))
             raise ValueError(f"Duplicate intent source values are not allowed in one batch: {sources}")
 
-        now = datetime.now(UTC)
+        now = now_utc()
         stmt = insert(DeviceIntent).values(
             [
                 {
@@ -109,7 +109,7 @@ class IntentService:
         return revoked
 
     async def mark_dirty(self, device_id: UUID, *, reason: str) -> int:
-        now = datetime.now(UTC)
+        now = now_utc()
         dirty_update_values = {
             "dirty_at": now,
             "generation": DeviceIntentDirty.generation + 1,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
@@ -11,6 +11,7 @@ from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeManagerErro
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.core.errors import AgentCallError
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
@@ -263,7 +264,7 @@ class VerificationExecutionService:
             await record_probe_session(
                 db,
                 device=device,
-                attempted_at=datetime.now(UTC),
+                attempted_at=now_utc(),
                 result=grid_probe_response_to_result((ok, error)),
                 source=ProbeSource.verification,
                 capabilities=capabilities,
@@ -392,7 +393,7 @@ class VerificationExecutionService:
             detail="Verified node retained as the managed Appium node",
         )
 
-        locked.verified_at = datetime.now(UTC)
+        locked.verified_at = now_utc()
         # Reconciler-authoritative terminal: no direct set_operational_state push. Set
         # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
         # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
@@ -550,7 +551,7 @@ async def _register_verification_node_intent(
     """
     startup_timeout = settings.get_int("appium.startup_timeout_sec")
     viability_timeout = settings.get_int("general.session_viability_timeout_sec")
-    deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
+    deadline = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
     intent_service = IntentService(db)
     # Lock the Device row before the revoke below touches DeviceIntent/DeviceIntentDirty.
     # revoke_intents -> mark_dirty upserts the dirty row; without the Device lock first

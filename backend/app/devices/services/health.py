@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import locking as appium_node_locking
 from app.core.sentinels import UNSET, UnsetType
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.services.health_view import (
     build_public_summary,
@@ -37,10 +37,6 @@ def _node_reason_label(node: AppiumNode) -> str:
     if node.health_state:
         return node.health_state
     return "running" if node_running_signal(node) else "stopped"
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 async def _lock(db: AsyncSession, device: Device) -> Device | None:
@@ -102,7 +98,7 @@ class DeviceHealthService:
         previous = build_public_summary(locked)
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
-        locked.device_checks_checked_at = _now()
+        locked.device_checks_checked_at = now_utc()
         # Reconcile immediately only on failure so the device goes offline right
         # away. On success, defer to apply_node_state_transition (which reconciles
         # on state transitions) or the background reconciler. This preserves the old
@@ -126,7 +122,7 @@ class DeviceHealthService:
         previous = build_public_summary(locked)
         locked.session_viability_status = status
         locked.session_viability_error = error
-        locked.session_viability_checked_at = _now()
+        locked.session_viability_checked_at = now_utc()
         # Same asymmetry as update_device_checks: reconcile immediately on failure
         # (device goes offline), defer on success (rely on apply_node_state_transition).
         if status == "failed":
@@ -168,7 +164,7 @@ class DeviceHealthService:
         if not isinstance(health_state, UnsetType):
             locked_node.health_state = health_state
         if health_provided:
-            locked_node.last_health_checked_at = _now()
+            locked_node.last_health_checked_at = now_utc()
 
         # Transition gate: an explicit health observation that does not change the
         # node's health columns is the steady-state node-health churn (node_health

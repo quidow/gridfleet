@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
@@ -13,6 +13,7 @@ from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, parse_timestamp
+from app.core.timeutil import now_utc
 from app.devices.models import (
     Device,
     DeviceEventType,
@@ -53,10 +54,6 @@ def _hardware_severity(old_status: str | None, new_status: str) -> EventSeverity
 
 
 fetch_pack_device_telemetry = agent_operations.pack_device_telemetry
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _health_rank(status: HardwareHealthStatus) -> int:
@@ -131,7 +128,7 @@ def hardware_telemetry_state_for_device(
         return HardwareTelemetryState.unknown
 
     timeout_seconds = stale_timeout_sec or settings.get_int("general.hardware_telemetry_stale_timeout_sec")
-    if (now or _now()) - reported_at > timedelta(seconds=timeout_seconds):
+    if (now or now_utc()) - reported_at > timedelta(seconds=timeout_seconds):
         return HardwareTelemetryState.stale
     return HardwareTelemetryState.fresh
 
@@ -248,7 +245,7 @@ class HardwareTelemetryService:
         device.hardware_telemetry_support_status = _coerce_support_status(sample.get("support_status"))
 
         reported_at = parse_timestamp(sample.get("reported_at"))
-        device.hardware_telemetry_reported_at = reported_at or _now()
+        device.hardware_telemetry_reported_at = reported_at or now_utc()
 
         previous_status = current_hardware_health_status(device)
         candidate_status = derive_candidate_hardware_health_status(device, settings=self._settings)

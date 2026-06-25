@@ -13,9 +13,9 @@ of truth for the event payload.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceEventType
 from app.devices.services.event import record_event
 
@@ -64,7 +64,7 @@ class ReviewService:
             return False
         device.review_required = True
         device.review_reason = reason
-        device.review_set_at = datetime.now(UTC)
+        device.review_set_at = now_utc()
         await record_event(
             db,
             device.id,

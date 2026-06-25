@@ -6,7 +6,6 @@ import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event as sa_event
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.events.catalog import (
     PUBLIC_EVENT_NAME_SET,
     EventSeverity,
@@ -41,7 +41,7 @@ HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 class Event:
     type: str
     data: dict[str, Any]
-    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    timestamp: str = field(default_factory=lambda: now_utc().isoformat())
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     severity: EventSeverity = "neutral"
 

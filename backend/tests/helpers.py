@@ -18,6 +18,7 @@ from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
+from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 
@@ -519,6 +520,12 @@ async def store_verification_job_for_test(
             max_attempts=1,
             job_id=uuid.UUID(job_id),
         )
+
+
+async def delete_jobs_by_kind(db: AsyncSession, *, kind: str) -> None:
+    """Test-only cleanup: drop all durable jobs of *kind* and commit."""
+    await db.execute(delete(Job).where(Job.kind == kind))
+    await db.commit()
 
 
 async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -> None:

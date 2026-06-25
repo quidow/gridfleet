@@ -1,11 +1,11 @@
 import importlib
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import column, func, select, table
 
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import DEVICES_IN_COOLDOWN, INTENT_REGISTRY_INTENTS
+from app.core.timeutil import now_utc
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -35,7 +35,7 @@ async def _refresh_devices_gauges(db: AsyncSession) -> None:
         .select_from(DEVICE_RESERVATIONS)
         .where(DEVICE_RESERVATIONS.c.released_at.is_(None))
         .where(DEVICE_RESERVATIONS.c.excluded_until.is_not(None))
-        .where(DEVICE_RESERVATIONS.c.excluded_until > datetime.now(UTC))
+        .where(DEVICE_RESERVATIONS.c.excluded_until > now_utc())
     )
     DEVICES_IN_COOLDOWN.set(int(cooldown_result.scalar_one() or 0))
     intent_count = await db.scalar(select(func.count()).select_from(DEVICE_INTENTS))

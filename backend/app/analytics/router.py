@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
@@ -15,21 +15,18 @@ from app.analytics.schemas import (
 )
 from app.core.csv_export import to_csv_response
 from app.core.dependencies import DbDep
+from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 def _default_date_from() -> datetime:
-    return datetime.now(UTC) - timedelta(days=30)
-
-
-def _default_date_to() -> datetime:
-    return datetime.now(UTC)
+    return now_utc() - timedelta(days=30)
 
 
 def _default_capacity_date_from() -> datetime:
-    return datetime.now(UTC) - timedelta(hours=24)
+    return now_utc() - timedelta(hours=24)
 
 
 @router.get("/sessions/summary", response_model=list[SessionSummaryRow])
@@ -41,7 +38,7 @@ async def session_summary(
     export_format: Annotated[str | None, Query(alias="format")] = None,
 ) -> list[SessionSummaryRow] | StreamingResponse:
     df = date_from or _default_date_from()
-    dt = date_to or _default_date_to()
+    dt = date_to or now_utc()
     rows = await analytics_service.get_session_summary(db, df, dt, group_by)
     if export_format == "csv":
         return to_csv_response(rows, "session_summary.csv")
@@ -56,7 +53,7 @@ async def device_utilization(
     export_format: Annotated[str | None, Query(alias="format")] = None,
 ) -> list[DeviceUtilizationRow] | StreamingResponse:
     df = date_from or _default_date_from()
-    dt = date_to or _default_date_to()
+    dt = date_to or now_utc()
     rows = await analytics_service.get_device_utilization(db, df, dt)
     if export_format == "csv":
         return to_csv_response(rows, "device_utilization.csv")
@@ -71,7 +68,7 @@ async def device_reliability(
     export_format: Annotated[str | None, Query(alias="format")] = None,
 ) -> list[DeviceReliabilityRow] | StreamingResponse:
     df = date_from or _default_date_from()
-    dt = date_to or _default_date_to()
+    dt = date_to or now_utc()
     rows = await analytics_service.get_device_reliability(db, df, dt)
     if export_format == "csv":
         return to_csv_response(rows, "device_reliability.csv")
@@ -85,7 +82,7 @@ async def fleet_overview(
     date_to: Annotated[datetime | None, Query()] = None,
 ) -> FleetOverview:
     df = date_from or _default_date_from()
-    dt = date_to or _default_date_to()
+    dt = date_to or now_utc()
     return await analytics_service.get_fleet_overview(db, df, dt)
 
 
@@ -98,7 +95,7 @@ async def fleet_capacity_timeline(
     bucket_minutes: Annotated[int, Query(ge=1, le=1440)] = 1,
 ) -> FleetCapacityTimeline:
     df = date_from or _default_capacity_date_from()
-    dt = date_to or _default_date_to()
+    dt = date_to or now_utc()
     try:
         return await device_services.fleet_capacity.get_fleet_capacity_timeline(
             db, date_from=df, date_to=dt, bucket_minutes=bucket_minutes

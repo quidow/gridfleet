@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -26,6 +26,7 @@ from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOp
 from app.core.leader.advisory import assert_current_leader
 from app.core.metrics_recorders import record_background_loop_phase
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -237,7 +238,7 @@ class NodeHealthService:
         if node is None:
             return
         window_sec = self._settings.get_int("appium_reconciler.restart_window_sec")
-        deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
+        deadline = now_utc() + timedelta(seconds=window_sec)
         precondition: NodeRunningPrecondition = {
             "kind": "node_running",
             "device_id": str(device.id),

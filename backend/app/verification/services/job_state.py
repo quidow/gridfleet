@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import copy
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from app.core.timeutil import now_utc
 from app.jobs.models import Job
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ def enum_value(value: object) -> object:
 
 
 def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_utc().isoformat()
 
 
 def new_stage(name: str) -> dict[str, Any]:

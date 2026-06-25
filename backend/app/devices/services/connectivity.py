@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from datetime import UTC, datetime
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,6 +18,7 @@ from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.models.event import DeviceEventType
@@ -1027,7 +1027,7 @@ class ConnectivityService:
         await _reconcile_expired_intents(
             db, settings=self._settings, circuit_breaker=self._circuit_breaker, publisher=self._publisher
         )
-        now = datetime.now(UTC)
+        now = now_utc()
         # Transitional cleanup for pre-intent cooldown reservations. Remove once
         # all cooldown writes are guaranteed to flow through DeviceIntent rows.
         legacy_entries = (

@@ -11,6 +11,7 @@ from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumNode
 from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.reservation_query import active_reservation_exists
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -51,10 +52,6 @@ PRE_EXECUTION_ERROR_TYPES: tuple[str, ...] = (
     "gridtimeoutexception",
     "sessionrequesttimeout",
 )
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _normalized_error_text(session: Session) -> str:
@@ -341,7 +338,7 @@ class FleetCapacityService:
         devices_total, devices_available, devices_offline, devices_maintenance = await _count_devices(db)
 
         snapshot = AnalyticsCapacitySnapshot(
-            captured_at=captured_at or _now(),
+            captured_at=captured_at or now_utc(),
             total_capacity_slots=total_capacity_slots,
             active_sessions=active_sessions,
             queued_requests=queued_requests,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, or_, select
@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
+from app.core.timeutil import now_utc
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
@@ -40,10 +41,6 @@ async def _refresh_jobs_gauges(db: AsyncSession) -> None:
 register_gauge_refresher(_refresh_jobs_gauges)
 
 
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
 async def create_job(
     db: AsyncSession,
     *,
@@ -62,7 +59,7 @@ async def create_job(
         payload=copy.deepcopy(payload),
         snapshot=copy.deepcopy(snapshot),
         max_attempts=max_attempts,
-        scheduled_at=scheduled_at or utcnow(),
+        scheduled_at=scheduled_at or now_utc(),
     )
     db.add(job)
     if commit:
@@ -71,13 +68,6 @@ async def create_job(
         await db.flush()
     await db.refresh(job)
     return job
-
-
-async def delete_jobs_by_kind(db: AsyncSession, *, kind: str) -> None:
-    result = await db.execute(select(Job).where(Job.kind == kind))
-    for row in result.scalars().all():
-        await db.delete(row)
-    await db.commit()
 
 
 class DurableJobService:
@@ -104,7 +94,7 @@ class DurableJobService:
         kind: str = JOB_KIND_DEVICE_VERIFICATION,
         timeout: timedelta = STALE_JOB_TIMEOUT,
     ) -> int:
-        cutoff = utcnow() - timeout
+        cutoff = now_utc() - timeout
         async with self._session_factory() as db:
             result = await db.execute(
                 select(Job).where(
@@ -138,7 +128,7 @@ class DurableJobService:
                 select(Job)
                 .where(
                     Job.status == JOB_STATUS_PENDING,
-                    or_(Job.scheduled_at.is_(None), Job.scheduled_at <= utcnow()),
+                    or_(Job.scheduled_at.is_(None), Job.scheduled_at <= now_utc()),
                 )
                 .order_by(Job.created_at.asc())
                 .limit(1)
@@ -154,7 +144,7 @@ class DurableJobService:
 
             row.status = JOB_STATUS_RUNNING
             row.attempts += 1
-            row.started_at = utcnow()
+            row.started_at = now_utc()
             row.completed_at = None
             await db.commit()
             await db.refresh(row)
@@ -181,9 +171,9 @@ class DurableJobService:
             snapshot = copy.deepcopy(job.snapshot)
             snapshot["status"] = JOB_STATUS_FAILED
             snapshot["error"] = f"Unsupported job kind: {row.kind}"
-            snapshot["finished_at"] = utcnow().isoformat()
+            snapshot["finished_at"] = now_utc().isoformat()
             job.snapshot = snapshot
-            job.completed_at = utcnow()
+            job.completed_at = now_utc()
             await db.commit()
         return True
 

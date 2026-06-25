@@ -10,7 +10,7 @@ intent reconciler keeps re-asserting onto the AppiumNode row.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import or_, select
@@ -18,6 +18,7 @@ from sqlalchemy import or_, select
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -63,7 +64,7 @@ async def operator_stop_active(db: AsyncSession, device_id: uuid.UUID) -> bool:
     ``request_start`` and clears the stop — use this to refuse instead, so an
     operator-stopped device is never silently revived (N13b).
     """
-    now = datetime.now(UTC)
+    now = now_utc()
     found = await db.scalar(
         select(DeviceIntent.id)
         .where(
@@ -102,7 +103,7 @@ def operator_start_intent(device: Device, desired_port: int) -> IntentRegistrati
 
 def operator_restart_intent(device: Device, desired_port: int, *, settings: SettingsReader) -> IntentRegistration:
     window_sec = settings.get_int("appium_reconciler.restart_window_sec")
-    deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
+    deadline = now_utc() + timedelta(seconds=window_sec)
     return IntentRegistration(
         source=operator_start_source(device.id),
         axis=NODE_PROCESS,

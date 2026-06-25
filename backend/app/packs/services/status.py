@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
+from app.core.timeutil import now_utc
 from app.hosts.models import Host, HostPluginRuntimeStatus
 from app.packs.models import (
     DriverPack,
@@ -125,7 +125,7 @@ class PackStatusService:
                         installer_log_excerpt=pack.get("installer_log_excerpt"),
                         resolver_version=pack.get("resolver_version"),
                         blocked_reason=pack.get("blocked_reason"),
-                        installed_at=datetime.now(UTC) if pack.get("status") == "installed" else None,
+                        installed_at=now_utc() if pack.get("status") == "installed" else None,
                     )
                 )
             else:
@@ -137,7 +137,7 @@ class PackStatusService:
                 existing_pack.resolver_version = pack.get("resolver_version")
                 existing_pack.blocked_reason = pack.get("blocked_reason")
                 if pack.get("status") == "installed":
-                    existing_pack.installed_at = datetime.now(UTC)
+                    existing_pack.installed_at = now_utc()
 
         doctor_scope_pack_ids = {p["pack_id"] for p in payload.get("packs", []) if p.get("status") == "installed"}
         doctor_by_pack: dict[str, list[dict[str, Any]]] = {}

@@ -39,7 +39,7 @@ from agent_app.config import agent_settings
 from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import SubprocessEnvContribution
-from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
+from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_post_session, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
 
 logger = logging.getLogger(__name__)
@@ -850,9 +850,36 @@ class AppiumProcessManager:
         """
         self._forget_port(port)
 
+    async def _dispatch_post_session(self, spec: AppiumLaunchSpec | None) -> None:
+        """Fire the adapter ``post_session`` cleanup hook for a stopped node.
+
+        Symmetric counterpart to the ``adapter_pre_session`` call in the start
+        path. Runs outside the start lock; adapter failures must never wedge
+        teardown (the node is already gone), so they are logged and swallowed.
+        """
+        if self._adapter_registry is None or spec is None or not spec.pack_id:
+            return
+        adapter = self._adapter_registry.get_current(spec.pack_id)
+        if adapter is None:
+            return
+        pack_release = getattr(adapter, "pack_release", "")
+        try:
+            await adapter_post_session(
+                adapter_registry=self._adapter_registry,
+                pack_id=spec.pack_id,
+                pack_release=pack_release,
+                platform_id=spec.platform_id,
+                identity_value=spec.connection_target,
+                ok=True,
+                detail="stopped",
+            )
+        except Exception as exc:
+            logger.warning("adapter post_session failed for pack %s: %s", spec.pack_id, sanitize_log_value(exc))
+
     async def stop(self, port: int) -> None:
         async with self._start_lock:
             self._intentional_stop_ports.add(port)
+            spec = self._launch_specs.get(port)
             appium_proc = self._forget_port(port)
 
             if appium_proc and appium_proc.returncode is None:
@@ -865,6 +892,7 @@ class AppiumProcessManager:
 
             appium_log_path(port).unlink(missing_ok=True)
             self._intentional_stop_ports.discard(port)
+        await self._dispatch_post_session(spec)
 
     async def status(self, port: int) -> dict[str, Any]:
         proc = self._appium_procs.get(port)

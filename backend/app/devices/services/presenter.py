@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import copy
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect, select
 
 from app.appium_nodes.services.node_viability import device_node_accepting_new_sessions, device_node_is_viable
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent
 from app.devices.schemas.device import DeviceReservationRead
 from app.devices.services import attention as device_attention
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int | None:
     if reservation_entry is None or reservation_entry.excluded_until is None:
         return None
-    remaining = int((reservation_entry.excluded_until - datetime.now(UTC)).total_seconds())
+    remaining = int((reservation_entry.excluded_until - now_utc()).total_seconds())
     return max(0, remaining)
 
 
@@ -256,7 +256,7 @@ def _dataclass_to_dict(value: object) -> dict[str, Any]:
 
 
 async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str, Any]:
-    now = datetime.now(UTC)
+    now = now_utc()
     intents = (
         (
             await db.execute(

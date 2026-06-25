@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -12,6 +11,7 @@ from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumNode
 from app.core import metrics_recorders
 from app.core.errors import AgentResponseError, AgentUnreachableError
+from app.core.timeutil import now_utc
 from app.devices.models import Device
 
 if TYPE_CHECKING:
@@ -120,7 +120,7 @@ async def deliver_agent_reconfigures(
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == row.device_id))).scalar_one_or_none()
         if node is None or (row.reconciled_generation < node.generation and not _row_matches_node_desired(row, node)):
             metrics_recorders.AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED.inc()
-            row.delivered_at = datetime.now(UTC)
+            row.delivered_at = now_utc()
             await db.commit()
             continue
 
@@ -163,7 +163,7 @@ async def deliver_agent_reconfigures(
                     )
 
                     try:
-                        row.delivered_at = datetime.now(UTC)
+                        row.delivered_at = now_utc()
                         # mark_node_stopped commits (including the row consumption above).
                         await mark_node_stopped(db, device, publisher=publisher)
                     except Exception:  # noqa: BLE001 — any failure must not strand the row
@@ -178,7 +178,7 @@ async def deliver_agent_reconfigures(
                         _record_delivery_failure(row)
                         await db.commit()
                 else:
-                    row.delivered_at = datetime.now(UTC)
+                    row.delivered_at = now_utc()
                     await db.commit()
                 continue
             _record_delivery_failure(row)
@@ -188,7 +188,7 @@ async def deliver_agent_reconfigures(
                     f"agent reconfigure delivery failed for device {row.device_id} on port {row.port}",
                 ) from exc
             continue
-        row.delivered_at = datetime.now(UTC)
+        row.delivered_at = now_utc()
         await db.commit()
 
 
@@ -245,7 +245,7 @@ async def _mark_duplicate_generation_rows_delivered(db: AsyncSession, device_id:
     result = await db.execute(
         update(AgentReconfigureOutbox)
         .where(AgentReconfigureOutbox.id.in_(select(ranked.c.id).where(ranked.c.rank > 1)))
-        .values(delivered_at=datetime.now(UTC))
+        .values(delivered_at=now_utc())
     )
     if int(getattr(result, "rowcount", 0) or 0) > 0:
         await db.commit()
@@ -258,6 +258,6 @@ def _record_delivery_failure(
 ) -> None:
     row.delivery_attempts += 1
     if row.delivery_attempts >= MAX_DELIVERY_ATTEMPTS:
-        row.abandoned_at = datetime.now(UTC)
+        row.abandoned_at = now_utc()
         row.abandoned_reason = abandoned_reason
         metrics_recorders.AGENT_RECONFIGURE_OUTBOX_ABANDONED.inc()

@@ -151,7 +151,7 @@ async def test_observe_background_loop_records_success_and_errors() -> None:
         patch("app.core.observability.record_background_loop_run") as record_run,
         patch("app.core.observability.record_background_loop_error") as record_error,
         patch("app.core.observability.perf_counter", side_effect=[1.0, 2.5, 10.0, 12.0]),
-        patch("app.core.observability._now", side_effect=[datetime.now(UTC)] * 4),
+        patch("app.core.observability.now_utc", side_effect=[datetime.now(UTC)] * 4),
     ):
         async with observability.observe_background_loop("heartbeat", 30.0).cycle():
             pass
