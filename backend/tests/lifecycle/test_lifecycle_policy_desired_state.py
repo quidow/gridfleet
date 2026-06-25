@@ -51,16 +51,13 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         *,
         device_id: UUID,
         intents: list[IntentRegistration],
-        reason: str,
         publisher: object,
     ) -> None:
         """Run real intent registration so the auto_recovery intent row is
         written, then simulate the reconciler bringing the node up so
         wait_for_node_running exits on its first poll instead of blocking
         for its full 60s timeout."""
-        await _real_register(
-            IntentService(db), device_id=device_id, intents=intents, reason=reason, publisher=publisher
-        )
+        await _real_register(IntentService(db), device_id=device_id, intents=intents, publisher=publisher)
         observed_node = (
             await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
         ).scalar_one_or_none()

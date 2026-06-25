@@ -265,7 +265,6 @@ class NodeHealthService:
                     precondition=precondition,
                 ),
             ],
-            reason="Max node health failures reached",
             publisher=self._publisher,
         )
         await db.commit()

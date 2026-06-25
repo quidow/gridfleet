@@ -41,7 +41,6 @@ async def test_register_intents_batches_dirty_mark(db_session: AsyncSession, db_
 
     registered = await service.register_intents(
         device_id=device.id,
-        reason="batch",
         intents=[
             IntentRegistration(
                 source="batch:node",
@@ -71,7 +70,6 @@ async def test_register_intents_batches_dirty_mark(db_session: AsyncSession, db_
     assert [intent.source for intent in intents] == ["batch:grid", "batch:node"]
     assert dirty is not None
     assert dirty.generation == 1
-    assert dirty.reason == "batch"
 
 
 async def test_register_intents_rejects_duplicate_sources_before_upsert(
@@ -84,7 +82,6 @@ async def test_register_intents_rejects_duplicate_sources_before_upsert(
     with pytest.raises(ValueError, match="Duplicate intent source"):
         await service.register_intents(
             device_id=device.id,
-            reason="batch",
             intents=[
                 IntentRegistration(
                     source="batch:node",
@@ -108,7 +105,6 @@ async def test_revoke_intent_deletes_and_marks_dirty(db_session: AsyncSession, d
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
-        reason="lost",
         intents=[
             IntentRegistration(
                 source="connectivity",
@@ -119,8 +115,8 @@ async def test_revoke_intent_deletes_and_marks_dirty(db_session: AsyncSession, d
     )
     await db_session.commit()
 
-    revoked = await service.revoke_intent(device_id=device.id, source="connectivity", reason="restored")
-    missing = await service.revoke_intent(device_id=device.id, source="connectivity", reason="restored again")
+    revoked = await service.revoke_intent(device_id=device.id, source="connectivity")
+    missing = await service.revoke_intent(device_id=device.id, source="connectivity")
     await db_session.commit()
 
     intents = (
@@ -132,15 +128,14 @@ async def test_revoke_intent_deletes_and_marks_dirty(db_session: AsyncSession, d
     assert intents == []
     assert dirty is not None
     assert dirty.generation == 2
-    assert dirty.reason == "restored"
 
 
 async def test_mark_dirty_returns_written_generation(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-dirty")
     service = IntentService(db_session)
 
-    first = await service.mark_dirty(device.id, reason="first")
-    second = await service.mark_dirty(device.id, reason="second")
+    first = await service.mark_dirty(device.id)
+    second = await service.mark_dirty(device.id)
     await db_session.commit()
 
     dirty = await db_session.get(DeviceIntentDirty, device.id)
@@ -148,14 +143,13 @@ async def test_mark_dirty_returns_written_generation(db_session: AsyncSession, d
     assert second == 2
     assert dirty is not None
     assert dirty.generation == 2
-    assert dirty.reason == "second"
 
 
 async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-empty")
     service = IntentService(db_session)
 
-    assert await service.register_intents(device_id=device.id, intents=[], reason="noop") == []
+    assert await service.register_intents(device_id=device.id, intents=[]) == []
     assert await db_session.get(DeviceIntentDirty, device.id) is None
 
 
@@ -168,7 +162,6 @@ async def test_register_intents_persists_precondition(db_session: AsyncSession, 
 
     [intent] = await service.register_intents(
         device_id=device.id,
-        reason="cooldown",
         intents=[
             IntentRegistration(
                 source=f"cooldown:node:{run.id}",
@@ -192,7 +185,6 @@ async def test_register_intents_upsert_overwrites_precondition(db_session: Async
 
     await service.register_intents(
         device_id=device.id,
-        reason="r1",
         intents=[
             IntentRegistration(
                 source=src,
@@ -206,7 +198,6 @@ async def test_register_intents_upsert_overwrites_precondition(db_session: Async
 
     [intent] = await service.register_intents(
         device_id=device.id,
-        reason="r2",
         intents=[
             IntentRegistration(
                 source=src,
@@ -235,7 +226,7 @@ async def test_mark_dirty_and_reconcile_flushes_before_lock(monkeypatch: pytest.
     async def fake_reconcile(db: object, did: object, **kwargs: object) -> None:
         pass
 
-    async def fake_mark_dirty(did: object, *, reason: object) -> int:
+    async def fake_mark_dirty(did: object) -> int:
         return 1
 
     monkeypatch.setattr("app.devices.services.intent.device_locking.lock_device", fake_lock_device)
@@ -248,19 +239,19 @@ async def test_mark_dirty_and_reconcile_flushes_before_lock(monkeypatch: pytest.
 
     # mark_dirty_and_reconcile: flush must precede lock
     call_log.clear()
-    await service.mark_dirty_and_reconcile(device_id, reason="test", publisher=publisher)
+    await service.mark_dirty_and_reconcile(device_id, publisher=publisher)
     assert call_log == ["flush", "lock"], f"expected flush then lock, got {call_log}"
 
     # register_intents_and_reconcile: no flush at all
     call_log.clear()
     monkeypatch.setattr(service, "register_intents", AsyncMock(return_value=[]))
-    await service.register_intents_and_reconcile(device_id=device_id, intents=[], reason="test", publisher=publisher)
+    await service.register_intents_and_reconcile(device_id=device_id, intents=[], publisher=publisher)
     assert "flush" not in call_log, f"unexpected flush in register path: {call_log}"
     assert "lock" in call_log
 
     # revoke_intents_and_reconcile: no flush at all
     call_log.clear()
     monkeypatch.setattr(service, "revoke_intents", AsyncMock(return_value=0))
-    await service.revoke_intents_and_reconcile(device_id=device_id, sources=[], reason="test", publisher=publisher)
+    await service.revoke_intents_and_reconcile(device_id=device_id, sources=[], publisher=publisher)
     assert "flush" not in call_log, f"unexpected flush in revoke path: {call_log}"
     assert "lock" in call_log

@@ -30,7 +30,6 @@ class IntentService:
         *,
         device_id: UUID,
         intents: list[IntentRegistration],
-        reason: str,
     ) -> list[DeviceIntent]:
         if not intents:
             return []
@@ -73,7 +72,7 @@ class IntentService:
             },
         ).returning(DeviceIntent.id, DeviceIntent.source)
         rows = (await self._db.execute(upsert)).all()
-        await self.mark_dirty(device_id, reason=reason)
+        await self.mark_dirty(device_id)
         ids_by_source = {source: intent_id for intent_id, source in rows}
         # Use populate_existing=True so that the SQLAlchemy identity map is
         # refreshed from the upserted DB row rather than the cached stale object.
@@ -89,7 +88,7 @@ class IntentService:
         intents_by_id = {intent.id: intent for intent in result.scalars().all()}
         return [intents_by_id[ids_by_source[intent.source]] for intent in intents]
 
-    async def revoke_intent(self, *, device_id: UUID, source: str, reason: str) -> bool:
+    async def revoke_intent(self, *, device_id: UUID, source: str) -> bool:
         stmt = (
             delete(DeviceIntent)
             .where(DeviceIntent.device_id == device_id, DeviceIntent.source == source)
@@ -98,26 +97,25 @@ class IntentService:
         intent_id = (await self._db.execute(stmt)).scalar_one_or_none()
         if intent_id is None:
             return False
-        await self.mark_dirty(device_id, reason=reason)
+        await self.mark_dirty(device_id)
         return True
 
-    async def revoke_intents(self, *, device_id: UUID, sources: list[str], reason: str) -> int:
+    async def revoke_intents(self, *, device_id: UUID, sources: list[str]) -> int:
         revoked = 0
         for source in sources:
-            if await self.revoke_intent(device_id=device_id, source=source, reason=reason):
+            if await self.revoke_intent(device_id=device_id, source=source):
                 revoked += 1
         return revoked
 
-    async def mark_dirty(self, device_id: UUID, *, reason: str) -> int:
+    async def mark_dirty(self, device_id: UUID) -> int:
         now = now_utc()
         dirty_update_values = {
             "dirty_at": now,
             "generation": DeviceIntentDirty.generation + 1,
-            "reason": reason,
         }
         stmt = (
             insert(DeviceIntentDirty)
-            .values(device_id=device_id, dirty_at=now, generation=1, reason=reason)
+            .values(device_id=device_id, dirty_at=now, generation=1)
             .on_conflict_do_update(
                 index_elements=[DeviceIntentDirty.device_id],
                 set_=dirty_update_values,
@@ -152,7 +150,6 @@ class IntentService:
         self,
         device_id: UUID,
         *,
-        reason: str,
         publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
@@ -174,7 +171,7 @@ class IntentService:
         """
         await self._lock_mutate_reconcile(
             device_id,
-            mutate=lambda: self.mark_dirty(device_id, reason=reason),
+            mutate=lambda: self.mark_dirty(device_id),
             publisher=publisher,
             observed_reason=observed_reason,
             flush_first=True,
@@ -185,13 +182,12 @@ class IntentService:
         *,
         device_id: UUID,
         intents: list[IntentRegistration],
-        reason: str,
         publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
         await self._lock_mutate_reconcile(
             device_id,
-            mutate=lambda: self.register_intents(device_id=device_id, intents=intents, reason=reason),
+            mutate=lambda: self.register_intents(device_id=device_id, intents=intents),
             publisher=publisher,
             observed_reason=observed_reason,
         )
@@ -201,13 +197,12 @@ class IntentService:
         *,
         device_id: UUID,
         sources: list[str],
-        reason: str,
         publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
         await self._lock_mutate_reconcile(
             device_id,
-            mutate=lambda: self.revoke_intents(device_id=device_id, sources=sources, reason=reason),
+            mutate=lambda: self.revoke_intents(device_id=device_id, sources=sources),
             publisher=publisher,
             observed_reason=observed_reason,
         )

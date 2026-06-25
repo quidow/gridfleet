@@ -139,7 +139,6 @@ class LifecyclePolicyActionsService:
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
                 intents=_crash_intents(device, source=source),
-                reason=reason,
                 publisher=self._publisher,
             )
             await db.commit()
@@ -148,7 +147,6 @@ class LifecyclePolicyActionsService:
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=_crash_intents(device, source=source),
-                    reason=reason,
                     publisher=self._publisher,
                 )
             else:
@@ -156,9 +154,7 @@ class LifecyclePolicyActionsService:
                 # derives offline (device_allows_allocation=False → ready=False).
                 device.device_checks_healthy = False
                 device.device_checks_summary = reason
-                await IntentService(db).mark_dirty_and_reconcile(
-                    device.id, reason=f"Node crash recorded ({source}): {reason}", publisher=self._publisher
-                )
+                await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
             await db.commit()
 
     async def exclude_run_if_needed(
@@ -202,11 +198,10 @@ class LifecyclePolicyActionsService:
                         },
                     )
                 ],
-                reason=reason,
                 publisher=self._publisher,
             )
             await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id, sources=[f"run:{run.id}"], reason=reason, publisher=self._publisher
+                device_id=device.id, sources=[f"run:{run.id}"], publisher=self._publisher
             )
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
@@ -247,7 +242,6 @@ class LifecyclePolicyActionsService:
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=[f"health_failure:reservation:{device.id}"],
-                reason=reason,
                 publisher=self._publisher,
             )
             await IntentService(db).register_intents_and_reconcile(
@@ -260,7 +254,6 @@ class LifecyclePolicyActionsService:
                         payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
                     )
                 ],
-                reason=reason,
                 publisher=self._publisher,
             )
             await self._incidents.record_lifecycle_incident(

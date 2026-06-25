@@ -236,7 +236,6 @@ async def ingest_pack_tarball(
     else:
         pack = DriverPack(
             id=pack_id,
-            origin="uploaded",
             display_name=manifest.display_name,
             maintainer=manifest.maintainer or "",
             license=manifest.license or "",

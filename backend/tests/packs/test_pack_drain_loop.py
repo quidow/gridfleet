@@ -32,7 +32,6 @@ class _Observation:
 async def test_complete_draining_packs_once_disables_empty_draining_pack(db_session: AsyncSession) -> None:
     pack = DriverPack(
         id="draining-pack",
-        origin="uploaded",
         display_name="Draining Pack",
         maintainer="tests",
         license="Apache-2.0",

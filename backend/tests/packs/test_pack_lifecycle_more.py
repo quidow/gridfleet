@@ -41,7 +41,6 @@ async def _seed_pack_with_releases(
     new_artifact.write_text("new")
     pack = DriverPack(
         id=pack_id,
-        origin="uploaded",
         display_name="Coverage Pack",
         current_release="2.0.0",
         runtime_policy={"strategy": "recommended"},

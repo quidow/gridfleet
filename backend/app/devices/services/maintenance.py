@@ -106,7 +106,6 @@ class MaintenanceService:
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=_maintenance_intents(device.id),
-            reason=maintenance_reason,
             publisher=self._publisher,
         )
 
@@ -148,14 +147,12 @@ class MaintenanceService:
                     expires_at=verify_intent_deadline,
                 )
             ],
-            reason="Operator exited maintenance",
             publisher=self._publisher,
         )
 
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=_maintenance_sources(device.id),
-            reason="Operator exited maintenance",
             publisher=self._publisher,
         )
 

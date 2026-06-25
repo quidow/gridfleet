@@ -1548,7 +1548,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
             f"health_failure:node:{device_id}",
             f"health_failure:recovery:{device_id}",
         ],
-        reason="Operator reconnect succeeded",
         publisher=event_bus,
     )
     assert device.recovery_allowed is False

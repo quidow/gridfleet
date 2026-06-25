@@ -1735,7 +1735,6 @@ async def test_existing_device_verification_rejected_when_operator_stopped(
     await IntentService(db_session).register_intents_and_reconcile(
         device_id=device.id,
         intents=operator_stop_intents(device.id),
-        reason="operator stop",
         publisher=event_bus,
     )
     await db_session.commit()
@@ -1771,7 +1770,6 @@ async def test_validate_update_request_rejects_operator_stopped(
     await IntentService(db_session).register_intents_and_reconcile(
         device_id=device.id,
         intents=operator_stop_intents(device.id),
-        reason="operator stop",
         publisher=event_bus,
     )
     await db_session.commit()

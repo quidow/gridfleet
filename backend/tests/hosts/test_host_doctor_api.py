@@ -59,7 +59,7 @@ async def test_trigger_doctor_returns_409_for_offline_host(client: AsyncClient, 
 @pytest.mark.db
 async def test_trigger_doctor_proxies_to_agent_and_persists(client: AsyncClient, db_session: AsyncSession) -> None:
     host = await _create_online_host(db_session)
-    db_session.add(DriverPack(id="appium-uiautomator2", origin="uploaded", display_name="UiAutomator2", maintainer=""))
+    db_session.add(DriverPack(id="appium-uiautomator2", display_name="UiAutomator2", maintainer=""))
     await db_session.flush()
     agent_checks: list[dict[str, Any]] = [
         {"check_id": "adb", "ok": True, "message": "adb found"},

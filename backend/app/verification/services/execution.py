@@ -466,7 +466,6 @@ class VerificationExecutionService:
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=locked.id,
             sources=[*operator_stop_sources(locked.id), operator_start_source(locked.id)],
-            reason="verification failed: clear operator-stop branding",
             publisher=self._publisher,
         )
         await db.commit()
@@ -572,7 +571,6 @@ async def _register_verification_node_intent(
     await intent_service.revoke_intents(
         device_id=device.id,
         sources=failure_stop_sources(device.id),
-        reason="verification probe in progress",
     )
     await intent_service.register_intents_and_reconcile(
         device_id=device.id,
@@ -584,7 +582,6 @@ async def _register_verification_node_intent(
                 expires_at=deadline,
             )
         ],
-        reason="verification probe in progress",
         publisher=publisher,
     )
 
@@ -601,7 +598,6 @@ async def _revoke_verification_node_intent(db: AsyncSession, device: Device, *, 
     await IntentService(db).revoke_intents_and_reconcile(
         device_id=device.id,
         sources=[_verification_intent_source(device.id)],
-        reason="verification probe completed",
         publisher=publisher,
     )
 

@@ -391,7 +391,6 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
                 payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
             )
         ],
-        reason="node crash",
         publisher=event_bus,
     )
     await db_session.commit()

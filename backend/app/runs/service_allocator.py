@@ -298,7 +298,6 @@ async def _register_run_grid_intent(
                 },
             )
         ],
-        reason=f"reserved for run {run.id}",
         publisher=publisher,
     )
 

@@ -278,7 +278,6 @@ async def reconnect_device(
                     f"health_failure:node:{device.id}",
                     f"health_failure:recovery:{device.id}",
                 ],
-                reason="Operator reconnect succeeded",
                 publisher=device_services.publisher,
             )
             # Intent reconciliation briefly locks the device row. Commit before

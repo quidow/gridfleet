@@ -469,18 +469,9 @@ class SessionSyncService:
         # may have already derived the correct state; a fresh session inserted
         # between it and this lock must override that derivation. Always recheck.
         locked_device = await device_locking.lock_device(db, device.id)
-        fresh_running_stmt = select(Session.id).where(
-            Session.device_id == locked_device.id,
-            Session.status == SessionStatus.running,
-            Session.ended_at.is_(None),
-        )
-        fresh_running = (await db.execute(fresh_running_stmt)).first()
-        reason = "Session ended" if fresh_running is None else "Fresh session started"
         # Mark dirty either way: the reconciler derives available/offline from
         # durable facts when no session remains, or restores busy when one does.
-        await intent_service.IntentService(db).mark_dirty_and_reconcile(
-            locked_device.id, reason=reason, publisher=self._publisher
-        )
+        await intent_service.IntentService(db).mark_dirty_and_reconcile(locked_device.id, publisher=self._publisher)
 
     async def _kill_orphans(self, db: AsyncSession) -> None:
         """Terminate Appium sessions with no tracking DB row, per running node."""

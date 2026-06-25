@@ -102,7 +102,6 @@ def _release() -> DriverPackRelease:
 def _pack(state: PackState = PackState.enabled) -> DriverPack:
     return DriverPack(
         id="local/pack",
-        origin="uploaded",
         display_name="Pack",
         maintainer="GridFleet",
         license="Apache-2.0",
@@ -129,7 +128,6 @@ def test_pack_service_builds_pack_outputs_from_manifest_helpers() -> None:
 
     empty_pack = DriverPack(
         id="local/empty",
-        origin="uploaded",
         display_name="Empty",
         maintainer="",
         license="",

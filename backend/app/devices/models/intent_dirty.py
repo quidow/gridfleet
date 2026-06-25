@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,4 +25,3 @@ class DeviceIntentDirty(Base):
         default=now_utc,
     )
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    reason: Mapped[str | None] = mapped_column(String, nullable=True)

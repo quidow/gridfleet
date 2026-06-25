@@ -393,7 +393,7 @@ class AllocationService:
         await db.flush()
         if device_id is not None:
             intent = self._intent_factory(db)
-            await intent.mark_dirty_and_reconcile(device_id, reason="grid_allocation_failed", publisher=self._publisher)
+            await intent.mark_dirty_and_reconcile(device_id, publisher=self._publisher)
 
     async def record_doomed_appium_session(
         self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str
@@ -829,7 +829,7 @@ class AllocationService:
         ticket.session_row_id = row.id
         await db.flush()
         intent = self._intent_factory(db)
-        await intent.mark_dirty_and_reconcile(locked.id, reason="grid_allocation_pending", publisher=self._publisher)
+        await intent.mark_dirty_and_reconcile(locked.id, publisher=self._publisher)
         return AllocationResult(allocation_id=row.id, target=target, device_id=locked.id)
 
 

@@ -38,7 +38,6 @@ async def _seed_health_failure_reservation_intent(
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device_id,
-        reason="seed health failure exclusion",
         intents=[
             IntentRegistration(
                 source=f"health_failure:reservation:{device_id}",

@@ -50,13 +50,12 @@ async def _make_device_available(
     *,
     device_id: object,
     intents: object,
-    reason: str,
     **kwargs: object,
 ) -> None:
     """Side-effect for intent registration stub — marks device available and
     simulates the reconciler bringing the node up so wait_for_node_running
     exits on its first poll instead of blocking for its full 60s timeout."""
-    del intents, reason, kwargs
+    del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
     with state_write_guard.bypass():
@@ -212,7 +211,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     lc_viability.run_session_viability_probe = probe_mock
 
     async def _register_and_make_available(
-        _self: IntentService, *, device_id: object, intents: object, reason: str, publisher: object
+        _self: IntentService, *, device_id: object, intents: object, publisher: object
     ) -> None:
         db = _self._db
         dev = await db.get(Device, device_id)

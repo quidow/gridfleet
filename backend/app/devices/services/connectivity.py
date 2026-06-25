@@ -324,7 +324,6 @@ async def _stop_disconnected_node(
                 payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
             )
         ],
-        reason="Device disconnected",
         publisher=publisher,
     )
     await health.apply_node_state_transition(db, locked_device, mark_offline=True)
@@ -744,7 +743,6 @@ class ConnectivityService:
             return
         await IntentService(db).mark_dirty_and_reconcile(
             locked_device.id,
-            reason="Device disconnected",
             publisher=self._publisher,
             observed_reason=ObservationReason.disconnected,
         )

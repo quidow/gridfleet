@@ -271,7 +271,6 @@ class RunReservationService:
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=run_release_intent_sources(run.id, device.id),
-                reason=reason,
                 publisher=publisher,
             )
         if commit:
