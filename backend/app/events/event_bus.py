@@ -79,7 +79,6 @@ class EventBus:
         self._subscribers: set[asyncio.Queue[Event]] = set()
         self._log: deque[Event] = deque(maxlen=log_buffer_size)
         self._max_queue_size = max_queue_size
-        self._webhook_queue: asyncio.Queue[Event] | None = None
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._engine: AsyncEngine | None = None
         self._handlers: list[EventHandler] = []
@@ -250,7 +249,6 @@ class EventBus:
         return {
             "subscriber_count": len(self._subscribers),
             "recent_events": [event.to_dict() for event in self._log],
-            "webhook_queue_configured": self._webhook_queue is not None,
             "persistent_mode": self._session_factory is not None,
             "started": self._started,
         }
@@ -295,11 +293,6 @@ class EventBus:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 logger.warning("Dropping event for slow SSE client")
-        if self._webhook_queue is not None:
-            try:
-                self._webhook_queue.put_nowait(event)
-            except asyncio.QueueFull:
-                logger.warning("Webhook queue full, dropping event")
         task = asyncio.create_task(self._dispatch_handlers(event))
         self.track_task(task)
 

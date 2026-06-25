@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.type_defs import SessionFactory
-    from app.events.event_bus import Event
 
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
 # All test files should import this instead of the old ``from app.events import event_bus``.
@@ -418,11 +417,6 @@ async def drain_handlers(bus: EventBus) -> None:
         await asyncio.gather(*tasks)
 
 
-def set_webhook_queue(bus: EventBus, q: asyncio.Queue[Event]) -> None:
-    """Configure the webhook queue on the bus."""
-    bus._webhook_queue = q
-
-
 def reset_event_bus(bus: EventBus) -> None:
     """Clear all mutable state on an EventBus instance.
 
@@ -432,7 +426,6 @@ def reset_event_bus(bus: EventBus) -> None:
     """
     bus._subscribers.clear()
     bus._log.clear()
-    bus._webhook_queue = None
     bus._handlers.clear()
     for task in list(bus._handler_tasks):
         task.cancel()

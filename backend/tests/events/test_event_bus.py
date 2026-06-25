@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
-from tests.helpers import drain_handlers, recent_events, reset_event_bus, set_webhook_queue
+from tests.helpers import drain_handlers, recent_events, reset_event_bus
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -76,17 +76,6 @@ async def test_get_recent_events_filter_types() -> None:
     assert events[1]["type"] == "device.updated"
 
 
-async def test_webhook_queue() -> None:
-    bus = EventBus()
-    wh_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=100)
-    set_webhook_queue(bus, wh_queue)
-
-    await bus.publish("test.event", {"key": "val"})
-
-    event = wh_queue.get_nowait()
-    assert event.type == "test.event"
-
-
 async def test_subscriber_count() -> None:
     bus = EventBus()
     assert bus.subscriber_count == 0
@@ -102,19 +91,15 @@ async def test_subscriber_count() -> None:
 async def test_snapshot_and_reset() -> None:
     bus = EventBus()
     queue = bus.subscribe()
-    webhook_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=10)
-    set_webhook_queue(bus, webhook_queue)
     await bus.publish("device.updated", {"device_id": "123"})
 
     snapshot = bus.snapshot()
     assert snapshot["subscriber_count"] == 1
-    assert snapshot["webhook_queue_configured"] is True
     assert snapshot["recent_events"][0]["type"] == "device.updated"
 
     reset_event_bus(bus)
     assert bus.subscriber_count == 0
     assert recent_events(bus) == []
-    assert bus.snapshot()["webhook_queue_configured"] is False
     assert queue.qsize() == 1
 
 
