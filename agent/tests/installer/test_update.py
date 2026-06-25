@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx2 as httpx
 import pytest
 
 from agent_app.cli import main as cli_main
@@ -16,6 +17,9 @@ from agent_app.installer.update import (
     UpdateResult,
     UpdateUpgradeError,
     UvNotFoundError,
+    _parse_min_python,
+    _venv_python_version,
+    fetch_required_python,
     format_update_dry_run,
     update_agent,
     wait_for_update_drain,
@@ -573,3 +577,93 @@ def test_update_restart_oserror_wraps_typed(tmp_path: Path) -> None:
             run_command=fake_run,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
         )
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (">=3.14", (3, 14)),
+        (">=3.14,<4.0", (3, 14)),
+        (">= 3.12", (3, 12)),
+        (None, None),
+        ("", None),
+        ("~=3.14", None),
+    ],
+)
+def test_parse_min_python(spec: str | None, expected: tuple[int, int] | None) -> None:
+    assert _parse_min_python(spec) == expected
+
+
+@pytest.mark.parametrize("key", ["version_info", "version"])
+def test_venv_python_version_reads_pyvenv_cfg(tmp_path: Path, key: str) -> None:
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    (venv / "pyvenv.cfg").write_text(f"home = /usr\n{key} = 3.12.13\n")
+    assert _venv_python_version(venv) == (3, 12)
+
+
+def test_venv_python_version_missing_returns_none(tmp_path: Path) -> None:
+    assert _venv_python_version(tmp_path / "nope") is None
+
+
+def test_fetch_required_python_parses_pypi_payload() -> None:
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"info": {"requires_python": ">=3.14"}}
+
+    assert fetch_required_python(None, get=lambda *a, **k: _Resp()) == (3, 14)
+
+
+def test_fetch_required_python_returns_none_on_error() -> None:
+    def boom(*_a: object, **_k: object) -> object:
+        raise httpx.HTTPError("offline")
+
+    assert fetch_required_python("0.29.0", get=boom) is None
+
+
+def test_update_recreates_venv_when_python_floor_exceeds_current(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    uv_runtime = _make_uv_runtime(tmp_path)
+    operator = _make_operator(tmp_path)
+    commands: list[list[str]] = []
+
+    update_agent(
+        config,
+        operator=operator,
+        uv_runtime=uv_runtime,
+        os_name="Linux",
+        run_command=lambda cmd: commands.append(list(cmd)),
+        drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
+        health_check=lambda url, **kw: HealthCheckResult(ok=True, message="ok"),
+        venv_python_version=lambda _venv: (3, 12),
+        required_python=lambda _to: (3, 14),
+    )
+
+    venv = str(Path(config.agent_dir) / "venv")
+    assert commands[0] == [str(uv_runtime.bin_path), "venv", "--clear", "--python", "3.14", venv]
+    assert commands[1][1:4] == ["pip", "install", "--python"]
+    assert commands[2] == ["systemctl", "--user", "restart", "gridfleet-agent"]
+
+
+def test_update_skips_recreate_when_current_satisfies_floor(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    uv_runtime = _make_uv_runtime(tmp_path)
+    operator = _make_operator(tmp_path)
+    commands: list[list[str]] = []
+
+    update_agent(
+        config,
+        operator=operator,
+        uv_runtime=uv_runtime,
+        os_name="Linux",
+        run_command=lambda cmd: commands.append(list(cmd)),
+        drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
+        health_check=lambda url, **kw: HealthCheckResult(ok=True, message="ok"),
+        venv_python_version=lambda _venv: (3, 14),
+        required_python=lambda _to: (3, 14),
+    )
+
+    assert commands[0][1:4] == ["pip", "install", "--python"]
+    assert not any(cmd[1:2] == ["venv"] for cmd in commands)

@@ -68,7 +68,7 @@ fi
 mkdir -p "$AGENT_DIR"
 if [ ! -x "$AGENT_DIR/venv/bin/python" ]; then
     echo "Creating dedicated venv at $AGENT_DIR/venv..."
-    uv venv --python 3.12 "$AGENT_DIR/venv"
+    uv venv --python 3.14 "$AGENT_DIR/venv"
 fi
 echo "Installing $PACKAGE_SPEC into $AGENT_DIR/venv..."
 uv pip install --python "$AGENT_DIR/venv/bin/python" --upgrade "$PACKAGE_SPEC"

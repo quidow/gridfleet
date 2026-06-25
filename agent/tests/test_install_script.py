@@ -72,7 +72,7 @@ def test_bootstrap_wrapper_runs_under_sh(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     commands = log.read_text()
-    assert "uv venv --python 3.12" in commands
+    assert "uv venv --python 3.14" in commands
     assert "uv pip install --python" in commands
     assert "--upgrade" in commands
     assert "gridfleet-agent install --dry-run --manager-url https://manager.example.com" in commands
