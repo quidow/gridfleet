@@ -5,7 +5,6 @@ from sqlalchemy import func, select
 from app.analytics.schemas import (
     DeviceReliabilityRow,
     DeviceUtilizationRow,
-    FleetDeviceSummary,
     FleetOverview,
     GroupByOption,
     SessionSummaryRow,
@@ -13,10 +12,6 @@ from app.analytics.schemas import (
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.sessions.filters import exclude_non_success_metric_sessions, exclude_non_test_sessions
 from app.sessions.models import Session, SessionStatus
-
-# A device with more than this many incidents in the reporting window is flagged
-# as "needing attention" in the fleet overview.
-_ATTENTION_INCIDENT_THRESHOLD = 5
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -177,52 +172,8 @@ async def get_fleet_overview(
     date_from: datetime,
     date_to: datetime,
 ) -> FleetOverview:
-    # Devices by platform_id
-    platform_stmt = select(Device.platform_id, func.count()).group_by(Device.platform_id)
-    platform_result = await db.execute(platform_stmt)
-    devices_by_platform = {str(row[0]): row[1] for row in platform_result.all()}
-
-    # Utilization data
     utilization = await get_device_utilization(db, date_from, date_to)
     avg_utilization = round(sum(d.busy_pct for d in utilization) / len(utilization), 2) if utilization else 0
-
-    sorted_by_usage = sorted(utilization, key=lambda d: d.busy_pct, reverse=True)
-    most_used = [
-        FleetDeviceSummary(
-            device_id=d.device_id, device_name=d.device_name, platform_id=d.platform_id, value=d.busy_pct
-        )
-        for d in sorted_by_usage[:5]
-    ]
-    least_used = [
-        FleetDeviceSummary(
-            device_id=d.device_id, device_name=d.device_name, platform_id=d.platform_id, value=d.busy_pct
-        )
-        for d in sorted_by_usage[-5:][::-1]
-        if sorted_by_usage
-    ]
-
-    # Reliability data
-    reliability = await get_device_reliability(db, date_from, date_to)
-    sorted_by_reliability = sorted(reliability, key=lambda d: d.total_incidents)
-    most_reliable = [
-        FleetDeviceSummary(
-            device_id=d.device_id,
-            device_name=d.device_name,
-            platform_id=d.platform_id,
-            value=float(d.total_incidents),
-        )
-        for d in sorted_by_reliability[:5]
-    ]
-    least_reliable = [
-        FleetDeviceSummary(
-            device_id=d.device_id,
-            device_name=d.device_name,
-            platform_id=d.platform_id,
-            value=float(d.total_incidents),
-        )
-        for d in sorted_by_reliability[-5:][::-1]
-        if sorted_by_reliability
-    ]
 
     # Pass rate
     pass_stmt = select(
@@ -234,34 +185,4 @@ async def get_fleet_overview(
     pass_row = pass_result.one()
     pass_rate = round(pass_row.passed / pass_row.total * 100, 2) if pass_row.total > 0 else None
 
-    # Devices needing attention (>5 incidents in range)
-    attention_stmt = (
-        select(func.count(func.distinct(DeviceEvent.device_id)))
-        .where(
-            DeviceEvent.created_at >= date_from,
-            DeviceEvent.created_at < date_to,
-            DeviceEvent.event_type.in_(
-                [
-                    DeviceEventType.health_check_fail,
-                    DeviceEventType.connectivity_lost,
-                    DeviceEventType.node_crash,
-                ]
-            ),
-        )
-        .group_by(DeviceEvent.device_id)
-        .having(func.count() > _ATTENTION_INCIDENT_THRESHOLD)
-    )
-    # Wrap to count the number of devices matching the having clause
-    attention_result = await db.execute(select(func.count()).select_from(attention_stmt.subquery()))
-    devices_needing_attention = attention_result.scalar() or 0
-
-    return FleetOverview(
-        devices_by_platform=devices_by_platform,
-        avg_utilization_pct=avg_utilization,
-        most_used=most_used,
-        least_used=least_used,
-        most_reliable=most_reliable,
-        least_reliable=least_reliable,
-        pass_rate_pct=pass_rate,
-        devices_needing_attention=devices_needing_attention,
-    )
+    return FleetOverview(avg_utilization_pct=avg_utilization, pass_rate_pct=pass_rate)

@@ -3511,35 +3511,10 @@ export interface components {
             /** Total Capacity Slots */
             total_capacity_slots: number;
         };
-        /** FleetDeviceSummary */
-        FleetDeviceSummary: {
-            /** Device Id */
-            device_id: string;
-            /** Device Name */
-            device_name: string;
-            /** Platform Id */
-            platform_id: string;
-            /** Value */
-            value: number;
-        };
         /** FleetOverview */
         FleetOverview: {
             /** Avg Utilization Pct */
             avg_utilization_pct: number;
-            /** Devices By Platform */
-            devices_by_platform: {
-                [key: string]: number;
-            };
-            /** Devices Needing Attention */
-            devices_needing_attention: number;
-            /** Least Reliable */
-            least_reliable: components["schemas"]["FleetDeviceSummary"][];
-            /** Least Used */
-            least_used: components["schemas"]["FleetDeviceSummary"][];
-            /** Most Reliable */
-            most_reliable: components["schemas"]["FleetDeviceSummary"][];
-            /** Most Used */
-            most_used: components["schemas"]["FleetDeviceSummary"][];
             /** Pass Rate Pct */
             pass_rate_pct: number | null;
         };
