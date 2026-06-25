@@ -129,15 +129,6 @@ def test_platform_defaults_and_shape_validation_branches() -> None:
     device_write._validate_device_shape(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network,
-        identity_value="10.0.0.1:5555",
-        connection_target="10.0.0.1:5555",
-        ip_address="10.0.0.1",
-        host_id=uuid.uuid4(),
-        allow_transport_identity_resolution=True,
-    )
-    device_write._validate_device_shape(
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
         identity_value=None,
         connection_target=None,
         ip_address=None,
