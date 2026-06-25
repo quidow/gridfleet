@@ -156,20 +156,17 @@ def test_device_config_identity_and_create_payload_branches() -> None:
         == {}
     )
 
-    normalized = {
-        "identity_scheme": "serial",
-        "identity_value": "stable",
-        "connection_target": "",
-        "ip_address": "",
-    }
-    assert device_write._resolve_identity(
+    explicit = device_write._resolve_identity(
         platform_id="android",
-        identity_scheme=None,
-        identity_value=None,
+        identity_scheme="serial",
+        identity_value="stable",
         connection_target=None,
         ip_address=None,
-        normalized=normalized,
-    ) == ("serial", "stable", "", None)
+    )
+    assert explicit[0] == "serial"
+    assert explicit[1] == "stable"
+    assert explicit[2] == "stable"  # connection_target falls back to identity_value
+    assert explicit[3] is None  # ip_address
 
     generated = device_write._resolve_identity(
         platform_id="android",
@@ -180,6 +177,8 @@ def test_device_config_identity_and_create_payload_branches() -> None:
     )
     assert generated[0] == "manager_generated"
     assert generated[1].startswith("android:")
+    assert generated[2] == ""  # connection_target when all inputs are None
+    assert generated[3] is None  # ip_address
 
     with pytest.raises(ValueError, match="platform_id"):
         device_write._resolve_create_payload_fields(
@@ -235,30 +234,19 @@ def test_device_config_identity_and_create_payload_branches() -> None:
     assert prepared["ip_address"] is None
     assert prepared["device_config"] == {"fresh": True}
 
-    normalized_payload = device_write._resolve_create_payload_fields(
+    os_payload = device_write._resolve_create_payload_fields(
         DeviceVerificationCreate(
             pack_id="pack",
             platform_id="android",
-            identity_value="input",
-            connection_target="input",
-            name="normalized",
+            identity_scope="host",
+            identity_value="serial",
+            connection_target="serial",
+            name="with-os",
             host_id=uuid.uuid4(),
+            os_version="15",
         ),
-        normalized={
-            "identity_scheme": "serial",
-            "identity_scope": "lab",
-            "identity_value": "stable",
-            "connection_target": "stable-target",
-            "os_version": "15",
-            "device_type": "real_device",
-            "connection_type": "network",
-            "ip_address": "10.0.0.4",
-        },
-        connection_behavior={"allow_transport_identity_until_host_resolution": True},
     )
-    assert normalized_payload["identity_scope"] == "lab"
-    assert normalized_payload["os_version"] == "15"
-    assert normalized_payload["connection_type"] == ConnectionType.network
+    assert os_payload["os_version"] == "15"
 
     scoped_payload = device_write._resolve_create_payload_fields(
         DeviceVerificationCreate(
@@ -272,6 +260,7 @@ def test_device_config_identity_and_create_payload_branches() -> None:
         resolved_identity_scope="host",
     )
     assert scoped_payload["identity_scope"] == "host"
+    assert scoped_payload["identity_value"] == "serial"  # identity_scope propagation doesn't clobber identity fields
 
 
 def test_patch_contract_and_update_payload_branches() -> None:

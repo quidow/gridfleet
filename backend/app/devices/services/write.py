@@ -241,20 +241,11 @@ def _resolve_identity(
     ip_address: str | None,
     existing_identity_value: str | None = None,
     resolved_identity_scheme: str | None = None,
-    normalized: dict[str, Any] | None = None,
 ) -> tuple[str, str, str | None, str | None]:
     """Resolve identity_scheme, identity_value, connection_target, ip_address from pack-shaped inputs.
 
     Returns (identity_scheme, identity_value, connection_target, ip_address).
     """
-    if normalized is not None:
-        return (
-            str(normalized["identity_scheme"]),
-            str(normalized["identity_value"]),
-            str(normalized["connection_target"] or ""),
-            str(normalized["ip_address"] or "") or None,
-        )
-
     resolved_scheme = identity_scheme or resolved_identity_scheme or "manager_generated"
     _scheme, _scope, resolved_value, resolved_target, resolved_ip = derive_pack_identity(
         identity_scheme=resolved_scheme,
@@ -274,7 +265,6 @@ def _resolve_create_payload_fields(
     connection_behavior: dict[str, Any] | None = None,
     resolved_identity_scheme: str | None = None,
     resolved_identity_scope: str | None = None,
-    normalized: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve and validate all non-config fields for a device create payload."""
     payload = _payload_fields(data)
@@ -298,17 +288,6 @@ def _resolve_create_payload_fields(
         if resolved_connection_type == ConnectionType.virtual
         else (payload.get("ip_address") or parse_ip_from_connection_target(payload.get("connection_target")))
     )
-    if normalized is not None:
-        payload["os_version"] = normalized.get("os_version") or payload["os_version"]
-        payload["os_version_display"] = normalized.get("os_version_display") or payload.get("os_version_display")
-        if normalized.get("device_type"):
-            resolved_device_type = DeviceType(normalized["device_type"])
-            payload["device_type"] = resolved_device_type
-        if normalized.get("connection_type"):
-            resolved_connection_type = ConnectionType(normalized["connection_type"])
-            payload["connection_type"] = resolved_connection_type
-        payload["ip_address"] = normalized.get("ip_address") or None
-
     identity_scheme, identity_value, connection_target, ip_address = _resolve_identity(
         platform_id=platform_id,
         identity_scheme=payload.get("identity_scheme"),
@@ -316,7 +295,6 @@ def _resolve_create_payload_fields(
         connection_target=payload.get("connection_target"),
         ip_address=payload.get("ip_address"),
         resolved_identity_scheme=resolved_identity_scheme,
-        normalized=normalized,
     )
 
     _validate_device_shape(
@@ -337,9 +315,7 @@ def _resolve_create_payload_fields(
         raise ValueError("pack_id is required")
     # Use resolved identity_scope from pack manifest if the payload doesn't provide one
     if "identity_scope" not in payload or not payload["identity_scope"]:
-        if normalized is not None and normalized.get("identity_scope"):
-            payload["identity_scope"] = normalized["identity_scope"]
-        elif resolved_identity_scope:
+        if resolved_identity_scope:
             payload["identity_scope"] = resolved_identity_scope
         else:
             raise ValueError("identity_scope is required")
