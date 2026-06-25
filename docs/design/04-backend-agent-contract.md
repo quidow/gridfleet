@@ -92,9 +92,8 @@ The start payload also carries `accepting_new_sessions`, `stop_pending`, and `gr
 | GET | `/agent/driver-packs/desired` | `PackStateLoop` (~10 s) | desired pack list for this host | 200 → `{packs: [...]}` |
 | POST | `/agent/driver-packs/status` | `PackStateLoop` after each tick | report runtime/adapter state | 204 |
 | GET | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | `tarball_fetch` | download the sha256-pinned pack tarball | 2xx → tarball bytes |
-| POST | `/agent/{host_id}/log-batch` | `logs.shipper` | ship buffered agent logs to the backend | 2xx |
 
-The `/agent/driver-packs/desired` and `/agent/driver-packs/status` routes are defined in `backend/app/packs/routers/agent_state.py` (router prefix `/agent/driver-packs`); the tarball download is served by `backend/app/packs/routers/uploads.py` and log batches by `backend/app/hosts/router_agent_logs.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls such as Appium status — the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
+The `/agent/driver-packs/desired` and `/agent/driver-packs/status` routes are defined in `backend/app/packs/routers/agent_state.py` (router prefix `/agent/driver-packs`); the tarball download is served by `backend/app/packs/routers/uploads.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls such as Appium status — the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
 
 ## Request envelope
 
