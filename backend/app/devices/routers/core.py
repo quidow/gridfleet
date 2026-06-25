@@ -155,7 +155,12 @@ async def list_devices(
 
 
 @router.get("/{device_id}", response_model=DeviceDetail)
-async def get_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def get_device(
+    device_id: uuid.UUID,
+    db: DbDep,
+    device_services: DeviceServicesDep,
+    include: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
     platform_label = await platform_label_service.load_platform_label(
         db,
@@ -167,6 +172,7 @@ async def get_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceSer
         device,
         health_summary=device_health.build_public_summary(device),
         platform_label=platform_label,
+        include_orchestration=include is not None and "orchestration" in include.split(","),
     )
 
 

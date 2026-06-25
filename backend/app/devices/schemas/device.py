@@ -342,7 +342,7 @@ class DeviceRead(BaseModel):
 
 class DeviceDetail(DeviceRead):
     appium_node: AppiumNodeRead | None = None
-    orchestration: DeviceOrchestrationRead
+    orchestration: DeviceOrchestrationRead | None = None
 
 
 class SessionDetail(SessionRead):

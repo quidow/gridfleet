@@ -754,6 +754,11 @@ async def test_get_device(client: AsyncClient, db_session: AsyncSession, default
     assert data["hardware_health_status"] == "unknown"
     assert data["hardware_telemetry_state"] == "unknown"
     assert data["battery_level_percent"] is None
+    # default GET omits orchestration
+    assert data["orchestration"] is None
+    # opt-in returns it
+    resp = await client.get(f"/api/devices/{device_id}?include=orchestration")
+    data = resp.json()
     assert data["orchestration"]["intents"] == []
     assert data["orchestration"]["derived"]["grid_routing"]["accepting_new_sessions"] is True
     assert data["orchestration"]["derived"]["recovery"]["allowed"] is True

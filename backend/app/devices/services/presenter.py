@@ -186,6 +186,7 @@ class DevicePresenterService:
         reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
         health_summary: dict[str, Any] | None = None,
         platform_label: str | None = None,
+        include_orchestration: bool = False,
     ) -> dict[str, Any]:
         payload = await self.serialize_device(
             db,
@@ -195,7 +196,8 @@ class DevicePresenterService:
             platform_label=platform_label,
         )
         payload["appium_node"] = _serialize_appium_node_for_detail(device)
-        payload["orchestration"] = await _serialize_orchestration(db, device)
+        if include_orchestration:
+            payload["orchestration"] = await _serialize_orchestration(db, device)
         return payload
 
 

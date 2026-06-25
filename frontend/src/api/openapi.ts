@@ -2493,7 +2493,7 @@ export interface components {
             /** Needs Attention */
             needs_attention: boolean;
             operational_state: components["schemas"]["DeviceOperationalState"];
-            orchestration: components["schemas"]["DeviceOrchestrationRead"];
+            orchestration?: components["schemas"]["DeviceOrchestrationRead"] | null;
             /** Os Version */
             os_version: string;
             /** Os Version Display */
@@ -7572,7 +7572,9 @@ export interface operations {
     };
     get_device_api_devices__device_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                include?: string | null;
+            };
             header?: never;
             path: {
                 device_id: string;
