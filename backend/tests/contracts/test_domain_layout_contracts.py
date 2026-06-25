@@ -157,7 +157,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     ),
     "verification": (
         "dependencies",
-        "protocols",
         "router",
         "schemas",
         "services_container",
