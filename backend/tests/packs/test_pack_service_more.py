@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
 from app.packs.services import service as pack_service
+from app.packs.services.driver_version import desired_driver_version, installed_driver_version
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
 
@@ -149,28 +150,33 @@ def test_pack_service_helper_branches_handle_empty_and_nested_values() -> None:
     direct = SimpleNamespace(resolved_install_spec={"appium_driver_version": 3})
     nested = SimpleNamespace(resolved_install_spec={"appium_driver": {"uiautomator2": "4.0.0"}})
     missing = SimpleNamespace(resolved_install_spec={"appium_driver": {"uiautomator2": None}})
-    assert pack_service._desired_driver_version(direct) == "3"
-    assert pack_service._desired_driver_version(nested) == "4.0.0"
-    assert pack_service._desired_driver_version(missing) is None
-    assert pack_service._desired_driver_version(SimpleNamespace(resolved_install_spec=None)) is None
+    assert desired_driver_version(direct, None) == "3"
+    assert desired_driver_version(nested, None) == "4.0.0"
+    assert desired_driver_version(missing, None) is None
+    assert desired_driver_version(SimpleNamespace(resolved_install_spec=None), None) is None
 
-    assert pack_service._runtime_driver_version(SimpleNamespace(driver_specs=[{"version": 5}])) == "5"
-    assert pack_service._runtime_driver_version(SimpleNamespace(driver_specs=[])) is None
+    assert installed_driver_version(SimpleNamespace(driver_specs=[{"version": 5}])) == "5"
+    assert installed_driver_version(SimpleNamespace(driver_specs=[])) is None
 
 
 async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None:
     installed = SimpleNamespace(
         pack_id="local/pack",
+        pack_release="1.0.0",
         status="installed",
         resolved_install_spec={"appium_driver_version": "3.0.0"},
     )
     blocked = SimpleNamespace(
         pack_id="local/pack",
+        pack_release="1.0.0",
         status="blocked",
         resolved_install_spec={"appium_driver": {"uiautomator2": "4.0.0"}},
     )
     runtime = SimpleNamespace(appium_server_version="2.0.0", driver_specs=[{"version": "3.1.0"}])
-    session = ExecuteSession(SimpleNamespace(all=lambda: [(installed, runtime), (blocked, None)]))
+    session = ExecuteSession(
+        SimpleNamespace(all=lambda: [(installed, runtime), (blocked, None)]),
+        ScalarRowsResult([]),  # release query returns no rows
+    )
 
     svc = PackCatalogService(lifecycle=PackLifecycleService())
     summaries = await svc._runtime_summaries_by_pack(session, ["local/pack"])  # type: ignore[arg-type]
@@ -186,7 +192,11 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
 
 async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() -> None:
     pack = _pack(PackState.draining)
-    session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
+    session = ExecuteSession(
+        ScalarRowsResult([pack]),
+        SimpleNamespace(all=lambda: []),  # HostPackInstallation rows
+        ScalarRowsResult([]),  # DriverPackRelease rows
+    )
 
     with (
         patch.object(PackLifecycleService, "try_complete_drain", new=AsyncMock()) as complete_drain,
@@ -208,7 +218,7 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     )  # type: ignore[arg-type]
     assert missing is None
 
-    detail_session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
+    detail_session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []), ScalarRowsResult([]))
     detail = await PackCatalogService(lifecycle=PackLifecycleService()).get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
     assert detail is not None
     assert detail.id == "local/pack"

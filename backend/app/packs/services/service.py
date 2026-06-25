@@ -36,6 +36,7 @@ from app.packs.schemas import (
     PlatformOut,
     RuntimePolicy,
 )
+from app.packs.services.driver_version import has_driver_drift, installed_driver_version
 from app.packs.services.release_ordering import selected_release
 
 
@@ -145,25 +146,6 @@ def _platform_out(platform: DriverPackPlatform) -> PlatformOut:
         parallel_resources=platform.data.get("parallel_resources") or {},
         device_type_overrides=platform.data.get("device_type_overrides") or {},
     )
-
-
-def _desired_driver_version(pack_row: HostPackInstallation) -> str | None:
-    spec = pack_row.resolved_install_spec or {}
-    version = spec.get("appium_driver_version")
-    if version is not None:
-        return str(version)
-    appium_driver = spec.get("appium_driver")
-    if isinstance(appium_driver, dict) and appium_driver:
-        first_version = next(iter(appium_driver.values()))
-        return str(first_version) if first_version is not None else None
-    return None
-
-
-def _runtime_driver_version(runtime: HostRuntimeInstallation) -> str | None:
-    if runtime.driver_specs:
-        version = runtime.driver_specs[0].get("version")
-        return str(version) if version is not None else None
-    return None
 
 
 class PackCatalogService:
@@ -315,6 +297,11 @@ class PackCatalogService:
             )
         ).all()
 
+        release_rows = (
+            (await db.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id.in_(pack_ids)))).scalars().all()
+        )
+        release_map = {(r.pack_id, r.release): r for r in release_rows}
+
         counters: dict[str, _RuntimeSummaryAccumulator] = {}
         for pack_row, runtime in rows:
             data = counters.setdefault(pack_row.pack_id, _RuntimeSummaryAccumulator())
@@ -325,12 +312,11 @@ class PackCatalogService:
             if runtime is not None:
                 if runtime.appium_server_version:
                     data.server_versions.add(runtime.appium_server_version)
-                driver_version = _runtime_driver_version(runtime)
+                driver_version = installed_driver_version(runtime)
                 if driver_version:
                     data.driver_versions.add(driver_version)
-            desired = _desired_driver_version(pack_row)
-            actual = _runtime_driver_version(runtime) if runtime is not None else None
-            if desired is not None and actual is not None and desired != actual:
+            release = release_map.get((pack_row.pack_id, pack_row.pack_release))
+            if has_driver_drift(pack_row, release, runtime):
                 data.driver_drift_hosts += 1
 
         summaries: dict[str, PackRuntimeSummaryOut] = {}

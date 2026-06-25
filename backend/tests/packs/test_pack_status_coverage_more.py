@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.hosts.models import HostPluginRuntimeStatus
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.packs.services import status as pack_status_service
+from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
@@ -112,15 +113,15 @@ async def test_pack_status_helper_fallbacks(db_session: AsyncSession, db_host: H
         resolved_install_spec={"appium_driver_version": None},
     )
     assert pack_status_service._pack_row_supports_host(pack, db_host, {}) is True
-    assert pack_status_service._desired_driver_version(pack, {}) is None
-    assert pack_status_service._installed_driver_version(pack, {}) is None
-    assert pack_status_service._compute_drift(pack, {}, {}) is False
+    assert desired_driver_version(pack, None) is None
+    assert installed_driver_version(None) is None
+    assert has_driver_drift(pack, None, None) is False
 
     pack.resolved_install_spec = {"appium_driver": {"uiautomator2": "5.0.0"}}
-    assert pack_status_service._desired_driver_version(pack, {}) == "5.0.0"
+    assert desired_driver_version(pack, None) == "5.0.0"
     pack.resolved_install_spec = {}
     release = type("Release", (), {"manifest_json": {"appium_driver": {"recommended": "6.0.0"}}})()
-    assert pack_status_service._desired_driver_version(pack, {(pack.pack_id, pack.pack_release): release}) == "6.0.0"
+    assert desired_driver_version(pack, release) == "6.0.0"
 
     runtime = HostRuntimeInstallation(
         host_id=db_host.id,
@@ -128,4 +129,4 @@ async def test_pack_status_helper_fallbacks(db_session: AsyncSession, db_host: H
         driver_specs=[{"version": "5.0.0"}],
     )
     pack.runtime_id = "rt"
-    assert pack_status_service._installed_driver_version(pack, {"rt": runtime}) == "5.0.0"
+    assert installed_driver_version(runtime) == "5.0.0"
