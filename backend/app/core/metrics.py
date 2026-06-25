@@ -1,15 +1,10 @@
 """Core metrics surface for the GridFleet backend.
 
-Phase 0a state: this module exposes only the registration-based gauge
-fan-out dispatcher. The Prometheus registry, gauge objects, and recorder
-functions still live in ``app/metrics_recorders.py`` and the legacy
-aggregator in ``app/metrics.py``; Phase 0b moves the registry and
-recorders here. The fan-out dispatcher will accumulate per-domain
-callbacks over phases 5/6/13/14 (events, jobs, devices, sessions).
-
-``app/main.py`` calls ``app.core.metrics.refresh_system_gauges_legacy``
-directly until Phase 14 flips the ``/metrics`` route over to the
-dispatcher below.
+Exposes the registration-based gauge fan-out dispatcher. Each domain
+registers a refresher via :func:`register_gauge_refresher` from its
+package ``__init__``; ``app/main.py``'s ``/metrics`` route calls
+:func:`refresh_system_gauges` to run them all. Prometheus gauge objects
+and recorder functions live in ``app/core/metrics_recorders.py``.
 """
 
 from __future__ import annotations
@@ -30,20 +25,15 @@ _refreshers: list[GaugeRefresher] = []
 def register_gauge_refresher(fn: GaugeRefresher) -> None:
     """Register a per-domain gauge refresher callback.
 
-    Each contributing domain calls this from its ``__init__.py`` during
-    its migration phase. The dispatcher iterates and awaits every
-    registered callback when :func:`refresh_system_gauges` is invoked.
+    Each contributing domain calls this from its ``__init__.py``. The
+    dispatcher iterates and awaits every registered callback when
+    :func:`refresh_system_gauges` is invoked.
     """
     _refreshers.append(fn)
 
 
 async def refresh_system_gauges(db: AsyncSession) -> None:
-    """Fan-out dispatcher. Awaits every registered refresher in order.
-
-    Empty in Phase 0a. Stays empty until each contributing domain
-    migrates and calls :func:`register_gauge_refresher`. ``app/main.py``
-    does not call this function yet — see module docstring.
-    """
+    """Fan-out dispatcher. Awaits every registered refresher in order."""
     for fn in _refreshers:
         await fn(db)
 
