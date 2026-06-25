@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.29.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.29.0...gridfleet-agent-v0.29.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **agent:** cross python version boundary on self-update ([27ceb81](https://github.com/quidow/gridfleet/commit/27ceb81d0337bf14b68bc2c014181f9abcf068b9))
+* **agent:** refresh index cache on self-update ([7c41244](https://github.com/quidow/gridfleet/commit/7c41244c631323c36b25df33fc179e041f7e545e))
+
 ## [0.29.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.28.0...gridfleet-agent-v0.29.0) (2026-06-25)
 
 
