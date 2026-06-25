@@ -2229,12 +2229,6 @@ async def test_list_devices_filter_by_os_version_display_falls_back_to_os_versio
     assert [item["name"] for item in data] == ["Android Coalesce 1"]
 
 
-def test_backend_sanitize_log_value_strips_control_characters() -> None:
-    from app.core.observability import sanitize_log_value
-
-    assert sanitize_log_value("device-1\r\ninjected=true") == "device-1\\r\\ninjected=true"
-
-
 @pytest.mark.asyncio
 async def test_device_read_exposes_is_reserved(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str

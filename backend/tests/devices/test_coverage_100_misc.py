@@ -28,7 +28,6 @@ from app.auth.config import AuthConfig
 from app.core.errors import PackDrainingError, _http_error_code
 from app.core.leader import advisory as control_plane_leader_module
 from app.core.leader import watcher as control_plane_leader_watcher
-from app.core.observability import sanitize_log_value
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState
@@ -135,7 +134,6 @@ def test_config_and_error_guard_branches() -> None:
 
 
 def test_schema_validator_and_model_guard_branches() -> None:
-    assert sanitize_log_value("x" * 250, max_length=5) == "xxxxx..."
     assert AppiumInstallable(source="npm", package="appium", version=">=1").recommended is None
 
     run = TestRun(name="run")

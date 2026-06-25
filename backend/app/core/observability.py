@@ -159,14 +159,6 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     return structlog.stdlib.get_logger(name)
 
 
-def sanitize_log_value(value: object, *, max_length: int = 240) -> str:
-    text = str(value)
-    text = text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
-    if len(text) > max_length:
-        return f"{text[:max_length]}..."
-    return text
-
-
 def generate_request_id() -> str:
     return str(uuid4())
 
@@ -301,13 +293,6 @@ class _HeartbeatBuffer:
     def mark_dirty(self) -> None:
         self.dirty = True
 
-    def clear(self) -> None:
-        self.snapshots.clear()
-        self.dirty = False
-
-    def copy(self) -> dict[str, dict[str, Any]]:
-        return {name: dict(value) for name, value in self.snapshots.items()}
-
 
 _heartbeat_buffer = _HeartbeatBuffer()
 
@@ -387,17 +372,13 @@ class BackgroundLoopFlushLoop:
             except Exception:
                 logger = get_logger(__name__)
                 logger.exception("background_loop_flush_failed")
-            interval = float(_default_flush_interval(settings=self._settings))
+            interval = float(current_background_loop_flush_interval_seconds(settings=self._settings))
             await asyncio.sleep(interval)
 
 
 def current_background_loop_flush_interval_seconds(*, settings: SettingsReader) -> float:
     """Read the active flush window from the settings registry."""
     return settings.get_float("general.background_loop_flush_interval_sec")
-
-
-# Internal alias retained for the flush task default; tests stub it directly.
-_default_flush_interval = current_background_loop_flush_interval_seconds
 
 
 @dataclass
