@@ -90,8 +90,6 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
             cursor="bad",
             direction="older",
             offset=0,
-            sort_by="created_at",
-            sort_dir="desc",
             db=db,
             run_services=mock_rs_list,
         )
@@ -111,8 +109,6 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
         cursor=None,
         direction="newer",
         offset=0,
-        sort_by="created_at",
-        sort_dir="desc",
         db=db,
         run_services=mock_rs_list,
     )
@@ -130,8 +126,6 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
         cursor=None,
         direction="older",
         offset=2,
-        sort_by="created_at",
-        sort_dir="desc",
         db=db,
         run_services=mock_rs_list,
     )
@@ -148,8 +142,6 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
             cursor=None,
             direction="older",
             offset=0,
-            sort_by="created_at",
-            sort_dir="desc",
             db=db,
             run_services=mock_rs_list,
         )
