@@ -27,7 +27,6 @@ async def test_cancelled_adapter_call_does_not_leak_import_state(tmp_path: Path)
     """If a wrapped adapter call is cancelled mid-await, it must unwind the
     process-global import state that `_activate_adapter_site()` changed."""
 
-    adapter_loader._adapter_cache_clear()
     pack_a_dir = _make_install_dir(tmp_path, "pack_a")
     original_path = list(sys.path)
     original_modules = {name: sys.modules[name] for name in _adapter_module_names()}

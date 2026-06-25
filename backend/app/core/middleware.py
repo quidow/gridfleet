@@ -78,7 +78,6 @@ class RequestContextMiddleware:
         bind_request_context(request_id=request_id, method=method, path=path)
         scope.setdefault("state", {})
         scope["state"]["request_id"] = request_id
-        scope["state"]["auth_mode"] = "disabled"
         scope["state"]["auth_username"] = None
 
         started = perf_counter()

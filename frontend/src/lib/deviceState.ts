@@ -1,14 +1,6 @@
 import type { BadgeTone } from '../components/ui/Badge';
 import type { DeviceChipStatus, DeviceFilterStatus, DeviceOperationalState } from '../types';
 
-export const DEVICE_STATUSES: DeviceOperationalState[] = [
-  'available',
-  'busy',
-  'offline',
-  'maintenance',
-  'verifying',
-];
-
 // Device-list status filter values: the operational states. Reservation is an
 // orthogonal boolean filter (`reserved=true`), not a status value.
 export const DEVICE_FILTER_STATUSES: DeviceFilterStatus[] = [

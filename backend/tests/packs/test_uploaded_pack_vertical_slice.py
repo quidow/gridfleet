@@ -58,14 +58,12 @@ if not (_AGENT_ROOT / "agent_app" / "pack" / "adapter_loader.py").exists():
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
+from agent_app.pack import adapter_loader  # type: ignore[import-not-found]  # noqa: E402
 from agent_app.pack.adapter_dispatch import (  # type: ignore[import-not-found]  # noqa: E402  (path injected above)
     dispatch_discover,
     dispatch_pre_session,
 )
-from agent_app.pack.adapter_loader import (  # type: ignore[import-not-found]  # noqa: E402
-    _adapter_cache_clear,
-    load_adapter,
-)
+from agent_app.pack.adapter_loader import load_adapter  # type: ignore[import-not-found]  # noqa: E402
 from agent_app.pack.adapter_types import SessionSpec  # type: ignore[import-not-found]  # noqa: E402
 from agent_app.pack.tarball_fetch import download_and_verify  # type: ignore[import-not-found]  # noqa: E402
 
@@ -230,13 +228,20 @@ def fixture_artifacts(tmp_path: Path) -> tuple[bytes, str]:
     return tarball_bytes, sha
 
 
+def _reset_adapter_cache() -> None:
+    adapter_loader._cache.clear()
+    adapter_loader._cache_install_locks.clear()
+    sys.path[:] = [entry for entry in sys.path if not entry or Path(entry).exists()]
+    adapter_loader._drop_adapter_modules()
+
+
 @pytest.fixture(autouse=True)
 def _clear_adapter_cache() -> Iterator[None]:
     """Ensure the per-test adapter cache + ``sys.path`` state is fresh."""
 
-    _adapter_cache_clear()
+    _reset_adapter_cache()
     yield
-    _adapter_cache_clear()
+    _reset_adapter_cache()
 
 
 # ---------------------------------------------------------------------------

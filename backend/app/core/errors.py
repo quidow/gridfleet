@@ -80,10 +80,6 @@ class AgentCallError(AppError):
         self.transport_outcome = transport_outcome
         self.error_category = error_category
 
-    @property
-    def error_code(self) -> str:
-        return self.code
-
 
 class AgentUnreachableError(AgentCallError):
     code = "AGENT_UNREACHABLE"

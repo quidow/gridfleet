@@ -108,24 +108,6 @@ class _IsolatedAdapter:
         return _wrapped
 
 
-def _adapter_cache_clear() -> None:
-    """Clear the adapter cache and prune stale ``sys.path`` entries.
-
-    Tests in particular create runtime directories under ``tmp_path`` that
-    disappear between cases. Leaving their ``site/`` entries on
-    ``sys.path`` causes ``importlib`` to resolve a stale ``adapter`` module
-    on the next load. Drop any path entries that no longer exist on disk.
-    """
-
-    _cache.clear()
-    _cache_install_locks.clear()
-    sys.path[:] = [entry for entry in sys.path if not entry or Path(entry).exists()]
-    # Also forget any previously-imported ``adapter`` package tree so the next
-    # load resolves all hooks against the current wheel, including submodules
-    # imported lazily from adapter methods.
-    _drop_adapter_modules()
-
-
 def _extract_wheel(tarball_path: Path, dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tarball_path, mode="r:*") as tar:

@@ -23,7 +23,7 @@ from agent_app.tools.manager import (
     _run_optional,
     detect_node_provider,
 )
-from agent_app.tools.paths import _parse_node_version, find_appium
+from agent_app.tools.paths import _parse_node_version
 
 if TYPE_CHECKING:
     import pytest
@@ -174,77 +174,6 @@ def test_parse_node_version_invalid_returns_zero() -> None:
     with patch("agent_app.tools.paths.logger.debug") as mock_log:
         assert _parse_node_version("/foo/vABC.def/bin/appium") == (0,)
     mock_log.assert_called_once()
-
-
-def test_find_appium_from_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("FNM_DIR", raising=False)
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    with patch("agent_app.tools.paths.shutil.which", return_value="/usr/local/bin/appium"):
-        assert find_appium() == "/usr/local/bin/appium"
-
-
-def test_find_appium_with_fnm_dir_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FNM_DIR", "/custom/fnm")
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    with (
-        patch("agent_app.tools.paths.shutil.which", return_value=None),
-        patch(
-            "agent_app.tools.paths.os.access",
-            side_effect=lambda p, m: p == "/custom/fnm/aliases/default/bin/appium",
-        ),
-    ):
-        assert find_appium() == "/custom/fnm/aliases/default/bin/appium"
-
-
-def test_find_appium_with_xdg_data_home_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("FNM_DIR", raising=False)
-    monkeypatch.setenv("XDG_DATA_HOME", "/xdg")
-    with (
-        patch("agent_app.tools.paths.shutil.which", return_value=None),
-        patch(
-            "agent_app.tools.paths.os.access",
-            side_effect=lambda p, m: p == "/xdg/fnm/aliases/default/bin/appium",
-        ),
-    ):
-        assert find_appium() == "/xdg/fnm/aliases/default/bin/appium"
-
-
-def test_find_appium_prefers_nvm_when_no_fnm(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("FNM_DIR", raising=False)
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    with (
-        patch("agent_app.tools.paths.shutil.which", return_value=None),
-        patch("agent_app.tools.paths.os.access", side_effect=lambda p, m: p.startswith("/home/user/.nvm")),
-        patch(
-            "agent_app.tools.paths.glob.glob",
-            return_value=["/home/user/.nvm/versions/node/v20.0.0/bin/appium"],
-        ),
-    ):
-        assert find_appium() == "/home/user/.nvm/versions/node/v20.0.0/bin/appium"
-
-
-def test_find_appium_fallback_to_usr_local_bin(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("FNM_DIR", raising=False)
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    with (
-        patch("agent_app.tools.paths.shutil.which", return_value=None),
-        patch("agent_app.tools.paths.os.access", side_effect=lambda p, m: p == "/usr/local/bin/appium"),
-        patch("agent_app.tools.paths.glob.glob", return_value=[]),
-        patch("agent_app.tools.paths.os.path.isfile", return_value=True),
-    ):
-        assert find_appium() == "/usr/local/bin/appium"
-
-
-def test_find_appium_returns_name_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("FNM_DIR", raising=False)
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    with (
-        patch("agent_app.tools.paths.shutil.which", return_value=None),
-        patch("agent_app.tools.paths.os.access", return_value=False),
-        patch("agent_app.tools.paths.glob.glob", return_value=[]),
-        patch("agent_app.tools.paths.os.path.isfile", return_value=False),
-    ):
-        assert find_appium() == "appium"
 
 
 # ---------------------------------------------------------------------------

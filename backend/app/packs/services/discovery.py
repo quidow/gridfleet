@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from sqlalchemy import select
@@ -47,19 +46,6 @@ class PackDevicePropertiesFetcher(Protocol):
         circuit_breaker: CircuitBreakerProtocol,
         pool: AgentHttpPool | None = None,
     ) -> dict[str, object] | None: ...
-
-
-@dataclass
-class PackDiscoveredCandidate:
-    pack_id: str
-    platform_id: str
-    identity_scheme: str
-    identity_scope: str
-    identity_value: str
-    suggested_name: str
-    detected_properties: dict[str, Any]
-    runnable: bool
-    missing_requirements: list[str] = field(default_factory=list)
 
 
 IdentityKey = tuple[str, str, str]
