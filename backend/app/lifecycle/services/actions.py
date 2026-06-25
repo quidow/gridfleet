@@ -138,7 +138,7 @@ class LifecyclePolicyActionsService:
         if node is not None and node.observed_running:
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
-                intents=_crash_intents(device, source=source, reason=reason),
+                intents=_crash_intents(device, source=source),
                 reason=reason,
                 publisher=self._publisher,
             )
@@ -147,7 +147,7 @@ class LifecyclePolicyActionsService:
             if node is not None:
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
-                    intents=_crash_intents(device, source=source, reason=reason),
+                    intents=_crash_intents(device, source=source),
                     reason=reason,
                     publisher=self._publisher,
                 )
@@ -284,7 +284,6 @@ class LifecyclePolicyActionsService:
         self,
         db: AsyncSession,
         device: Device,
-        next_state: dict[str, Any],
         *,
         source: str,
         reason: str,
@@ -481,8 +480,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRegistration]:
-    del reason
+def _crash_intents(device: Device, *, source: str) -> list[IntentRegistration]:
     if source == "connectivity":
         return [
             IntentRegistration(

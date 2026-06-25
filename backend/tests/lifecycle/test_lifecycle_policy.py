@@ -2241,7 +2241,6 @@ async def test_record_recovery_suppressed_dedup_refreshes_timestamp_keeps_fresh(
     result = await _make_actions_service().record_recovery_suppressed(
         db_session,
         device,
-        {},
         source="device_connectivity",
         reason="connectivity lost",
         suppression_reason="Recovery probe failed",
@@ -2289,7 +2288,6 @@ async def test_record_recovery_suppressed_dedup_emits_no_second_incident(
     first = await svc.record_recovery_suppressed(
         db_session,
         device,
-        {},
         source="device_connectivity",
         reason="connectivity lost",
         suppression_reason="Recovery probe failed",
@@ -2299,7 +2297,6 @@ async def test_record_recovery_suppressed_dedup_emits_no_second_incident(
     second = await svc.record_recovery_suppressed(
         db_session,
         device,
-        {},
         source="device_connectivity",
         reason="connectivity lost",
         suppression_reason="Recovery probe failed",
