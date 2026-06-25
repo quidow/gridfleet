@@ -30,7 +30,7 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
 - `guides/lifecycle-maintenance-and-recovery.md`
   - Maintenance, reconnect, lifecycle summaries, and recovery behavior.
 - `guides/settings-and-operational-controls.md`
-  - Settings tabs, operational knobs, driver-page handoff, and webhook controls.
+  - Settings tabs, operational knobs, and driver-page handoff.
 - `guides/runs-and-reservations.md`
   - Reservation lifecycle, operator run monitoring, and cancel versus force-release guidance.
 - `guides/dashboard-and-triage.md`
@@ -68,8 +68,6 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - Manager-to-agent reachability and agent service recovery workflow.
 - `runbooks/stuck-devices.md`
   - Recovery flow for devices stuck in `busy` or `reserved`.
-- `runbooks/webhook-delivery-failures.md`
-  - Delivery inspection, retry, test-event, and disable/fix flow for webhooks.
 - `runbooks/backend-deploy-restart-rollback.md`
   - Manual deployment, restart, and rollback flow for the production compose stack.
 - `runbooks/appium-node-desync.md`
@@ -103,8 +101,8 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - Supported `/api` route surface grouped by domain.
 - `reference/settings.md`
   - Runtime settings registry, defaults, validation, and env fallbacks.
-- `reference/events-and-webhooks.md`
-  - SSE, notifications, webhooks, and emitted event names.
+- `reference/events.md`
+  - SSE, notifications, and emitted event names.
 - `reference/glossary.md`
   - Core fleet and contract terms.
 - `reference/testkit.md`

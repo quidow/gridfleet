@@ -1,6 +1,6 @@
 # Settings And Operational Controls
 
-This guide explains what the Settings page controls, which changes are low-risk versus high-impact, and how the driver catalog and webhook tools fit into daily operations.
+This guide explains what the Settings page controls, which changes are low-risk versus high-impact, and how the driver catalog fits into daily operations.
 
 ## How The Settings Page Works
 
@@ -13,7 +13,7 @@ Current shipped behaviors:
 - `Modified` means the saved value differs from the registry default
 - the reset icon restores one key to its default
 - `Reset All Settings` restores every registry-backed setting to defaults
-- webhook and plugin tabs are operational registries on the same page, not part of the generic settings key registry
+- the plugin tab is an operational registry on the same page, not part of the generic settings key registry
 
 Use this page for shared fleet behavior. Do not use it as a replacement for device-specific setup or recovery.
 
@@ -29,7 +29,6 @@ Use this page for shared fleet behavior. Do not use it as a replacement for devi
 | `Reservations` | default TTL, heartbeat timeout, stale-run reaper timing | directly affects how long devices stay locked to runs |
 | `Data Retention` | cleanup age and cleanup cadence | aggressive values reduce history available for triage |
 | `Backup & Restore` | export and import of a device-configuration bundle | importing a stale or wrong bundle can overwrite device config |
-| `Webhooks` | outbound event subscriptions and delivery targets | bad endpoints create noisy failures or missed downstream alerts |
 | `Appium Plugins` | plugin registry and per-host plugin sync | bad plugin versions can break node startup |
 
 ## General
@@ -93,24 +92,14 @@ Most important settings:
 
 Use this tab when node start, node registration, or verification probes need fleet-wide adjustment.
 
-## Notifications And Webhooks
+## Notifications
 
-The product has two notification layers:
-
-- `Notifications`
-  - controls which recent events generate in-app toast messages and what severity threshold applies
-- `Webhooks`
-  - controls which events are pushed to external systems
-
-Toast settings are for the operator in the UI right now. Webhooks are for systems such as Slack relays, incident tooling, or custom listeners.
+The `Notifications` tab controls which recent events generate in-app toast messages and what severity threshold applies.
 
 Practical guidance:
 
 - use toasts for events you want the current operator to notice immediately
-- use webhooks for persistent downstream handling
-- `device.hardware_health_changed` is intended for warning/critical battery conditions; use it when labs need downstream alerting for overheating or charging anomalies
-- use `Send test event` before trusting a new webhook target
-- disable, do not delete, a webhook when you want a temporary pause without losing its event list
+- `device.hardware_health_changed` is intended for warning/critical battery conditions; raise its toast priority when labs need to surface overheating or charging anomalies
 
 ## Device Defaults
 

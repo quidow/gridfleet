@@ -147,7 +147,7 @@ Loop callers map all three terminal errors to `None` (indeterminate). API mutato
   - `open` — short-circuit with `CircuitOpenError(retry_after_seconds=...)`.
   - `half_open` — first probe is allowed through; concurrent probes get `retry_after_seconds=0`. Result decides next state.
 - **Counted as failure.** Transport errors and HTTP `>= 500` from the response. 4xx is not a failure (the agent answered, just refused).
-- **Events.** `host.circuit_breaker.opened` and `.closed` are published to the event bus when the state actually transitions, surfacing on the dashboard and webhooks.
+- **Events.** `host.circuit_breaker.opened` and `.closed` are published to the event bus when the state actually transitions, surfacing on the dashboard.
 
 This is what insulates the leader from "10 hosts unreachable" cascading into 14 loops × 10 hosts × 3 retries every cycle.
 
@@ -283,7 +283,7 @@ The exception classes below are defined in `agent_app/appium/exceptions.py`; the
 
 ## Open contract questions / known gaps
 
-- **No agent-initiated state push.** Adding webhooks from agent → backend has been discussed but is intentionally absent: it would create a second authority for "is the node up", and the cost of polling at 30 s is acceptable. If we ever change this, every code path in Docs 2 and 3 needs revisiting.
+- **No agent-initiated state push.** Adding push callbacks from agent → backend has been discussed but is intentionally absent: it would create a second authority for "is the node up", and the cost of polling at 30 s is acceptable. If we ever change this, every code path in Docs 2 and 3 needs revisiting.
 - **No retry budget at the wrapper level.** Loops do their own retry/backoff (`RESTART_MAX_RETRIES`). The wrapper does not retry — that prevents accidental amplification when the agent is degraded.
 
 ## What this doc does NOT cover

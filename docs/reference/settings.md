@@ -91,12 +91,12 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `retention.agent_log_days` | `retention` | `int` | `7` | `GRIDFLEET_AGENT_LOG_RETENTION_DAYS` | `1..30` | Delete shipped agent-process log entries older than N days |
 | `retention.host_resource_telemetry_hours` | `retention` | `int` | `24` | none | `1..720` | Delete host resource telemetry older than N hours |
 | `retention.capacity_snapshots_days` | `retention` | `int` | `30` | none | `1..3650` | Delete fleet capacity snapshots older than N days |
-| `retention.system_events_days` | `retention` | `int` | `30` | none | `1..3650` | Delete system events older than N days; their webhook delivery records cascade |
+| `retention.system_events_days` | `retention` | `int` | `30` | none | `1..3650` | Delete system events older than N days |
 | `retention.test_runs_days` | `retention` | `int` | `30` | none | `1..3650` | Delete terminal test runs older than N days; their device reservations cascade |
 | `retention.jobs_days` | `retention` | `int` | `30` | none | `1..3650` | Delete completed or failed durable jobs older than N days |
 | `retention.cleanup_interval_hours` | `retention` | `int` | `1` | none | `1..168` | Interval for the retention cleanup loop |
 
 ## Notes
 
-- Driver registry and webhook registry are operator tools on the Settings screen, but they are not part of the persisted settings-key registry above.
-- `notifications.toast_events` is validated and normalized against the emitted event names documented in [events-and-webhooks.md](events-and-webhooks.md).
+- Driver registry is an operator tool on the Settings screen, but it is not part of the persisted settings-key registry above.
+- `notifications.toast_events` is validated and normalized against the emitted event names documented in [events.md](events.md).

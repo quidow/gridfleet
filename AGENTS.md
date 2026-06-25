@@ -81,7 +81,7 @@ Adapter builds require `uv` on `PATH`. Uploaded adapter wheels execute on agent 
 ## Architecture: What Spans Multiple Files
 
 ### Backend control plane and the leader-loop pattern
-The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~18 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, grid_allocation_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher. The `grid_allocation_reaper_loop` expires stale router allocation tickets (devices allocated but never confirmed by the router). `session_sync` is now a direct-to-Appium observation sweep (liveness probes + orphan-session kill via Appium's `/appium/sessions`), not a Grid-hub `/status` poll.
+The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~17 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, run_reaper, grid_allocation_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher. The `grid_allocation_reaper_loop` expires stale router allocation tickets (devices allocated but never confirmed by the router). `session_sync` is now a direct-to-Appium observation sweep (liveness probes + orphan-session kill via Appium's `/appium/sessions`), not a Grid-hub `/status` poll.
 
 Leader election uses **PostgreSQL advisory locks** via `app/core/leader/` (`advisory.py`, `keepalive.py`, `watcher.py`). When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. Domain-specific loops live under their owning `app/<domain>/services/` package.
 
@@ -160,7 +160,7 @@ When you need product/operator context that the code does not encode, look here 
 - `docs/reference/settings.md` — DB settings registry surface
 - `docs/reference/api.md` — `/api` route catalog
 - `docs/reference/capabilities.md` — how Appium caps are derived from device state
-- `docs/reference/events-and-webhooks.md` — SSE + webhook event names
+- `docs/reference/events.md` — SSE + event names
 - `docs/guides/security.md` — threat model and network boundaries
 - `docs/runbooks/` — incident response with exact commands
 

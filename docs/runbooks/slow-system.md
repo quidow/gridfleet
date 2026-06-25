@@ -24,7 +24,7 @@ If `/health/ready` is unhealthy, stop here and focus on the failing `checks` ent
 
 ```bash
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | \
-  egrep '^(pending_jobs|active_sessions|background_loop_errors_total|background_loop_runs_total|background_loop_overrun_total|http_unhandled_exception_total|agent_calls_total|webhook_deliveries_total)'
+  egrep '^(pending_jobs|active_sessions|background_loop_errors_total|background_loop_runs_total|background_loop_overrun_total|http_unhandled_exception_total|agent_calls_total)'
 ```
 
 Prioritize these patterns:
@@ -52,7 +52,6 @@ Look for:
 
 - repeated background-loop exceptions
 - repeated agent timeouts or `AGENT_UNREACHABLE`
-- repeated webhook delivery failures
 - long stretches of router or Appium-node startup churn
 
 ## 4. Check Postgres saturation

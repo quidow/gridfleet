@@ -73,7 +73,6 @@ Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. T
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
 | `run_reaper_loop` | 15 s | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, `DELETE /session/{id}` direct to the device's Appium node through `appium_direct.terminate_session` | abandoned-run reaping |
-| `webhook_delivery_loop` | 1 s poll | `outbound_webhook_deliveries` | webhook delivery rows | webhook delivery state |
 | `durable_job_worker_loop` | 1 s poll | `durable_jobs` | durable job state | durable-job state |
 | `pack_drain_loop` | 60 s | pack desired-state | drain progress | pack-drain rows |
 | `data_cleanup_loop` | 1 h | various retention windows | deletes old rows | data-retention deletions |

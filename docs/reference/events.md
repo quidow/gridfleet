@@ -1,6 +1,6 @@
-# Events And Webhooks Reference
+# Events Reference
 
-This page documents the shipped live-event contract used by SSE subscribers, recent-notification polling, and webhook delivery.
+This page documents the shipped live-event contract used by SSE subscribers and recent-notification polling.
 
 > [!IMPORTANT]
 > `device.availability_changed` was removed with the device-state split. Subscribe to `device.operational_state_changed` instead.
@@ -12,14 +12,6 @@ This page documents the shipped live-event contract used by SSE subscribers, rec
 | `GET` | `/api/events/catalog` | Read the canonical emitted-event catalog for UI pickers and filters | none | event catalog object |
 | `GET` | `/api/events` | Subscribe to live server-sent events | optional `types` and `device_ids` filters | SSE stream |
 | `GET` | `/api/notifications` | Read recent persisted `system_events` history (durable; in-memory fallback when persistence is unconfigured) | `limit`, `offset`, optional `types`, optional `severity` | recent event array |
-| `GET` | `/api/webhooks` | List webhooks | none | `WebhookRead[]` |
-| `POST` | `/api/webhooks` | Create a webhook | `WebhookCreate` with valid `event_types` only | `WebhookRead` |
-| `GET` | `/api/webhooks/{webhook_id}` | Read a webhook | path `webhook_id` | `WebhookRead` |
-| `PATCH` | `/api/webhooks/{webhook_id}` | Update a webhook | `WebhookUpdate` with valid `event_types` only | `WebhookRead` |
-| `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
-| `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic test event | path `webhook_id` | status object |
-| `GET` | `/api/webhooks/{webhook_id}/deliveries` | List recent delivery attempts for a webhook | path `webhook_id`, query `limit` | `WebhookDeliveryListRead` |
-| `POST` | `/api/webhooks/{webhook_id}/deliveries/{delivery_id}/retry` | Retry a webhook delivery | path `webhook_id`, `delivery_id` | `WebhookDeliveryRead` |
 
 ## Severity
 
@@ -67,13 +59,6 @@ The manager publishes one shared event object shape:
 
 - `/api/notifications` returns an array of the same event envelopes
 - The event log returned by `/api/notifications` comes from the durable `system_events` table (persisted `SystemEvent` rows, ordered newest-first); these rows are not pruned by retention cleanup. An in-memory recent-only buffer is used only as a fallback when persistence is not configured
-
-### Webhook delivery shape
-
-- Webhooks receive the same JSON envelope via HTTP `POST`
-- Delivery is attempted up to 3 times total (the initial attempt plus up to 2 retries). Only retryable failures retry — network/timeout errors and HTTP `5xx` responses; `4xx` and other client-side errors are not retried and exhaust immediately. Retries use exponential backoff with jitter (base ~`1s` then ~`4s`, plus up to `2s` of random jitter)
-- Only enabled webhooks whose `event_types` include the published event name receive the event
-- Webhook create/update rejects unknown event names with `422`
 
 ## Emitted Event Names
 
@@ -144,13 +129,12 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | `success` | `success`, `warning`, `critical` | device and group bulk actions |
 | `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | `neutral` | `neutral`, `info` | settings writes |
 | `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted`, `duration_seconds` | `neutral` | `neutral`, `warning` | retention cleanup loop |
-| `webhook.test` | `webhook_id`, `webhook_name`, `message` | `neutral` | `neutral` | webhook test endpoint |
 | `pack_feature.degraded` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `warning` | `warning`, `critical` | driver pack feature monitor |
 | `pack_feature.recovered` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `success` | `success` | driver pack feature monitor |
 
 ## Event Delivery Semantics
 
-Transactional events (those produced inside code paths that mutate the database) dispatch to webhook and SSE subscribers only after the writer's SQLAlchemy transaction commits successfully. If the transaction rolls back, queued events are dropped, so subscribers do not observe state transitions that did not become durable.
+Transactional events (those produced inside code paths that mutate the database) dispatch to SSE subscribers only after the writer's SQLAlchemy transaction commits successfully. If the transaction rolls back, queued events are dropped, so subscribers do not observe state transitions that did not become durable.
 
 This is rollback-safe but not a durable outbox. Events are queued in memory on `Session.info`; the SQLAlchemy `after_commit` hook schedules `event_bus.publish` with `loop.create_task`, and `event_bus.publish` persists the `SystemEvent` row in a separate transaction. If the process exits between the writer commit and the `SystemEvent` commit, the event can be lost. A durable outbox is out of scope for issue #73.
 
