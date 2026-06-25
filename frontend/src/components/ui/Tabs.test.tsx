@@ -15,7 +15,7 @@ const FLAT_TABS: TabDefinition[] = [
 const GROUPED_TABS: TabDefinition[] = [
   { id: 'general', label: 'General', section: 'System' },
   { id: 'grid', label: 'Grid', section: 'System' },
-  { id: 'webhooks', label: 'Webhooks', section: 'Integrations' },
+  { id: 'notifications', label: 'Notifications', section: 'Integrations' },
   { id: 'drivers', label: 'Drivers', section: 'Extensions' },
 ];
 
@@ -72,7 +72,7 @@ describe('Tabs — grouped', () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole('button', { name: 'General' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Webhooks' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Drivers' })).toBeInTheDocument();
   });
 });

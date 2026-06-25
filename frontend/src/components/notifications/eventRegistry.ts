@@ -61,7 +61,6 @@ const LEGACY_FALLBACK: Record<string, EventSeverity> = {
   'settings.changed': 'neutral',
   'config.updated': 'neutral',
   'test_data.updated': 'neutral',
-  'webhook.test': 'neutral',
   'system.cleanup_completed': 'neutral',
 };
 
@@ -180,9 +179,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
   },
   'test_data.updated': {
     render: (data) => `${firstString(data, ['device_name'], 'Device')} test_data updated${stringValue(data.changed_by) ? ` by ${stringValue(data.changed_by)}` : ''}`,
-  },
-  'webhook.test': {
-    render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')}: test event published`,
   },
   'system.cleanup_completed': {
     render: (data) => `Cleanup completed: ${numberValue(data.sessions_deleted) ?? 0} sessions, ${numberValue(data.audit_entries_deleted) ?? 0} audit logs, ${numberValue(data.device_events_deleted) ?? 0} device events`,

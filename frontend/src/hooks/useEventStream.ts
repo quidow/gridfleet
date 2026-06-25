@@ -40,7 +40,6 @@ const EVENT_QUERY_MAP: Record<string, ReadonlyArray<readonly string[]>> = {
   'system.cleanup_completed': [qk.sessions.root, qk.analytics.root],
   'pack_feature.degraded': [qk.driverPackCatalog.root, qk.driverPack.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
   'pack_feature.recovered': [qk.driverPackCatalog.root, qk.driverPack.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
-  'webhook.test': [qk.webhooks.root],
 };
 
 type ToastResult = { type: 'success' | 'error' | 'warning' | 'info'; message: string } | null;

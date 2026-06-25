@@ -264,7 +264,7 @@ export async function mockDefaultApiFallbacks(page: Page) {
       return;
     }
 
-    if (path === '/api/settings' || path === '/api/hosts' || path === '/api/devices' || path === '/api/webhooks') {
+    if (path === '/api/settings' || path === '/api/hosts' || path === '/api/devices') {
       await fulfillJson(route, []);
       return;
     }
@@ -406,21 +406,10 @@ async function mockEmptyHostsApi(page: Page) {
   });
 }
 
-async function mockEmptyWebhooksApi(page: Page) {
-  await page.route('**/api/webhooks', async (route) => {
-    if (route.request().method() !== 'GET') {
-      await route.fallback();
-      return;
-    }
-    await fulfillJson(route, []);
-  });
-}
-
 export async function mockSettingsChromeApis(page: Page) {
   await mockEventsApi(page);
   await mockEmptySettingsApi(page);
   await mockEmptyHostsApi(page);
-  await mockEmptyWebhooksApi(page);
 }
 
 export async function mockAppShellApis(page: Page) {

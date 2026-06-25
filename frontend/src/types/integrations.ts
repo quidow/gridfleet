@@ -2,18 +2,6 @@ import type { components } from '../api/openapi';
 
 type Schemas = components['schemas'];
 
-export type WebhookRead = Schemas['WebhookRead'];
-export type WebhookDeliveryRead = Omit<Schemas['WebhookDeliveryRead'], 'status'> & {
-  status: 'pending' | 'delivered' | 'failed' | 'exhausted';
-};
-export type WebhookDeliveryListRead = Omit<Schemas['WebhookDeliveryListRead'], 'items'> & {
-  items: WebhookDeliveryRead[];
-};
-export type WebhookCreate = Omit<Schemas['WebhookCreate'], 'enabled'> & {
-  enabled?: boolean;
-};
-export type WebhookUpdate = Schemas['WebhookUpdate'];
-
 export type AppiumPlugin = Schemas['PluginRead'];
 export type AppiumPluginCreate = Omit<Schemas['PluginCreate'], 'enabled' | 'notes'> & {
   enabled?: boolean;
