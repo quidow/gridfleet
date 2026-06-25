@@ -69,7 +69,6 @@ async def test_start_node_locks_device_before_reservation_check(
         return SettingsServices(
             service=settings_service,
             config=SettingsConfigService(publisher=event_bus),
-            session_factory=db_session_maker,
         )
 
     def _override_event_services() -> EventServices:
