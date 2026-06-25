@@ -81,10 +81,6 @@ class VerificationService:
             return None
         return public_snapshot(row.snapshot)
 
-    async def clear_verification_jobs(self, session_factory: SessionFactory = async_session) -> None:
-        async with session_factory() as db:
-            await job_queue.delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
-
     async def enqueue_for_device(self, db: AsyncSession, device: Device) -> uuid.UUID:
         """Enqueue a create-mode verification job for an already-built device row.
 

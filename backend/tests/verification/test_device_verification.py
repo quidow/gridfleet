@@ -22,7 +22,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.jobs.queue import DurableJobService
+from app.jobs.queue import DurableJobService, delete_jobs_by_kind
 from app.lifecycle.services.operator_node import (
     OperatorNodeLifecycleService,
     operator_stop_active,
@@ -40,7 +40,6 @@ from app.verification.services.execution import (
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
-from app.verification.services.service import VerificationService
 from tests.conftest import settings_service
 from tests.fakes import build_review_service
 from tests.helpers import create_device_record
@@ -99,9 +98,11 @@ HOST_PAYLOAD = {
 async def reset_verification_jobs(db_session: AsyncSession) -> AsyncGenerator[None]:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     await seed_test_packs(db_session)
-    await VerificationService().clear_verification_jobs(session_factory=session_factory)
+    async with session_factory() as db:
+        await delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
     yield
-    await VerificationService().clear_verification_jobs(session_factory=session_factory)
+    async with session_factory() as db:
+        await delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
 
 
 @pytest_asyncio.fixture
