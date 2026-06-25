@@ -12,8 +12,6 @@ from agent_app.pack.runtime import (
     _driver_install_commands,
     _github_npm_install_spec,
     _github_ref,
-    plugin_install_command,
-    versioned,
 )
 
 
@@ -39,16 +37,6 @@ class _FakeRunner(NpmRunner):
         github_repo: str | None = None,
     ) -> None:
         self.calls.append(("install_driver", name, package, version, appium_home))
-
-    async def install_plugin(
-        self,
-        name: str,
-        version: str,
-        source: str,
-        package: str | None,
-        appium_home: str,
-    ) -> None:
-        self.calls.append(("install_plugin", name, version, source, package or "", appium_home))
 
 
 class _AlreadyInstalledRunner(_FakeRunner):
@@ -101,7 +89,6 @@ def _spec(
         server_package="appium",
         server_version=server,
         drivers=((driver_name, driver_version, "npm", None),),
-        plugins=(),
         node_major=None,
     )
 
@@ -256,27 +243,6 @@ async def test_real_npm_runner_install_driver_failure(tmp_path: Path) -> None:
             )
 
 
-@pytest.mark.asyncio
-async def test_real_npm_runner_install_plugin_failure(tmp_path: Path) -> None:
-    runner = RealNpmRunner()
-    with patch(
-        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    ) as mock_exec:
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"", b"plugin error"))
-        proc.returncode = 1
-        mock_exec.return_value = proc
-        with pytest.raises(RuntimeError, match="plugin error"):
-            await runner.install_plugin(
-                "images",
-                "1.0.0",
-                "npm",
-                None,
-                str(tmp_path / "home"),
-            )
-
-
 # ── RealNpmRunner success paths ────────────────────────────────────
 
 
@@ -335,45 +301,7 @@ async def test_real_npm_runner_install_driver_github_source(tmp_path: Path) -> N
         assert second_call_args[1:4] == ("driver", "list", "--installed")
 
 
-@pytest.mark.asyncio
-async def test_real_npm_runner_install_plugin_success(tmp_path: Path) -> None:
-    runner = RealNpmRunner()
-    appium_home = str(tmp_path / "home")
-    (Path(appium_home) / "node_modules" / ".bin").mkdir(parents=True)
-    with patch(
-        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    ) as mock_exec:
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(return_value=(b"", b""))
-        proc.returncode = 0
-        mock_exec.return_value = proc
-        await runner.install_plugin(
-            "images",
-            "1.0.0",
-            "npm",
-            "@appium/images-plugin",
-            appium_home,
-        )
-        mock_exec.assert_called_once()
-        args, _kwargs = mock_exec.call_args
-        assert args[0] == str(Path(appium_home) / "node_modules" / ".bin" / "appium")
-        assert args[1:4] == ("plugin", "install", "images@1.0.0")
-
-
 # ── Helper function tests ───────────────────────────────────────────
-
-
-def test_versioned_already_has_at() -> None:
-    assert versioned("pkg@1.2.3", "2.0.0") == "pkg@1.2.3"
-
-
-def test_versioned_adds_at() -> None:
-    assert versioned("pkg", "2.0.0") == "pkg@2.0.0"
-
-
-def test_versioned_scoped_package() -> None:
-    assert versioned("@scope/pkg", "2.0.0") == "@scope/pkg@2.0.0"
 
 
 def test_github_ref_semver() -> None:
@@ -427,72 +355,3 @@ def test_driver_install_commands_github() -> None:
 def test_driver_install_commands_npm() -> None:
     cmds = _driver_install_commands("/bin/appium", "/home", "pkg", "1.0.0", "npm", None)
     assert cmds == [["/bin/appium", "driver", "install", "--source=npm", "pkg@1.0.0"]]
-
-
-def test_plugin_install_command_npm_source() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "npm:@appium/images-plugin", None) == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "@appium/images-plugin@1.0.0",
-        "--source=npm",
-    ]
-
-
-def test_plugin_install_command_github_source() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", None) == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "user/repo",
-        "--source=github",
-    ]
-
-
-def test_plugin_install_command_github_source_with_package() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", "pkg-name") == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "user/repo",
-        "--source=github",
-        "--package=pkg-name",
-    ]
-
-
-def test_plugin_install_command_git_source() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "git:https://github.com/user/repo.git", None) == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "https://github.com/user/repo.git",
-        "--source=git",
-    ]
-
-
-def test_plugin_install_command_local_source() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "local:/path/to/plugin", None) == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "/path/to/plugin",
-        "--source=local",
-    ]
-
-
-def test_plugin_install_command_default_source() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "npm", None) == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "images@1.0.0",
-    ]
-
-
-def test_plugin_install_command_default_source_no_version_in_name() -> None:
-    assert plugin_install_command("/bin/appium", "images", "1.0.0", "some_source", None) == [
-        "/bin/appium",
-        "plugin",
-        "install",
-        "images@1.0.0",
-    ]

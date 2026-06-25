@@ -504,63 +504,6 @@ async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
         )
 
 
-async def test_list_plugins_filters_non_dict_payload_entries() -> None:
-    client = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/plugins",
-            payload=[{"name": "images", "version": "1.0.0"}, 123, {"name": "execute-driver", "version": "2.0.0"}],
-        )
-    )
-
-    payload = await agent_operations.list_plugins(
-        "10.0.0.5",
-        5100,
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-    )
-
-    assert payload == [{"name": "images", "version": "1.0.0"}, {"name": "execute-driver", "version": "2.0.0"}]
-
-
-async def test_sync_plugins_endpoint_returns_valid_payload() -> None:
-    sync_plugins_client = StrictAgentClient(
-        post_response=_response("POST", "http://10.0.0.5:5100/agent/plugins/sync", payload={"installed": []})
-    )
-
-    assert (
-        await agent_operations.sync_plugins(
-            "10.0.0.5",
-            5100,
-            plugins=[],
-            http_client_factory=_strict_client_factory(sync_plugins_client),
-            settings=SETTINGS,
-            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-        )
-    ) == {"installed": []}
-
-
-async def test_sync_plugins_raises_for_invalid_payload() -> None:
-    client = StrictAgentClient(
-        post_response=_response(
-            "POST",
-            "http://10.0.0.5:5100/agent/plugins/sync",
-            payload=["bad"],
-        )
-    )
-
-    with pytest.raises(AgentUnreachableError, match="sync plugins failed"):
-        await agent_operations.sync_plugins(
-            "10.0.0.5",
-            5100,
-            plugins=[{"name": "images"}],
-            http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
-            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-        )
-
-
 async def test_pack_device_lifecycle_resolve_raises_for_invalid_payload() -> None:
     client = StrictAgentClient(
         post_response=_response(

@@ -234,7 +234,6 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
             connection_target="device-001",
             port=4723,
             **PACK_START_KWARGS,
-            plugins=["images", "execute-driver"],
             extra_caps={"appium:platform": "phone"},
         )
 
@@ -254,7 +253,6 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
         "--default-capabilities",
     )
     assert "--session-override" in create_proc.await_args_list[0].args
-    assert "--use-plugins" in create_proc.await_args_list[0].args
     logs = manager.get_logs(4723)
     assert any("appium ready" in line for line in logs)
     await manager.shutdown()
@@ -717,7 +715,6 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="device-loop",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -751,7 +748,6 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="device-conflict",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -809,7 +805,6 @@ async def test_auto_restart_aborts_when_target_already_served_by_another_node() 
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="device-dup",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1395,7 +1390,6 @@ async def test_auto_restart_returns_when_intentional_stop_during_sleep() -> None
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1428,7 +1422,6 @@ async def test_auto_restart_records_port_conflict_and_drops() -> None:
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1457,7 +1450,6 @@ async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1508,7 +1500,6 @@ async def test_start_appium_server_raises_runtime_missing_when_binary_not_found(
     spec = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1535,7 +1526,6 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
     spec = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1578,7 +1568,6 @@ async def test_reconfigure_persists_state_into_launch_spec() -> None:
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
-        plugins=None,
         extra_caps=None,
         session_override=True,
         device_type=None,
@@ -1639,33 +1628,6 @@ async def test_wait_for_readiness_returns_false_when_process_exits() -> None:
     proc = FakeProcess(pid=1)
     proc.set_exit(1)
     assert await manager._wait_for_readiness(4723, cast("asyncio.subprocess.Process", proc)) is False
-
-
-async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
-    manager = AppiumProcessManager()
-    spec = AppiumLaunchSpec(
-        connection_target="dev",
-        port=4723,
-        plugins=None,
-        extra_caps=None,
-        session_override=False,
-        device_type=None,
-        ip_address=None,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
-    proc = FakeProcess(pid=1234)
-    with (
-        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
-        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-    ):
-        await manager._start_appium_server(spec, clear_logs_on_failure=False)
-    args = create_proc.await_args_list[0].args
-    assert "--use-plugins" not in args
-    await manager.shutdown()
 
 
 def test_subprocess_env_contribution_defaults() -> None:

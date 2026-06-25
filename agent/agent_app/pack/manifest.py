@@ -75,18 +75,9 @@ class DesiredPack:
 
 
 @dataclass
-class DesiredPlugin:
-    name: str
-    version: str
-    source: str
-    package: str | None
-
-
-@dataclass
 class DesiredPayload:
     host_id: str
     packs: list[DesiredPack]
-    plugins: list[DesiredPlugin]
 
 
 def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
@@ -117,7 +108,6 @@ def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
     return DesiredPayload(
         host_id=payload["host_id"],
         packs=packs,
-        plugins=[_plugin(p) for p in payload.get("plugins", [])],
     )
 
 
@@ -186,12 +176,3 @@ def _features(raw: dict[str, Any]) -> list[DesiredFeature]:
         for feature_id, feature_data in sorted(raw.items())
         if isinstance(feature_data, dict)
     ]
-
-
-def _plugin(raw: dict[str, Any]) -> DesiredPlugin:
-    return DesiredPlugin(
-        name=raw["name"],
-        version=raw["version"],
-        source=raw["source"],
-        package=raw.get("package"),
-    )

@@ -75,9 +75,6 @@ from app.packs.services.service import PackCatalogService
 from app.packs.services.status import PackStatusService
 from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
-from app.plugins.dependencies import get_plugin_services
-from app.plugins.service import PluginService
-from app.plugins.services_container import PluginServices
 from app.portability.dependencies import get_portability_services
 from app.portability.services.export import PortabilityExportService
 from app.portability.services.import_bundle import PortabilityImportService
@@ -660,10 +657,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             session_factory=sf,
         )
 
-    def override_get_plugin_services() -> PluginServices:
-        plugin_svc = PluginService(settings=settings_service, circuit_breaker=test_circuit_breaker)
-        return PluginServices(plugin=plugin_svc)
-
     def override_get_appium_node_services() -> AppiumNodeServices:
         assert db_session.bind is not None
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -716,7 +709,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_run_services] = override_get_run_services
     app.dependency_overrides[get_grid_services] = override_get_grid_services
     app.dependency_overrides[get_pack_services] = override_get_pack_services
-    app.dependency_overrides[get_plugin_services] = override_get_plugin_services
     app.dependency_overrides[get_appium_node_services] = override_get_appium_node_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c

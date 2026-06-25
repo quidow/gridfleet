@@ -66,7 +66,6 @@ from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
 from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
 from app.packs.services.drain import PackDrainLoop
-from app.plugins import router as plugins
 from app.portability import router as portability_router
 from app.runs import router as runs_router
 from app.runs.service_reaper import RunReaperLoop
@@ -328,7 +327,6 @@ app.include_router(verification_router.router, dependencies=[Depends(auth_depend
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(runs_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(lifecycle_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(settings.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

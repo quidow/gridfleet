@@ -5,7 +5,6 @@ from unittest.mock import Mock
 
 from sqlalchemy import select
 
-from app.hosts.models import HostPluginRuntimeStatus
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.packs.services import status as pack_status_service
 from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
@@ -31,7 +30,6 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
         appium_server_package="appium",
         appium_server_version="2.0.0",
         driver_specs=[],
-        plugin_specs=None,
         appium_home="/old",
         status="pending",
         blocked_reason="old",
@@ -43,14 +41,7 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
         runtime_id="rt-existing",
         status="pending",
     )
-    plugin = HostPluginRuntimeStatus(
-        host_id=db_host.id,
-        runtime_id="rt-existing",
-        plugin_name="images",
-        version="1.0.0",
-        status="pending",
-    )
-    db_session.add_all([runtime, pack, plugin])
+    db_session.add_all([runtime, pack])
     await db_session.commit()
 
     await _status_svc.apply_status(
@@ -62,9 +53,6 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
                     "runtime_id": "rt-existing",
                     "appium_server": {"package": "appium", "version": "2.19.0"},
                     "appium_driver": [{"package": "uiautomator2", "version": "5.0.0"}],
-                    "appium_plugins": [
-                        {"name": "images", "version": "2.0.0", "status": "installed", "blocked_reason": None}
-                    ],
                     "appium_home": "/new",
                     "status": "installed",
                     "blocked_reason": None,
@@ -92,13 +80,10 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
 
     await db_session.refresh(runtime)
     await db_session.refresh(pack)
-    await db_session.refresh(plugin)
     assert runtime.appium_server_version == "2.19.0"
-    assert runtime.plugin_specs == []
     assert runtime.appium_home == "/new"
     assert pack.pack_release == "2026.05.0"
     assert pack.installed_at is not None
-    assert plugin.version == "2.0.0"
     doctors = (await db_session.execute(select(HostPackDoctorResult))).scalars().all()
     assert [(row.pack_id, row.check_id) for row in doctors] == [("appium-uiautomator2", "node")]
 

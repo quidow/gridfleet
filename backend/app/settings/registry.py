@@ -512,13 +512,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=65535,
     ),
     SettingDefinition(
-        key="appium.default_plugins",
-        category="grid",
-        setting_type="string",
-        default="",
-        description="Comma-separated Appium plugins for all nodes",
-    ),
-    SettingDefinition(
         key="appium.startup_timeout_sec",
         category="grid",
         setting_type="int",

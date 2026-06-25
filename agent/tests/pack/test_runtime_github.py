@@ -44,16 +44,6 @@ class RecordingRunner:
             }
         )
 
-    async def install_plugin(
-        self,
-        name: str,
-        version: str,
-        source: str,
-        package: str | None,
-        appium_home: str,
-    ) -> None:
-        return None
-
 
 @pytest.mark.asyncio
 async def test_github_source_passes_correct_args(tmp_path: Path) -> None:
@@ -63,7 +53,6 @@ async def test_github_source_passes_correct_args(tmp_path: Path) -> None:
         server_package="appium",
         server_version="2.11.5",
         drivers=(("roku", "0.13.3", "github", "dlenroc/appium-roku-driver"),),
-        plugins=(),
         node_major=None,
     )
     await mgr.reconcile({"appium-roku-dlenroc": spec})
@@ -80,7 +69,6 @@ async def test_npm_source_still_works(tmp_path: Path) -> None:
         server_package="appium",
         server_version="2.11.5",
         drivers=(("uiautomator2", "3.6.0", "npm", None),),
-        plugins=(),
         node_major=None,
     )
     await mgr.reconcile({"appium-uiautomator2": spec})
@@ -93,14 +81,12 @@ def test_runtime_id_differs_by_source() -> None:
         server_package="appium",
         server_version="2.11.5",
         drivers=(("roku", "0.13.3", "npm", None),),
-        plugins=(),
         node_major=None,
     )
     spec_gh = RuntimeSpec(
         server_package="appium",
         server_version="2.11.5",
         drivers=(("roku", "0.13.3", "github", "dlenroc/appium-roku-driver"),),
-        plugins=(),
         node_major=None,
     )
     assert AppiumRuntimeManager.runtime_id_for(spec_npm) != AppiumRuntimeManager.runtime_id_for(spec_gh)
@@ -143,7 +129,6 @@ def test_runtime_id_differs_by_runtime_packages() -> None:
         server_package="appium",
         server_version="3.3.1",
         drivers=(("xcuitest", "10.43.1", "npm", None),),
-        plugins=(),
         node_major=None,
     )
     with_pkg = dataclasses.replace(base, runtime_packages=(("appium-ios-remotexpc", "0.44.0"),))
@@ -158,7 +143,6 @@ async def test_runtime_packages_are_installed_explicitly(tmp_path: Path) -> None
         server_package="appium",
         server_version="3.3.1",
         drivers=(("xcuitest", "10.43.1", "npm", None),),
-        plugins=(),
         node_major=None,
         runtime_packages=(("appium-ios-remotexpc", "0.44.0"),),
     )

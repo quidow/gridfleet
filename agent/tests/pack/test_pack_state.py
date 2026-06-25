@@ -273,24 +273,6 @@ async def test_installed_packs_are_not_blocked_by_host_probe_support() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_entry_includes_appium_plugins_key() -> None:
-    """Every runtime entry in the posted payload must include the appium_plugins key."""
-    client = _FakeClient(_make_desired([_android_pack()]))
-    loop = PackStateLoop(
-        client=client,
-        runtime_mgr=_SucceedingRuntimeMgr(),
-        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
-    )
-
-    await loop.run_once()
-
-    payload = client.posted[-1]
-    assert len(payload["runtimes"]) >= 1
-    for rt in payload["runtimes"]:
-        assert "appium_plugins" in rt, f"runtime {rt.get('runtime_id')} missing appium_plugins"
-
-
-@pytest.mark.asyncio
 async def test_runtime_entry_includes_blocked_reason_key() -> None:
     """Every runtime entry in the posted payload must include the blocked_reason key."""
     client = _FakeClient(_make_desired([_android_pack()]))

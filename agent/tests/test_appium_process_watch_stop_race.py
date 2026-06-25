@@ -32,7 +32,6 @@ async def test_stop_cancels_restart_task_from_natural_crash() -> None:
     spec = AppiumLaunchSpec(
         connection_target="udid-watch",
         port=port,
-        plugins=None,
         extra_caps=None,
         session_override=False,
         device_type="real_device",

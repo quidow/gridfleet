@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { ConfirmDialog, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
 import { BackupRestorePanel } from '../components/settings/BackupRestorePanel';
-import { PluginRegistryPanel } from '../components/settings/PluginRegistryPanel';
 import { SettingsCategoryPanel } from '../components/settings/SettingsCategoryPanel';
 import { useResetAllSettings } from '../hooks/useSettings';
 import { usePageTitle } from '../hooks/usePageTitle';
@@ -16,11 +15,10 @@ const TABS = [
   { id: 'retention', label: 'Data Retention', section: 'System' },
   { id: 'backup', label: 'Backup & Restore', section: 'System' },
   { id: 'notifications', label: 'Notifications', section: 'Integrations' },
-  { id: 'plugins', label: 'Appium Plugins', section: 'Extensions' },
 ];
 
 const TAB_IDS = TABS.map((t) => t.id);
-const REGISTRY_TABS = new Set(['plugins']);
+const REGISTRY_TABS = new Set<string>();
 const CUSTOM_PANEL_TABS = new Set(['backup']);
 
 export function Settings() {
@@ -47,7 +45,6 @@ export function Settings() {
         {!REGISTRY_TABS.has(tab) && !CUSTOM_PANEL_TABS.has(tab) ? (
           <SettingsCategoryPanel category={tab} />
         ) : null}
-        {tab === 'plugins' ? <PluginRegistryPanel /> : null}
         {tab === 'backup' ? <BackupRestorePanel /> : null}
       </div>
 

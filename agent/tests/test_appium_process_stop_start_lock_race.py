@@ -43,7 +43,6 @@ async def test_stop_holds_start_lock_during_process_teardown() -> None:
     mgr._launch_specs[5555] = AppiumLaunchSpec(
         connection_target="udid-stop",
         port=5555,
-        plugins=None,
         extra_caps=None,
         session_override=False,
         device_type="real_device",

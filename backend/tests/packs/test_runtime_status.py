@@ -46,7 +46,6 @@ async def test_host_driver_pack_status_includes_runtime_and_plugin_status(
         appium_server_package="appium",
         appium_server_version="2.11.5",
         driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
-        plugin_specs=[{"name": "images", "version": "latest", "status": "installed"}],
         appium_home="/tmp/runtime-a",
         status="installed",
         blocked_reason=None,
@@ -62,7 +61,6 @@ async def test_host_driver_pack_status_includes_runtime_and_plugin_status(
     assert rt["appium_server_package"] == "appium"
     assert rt["appium_server_version"] == "2.11.5"
     assert rt["driver_specs"] == [{"package": "appium-uiautomator2-driver", "version": "3.6.0"}]
-    assert rt["plugin_specs"] == [{"name": "images", "version": "latest", "status": "installed"}]
     assert rt["appium_home"] == "/tmp/runtime-a"
     assert rt["status"] == "installed"
     assert rt["blocked_reason"] is None
@@ -89,7 +87,6 @@ async def test_blocked_runtime_does_not_contaminate_installed_runtime(
         appium_server_package="appium",
         appium_server_version="2.19.0",
         driver_specs=[{"package": "appium-uiautomator2-driver", "version": "5.0.0"}],
-        plugin_specs=[],
         appium_home="/tmp/runtime-ok",
         status="installed",
         blocked_reason=None,
@@ -100,7 +97,6 @@ async def test_blocked_runtime_does_not_contaminate_installed_runtime(
         appium_server_package="appium",
         appium_server_version="2.19.0",
         driver_specs=[{"package": "appium-xcuitest-driver", "version": "9.3.1"}],
-        plugin_specs=[],
         appium_home="/tmp/runtime-bad",
         status="blocked",
         blocked_reason="plugin_incompatible:images@1.0.0",
@@ -121,42 +117,6 @@ async def test_blocked_runtime_does_not_contaminate_installed_runtime(
     bad_rt = by_id["runtime-bad"]
     assert bad_rt["status"] == "blocked"
     assert bad_rt["blocked_reason"] == "plugin_incompatible:images@1.0.0"
-
-
-@pytest.mark.asyncio
-async def test_runtime_status_plugin_specs_defaults_to_empty_list(
-    db_session: AsyncSession,
-) -> None:
-    """A runtime with no plugin_specs returns an empty list, not None."""
-    host = Host(
-        hostname="h-runtime-empty-plugins.local",
-        ip="10.0.0.79",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.commit()
-
-    runtime = HostRuntimeInstallation(
-        host_id=host.id,
-        runtime_id="runtime-noplugins",
-        appium_server_package="appium",
-        appium_server_version="2.11.5",
-        driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
-        # plugin_specs omitted — should default to []
-        appium_home="/tmp/runtime-noplugins",
-        status="installed",
-        blocked_reason=None,
-    )
-    db_session.add(runtime)
-    await db_session.commit()
-
-    body = await _status_svc.get_host_driver_pack_status(db_session, host.id)
-
-    assert len(body["runtimes"]) == 1
-    rt = body["runtimes"][0]
-    assert rt["plugin_specs"] == []
 
 
 @pytest.mark.asyncio

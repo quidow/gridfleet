@@ -96,9 +96,7 @@ def test_agent_pack_telemetry_signature_uses_adapter_contract() -> None:
 
 def test_policy_and_plugin_tests_exist() -> None:
     expected = [
-        ROOT / "tests" / "plugins" / "test_agent_desired_policy.py",
         ROOT.parent / "agent" / "tests" / "pack" / "test_runtime_policy.py",
-        ROOT.parent / "agent" / "tests" / "pack" / "test_runtime_plugins.py",
     ]
     missing = [str(path) for path in expected if not path.exists()]
     assert missing == []

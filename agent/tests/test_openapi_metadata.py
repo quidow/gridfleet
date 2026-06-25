@@ -12,8 +12,6 @@ _OPS_WITHOUT_REQUIRED_4XX: set[tuple[str, str]] = {
     ("GET", "/agent/health"),
     ("GET", "/agent/host/telemetry"),
     ("GET", "/agent/tools/status"),
-    ("GET", "/agent/plugins"),
-    ("POST", "/agent/plugins/sync"),
     # Enumeration endpoint: always returns 200 (empty list when no pack is loaded)
     ("GET", "/agent/pack/devices"),
     # Doctor endpoint: always returns 200 (empty checks list when no adapter loaded)

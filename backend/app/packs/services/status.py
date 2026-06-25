@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
-from app.hosts.models import Host, HostPluginRuntimeStatus
+from app.hosts.models import Host
 from app.packs.models import (
     DriverPack,
     DriverPackRelease,
@@ -20,7 +20,6 @@ from app.packs.models import (
 from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
 from app.packs.services.host_compatibility import manifest_supports_host_os
 from app.packs.services.release_ordering import selected_release
-from app.plugins.models import AppiumPlugin
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,7 +77,6 @@ class PackStatusService:
                         appium_server_package=rt["appium_server"]["package"],
                         appium_server_version=rt["appium_server"]["version"],
                         driver_specs=rt.get("appium_driver", []),
-                        plugin_specs=[],
                         appium_home=rt.get("appium_home"),
                         status=rt.get("status", "pending"),
                         blocked_reason=rt.get("blocked_reason"),
@@ -88,21 +86,9 @@ class PackStatusService:
                 existing.appium_server_package = rt["appium_server"]["package"]
                 existing.appium_server_version = rt["appium_server"]["version"]
                 existing.driver_specs = rt.get("appium_driver", [])
-                existing.plugin_specs = existing.plugin_specs or []
                 existing.appium_home = rt.get("appium_home")
                 existing.status = rt.get("status", existing.status)
                 existing.blocked_reason = rt.get("blocked_reason")
-
-            for plugin in rt.get("appium_plugins", []):
-                await self.upsert_plugin_status(
-                    db,
-                    host_id=host_id,
-                    runtime_id=rt["runtime_id"],
-                    plugin_name=plugin["name"],
-                    version=plugin["version"],
-                    status=plugin.get("status", "unknown"),
-                    blocked_reason=plugin.get("blocked_reason"),
-                )
 
         for pack in payload.get("packs", []):
             existing_pack = (
@@ -210,17 +196,6 @@ class PackStatusService:
             doctor = [
                 row for row in doctor if row.pack_id not in reported_pack_ids or row.pack_id in compatible_pack_ids
             ]
-        plugin_rows = (
-            (
-                await db.execute(
-                    select(HostPluginRuntimeStatus)
-                    .where(HostPluginRuntimeStatus.host_id == host_id)
-                    .order_by(HostPluginRuntimeStatus.runtime_id, HostPluginRuntimeStatus.plugin_name)
-                )
-            )
-            .scalars()
-            .all()
-        )
         feature_rows = (
             (
                 await db.execute(
@@ -238,16 +213,6 @@ class PackStatusService:
                 for row in feature_rows
                 if row.pack_id not in reported_pack_ids or row.pack_id in compatible_pack_ids
             ]
-        plugins_by_runtime: dict[str, list[dict[str, Any]]] = {}
-        for row in plugin_rows:
-            plugins_by_runtime.setdefault(row.runtime_id, []).append(
-                {
-                    "name": row.plugin_name,
-                    "version": row.version,
-                    "status": row.status,
-                    "blocked_reason": row.blocked_reason,
-                }
-            )
         return {
             "host_id": host_id,
             "packs": [
@@ -281,11 +246,9 @@ class PackStatusService:
                     "appium_server_package": row.appium_server_package,
                     "appium_server_version": row.appium_server_version,
                     "driver_specs": row.driver_specs or [],
-                    "plugin_specs": row.plugin_specs or [],
                     "appium_home": row.appium_home,
                     "status": row.status,
                     "blocked_reason": row.blocked_reason,
-                    "plugins": plugins_by_runtime.get(row.runtime_id, []),
                 }
                 for row in runtimes
             ],
@@ -400,47 +363,6 @@ class PackStatusService:
 
         return {"pack_id": pack_id, "hosts": hosts}
 
-    async def upsert_plugin_status(
-        self,
-        db: AsyncSession,
-        *,
-        host_id: uuid.UUID,
-        runtime_id: str,
-        plugin_name: str,
-        version: str,
-        status: str,
-        blocked_reason: str | None = None,
-    ) -> None:
-        """Persist plugin install status keyed by (host_id, runtime_id, plugin_name).
-
-        Inserts a new row if none exists; otherwise updates version, status, and updated_at.
-        """
-        existing = (
-            await db.execute(
-                select(HostPluginRuntimeStatus).where(
-                    HostPluginRuntimeStatus.host_id == host_id,
-                    HostPluginRuntimeStatus.runtime_id == runtime_id,
-                    HostPluginRuntimeStatus.plugin_name == plugin_name,
-                )
-            )
-        ).scalar_one_or_none()
-
-        if existing is None:
-            db.add(
-                HostPluginRuntimeStatus(
-                    host_id=host_id,
-                    runtime_id=runtime_id,
-                    plugin_name=plugin_name,
-                    version=version,
-                    status=status,
-                    blocked_reason=blocked_reason,
-                )
-            )
-        else:
-            existing.version = version
-            existing.status = status
-            existing.blocked_reason = blocked_reason
-
     async def compute_desired(self, db: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
         host = await db.get(Host, host_id)
         rows = (
@@ -455,15 +377,6 @@ class PackStatusService:
             .scalars()
             .all()
         )
-
-        plugin_rows = (
-            (await db.execute(select(AppiumPlugin).where(AppiumPlugin.enabled.is_(True)).order_by(AppiumPlugin.name)))
-            .scalars()
-            .all()
-        )
-        plugins = [
-            {"name": p.name, "version": p.version, "source": p.source, "package": p.package} for p in plugin_rows
-        ]
 
         packs: list[dict[str, Any]] = []
         for pack in rows:
@@ -487,7 +400,7 @@ class PackStatusService:
                     "tarball_sha256": latest.artifact_sha256,
                 }
             )
-        return {"host_id": str(host_id), "packs": packs, "plugins": plugins}
+        return {"host_id": str(host_id), "packs": packs}
 
 
 def _pack_row_supports_host(

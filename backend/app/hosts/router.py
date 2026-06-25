@@ -43,14 +43,9 @@ from app.hosts.schemas import (
 )
 from app.packs import schemas as pack_schemas
 from app.packs.dependencies import PackServicesDep
-from app.plugins.service import PluginService
 from app.settings.dependencies import SettingsServicesDep
 
 if TYPE_CHECKING:
-    from app.agent_comm.http_pool import AgentHttpPool
-    from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.agent_comm.services_container import AgentCommServices
-    from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
     from app.events.protocols import EventPublisher
     from app.events.services_container import EventServices
@@ -58,7 +53,6 @@ if TYPE_CHECKING:
     from app.hosts.services_container import HostServices
     from app.packs.protocols import PackDiscoveryProtocol
     from app.packs.services_container import PackServices
-    from app.settings.services_container import SettingsServices
 
 HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 
@@ -108,8 +102,6 @@ def _schedule_host_acceptance_tasks(
     event_services: EventServices,
     pack_services: PackServices,
     host_services: HostServices,
-    settings_services: SettingsServices,
-    agent_comm: AgentCommServices,
 ) -> None:
     _fire_and_forget(
         _auto_discover,
@@ -117,14 +109,6 @@ def _schedule_host_acceptance_tasks(
         event_services.publisher,
         pack_services.discovery,
         host_services.crud,
-    )
-    _fire_and_forget(
-        _auto_prepare_host_diagnostics,
-        host_id,
-        settings=settings_services.service,
-        circuit_breaker=agent_comm.circuit_breaker,
-        crud=host_services.crud,
-        pool=agent_comm.http_pool,
     )
 
 
@@ -171,26 +155,6 @@ async def _auto_discover(
         logger.exception("Auto-discovery failed for host %s", host_id)
 
 
-async def _auto_prepare_host_diagnostics(
-    host_id: uuid.UUID,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    crud: HostCrudProtocol,
-    pool: AgentHttpPool | None = None,
-) -> None:
-    try:
-        async with async_session() as db:
-            host = await crud.get_host(db, host_id)
-            if host is None:
-                return
-            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker, pool=pool)
-            plugins = await svc.list_plugins(db)
-            await svc.auto_sync_host_plugins(host, plugins)
-    except Exception:
-        logger.exception("Automatic diagnostics preparation failed for host %s", host_id)
-
-
 @router.post("/register", response_model=HostRead)
 async def register_host(
     data: HostRegister,
@@ -224,8 +188,6 @@ async def register_host(
                 event_services=event_services,
                 pack_services=pack_services,
                 host_services=host_services,
-                settings_services=settings_services,
-                agent_comm=agent_comm,
             )
 
     return _serialize_host(host, settings_services)
@@ -238,7 +200,6 @@ async def approve_host(
     host_services: HostServicesDep,
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
-    agent_comm: AgentCommServicesDep,
     pack_services: PackServicesDep,
 ) -> dict[str, Any]:
     host = found_or_404(await host_services.crud.approve_host(db, host_id), "Host not found or not pending")
@@ -247,8 +208,6 @@ async def approve_host(
         event_services=event_services,
         pack_services=pack_services,
         host_services=host_services,
-        settings_services=settings_services,
-        agent_comm=agent_comm,
     )
     return _serialize_host(host, settings_services)
 

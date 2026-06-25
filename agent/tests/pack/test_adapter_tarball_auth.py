@@ -89,5 +89,4 @@ def _runtime_env(tmp_path: Path) -> RuntimeEnv:
         server_package="appium",
         server_version="3.3.1",
         driver_versions={"@dlenroc/appium-roku-driver": "0.13.3"},
-        plugin_statuses=[],
     )

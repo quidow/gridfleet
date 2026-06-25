@@ -29,8 +29,6 @@ from app.agent_comm.generated import (
     PackDevicePropertiesResponse,
     PackDevicesResponse,
     PackDeviceTelemetryResponse,
-    PluginListItem,
-    PluginSyncResponse,
     ToolsStatusResponse,
 )
 from app.core.errors import AgentResponseError, AgentUnreachableError
@@ -430,71 +428,6 @@ def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | Non
         message = detail.get("message")
         return code, str(message) if message is not None else str(detail)
     return None, str(detail) if detail is not None else f"HTTP {response.status_code}"
-
-
-async def list_plugins(
-    host: str,
-    agent_port: int,
-    *,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 15,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> list[dict[str, Any]]:
-    response = await _send_request(
-        "GET",
-        f"{agent_base_url(host, agent_port)}/agent/plugins",
-        endpoint="plugins_list",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    _raise_for_status(response, host=host, action="list plugins")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(host, f"Agent list plugins failed on host {host} (invalid JSON payload)") from exc
-    if not isinstance(raw, list):
-        return []
-    try:
-        for it in raw:
-            if isinstance(it, dict):
-                PluginListItem.model_validate(it)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent list plugins failed on host {host} (invalid plugin list)") from exc
-    return [it for it in raw if isinstance(it, dict)]
-
-
-async def sync_plugins(
-    host: str,
-    agent_port: int,
-    *,
-    plugins: list[dict[str, Any]],
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 180,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any]:
-    response = await _send_request(
-        "POST",
-        f"{agent_base_url(host, agent_port)}/agent/plugins/sync",
-        endpoint="plugins_sync",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        json_body={"plugins": plugins},
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    return _decode_model_payload(response, host=host, action="sync plugins", model=PluginSyncResponse)
 
 
 async def get_tool_status(

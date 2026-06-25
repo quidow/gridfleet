@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import ANY, AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -10,11 +10,9 @@ from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
-from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
+from app.hosts.router import _auto_discover
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.plugins.service import PluginService
 from tests.conftest import test_circuit_breaker
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -477,10 +475,9 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert data["recommended_agent_version"] == "0.3.0"
     assert data["agent_update_available"] is True
     host_id = UUID(data["id"])
-    assert len(scheduled) == 2
+    assert len(scheduled) == 1
     assert scheduled[0][0] is _auto_discover
     assert scheduled[0][1][0] == host_id  # host_id arg
-    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
 
 async def test_reregister_closes_open_circuit_breaker(client: AsyncClient) -> None:
@@ -629,38 +626,12 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
     assert approve_resp.status_code == 200
     assert approve_resp.json()["agent_version_status"] == "ok"
     host_id = UUID(approve_resp.json()["id"])
-    assert len(scheduled) == 2
+    assert len(scheduled) == 1
     assert scheduled[0][0] is _auto_discover
     assert scheduled[0][1][0] == host_id  # host_id arg
-    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
     reset_resp = await client.post("/api/settings/reset/agent.auto_accept_hosts")
     assert reset_resp.status_code == 200
-
-
-async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSession) -> None:
-    host = Host(
-        hostname="runtime-prepare-host",
-        ip="10.0.0.42",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.commit()
-    await db_session.refresh(host)
-    sync = AsyncMock()
-    crud_mock = Mock()
-    crud_mock.get_host = AsyncMock(return_value=host)
-    with (
-        patch.object(PluginService, "list_plugins", new=AsyncMock(return_value=[])),
-        patch.object(PluginService, "auto_sync_host_plugins", sync),
-    ):
-        await _auto_prepare_host_diagnostics(
-            host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock(), crud=crud_mock
-        )
-
-    sync.assert_awaited_once_with(host, [])
 
 
 @pytest.mark.asyncio

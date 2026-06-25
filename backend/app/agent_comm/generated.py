@@ -53,7 +53,6 @@ class AppiumStartRequest(BaseModel):
         ),
     ]
     platform_id: Annotated[str, Field(min_length=1, pattern="^[A-Za-z0-9_.\\-]+$", title="Platform Id")]
-    plugins: Annotated[list[str] | None, Field(title="Plugins")] = None
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
     session_override: Annotated[bool | None, Field(title="Session Override")] = True
     stop_pending: Annotated[bool | None, Field(title="Stop Pending")] = False
@@ -227,35 +226,6 @@ class PackDevicesResponse(BaseModel):
 
 class PackDoctorResponse(BaseModel):
     checks: Annotated[list[DoctorCheckOut] | None, Field(title="Checks")] = None
-
-
-class PluginConfig(BaseModel):
-    name: Annotated[
-        str,
-        Field(
-            min_length=1,
-            pattern="^(@[a-z0-9][a-z0-9_\\-]*/)?[a-z0-9][a-z0-9_.\\-]*$",
-            title="Name",
-        ),
-    ]
-    package: Annotated[str | None, Field(title="Package")] = None
-    source: Annotated[str, Field(title="Source")]
-    version: Annotated[str, Field(title="Version")]
-
-
-class PluginListItem(BaseModel):
-    name: Annotated[str, Field(title="Name")]
-    version: Annotated[str, Field(title="Version")]
-
-
-class PluginSyncRequest(BaseModel):
-    plugins: Annotated[list[PluginConfig], Field(title="Plugins")]
-
-
-class PluginSyncResponse(BaseModel):
-    model_config = ConfigDict(
-        extra="allow",
-    )
 
 
 class ToolEntry(BaseModel):

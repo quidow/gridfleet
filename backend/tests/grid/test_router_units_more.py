@@ -65,9 +65,6 @@ from app.packs.routers import (
     uploads as driver_pack_uploads,
 )
 from app.packs.schemas import CurrentReleasePatch, RuntimePolicy
-from app.plugins import router as plugins_router
-from app.plugins.schemas import PluginCreate, PluginUpdate
-from app.plugins.service import PluginService
 from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import (
@@ -386,17 +383,6 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         )
     assert exc.value.status_code == 404
 
-    plugin_id = uuid.uuid4()
-    plugin = SimpleNamespace(id=plugin_id)
-    fake_ps = SimpleNamespace(plugin=SimpleNamespace(update_plugin=AsyncMock(return_value=plugin)))
-    result = await plugins_router.update_plugin(  # type: ignore[arg-type]
-        plugin_id, PluginUpdate(enabled=False), db=object(), plugin_services=fake_ps
-    )
-    assert result is plugin
-
-    fake_ps2 = SimpleNamespace(plugin=SimpleNamespace(sync_all_host_plugins=AsyncMock(return_value={"synced": 1})))
-    assert await plugins_router.sync_all_plugins(db=object(), plugin_services=fake_ps2) == {"synced": 1}  # type: ignore[arg-type]
-
     reset_svc = Mock()
     reset_svc.reset_all = AsyncMock()
     assert await settings_router.reset_all_settings(
@@ -506,38 +492,6 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     assert (await devices_verification_router._read_queue_event(empty_queue)).type == "x"  # type: ignore[arg-type]
 
 
-async def test_plugins_router_missing_host_and_plugin_paths() -> None:
-    plugin_id = uuid.uuid4()
-    fake_ps_update = SimpleNamespace(plugin=SimpleNamespace(update_plugin=AsyncMock(return_value=None)))
-    with pytest.raises(HTTPException) as caught:
-        await plugins_router.update_plugin(  # type: ignore[arg-type]
-            plugin_id, PluginUpdate(enabled=True), db=object(), plugin_services=fake_ps_update
-        )
-    assert caught.value.status_code == 404
-
-    fake_ps_delete = SimpleNamespace(plugin=SimpleNamespace(delete_plugin=AsyncMock(return_value=False)))
-    with pytest.raises(HTTPException) as caught:
-        await plugins_router.delete_plugin(  # type: ignore[arg-type]
-            plugin_id, db=object(), plugin_services=fake_ps_delete
-        )
-    assert caught.value.status_code == 404
-
-    fake_hs_none = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=None)))
-    fake_ps_host = SimpleNamespace(plugin=SimpleNamespace())
-    with pytest.raises(HTTPException) as caught:
-        await plugins_router.host_plugins(
-            uuid.uuid4(), db=object(), plugin_services=fake_ps_host, host_services=fake_hs_none
-        )  # type: ignore[arg-type]
-    assert caught.value.status_code == 404
-
-    fake_ps_sync = SimpleNamespace(plugin=SimpleNamespace())
-    with pytest.raises(HTTPException) as caught:
-        await plugins_router.sync_host_plugins(
-            uuid.uuid4(), db=object(), plugin_services=fake_ps_sync, host_services=fake_hs_none
-        )  # type: ignore[arg-type]
-    assert caught.value.status_code == 404
-
-
 async def test_device_verification_router_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = SimpleNamespace(bind=None)
     mock_verification_services_pack_error = SimpleNamespace(
@@ -585,8 +539,6 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
     host = SimpleNamespace(id=host_id, hostname="host-a")
     discovery_result = SimpleNamespace(new_devices=[SimpleNamespace(id=uuid.uuid4())])
     mock_publisher = AsyncMock()
-    _auto_ss = FakeSettingsReader({})
-    _auto_cb = Mock()
     fake_discovery = AsyncMock()
     fake_discovery.discover_devices = AsyncMock(return_value=discovery_result)
     fake_crud_host = SimpleNamespace(get_host=AsyncMock(return_value=host))
@@ -594,25 +546,11 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
         await hosts._auto_discover(host_id, mock_publisher, fake_discovery, fake_crud_host)
     mock_publisher.publish.assert_awaited_once()
 
-    fake_crud_host2 = SimpleNamespace(get_host=AsyncMock(return_value=host))
-    with (
-        patch.object(hosts, "async_session", return_value=SessionCtx()),
-        patch.object(PluginService, "list_plugins", new=AsyncMock(return_value=[object()])),
-        patch.object(PluginService, "auto_sync_host_plugins", new=AsyncMock()) as sync,
-    ):
-        await hosts._auto_prepare_host_diagnostics(
-            host_id, settings=_auto_ss, circuit_breaker=_auto_cb, crud=fake_crud_host2
-        )  # type: ignore[arg-type]
-    sync.assert_awaited_once()
-
     fake_crud_none = SimpleNamespace(get_host=AsyncMock(return_value=None))
     fake_discovery2 = AsyncMock()
     fake_discovery2.discover_devices = AsyncMock(return_value=discovery_result)
     with patch.object(hosts, "async_session", return_value=SessionCtx()):
         await hosts._auto_discover(host_id, mock_publisher, fake_discovery2, fake_crud_none)
-        await hosts._auto_prepare_host_diagnostics(
-            host_id, settings=_auto_ss, circuit_breaker=_auto_cb, crud=fake_crud_none
-        )  # type: ignore[arg-type]
 
     fake_crud_err = SimpleNamespace(get_host=AsyncMock(side_effect=RuntimeError("db")))
     fake_discovery3 = AsyncMock()
@@ -622,10 +560,7 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
         patch.object(hosts.logger, "exception", new=Mock()) as log_exception,
     ):
         await hosts._auto_discover(host_id, mock_publisher, fake_discovery3, fake_crud_err)
-        await hosts._auto_prepare_host_diagnostics(
-            host_id, settings=_auto_ss, circuit_breaker=_auto_cb, crud=fake_crud_err
-        )  # type: ignore[arg-type]
-    assert log_exception.call_count == 2
+    assert log_exception.call_count == 1
 
     with pytest.raises(HTTPException) as caught:
         await hosts.host_driver_packs(host_id, db=DummySession(get_result=None), pack_services=SimpleNamespace())
@@ -972,25 +907,6 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
     )
 
 
-async def test_plugins_router_maps_service_conflicts_and_missing_resources() -> None:
-    plugin_id = uuid.uuid4()
-    body = PluginCreate(name="images", version="1.0.0", source="npm:images")
-
-    fake_ps_create = SimpleNamespace(
-        plugin=SimpleNamespace(create_plugin=AsyncMock(side_effect=IntegrityError("insert", {}, Exception("dupe"))))
-    )
-    with pytest.raises(HTTPException) as exc:
-        await plugins_router.create_plugin(body, db=object(), plugin_services=fake_ps_create)  # type: ignore[arg-type]
-    assert exc.value.status_code == 409
-
-    fake_ps_update = SimpleNamespace(plugin=SimpleNamespace(update_plugin=AsyncMock(return_value=None)))
-    with pytest.raises(HTTPException) as exc:
-        await plugins_router.update_plugin(  # type: ignore[arg-type]
-            plugin_id, PluginUpdate(version="2.0.0"), db=object(), plugin_services=fake_ps_update
-        )
-    assert exc.value.status_code == 404
-
-
 async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host_id = uuid.uuid4()
     host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
@@ -1038,7 +954,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         )
         assert result == {"id": str(host_id)}
     assert response.status_code == 201
-    assert fire.call_count == 2
+    assert fire.call_count == 1
 
     fake_hs_appr_none = SimpleNamespace(crud=SimpleNamespace(approve_host=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
@@ -1048,7 +964,6 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
             host_services=fake_hs_appr_none,
             event_services=mock_event_services,
             settings_services=mock_ss,
-            agent_comm=_host_agent_comm,
             pack_services=fake_pack_services,
         )
     assert exc.value.status_code == 404
@@ -1064,11 +979,10 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
             host_services=fake_hs_appr_ok,
             event_services=mock_event_services,
             settings_services=mock_ss,
-            agent_comm=_host_agent_comm,
             pack_services=fake_pack_services,
         )
         assert result == {"id": str(host_id)}
-    assert fire.call_count == 2
+    assert fire.call_count == 1
 
     fake_hs_rej_false = SimpleNamespace(crud=SimpleNamespace(reject_host=AsyncMock(return_value=False)))
     with pytest.raises(HTTPException) as exc:
@@ -1585,38 +1499,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
                 agent_comm=_logs_ac,
             )
     assert exc.value.status_code == 502
-
-    plugin_id = uuid.uuid4()
-    fake_ps_delete = SimpleNamespace(plugin=SimpleNamespace(delete_plugin=AsyncMock(return_value=False)))
-    with pytest.raises(HTTPException) as exc:
-        await plugins_router.delete_plugin(plugin_id, db=object(), plugin_services=fake_ps_delete)  # type: ignore[arg-type]
-    assert exc.value.status_code == 404
-
-    fake_hs_none2 = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=None)))
-    fake_ps_none = SimpleNamespace(plugin=SimpleNamespace())
-    with pytest.raises(HTTPException) as exc:
-        await plugins_router.host_plugins(
-            plugin_id, db=object(), plugin_services=fake_ps_none, host_services=fake_hs_none2
-        )  # type: ignore[arg-type]
-    assert exc.value.status_code == 404
-
-    host = SimpleNamespace(id=plugin_id)
-    fake_plugin_svc = SimpleNamespace(
-        list_plugins=AsyncMock(return_value=["required"]),
-        get_host_plugin_statuses=AsyncMock(return_value=[{"status": "ok"}]),
-        sync_host_plugins=AsyncMock(return_value={"installed": []}),
-    )
-    fake_ps_full = SimpleNamespace(plugin=fake_plugin_svc)
-    fake_hs_host2 = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=host)))
-    statuses = await plugins_router.host_plugins(  # type: ignore[arg-type]
-        plugin_id, db=object(), plugin_services=fake_ps_full, host_services=fake_hs_host2
-    )
-    assert statuses == [{"status": "ok"}]
-    fake_hs_host3 = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=host)))
-    sync_result = await plugins_router.sync_host_plugins(  # type: ignore[arg-type]
-        plugin_id, db=object(), plugin_services=fake_ps_full, host_services=fake_hs_host3
-    )
-    assert sync_result == {"installed": []}
 
 
 async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> None:

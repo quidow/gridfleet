@@ -98,7 +98,6 @@ class PackStateLoop:
             assert resolution.runtime_spec is not None
             desired_by_pack[pack.id] = dataclasses.replace(
                 resolution.runtime_spec,
-                plugins=tuple((p.name, p.version, p.source, p.package) for p in parsed.plugins),
                 runtime_packages=tuple((rp.package, rp.version) for rp in pack.runtime_packages),
             )
         return desired_by_pack, resolver_blocked_packs
@@ -252,7 +251,6 @@ class PackStateLoop:
                         "appium_driver": [
                             {"package": n, "version": env.driver_versions.get(n, v)} for n, v, _s, _g in spec.drivers
                         ],
-                        "appium_plugins": env.plugin_statuses,
                         "appium_home": env.appium_home,
                         "status": "installed",
                         "blocked_reason": None,

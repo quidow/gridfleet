@@ -240,7 +240,6 @@ class AppiumProcessInfo:
 class AppiumLaunchSpec:
     connection_target: str
     port: int
-    plugins: list[str] | None
     extra_caps: dict[str, Any] | None
     session_override: bool
     device_type: str | None
@@ -616,8 +615,6 @@ class AppiumProcessManager:
         ]
         if spec.session_override:
             appium_cmd.append("--session-override")
-        if spec.plugins:
-            appium_cmd.extend(["--use-plugins", ",".join(spec.plugins)])
         if spec.insecure_features:
             appium_cmd.extend(["--allow-insecure", ",".join(spec.insecure_features)])
 
@@ -682,7 +679,6 @@ class AppiumProcessManager:
         port: int,
         *,
         pack_id: str,
-        plugins: list[str] | None = None,
         extra_caps: dict[str, Any] | None = None,
         accepting_new_sessions: bool = True,
         stop_pending: bool = False,
@@ -737,7 +733,6 @@ class AppiumProcessManager:
         spec = AppiumLaunchSpec(
             connection_target=resolved_connection_target,
             port=port,
-            plugins=list(plugins) if plugins else None,
             extra_caps=merged_extra_caps if merged_extra_caps else None,
             accepting_new_sessions=accepting_new_sessions,
             stop_pending=stop_pending,

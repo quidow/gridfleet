@@ -26,8 +26,6 @@ These are the parts the agent can install, verify, or keep aligned after the hos
 | --- | --- | --- |
 | Appium runtime | installed per driver pack under `AGENT_RUNTIME_ROOT` | driver pack catalog |
 | Appium driver packs | reconciled from the active pack catalog and checked with Appium doctor | driver pack catalog |
-| Appium plugins | installed or removed to match the registry | plugin registry |
-| Appium default plugin activation | passed to managed Appium nodes as `--use-plugins` | `appium.default_plugins` |
 
 What the agent does not install for you:
 
@@ -95,19 +93,6 @@ What still needs to exist before that works:
 - Xcode simulator devices already installed for Apple simulator lanes
 
 GridFleet does not currently provision SDK system images, create AVDs, or install new Apple simulator devices from the dashboard.
-
-## Appium Drivers And Plugins
-
-Driver and plugin management is split on purpose:
-
-- **Drivers**
-  - Synced from the manager registry through the host agent.
-  - Driver sync runs Appium doctor afterward and stores the latest result on the host.
-  - Some drivers do not expose doctor checks; the host UI shows that as "No doctor checks" (neutral text) instead of as a failure.
-- **Plugins**
-  - Installed or removed to match the manager registry.
-  - Plugin activation is separate and controlled by `appium.default_plugins`.
-  - Installing or uninstalling a plugin does not restart already-running Appium nodes.
 
 ## Detected Host Tools
 

@@ -17,7 +17,6 @@ from agent_app.host.router import router as host_router
 from agent_app.lifespan import lifespan
 from agent_app.observability import REQUEST_ID_HEADER, RequestContextMiddleware, configure_logging
 from agent_app.pack.router import router as pack_router
-from agent_app.plugins.router import router as plugins_router
 from agent_app.tools.router import router as tools_router
 
 configure_logging()
@@ -73,7 +72,6 @@ for _router in (
     host_router,
     appium_router,
     pack_router,
-    plugins_router,
     tools_router,
 ):
     app.include_router(_router)
