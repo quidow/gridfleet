@@ -10,6 +10,12 @@ paths-ignore:
   - agent/tests
   - testkit/tests
   - scripts/state-testing
+  # protocols.py files are pure Protocol/interface stubs; CodeQL flags their
+  # ellipsis/annotation idioms as py/ineffectual-statement (false positive).
+  - "backend/app/**/protocols.py"
+  # Alembic migrations carry load-bearing module globals (revision,
+  # down_revision, branch_labels, depends_on) that CodeQL reports as unused.
+  - backend/alembic/versions
   - frontend/e2e
   - "frontend/**/*.test.ts"
   - "frontend/**/*.test.tsx"
