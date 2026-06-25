@@ -52,7 +52,7 @@ jobs:
         with:
           enable-cache: true
           cache-suffix: publish-agent
-          python-version: "3.12"
+          python-version: "3.14"
           cache-dependency-glob: |
             agent/pyproject.toml
             agent/uv.lock
