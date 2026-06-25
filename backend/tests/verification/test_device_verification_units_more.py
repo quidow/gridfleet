@@ -739,14 +739,21 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     context.mode = "update"
     mock_crud_none = AsyncMock()
     mock_crud_none.update_device = AsyncMock(return_value=None)
-    failed = await execution._finalize_success(
+    svc_none = VerificationExecutionService(
+        review=build_review_service(),
+        publisher=event_bus,
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
+        crud=mock_crud_none,
+        viability=AsyncMock(),
+        capability=AsyncMock(),
+        reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
+    )
+    failed = await svc_none._finalize_success(
         db,
         context,
         job=_job(),
         node=None,
-        publisher=event_bus,
-        crud=mock_crud_none,
-        viability=AsyncMock(),
     )
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
@@ -797,14 +804,21 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     node = SimpleNamespace(port=4723, pid=22)
     viability_mock = AsyncMock()
     viability_mock.record_session_viability_result = AsyncMock()
-    outcome = await execution._finalize_success(
+    svc_upd = VerificationExecutionService(
+        review=build_review_service(),
+        publisher=event_bus,
+        agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
+        crud=mock_crud_upd,
+        viability=viability_mock,
+        capability=AsyncMock(),
+        reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
+    )
+    outcome = await svc_upd._finalize_success(
         db,
         context,
         job=_job(),
         node=node,
-        publisher=event_bus,
-        crud=mock_crud_upd,
-        viability=viability_mock,
     )
     assert outcome.status == "completed"
     # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer.
@@ -824,7 +838,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     # Update-mode entry now registers the verification lease (derives verifying) instead of a
     # direct set_operational_state; stub it out so the mock db isn't driven through the real reconcile.
     monkeypatch.setattr("app.verification.services.execution._register_verification_node_intent", AsyncMock())
-    monkeypatch.setattr("app.verification.services.execution._finalize_failure", AsyncMock())
+    monkeypatch.setattr(execution.VerificationExecutionService, "_finalize_failure", AsyncMock())
 
     svc2 = VerificationExecutionService(
         review=build_review_service(),
@@ -850,7 +864,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         )
 
     assert update_device.name == "new"
-    execution._finalize_failure.assert_awaited()
+    execution.VerificationExecutionService._finalize_failure.assert_awaited()
 
 
 async def test_preparation_resolution_and_validation_error_paths(

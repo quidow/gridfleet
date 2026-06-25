@@ -321,12 +321,11 @@ class VerificationExecutionService:
 
             health_error = await self.run_device_health(job, device, http_client_factory=http_client_factory)
             if health_error is not None:
-                return await _finalize_failure(
+                return await self._finalize_failure(
                     db,
                     context,
                     error=health_error,
                     job=job,
-                    finalizers=self._failure_finalizers,
                     original_fields=original_fields,
                 )
 
@@ -337,36 +336,140 @@ class VerificationExecutionService:
                 probe_session_fn=probe_session_fn,
             )
             if probe_error is not None:
-                return await _finalize_failure(
+                return await self._finalize_failure(
                     db,
                     context,
                     error=probe_error,
                     job=job,
-                    finalizers=self._failure_finalizers,
                     node=node,
                     original_fields=original_fields,
                 )
 
-            return await _finalize_success(
+            return await self._finalize_success(
                 db,
                 context,
                 job=job,
                 node=node,
-                publisher=self._publisher,
-                crud=self._crud,
-                viability=self._viability,
             )
         except Exception:
-            await _finalize_failure(
+            await self._finalize_failure(
                 db,
                 context,
                 error="Verification crashed unexpectedly",
                 job=job,
-                finalizers=self._failure_finalizers,
                 node=node,
                 original_fields=original_fields,
             )
             raise
+
+    async def _finalize_success(
+        self,
+        db: AsyncSession,
+        context: PreparedVerificationContext,
+        *,
+        job: dict[str, Any],
+        node: AppiumNode | None,
+    ) -> VerificationExecutionOutcome:
+        assert context.save_device_id is not None
+        await set_stage(job, "save_device", "running")
+        if context.mode == "update":
+            updated = await self._crud.update_device(
+                db,
+                context.save_device_id,
+                DeviceVerificationUpdate.model_validate(context.save_payload),
+                enforce_patch_contract=False,
+            )
+            if updated is None:
+                return VerificationExecutionOutcome(status="failed", error="Device was not found")
+            locked = updated
+        else:
+            locked = await device_locking.lock_device(db, context.save_device_id)
+            _restore_create_payload_fields(locked, context.save_payload)
+        await set_stage(
+            job,
+            "cleanup",
+            "passed",
+            detail="Verified node retained as the managed Appium node",
+        )
+
+        locked.verified_at = datetime.now(UTC)
+        # Reconciler-authoritative terminal: no direct set_operational_state push. Set
+        # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
+        # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
+        # via ``publisher``. Setting ``verified_at`` before the revoke is load-bearing: otherwise
+        # the reconcile sees ``verified_at IS NULL``, skips the ``baseline:idle`` injection, and
+        # computes ``desired_state=stopped`` on an empty node_process intent set — a spurious
+        # ``available -> offline`` flap right after registration.
+        await _revoke_verification_node_intent(db, locked, publisher=self._publisher)
+        await self._viability.record_session_viability_result(
+            db,
+            locked,
+            status="passed",
+            checked_by=SessionViabilityCheckedBy.verification,
+        )
+        await db.commit()
+        detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"
+        await set_stage(job, "save_device", "passed", detail=detail)
+        return VerificationExecutionOutcome(status="completed", device_id=str(locked.id))
+
+    async def _finalize_failure(
+        self,
+        db: AsyncSession,
+        context: PreparedVerificationContext,
+        *,
+        error: str,
+        job: dict[str, Any],
+        node: AppiumNode | None = None,
+        original_fields: dict[str, Any] | None = None,
+    ) -> VerificationExecutionOutcome:
+        assert context.save_device_id is not None
+        if context.mode == "create":
+            cleanup_error = await _stop_verification_node_if_running(
+                job, db, context.transient_device, node, self._failure_finalizers.node_manager
+            )
+            # Device deletion cascades to DeviceIntent rows, so no explicit
+            # verification intent revoke is needed on the create-mode failure
+            # path.
+            await self._failure_finalizers.crud.delete_device(db, context.save_device_id)
+            await db.commit()
+            if cleanup_error is not None:
+                return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
+            return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
+
+        with db.no_autoflush:
+            locked = await device_locking.lock_device(db, context.save_device_id)
+        _restore_update_original_fields(locked, original_fields)
+        await _stop_verification_node_if_running(job, db, locked, node, self._failure_finalizers.node_manager)
+        # Reconciler-authoritative terminal: no direct set_operational_state push. Shelve the device
+        # (review_required) BEFORE the revoke so the reconcile the revoke triggers reads the durable
+        # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
+        # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the
+        # derived ``offline`` emits.
+        await self._failure_finalizers.review.mark_review_required(
+            db,
+            locked,
+            reason=f"verification failed: {error}",
+            source="verification",
+        )
+        await _revoke_verification_node_intent(db, locked, publisher=self._publisher)
+        # The failure cleanup stopped the node via ``request_stop`` (which registers sticky
+        # operator:stop intents), and the verification node-start left a stray ``operator:start``
+        # intent. Strip BOTH: operator:stop must not survive — it would brand the device
+        # operator-stopped and block re-verify + the operator start-node route (spec bug-3 §1).
+        # operator:start must not survive either — its node_running auto-retire precondition is
+        # swept only by the leader device_intent_reconciler loop, so it persists through this
+        # synchronous flow; once operator:stop is gone it would be the sole node_process intent
+        # and the reconciler would restart the node. With no node_process start intent left, the
+        # ``review_required`` set above suppresses ``baseline:idle`` (device_in_service) so the
+        # node stays stopped (spec §8.1).
+        await IntentService(db).revoke_intents_and_reconcile(
+            device_id=locked.id,
+            sources=[*operator_stop_sources(locked.id), operator_start_source(locked.id)],
+            reason="verification failed: clear operator-stop branding",
+            publisher=self._publisher,
+        )
+        await db.commit()
+        return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
 
 
 def _health_failure_detail(result: dict[str, Any]) -> str:
@@ -568,117 +671,3 @@ def _restore_update_original_fields(device: Device, original_fields: dict[str, A
         return
     for key, value in original_fields.items():
         setattr(device, key, deepcopy(value))
-
-
-async def _finalize_success(
-    db: AsyncSession,
-    context: PreparedVerificationContext,
-    *,
-    job: dict[str, Any],
-    node: AppiumNode | None,
-    publisher: EventPublisher,
-    crud: DeviceCrudProtocol,
-    viability: SessionViabilityProbe,
-) -> VerificationExecutionOutcome:
-    assert context.save_device_id is not None
-    await set_stage(job, "save_device", "running")
-    if context.mode == "update":
-        updated = await crud.update_device(
-            db,
-            context.save_device_id,
-            DeviceVerificationUpdate.model_validate(context.save_payload),
-            enforce_patch_contract=False,
-        )
-        if updated is None:
-            return VerificationExecutionOutcome(status="failed", error="Device was not found")
-        locked = updated
-    else:
-        locked = await device_locking.lock_device(db, context.save_device_id)
-        _restore_create_payload_fields(locked, context.save_payload)
-    await set_stage(
-        job,
-        "cleanup",
-        "passed",
-        detail="Verified node retained as the managed Appium node",
-    )
-
-    locked.verified_at = datetime.now(UTC)
-    # Reconciler-authoritative terminal: no direct set_operational_state push. Set
-    # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
-    # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
-    # via ``publisher``. Setting ``verified_at`` before the revoke is load-bearing: otherwise
-    # the reconcile sees ``verified_at IS NULL``, skips the ``baseline:idle`` injection, and
-    # computes ``desired_state=stopped`` on an empty node_process intent set — a spurious
-    # ``available -> offline`` flap right after registration.
-    await _revoke_verification_node_intent(db, locked, publisher=publisher)
-    await viability.record_session_viability_result(
-        db,
-        locked,
-        status="passed",
-        checked_by=SessionViabilityCheckedBy.verification,
-    )
-    await db.commit()
-    detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"
-    await set_stage(job, "save_device", "passed", detail=detail)
-    return VerificationExecutionOutcome(status="completed", device_id=str(locked.id))
-
-
-async def _finalize_failure(
-    db: AsyncSession,
-    context: PreparedVerificationContext,
-    *,
-    error: str,
-    job: dict[str, Any],
-    finalizers: FailureFinalizers,
-    node: AppiumNode | None = None,
-    original_fields: dict[str, Any] | None = None,
-) -> VerificationExecutionOutcome:
-    assert context.save_device_id is not None
-    publisher = finalizers.publisher
-    if context.mode == "create":
-        cleanup_error = await _stop_verification_node_if_running(
-            job, db, context.transient_device, node, finalizers.node_manager
-        )
-        # Device deletion cascades to DeviceIntent rows, so no explicit
-        # verification intent revoke is needed on the create-mode failure
-        # path.
-        await finalizers.crud.delete_device(db, context.save_device_id)
-        await db.commit()
-        if cleanup_error is not None:
-            return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
-        return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
-
-    with db.no_autoflush:
-        locked = await device_locking.lock_device(db, context.save_device_id)
-    _restore_update_original_fields(locked, original_fields)
-    await _stop_verification_node_if_running(job, db, locked, node, finalizers.node_manager)
-    # Reconciler-authoritative terminal: no direct set_operational_state push. Shelve the device
-    # (review_required) BEFORE the revoke so the reconcile the revoke triggers reads the durable
-    # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
-    # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the
-    # derived ``offline`` emits.
-    await finalizers.review.mark_review_required(
-        db,
-        locked,
-        reason=f"verification failed: {error}",
-        source="verification",
-    )
-    await _revoke_verification_node_intent(db, locked, publisher=publisher)
-    # The failure cleanup stopped the node via ``request_stop`` (which registers sticky
-    # operator:stop intents), and the verification node-start left a stray ``operator:start``
-    # intent. Strip BOTH: operator:stop must not survive — it would brand the device
-    # operator-stopped and block re-verify + the operator start-node route (spec bug-3 §1).
-    # operator:start must not survive either — its node_running auto-retire precondition is
-    # swept only by the leader device_intent_reconciler loop, so it persists through this
-    # synchronous flow; once operator:stop is gone it would be the sole node_process intent
-    # and the reconciler would restart the node. With no node_process start intent left, the
-    # ``review_required`` set above suppresses ``baseline:idle`` (device_in_service) so the
-    # node stays stopped (spec §8.1).
-    await IntentService(db).revoke_intents_and_reconcile(
-        device_id=locked.id,
-        sources=[*operator_stop_sources(locked.id), operator_start_source(locked.id)],
-        reason="verification failed: clear operator-stop branding",
-        publisher=publisher,
-    )
-    await db.commit()
-    return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
