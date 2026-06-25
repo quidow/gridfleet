@@ -73,13 +73,6 @@ async def create_job(
     return job
 
 
-async def delete_jobs_by_kind(db: AsyncSession, *, kind: str) -> None:
-    result = await db.execute(select(Job).where(Job.kind == kind))
-    for row in result.scalars().all():
-        await db.delete(row)
-    await db.commit()
-
-
 class DurableJobService:
     def __init__(
         self,

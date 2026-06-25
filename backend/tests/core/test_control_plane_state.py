@@ -10,9 +10,9 @@ from app.devices.services import state_write_guard
 from app.devices.services.state import set_operational_state
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.jobs.queue import delete_jobs_by_kind
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import (
+    delete_jobs_by_kind,
     drain_handlers,
     get_connectivity_control_plane_state,
     get_session_viability_control_plane_state,

@@ -22,7 +22,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.jobs.queue import DurableJobService, delete_jobs_by_kind
+from app.jobs.queue import DurableJobService
 from app.lifecycle.services.operator_node import (
     OperatorNodeLifecycleService,
     operator_stop_active,
@@ -42,7 +42,7 @@ from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
 from tests.fakes import build_review_service
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, delete_jobs_by_kind
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
