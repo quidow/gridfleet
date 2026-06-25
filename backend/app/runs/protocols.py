@@ -6,22 +6,14 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
-    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.pagination import CursorPage
     from app.devices.models import Device, DeviceEvent, DeviceEventType
     from app.devices.models.reservation import DeviceReservation
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.incidents import LifecycleIncidentDetails
-    from app.runs.models import RunState, TestRun
-    from app.runs.schemas import ReservedDeviceInfo, RunCreate, SessionCounts
-
-
-@runtime_checkable
-class RunAllocatorProtocol(Protocol):
-    async def create_run(self, db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]: ...
+    from app.runs.models import TestRun
 
 
 @runtime_checkable
@@ -41,67 +33,6 @@ class RunReleaseProtocol(Protocol):
     ) -> None: ...
     async def complete_deferred_stops_post_commit(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> None: ...
     async def terminate_run_sessions_and_probe_survivors(self, db: AsyncSession, run: TestRun) -> set[uuid.UUID]: ...
-
-
-@runtime_checkable
-class RunLifecycleProtocol(Protocol):
-    async def signal_ready(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun: ...
-    async def signal_active(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun: ...
-    async def heartbeat(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun: ...
-    async def complete_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun: ...
-    async def cancel_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun: ...
-    async def force_release(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun: ...
-    async def expire_run(self, db: AsyncSession, run: TestRun, reason: str) -> None: ...
-
-
-@runtime_checkable
-class RunFailureProtocol(Protocol):
-    async def report_preparation_failure(
-        self,
-        db: AsyncSession,
-        run_id: uuid.UUID,
-        device_id: uuid.UUID,
-        *,
-        message: str,
-        source: str = "ci_preparation",
-    ) -> TestRun: ...
-    async def cooldown_device(
-        self,
-        db: AsyncSession,
-        run_id: uuid.UUID,
-        device_id: uuid.UUID,
-        *,
-        reason: str,
-        ttl_seconds: int,
-    ) -> tuple[datetime | None, int, bool, int, bool]: ...
-
-
-@runtime_checkable
-class RunQueryProtocol(Protocol):
-    async def list_runs(
-        self,
-        db: AsyncSession,
-        state: RunState | None = None,
-        created_from: datetime | None = None,
-        created_to: datetime | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        sort_by: str = "created_at",
-        sort_dir: str = "desc",
-    ) -> tuple[list[TestRun], int]: ...
-    async def list_runs_cursor(
-        self,
-        db: AsyncSession,
-        state: RunState | None = None,
-        created_from: datetime | None = None,
-        created_to: datetime | None = None,
-        limit: int = 50,
-        cursor: str | None = None,
-        direction: str = "older",
-    ) -> CursorPage[TestRun]: ...
-    async def fetch_session_counts(
-        self, db: AsyncSession, run_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, SessionCounts]: ...
 
 
 @runtime_checkable
@@ -161,11 +92,6 @@ class RunReservationProtocol(Protocol):
         publisher: EventPublisher,
         commit: bool = ...,
     ) -> TestRun | None: ...
-
-
-@runtime_checkable
-class DeviceHealthCheckWriter(Protocol):
-    async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None: ...
 
 
 @runtime_checkable
