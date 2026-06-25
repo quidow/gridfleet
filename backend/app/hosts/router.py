@@ -48,11 +48,16 @@ from app.settings.dependencies import SettingsServicesDep
 if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.agent_comm.services_container import AgentCommServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
     from app.events.protocols import EventPublisher
+    from app.events.services_container import EventServices
     from app.hosts.protocols import HostCrudProtocol
+    from app.hosts.services_container import HostServices
     from app.packs.protocols import PackDiscoveryProtocol
+    from app.packs.services_container import PackServices
+    from app.settings.services_container import SettingsServices
 
 HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 
@@ -94,6 +99,32 @@ def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object, **kwargs: object)
     task = asyncio.create_task(task_fn(*args, **kwargs))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+
+def _schedule_host_acceptance_tasks(
+    host_id: uuid.UUID,
+    *,
+    event_services: EventServices,
+    pack_services: PackServices,
+    host_services: HostServices,
+    settings_services: SettingsServices,
+    agent_comm: AgentCommServices,
+) -> None:
+    _fire_and_forget(
+        _auto_discover,
+        host_id,
+        event_services.publisher,
+        pack_services.discovery,
+        host_services.crud,
+    )
+    _fire_and_forget(
+        _auto_prepare_host_diagnostics,
+        host_id,
+        settings=settings_services.service,
+        circuit_breaker=agent_comm.circuit_breaker,
+        crud=host_services.crud,
+        pool=agent_comm.http_pool,
+    )
 
 
 def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[str, Any]:
@@ -187,20 +218,13 @@ async def register_host(
     if is_new:
         response.status_code = 201
         if settings_services.service.get("agent.auto_accept_hosts"):
-            _fire_and_forget(
-                _auto_discover,
+            _schedule_host_acceptance_tasks(
                 host.id,
-                event_services.publisher,
-                pack_services.discovery,
-                host_services.crud,
-            )
-            _fire_and_forget(
-                _auto_prepare_host_diagnostics,
-                host.id,
-                settings=settings_services.service,
-                circuit_breaker=agent_comm.circuit_breaker,
-                crud=host_services.crud,
-                pool=agent_comm.http_pool,
+                event_services=event_services,
+                pack_services=pack_services,
+                host_services=host_services,
+                settings_services=settings_services,
+                agent_comm=agent_comm,
             )
 
     return _serialize_host(host, settings_services)
@@ -217,20 +241,13 @@ async def approve_host(
     pack_services: PackServicesDep,
 ) -> dict[str, Any]:
     host = found_or_404(await host_services.crud.approve_host(db, host_id), "Host not found or not pending")
-    _fire_and_forget(
-        _auto_discover,
+    _schedule_host_acceptance_tasks(
         host.id,
-        event_services.publisher,
-        pack_services.discovery,
-        host_services.crud,
-    )
-    _fire_and_forget(
-        _auto_prepare_host_diagnostics,
-        host.id,
-        settings=settings_services.service,
-        circuit_breaker=agent_comm.circuit_breaker,
-        crud=host_services.crud,
-        pool=agent_comm.http_pool,
+        event_services=event_services,
+        pack_services=pack_services,
+        host_services=host_services,
+        settings_services=settings_services,
+        agent_comm=agent_comm,
     )
     return _serialize_host(host, settings_services)
 
