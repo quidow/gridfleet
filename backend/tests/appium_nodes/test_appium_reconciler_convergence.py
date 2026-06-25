@@ -391,12 +391,14 @@ async def test_converge_host_rows_calls_start_for_running_intent_no_observation(
 
 @pytest.mark.asyncio
 async def test_converge_host_rows_resets_start_failure_when_observed_matches_db() -> None:
+    # Row carries reconciler failure residue: reset must be called.
     row = _row(
         desired_state="running",
         desired_port=4723,
         port=4723,
         pid=12345,
         active_connection_target="emulator-5554",
+        lifecycle_policy_state={"last_failure_source": "appium_reconciler", "last_failure_reason": "timeout"},
     )
     observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     reset_start_failure = AsyncMock()
@@ -420,6 +422,35 @@ async def test_converge_host_rows_resets_start_failure_when_observed_matches_db(
     start_agent.assert_not_awaited()
     stop_agent.assert_not_awaited()
     write_observed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_converge_host_rows_confirm_running_skips_reset_when_no_residue() -> None:
+    # Row with no failure residue: confirm_running must NOT call reset_start_failure.
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+        lifecycle_policy_state={},
+    )
+    observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
+    reset_start_failure = AsyncMock()
+
+    await converge_host_rows(
+        host_id=row.host_id,
+        rows=[row],
+        agent_running=[observed],
+        now=datetime.now(UTC),
+        start_agent=AsyncMock(),
+        stop_agent=AsyncMock(),
+        write_observed=AsyncMock(),
+        clear_token=AsyncMock(),
+        reset_start_failure=reset_start_failure,
+    )
+
+    reset_start_failure.assert_not_awaited()
 
 
 @pytest.mark.asyncio
