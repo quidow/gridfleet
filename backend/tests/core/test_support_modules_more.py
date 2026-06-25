@@ -142,7 +142,6 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
 
 def test_metrics_helpers_and_rendering() -> None:
     metrics_recorders.record_background_loop_error("heartbeat", 0.2)
-    metrics_recorders.record_webhook_delivery("success", count=0)
     metrics_recorders.record_event_published("device.created")
     assert isinstance(metrics.render_metrics(), bytes)
 

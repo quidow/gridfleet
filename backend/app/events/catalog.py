@@ -339,14 +339,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         ),
     ),
     PublicEventDefinition(
-        name="webhook.test",
-        category="operations_and_settings",
-        description="Synthetic webhook test event was published.",
-        default_severity="neutral",
-        allowed_severities=frozenset({"neutral"}),
-        typical_data_fields=("webhook_id", "webhook_name", "message"),
-    ),
-    PublicEventDefinition(
         name="pack_feature.degraded",
         category="operations_and_settings",
         description="A driver pack feature transitioned to a not-ok state on a host.",

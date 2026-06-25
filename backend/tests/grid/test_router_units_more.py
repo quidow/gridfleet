@@ -82,7 +82,6 @@ from app.settings import router as settings_router
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
 from app.verification import router as devices_verification_router
-from app.webhooks import router as webhooks
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -404,21 +403,6 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         db=object(), events=SimpleNamespace(publisher=event_bus), settings_services=_mock_settings_svc(reset_svc)
     ) == {"status": "all settings reset to defaults"}
     reset_svc.reset_all.assert_awaited_once()
-
-    webhook_id = uuid.uuid4()
-    webhook = SimpleNamespace(id=webhook_id)
-    mock_wh_svc = SimpleNamespace(crud=SimpleNamespace(get_webhook=AsyncMock(return_value=webhook)))
-    assert await webhooks.get_webhook(webhook_id, db=object(), webhook_services=mock_wh_svc) is webhook  # type: ignore[arg-type]
-    mock_wh_svc2 = SimpleNamespace(crud=SimpleNamespace(update_webhook=AsyncMock(return_value=webhook)))
-    assert (
-        await webhooks.update_webhook(
-            webhook_id,
-            webhooks.WebhookUpdate(enabled=True),
-            db=object(),
-            webhook_services=mock_wh_svc2,  # type: ignore[arg-type]
-        )
-        is webhook
-    )
 
     device = object()
     mock_crud_none = SimpleNamespace(get_device=AsyncMock(return_value=None))
@@ -2316,81 +2300,6 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
     )
     assert response.status_code == 204
     assert dummy_session.committed is True
-
-
-async def test_webhook_router_error_and_delivery_paths() -> None:
-    webhook_id = uuid.uuid4()
-    delivery_id = uuid.uuid4()
-    webhook = SimpleNamespace(id=webhook_id, name="alerts")
-    delivery = SimpleNamespace(
-        id=delivery_id,
-        webhook_id=webhook_id,
-        event_type="webhook.test",
-        status="pending",
-        attempts=0,
-        max_attempts=3,
-        last_attempt_at=None,
-        next_retry_at=None,
-        last_error=None,
-        last_http_status=None,
-        created_at=datetime(2026, 5, 1, tzinfo=UTC),
-        updated_at=datetime(2026, 5, 1, tzinfo=UTC),
-    )
-
-    mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
-    none_crud = SimpleNamespace(
-        get_webhook=AsyncMock(return_value=None),
-        update_webhook=AsyncMock(return_value=None),
-        delete_webhook=AsyncMock(return_value=False),
-    )
-    none_dispatch = SimpleNamespace(
-        list_deliveries=AsyncMock(return_value=([], 0)),
-        retry_delivery=AsyncMock(return_value=None),
-    )
-    none_wh_svc = SimpleNamespace(crud=none_crud, dispatch=none_dispatch)
-    for call in (
-        lambda: webhooks.get_webhook(webhook_id, db=object(), webhook_services=none_wh_svc),  # type: ignore[arg-type]
-        lambda: webhooks.update_webhook(  # type: ignore[arg-type]
-            webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object(), webhook_services=none_wh_svc
-        ),
-        lambda: webhooks.delete_webhook(webhook_id, db=object(), webhook_services=none_wh_svc),  # type: ignore[arg-type]
-        lambda: webhooks.test_webhook(  # type: ignore[arg-type]
-            webhook_id, db=object(), event_services=mock_event_services_wh, webhook_services=none_wh_svc
-        ),
-        lambda: webhooks.list_webhook_deliveries(webhook_id, db=object(), webhook_services=none_wh_svc),  # type: ignore[arg-type]
-        lambda: webhooks.retry_webhook_delivery(  # type: ignore[arg-type]
-            webhook_id, delivery_id, db=object(), webhook_services=none_wh_svc
-        ),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await call()
-        assert exc.value.status_code == 404
-
-    mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
-    ok_crud = SimpleNamespace(get_webhook=AsyncMock(return_value=webhook))
-    ok_dispatch = SimpleNamespace(
-        list_deliveries=AsyncMock(return_value=([delivery], 1)),
-        retry_delivery=AsyncMock(side_effect=[None, delivery]),
-    )
-    ok_wh_svc = SimpleNamespace(crud=ok_crud, dispatch=ok_dispatch)
-    result = await webhooks.test_webhook(  # type: ignore[arg-type]
-        webhook_id, db=object(), event_services=mock_event_services_wh, webhook_services=ok_wh_svc
-    )
-    assert result["webhook_name"] == "alerts"
-    mock_event_services_wh.publisher.publish.assert_awaited_once()
-    deliveries = await webhooks.list_webhook_deliveries(  # type: ignore[arg-type]
-        webhook_id, db=object(), webhook_services=ok_wh_svc
-    )
-    assert deliveries["total"] == 1
-    with pytest.raises(HTTPException) as exc:
-        await webhooks.retry_webhook_delivery(  # type: ignore[arg-type]
-            webhook_id, delivery_id, db=object(), webhook_services=ok_wh_svc
-        )
-    assert exc.value.status_code == 404
-    retried = await webhooks.retry_webhook_delivery(  # type: ignore[arg-type]
-        webhook_id, delivery_id, db=object(), webhook_services=ok_wh_svc
-    )
-    assert retried.id == delivery_id
 
 
 async def test_runs_router_parses_filters_and_maps_service_errors() -> None:

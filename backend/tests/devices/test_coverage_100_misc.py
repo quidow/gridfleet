@@ -103,7 +103,6 @@ from app.settings.service_config import SettingsConfigService
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
-from app.webhooks.schemas import WebhookUpdate
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
@@ -148,7 +147,6 @@ def test_schema_validator_and_model_guard_branches() -> None:
     with pytest.raises(ValidationError, match="min_count can only be provided"):
         DeviceRequirement(pack_id="pack", platform_id="platform", min_count=1)
 
-    assert WebhookUpdate(event_types=None).event_types is None
     with pytest.raises(ValueError, match="JSON object"):
         TestDataPayload.model_construct(root=[])._validate()  # type: ignore[arg-type]
 
@@ -513,7 +511,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             {
                 "retention.audit_log_days": 0,
                 "retention.event_log_days": 1,
-                "retention.webhook_delivery_days": 1,
                 "retention.system_event_days": 1,
                 "retention.background_loop_heartbeat_days": 1,
                 "retention.automation_artifact_days": 1,

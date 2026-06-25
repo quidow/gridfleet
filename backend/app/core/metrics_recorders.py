@@ -133,11 +133,6 @@ FORCED_RELEASE_NODE_STOP_TOTAL = Counter(
     "Force-release hard node-stops actually fired — i.e. the session survived (or stayed "
     "indeterminate after a retry) the W3C DELETE. Steady-state low: most force-releases DELETE cleanly.",
 )
-WEBHOOK_DELIVERIES_TOTAL = Counter(
-    "webhook_deliveries_total",
-    "Webhook delivery state transitions.",
-    labelnames=("status",),
-)
 EVENTS_PUBLISHED_TOTAL = Counter(
     "events_published_total",
     "System events published by the backend.",
@@ -255,12 +250,6 @@ def record_background_loop_effective_period(loop_name: str, period_seconds: floa
     configured interval.
     """
     BACKGROUND_LOOP_EFFECTIVE_PERIOD_SECONDS.labels(loop_name=loop_name).set(period_seconds)
-
-
-def record_webhook_delivery(status: str, count: int = 1) -> None:
-    if count <= 0:
-        return
-    WEBHOOK_DELIVERIES_TOTAL.labels(status=status).inc(count)
 
 
 def record_event_published(event_type: str) -> None:

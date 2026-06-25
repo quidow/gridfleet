@@ -2,7 +2,7 @@
 
 Codeant flagged that pre-fix `event_bus.publish` ran inside the state writer
 with its own session and committed independently of the outer transaction. A rollback on
-the caller's session left the SystemEvent row + SSE/webhook delivery in place. Helper
+the caller's session left the SystemEvent row + SSE delivery in place. Helper
 must now queue events on the session and dispatch only after the outer commit succeeds.
 """
 

@@ -80,8 +80,6 @@ from app.settings.dependencies import (
 )
 from app.settings.service import SettingsService
 from app.verification import router as verification_router
-from app.webhooks import router as webhooks
-from app.webhooks.dispatcher import WebhookDeliveryLoop
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -189,7 +187,6 @@ async def _build_and_start_app_services(
 
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
-    bus.register_handler(app_services.webhooks.dispatch.handle_system_event)
     await bus.start()
     return bus, svc, pool, app_services
 
@@ -212,7 +209,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
     pack_drain = PackDrainLoop(services=app_services.packs)
     job_worker = app_services.jobs
-    webhook_delivery = WebhookDeliveryLoop(services=app_services.webhooks)
     background_loop_flush = app_services.background_loop_flush
 
     _leader_loops: list[tuple[Any, str]] = [
@@ -225,7 +221,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
         (hardware_telemetry.run(), "hardware_telemetry_loop"),
         (host_resource_telemetry.run(), "host_resource_telemetry_loop"),
         (job_worker.run(), "durable_job_worker_loop"),
-        (webhook_delivery.run(), "webhook_dispatcher.webhook_delivery_loop"),
         (run_reaper.run(), "run_reaper_loop"),
         (allocation_reaper.run(), "grid_allocation_reaper_loop"),
         (data_cleanup.run(), "data_cleanup_loop"),
@@ -331,7 +326,6 @@ app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require
 app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(verification_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(runs_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

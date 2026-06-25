@@ -158,7 +158,7 @@ class EventBus:
         ``AsyncSession``.
 
         On commit, ``loop.create_task(self.publish(event_type, data))`` runs for
-        each queued event. On rollback, the queue is dropped — webhook/SSE
+        each queued event. On rollback, the queue is dropped — SSE
         subscribers never see a transition that did not become durable. ``data``
         is captured by reference — do not mutate it after queuing.
 

@@ -98,7 +98,7 @@ alembic_revision="$(query_scalar "SELECT version_num FROM alembic_version LIMIT 
     echo "alembic_revision=${alembic_revision}"
 } > "${metadata_path}"
 
-for table_name in devices hosts sessions test_runs runtime_events webhooks webhook_deliveries; do
+for table_name in devices hosts sessions test_runs runtime_events; do
     count="$(query_scalar "SELECT COUNT(*) FROM ${table_name};")"
     echo "row_count.${table_name}=${count}" >> "${metadata_path}"
 done

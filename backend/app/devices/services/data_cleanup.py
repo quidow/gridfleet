@@ -241,7 +241,6 @@ class DataCleanupService:
                 cutoff=cutoff,
             )
 
-        # SystemEvent — webhook_deliveries rows cascade via FK ON DELETE CASCADE.
         system_events_days: int = self._settings.get("retention.system_events_days")
         if system_events_days > 0:
             cutoff = now - timedelta(days=system_events_days)
