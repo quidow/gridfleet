@@ -10,7 +10,6 @@ from app.runs.service_reservation import get_run_for_update as _get_run_for_upda
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,18 +100,10 @@ class RunLifecycleService:
         assert run is not None
         return run
 
-    async def _retry_on_deadlock(
-        self, db: AsyncSession, attempt_txn: Callable[[], Awaitable[list[uuid.UUID]]]
-    ) -> list[uuid.UUID]:
-        """Run one terminal-transition transaction, retrying serialization losses.
-
-        ``attempt_txn`` must own the whole transaction (re-read the run under
-        lock, mutate, commit); the shared helper rolls back between attempts.
-        """
-        return await retry_on_serialization_failure(db, attempt_txn, caller="run_lifecycle")
-
     async def complete_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-        cleanup_ids = await self._retry_on_deadlock(db, lambda: self._complete_run_txn(db, run_id))
+        cleanup_ids = await retry_on_serialization_failure(
+            db, lambda: self._complete_run_txn(db, run_id), caller="run_lifecycle"
+        )
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
         run = await get_run(db, run_id)
         assert run is not None
@@ -148,7 +139,9 @@ class RunLifecycleService:
         return cleanup_ids
 
     async def cancel_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-        cleanup_ids = await self._retry_on_deadlock(db, lambda: self._cancel_run_txn(db, run_id))
+        cleanup_ids = await retry_on_serialization_failure(
+            db, lambda: self._cancel_run_txn(db, run_id), caller="run_lifecycle"
+        )
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
         run = await get_run(db, run_id)
         assert run is not None
@@ -179,7 +172,9 @@ class RunLifecycleService:
         return cleanup_ids
 
     async def force_release(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-        cleanup_ids = await self._retry_on_deadlock(db, lambda: self._force_release_txn(db, run_id))
+        cleanup_ids = await retry_on_serialization_failure(
+            db, lambda: self._force_release_txn(db, run_id), caller="run_lifecycle"
+        )
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
         run = await get_run(db, run_id)
         assert run is not None
