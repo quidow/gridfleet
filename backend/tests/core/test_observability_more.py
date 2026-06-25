@@ -1,11 +1,57 @@
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import app.main as main_module
 from app.core import observability
+from app.core.observability import BACKGROUND_LOOP_NAMES
+
+# Loops started in main.py's lifespan that are intentionally NOT readiness-gated.
+# Adding a loop here is a deliberate decision — document why in the PR that does so.
+_NOT_READINESS_GATED = frozenset({"background_loop_flush"})
+
+
+def _normalize(name: str) -> str:
+    # main.py task names carry a "_loop" suffix and occasional dotted prefixes
+    # (e.g. "webhook_dispatcher.webhook_delivery_loop"); BACKGROUND_LOOP_NAMES uses
+    # bare base names (e.g. "webhook_delivery").
+    base = name.rsplit(".", 1)[-1]
+    return base[:-5] if base.endswith("_loop") else base
+
+
+def _started_loop_names() -> set[str]:
+    source = Path(main_module.__file__).read_text()
+    tree = ast.parse(source)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        # Collect the 2nd element of each (coro, "name") tuple in the _leader_loops list
+        # and any asyncio.create_task(..., name="...") (the watcher).
+        if isinstance(node, ast.Tuple) and len(node.elts) == 2 and isinstance(node.elts[1], ast.Constant):
+            val = node.elts[1].value
+            if isinstance(val, str):
+                names.add(_normalize(val))
+        if isinstance(node, ast.keyword) and node.arg == "name" and isinstance(node.value, ast.Constant):
+            val = node.value.value
+            if isinstance(val, str):
+                names.add(_normalize(val))
+    return names
+
+
+def test_background_loop_names_match_started_loops() -> None:
+    """Readiness gating (BACKGROUND_LOOP_NAMES) must list exactly the loops main.py
+    starts, minus the explicitly non-gated set. Fails loudly if a loop is added to one
+    side but not the other — readiness would otherwise silently skip the new loop."""
+    started = _started_loop_names() - _NOT_READINESS_GATED
+    gated = set(BACKGROUND_LOOP_NAMES)
+    missing_from_gating = started - gated
+    stale_in_gating = gated - started
+    assert not missing_from_gating, f"loops started but not readiness-gated: {sorted(missing_from_gating)}"
+    assert not stale_in_gating, f"readiness-gated names with no started loop: {sorted(stale_in_gating)}"
 
 
 @pytest.fixture(autouse=True)

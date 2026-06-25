@@ -450,6 +450,113 @@ async def test_reset_start_failure_clears_orphaned_reason(
     assert device.lifecycle_policy_state.get("last_failure_reason") is None
 
 
+async def test_confirm_running_skips_lock_when_no_failure_residue(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lock must NOT be acquired for confirm_running when lifecycle_policy_state has no residue."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Clean Running Device",
+        identity_value="confirm-running-clean-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    lock_mock = AsyncMock(return_value=device)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler._lock_device_for_reconciler", lock_mock)
+
+    @asynccontextmanager
+    async def _scope() -> AsyncSession:
+        yield db_session
+
+    reset_fn = appium_reconciler.ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=None,
+        circuit_breaker=Mock(),
+        session_factory=_scope,
+    )._make_reset_start_failure(require_leader=False, session_scope=_scope)
+
+    # Row with no failure residue in lifecycle_policy_state
+    row = _desired_row(device_id=device.id, lifecycle_policy_state={})
+    from app.appium_nodes.services.reconciler_convergence import ConvergenceAction, _execute_action
+
+    await _execute_action(
+        host_id=db_host.id,
+        row=row,
+        action=ConvergenceAction(kind="confirm_running"),
+        start_agent=AsyncMock(),
+        stop_agent=AsyncMock(),
+        write_observed=AsyncMock(),
+        clear_token=AsyncMock(),
+        reset_start_failure=reset_fn,
+    )
+    lock_mock.assert_not_awaited()
+
+
+async def test_confirm_running_acquires_lock_when_failure_residue_present(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lock MUST be acquired and state cleared when residue (recovery_backoff_attempts) is present."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Residue Running Device",
+        identity_value="confirm-running-residue-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "recovery_backoff_attempts": 2,
+            "backoff_until": None,
+            "last_failure_source": "appium_reconciler",
+            "last_failure_reason": "timeout",
+        }
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _scope() -> AsyncSession:
+        yield db_session
+
+    reset_fn = appium_reconciler.ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=None,
+        circuit_breaker=Mock(),
+        session_factory=_scope,
+    )._make_reset_start_failure(require_leader=False, session_scope=_scope)
+
+    # Row carries the same residue state lock-free
+    row = _desired_row(
+        device_id=device.id,
+        lifecycle_policy_state={
+            "recovery_backoff_attempts": 2,
+            "backoff_until": None,
+            "last_failure_source": "appium_reconciler",
+            "last_failure_reason": "timeout",
+        },
+    )
+    from app.appium_nodes.services.reconciler_convergence import ConvergenceAction, _execute_action
+
+    await _execute_action(
+        host_id=db_host.id,
+        row=row,
+        action=ConvergenceAction(kind="confirm_running"),
+        start_agent=AsyncMock(),
+        stop_agent=AsyncMock(),
+        write_observed=AsyncMock(),
+        clear_token=AsyncMock(),
+        reset_start_failure=reset_fn,
+    )
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") in (None, 0)
+    assert device.lifecycle_policy_state.get("last_failure_source") is None
+
+
 async def test_clear_transition_token_and_touch_noop(
     db_session: AsyncSession,
     db_host: Host,

@@ -103,23 +103,6 @@ def _validate_string(key: str, value: SettingValue, defn: SettingDefinition) -> 
     return None
 
 
-def _validate_json_string_items(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
-    if not isinstance(value, list):
-        return f"Expected list for {key}, got {type(value).__name__}"
-    invalid_items = [item for item in value if not isinstance(item, str) or not item.strip()]
-    if invalid_items:
-        invalid_display = ", ".join(sorted({str(item) for item in invalid_items}))
-        return f"Invalid item(s) for {key}: {invalid_display}"
-    if defn.reject_item_prefixes:
-        rejected = [
-            item for item in value if any(item.strip().startswith(prefix) for prefix in defn.reject_item_prefixes or [])
-        ]
-        if rejected:
-            invalid_display = ", ".join(sorted({str(item) for item in rejected}))
-            return f"Invalid item(s) for {key}: {invalid_display}"
-    return None
-
-
 def _validate_json_allowed_items(key: str, value: SettingValue, allowed_values: list[str]) -> str | None:
     if not isinstance(value, list):
         return f"Expected list for {key}, got {type(value).__name__}"
@@ -136,10 +119,6 @@ def _validate_json(key: str, value: SettingValue, defn: SettingDefinition) -> st
         json.dumps(value)
     except TypeError, ValueError:
         return f"Value for {key} is not JSON-serializable"
-    if defn.json_list_item_type == "string":
-        error = _validate_json_string_items(key, value, defn)
-        if error:
-            return error
     if defn.item_allowed_values is not None:
         error = _validate_json_allowed_items(key, value, defn.item_allowed_values)
         if error:
@@ -396,8 +375,6 @@ class SettingsService:
                 validation["max"] = defn.max_value
         elif defn.allowed_values:
             validation = {"allowed_values": defn.allowed_values}
-        elif defn.json_list_item_type:
-            validation = {"item_type": defn.json_list_item_type}
         elif defn.item_allowed_values:
             validation = {"item_allowed_values": defn.item_allowed_values, "item_type": "string"}
 

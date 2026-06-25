@@ -10,14 +10,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.core import metrics_recorders
 from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services import intent_reconciler, state_write_guard
+from app.devices.services.intent_reconciler import run_device_intent_reconciler_once
 from app.devices.services.intent_types import NODE_PROCESS, RESERVATION
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
@@ -236,3 +239,53 @@ async def test_sweep_preserves_cooldown_intent_when_reservation_active(
     await db_session.commit()
 
     assert await _intent_exists(db_session, device.id, source)
+
+
+# ---------------------------------------------------------------------------
+# Sweep cadence: only on full-scan cycles
+# ---------------------------------------------------------------------------
+
+
+async def test_orphan_sweeps_run_only_on_full_scan_cycle(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both orphan sweeps must run on a full-scan cycle (cycle % full_scan_every == 0)
+    and be skipped on a non-full-scan cycle."""
+    calls: list[str] = []
+
+    async def _spy_sweep(db: object) -> None:
+        calls.append("sweep")
+
+    async def _spy_terminal(db: object, **kwargs: object) -> None:
+        calls.append("terminal")
+
+    monkeypatch.setattr(intent_reconciler, "_sweep_orphaned_intents", _spy_sweep)
+    monkeypatch.setattr(intent_reconciler, "_reconcile_terminal_run_intents", _spy_terminal)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
+
+    settings = FakeSettingsReader({"general.intent_reconcile_full_scan_every_cycles": 5})
+
+    # cycle=0: 0 % 5 == 0 → full scan → sweeps must run
+    await run_device_intent_reconciler_once(
+        db_session,
+        cycle=0,
+        settings=settings,
+        circuit_breaker=Mock(),
+        publisher=AsyncMock(),
+    )
+    assert calls.count("sweep") == 1, "sweep must run on full-scan cycle"
+    assert calls.count("terminal") == 1, "terminal sweep must run on full-scan cycle"
+
+    calls.clear()
+
+    # cycle=1: 1 % 5 != 0 → dirty-only → sweeps must NOT run
+    await run_device_intent_reconciler_once(
+        db_session,
+        cycle=1,
+        settings=settings,
+        circuit_breaker=Mock(),
+        publisher=AsyncMock(),
+    )
+    assert calls.count("sweep") == 0, "sweep must NOT run on non-full-scan cycle"
+    assert calls.count("terminal") == 0, "terminal sweep must NOT run on non-full-scan cycle"

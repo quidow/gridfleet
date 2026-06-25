@@ -86,10 +86,6 @@ async def list_runs(
     cursor: Annotated[str | None, Query()] = None,
     direction: Annotated[Literal["older", "newer"], Query()] = "older",
     offset: Annotated[int, Query(ge=0)] = 0,
-    sort_by: Annotated[
-        Literal["name", "state", "devices", "created_by", "created_at", "duration"], Query()
-    ] = "created_at",
-    sort_dir: Annotated[Literal["asc", "desc"], Query()] = "desc",
 ) -> dict[str, Any]:
     try:
         parsed_created_from = _parse_run_filter_datetime(created_from)
@@ -125,8 +121,6 @@ async def list_runs(
         created_to=parsed_created_to,
         limit=limit,
         offset=offset,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
     )
     counts_map = await run_services.query.fetch_session_counts(db, [r.id for r in runs])
     items = [run_service.build_run_read(r, counts_map.get(r.id)) for r in runs]

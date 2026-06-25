@@ -11363,8 +11363,6 @@ export interface operations {
                 cursor?: string | null;
                 direction?: "older" | "newer";
                 offset?: number;
-                sort_by?: "name" | "state" | "devices" | "created_by" | "created_at" | "duration";
-                sort_dir?: "asc" | "desc";
             };
             header?: never;
             path?: never;

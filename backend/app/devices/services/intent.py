@@ -11,6 +11,7 @@ from app.devices.models import DeviceIntent, DeviceIntentDirty
 from app.devices.services.intent_reconciler import reconcile_device
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,6 +126,28 @@ class IntentService:
         )
         return int((await self._db.execute(stmt)).scalar_one())
 
+    async def _lock_mutate_reconcile(
+        self,
+        device_id: UUID,
+        *,
+        mutate: Callable[[], Awaitable[object]],
+        publisher: EventPublisher,
+        observed_reason: ObservationReason | None,
+        flush_first: bool = False,
+    ) -> None:
+        if flush_first:
+            # Flush pending session changes so the inline reconciler sees updated
+            # observation columns instead of the stale DB snapshot the
+            # lock_device(populate_existing=True) re-read would return.
+            await self._db.flush()
+        # Lock the Device row before touching DeviceIntent/DeviceIntentDirty so this
+        # inline path acquires locks in the same order as the background dirty-scan
+        # reconciler (Device -> dirty). The reverse order deadlocks under concurrent
+        # reconcile of the same device (see test_concurrency_intent_reconcile_dirty_deadlock).
+        await device_locking.lock_device(self._db, device_id)
+        await mutate()
+        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
+
     async def mark_dirty_and_reconcile(
         self,
         device_id: UUID,
@@ -149,14 +172,13 @@ class IntentService:
         when the cause is not known at this site — the reconciler then derives state
         and emits the bus event but records no audit row (it must not guess the cause).
         """
-        await self._db.flush()
-        # Lock the Device row before touching DeviceIntent/DeviceIntentDirty so this
-        # inline path acquires locks in the same order as the background dirty-scan
-        # reconciler (Device -> dirty). The reverse order deadlocks under concurrent
-        # reconcile of the same device (see test_concurrency_intent_reconcile_dirty_deadlock).
-        await device_locking.lock_device(self._db, device_id)
-        await self.mark_dirty(device_id, reason=reason)
-        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
+        await self._lock_mutate_reconcile(
+            device_id,
+            mutate=lambda: self.mark_dirty(device_id, reason=reason),
+            publisher=publisher,
+            observed_reason=observed_reason,
+            flush_first=True,
+        )
 
     async def register_intents_and_reconcile(
         self,
@@ -167,10 +189,12 @@ class IntentService:
         publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
-        # Lock Device before the intent/dirty upserts — see mark_dirty_and_reconcile.
-        await device_locking.lock_device(self._db, device_id)
-        await self.register_intents(device_id=device_id, intents=intents, reason=reason)
-        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
+        await self._lock_mutate_reconcile(
+            device_id,
+            mutate=lambda: self.register_intents(device_id=device_id, intents=intents, reason=reason),
+            publisher=publisher,
+            observed_reason=observed_reason,
+        )
 
     async def revoke_intents_and_reconcile(
         self,
@@ -181,7 +205,9 @@ class IntentService:
         publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
-        # Lock Device before the intent/dirty deletes — see mark_dirty_and_reconcile.
-        await device_locking.lock_device(self._db, device_id)
-        await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
-        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
+        await self._lock_mutate_reconcile(
+            device_id,
+            mutate=lambda: self.revoke_intents(device_id=device_id, sources=sources, reason=reason),
+            publisher=publisher,
+            observed_reason=observed_reason,
+        )

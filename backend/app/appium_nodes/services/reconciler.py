@@ -40,6 +40,7 @@ from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
     _execute_action,
+    _needs_start_failure_reset,
     decide_convergence_action,
     match_observed_entry,
     reap_orphan_nodes,
@@ -323,6 +324,7 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
         select(
             Device.id.label("device_id"),
             Device.host_id,
+            Device.lifecycle_policy_state,
             AppiumNode.id.label("node_id"),
             target_expr.label("connection_target"),
             AppiumNode.desired_state,
@@ -353,6 +355,7 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
             pid=row.pid,
             active_connection_target=row.active_connection_target,
             stop_pending=row.stop_pending,
+            lifecycle_policy_state=row.lifecycle_policy_state,
         )
         for row in rows
     ]
@@ -364,6 +367,7 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
         select(
             Device.id.label("device_id"),
             Device.host_id,
+            Device.lifecycle_policy_state,
             AppiumNode.id.label("node_id"),
             target_expr.label("connection_target"),
             AppiumNode.desired_state,
@@ -394,6 +398,7 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
         pid=row.pid,
         active_connection_target=row.active_connection_target,
         stop_pending=row.stop_pending,
+        lifecycle_policy_state=row.lifecycle_policy_state,
     )
 
 
@@ -550,14 +555,7 @@ async def _reset_start_failure(
         if device is None:
             return
         current = lifecycle_policy_state(device)
-        has_reconciler_failure = current.get("last_failure_source") == "appium_reconciler"
-        has_orphaned_reason = bool(current.get("last_failure_reason") and not current.get("last_failure_source"))
-        if (
-            not current.get("recovery_backoff_attempts")
-            and not current.get("backoff_until")
-            and not has_reconciler_failure
-            and not has_orphaned_reason
-        ):
+        if not _needs_start_failure_reset(current):
             return
         reset_reconciler_start_failure_state(device)
         await db.commit()

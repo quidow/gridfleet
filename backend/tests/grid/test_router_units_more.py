@@ -2461,8 +2461,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
             cursor=None,
             direction="older",
             offset=0,
-            sort_by="created_at",
-            sort_dir="desc",
             db=object(),
             run_services=mock_rs_list,
         )
@@ -2481,8 +2479,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
             cursor="bad",
             direction="older",
             offset=0,
-            sort_by="created_at",
-            sort_dir="desc",
             db=object(),
             run_services=mock_rs_list,
         )
@@ -2896,8 +2892,6 @@ async def test_runs_router_cursor_detail_and_cooldown_error_branches() -> None:
             cursor="bad",
             direction="older",
             offset=0,
-            sort_by="created_at",
-            sort_dir="desc",
             db=object(),
             run_services=mock_rs,
         )

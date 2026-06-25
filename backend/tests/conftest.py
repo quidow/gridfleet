@@ -671,12 +671,8 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
 
     def override_get_plugin_services() -> PluginServices:
-        assert db_session.bind is not None
-        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            db_session.bind, class_=AsyncSession, expire_on_commit=False
-        )
         plugin_svc = PluginService(settings=settings_service, circuit_breaker=test_circuit_breaker)
-        return PluginServices(plugin=plugin_svc, session_factory=sf)
+        return PluginServices(plugin=plugin_svc)
 
     def override_get_appium_node_services() -> AppiumNodeServices:
         assert db_session.bind is not None
@@ -725,7 +721,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return WebhookServices(
             crud=WebhookCrudService(),
             dispatch=WebhookDispatchService(session_factory=sf),
-            session_factory=sf,
         )
 
     app.dependency_overrides[get_db] = override_get_db

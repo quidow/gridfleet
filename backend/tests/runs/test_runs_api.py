@@ -437,9 +437,7 @@ async def test_list_runs_filter_created_range(
     assert resp.json()["items"] == []
 
 
-async def test_list_runs_paginates_and_sorts(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
+async def test_list_runs_paginates(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-sort-1", "D1")
     await _create_available_device(db_session, default_host_id, "run-sort-2", "D2")
     await _create_available_device(db_session, default_host_id, "run-sort-3", "D3")
@@ -449,7 +447,7 @@ async def test_list_runs_paginates_and_sorts(
 
     response = await client.get(
         "/api/runs",
-        params={"limit": 2, "offset": 1, "sort_by": "name", "sort_dir": "asc"},
+        params={"limit": 2, "offset": 1},
     )
 
     assert response.status_code == 200
@@ -457,7 +455,8 @@ async def test_list_runs_paginates_and_sorts(
     assert body["total"] == 3
     assert body["limit"] == 2
     assert body["offset"] == 1
-    assert [row["name"] for row in body["items"]] == ["Middle Run", "Zulu Run"]
+    # default order is created_at DESC — offset=1 skips the most-recent (Middle Run)
+    assert [row["name"] for row in body["items"]] == ["Alpha Run", "Zulu Run"]
 
 
 async def test_list_runs_out_of_range_offset_returns_empty_items_with_total(

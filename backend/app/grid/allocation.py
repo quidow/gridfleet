@@ -159,16 +159,12 @@ def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, re
     ticket.status = to
 
 
-# Bulk Core UPDATE paths only ever terminalize a ``claimed`` ticket to ``expired``
-# (session ended / orphan reaped). The per-row ``_legal_ticket_transition`` table
-# deliberately omits ``claimed -> expired`` — that terminalization is bulk-only — so
-# the bulk seam carries its own small legal set rather than widening the per-row table
-# (which would also relax what the single-ticket seam permits).
-_LEGAL_BULK_TRANSITIONS = frozenset({(GridQueueStatus.claimed, GridQueueStatus.expired)})
-
-
 def _legal_bulk_ticket_transition(from_status: GridQueueStatus, to: GridQueueStatus) -> bool:
-    return (from_status, to) in _LEGAL_BULK_TRANSITIONS
+    # Bulk Core UPDATE paths only ever terminalize a ``claimed`` ticket to ``expired``
+    # (session ended / orphan reaped). The per-row ``_legal_ticket_transition`` table
+    # deliberately omits ``claimed -> expired`` — that terminalization is bulk-only — so
+    # the bulk seam keeps its own explicit rule rather than widening the per-row table.
+    return from_status == GridQueueStatus.claimed and to == GridQueueStatus.expired
 
 
 async def transition_tickets_bulk(
@@ -496,41 +492,17 @@ class AllocationService:
             transition_ticket(stale, GridQueueStatus.expired, reason="reaper_queue_timeout_or_stale_poll")
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="expired").inc()
             tickets_expired += 1
-        await db.flush()
-        return {"pending_failed": pending_failed, "tickets_expired": tickets_expired}
-
-    async def reap_orphaned_claims(self, db: DbSession) -> int:
-        """Expire ``claimed`` tickets whose client has abandoned them AND whose Session can
-        never become live again.
-
-        Defense-in-depth behind ``expire_tickets_for_session`` (which terminalizes a claim
-        synchronously when its Session ends). This sweep clears residue that a missed seam or
-        an older build leaked: ``claimed`` tickets left pointing at an ended/purged Session
-        that nothing else moves off ``claimed`` (harness G7). Both gates are required:
-
-        * **abandoned** — ``last_polled_at`` older than the liveness window. A still-polling
-          client is left for ``resume_claimed`` to rewind to ``waiting`` on its next poll, so
-          the sweep never races an honest resume.
-        * **not live** — ``session_row_id`` IS NULL (Session purged → FK ``SET NULL``), OR the
-          Session is missing / ended / not ``pending``|``running`` (the same predicate
-          ``resume_claimed`` treats as un-resumable).
-
-        An honest in-flight claim is spared by the not-live gate (its Session is
-        ``pending``/``running``). Returns the number of tickets transitioned.
-        """
-        stale_cutoff = _ticket_liveness_cutoff(now_utc())
-        # A Session that can never re-serve a claim: ended, or not pending/running. (A purged
-        # Session nulls session_row_id via FK SET NULL — caught by the IS NULL arm below — so a
-        # dangling FK to a missing row does not occur.)
+        # Defense-in-depth behind expire_tickets_for_session: terminalize ``claimed``
+        # tickets abandoned by their client AND pointing at a session that can never go
+        # live again (purged -> session_row_id NULL, or ended / not pending|running).
+        # The outcome metric is a deliberate missed-seam canary.
         not_live_session_ids = select(Session.id).where(
             or_(
                 Session.ended_at.is_not(None),
                 Session.status.not_in((SessionStatus.pending, SessionStatus.running)),
             )
         )
-        # Bulk claimed -> expired through the guarded bulk seam (transition_tickets_bulk),
-        # mirroring expire_tickets_for_session.
-        reaped = await transition_tickets_bulk(
+        orphan_claims_reaped = await transition_tickets_bulk(
             db,
             from_status=GridQueueStatus.claimed,
             to=GridQueueStatus.expired,
@@ -544,10 +516,14 @@ class AllocationService:
             ),
             synchronize_session=False,
         )
-        if reaped:
-            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="orphan_claim_reaped").inc(reaped)
+        if orphan_claims_reaped:
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="orphan_claim_reaped").inc(orphan_claims_reaped)
         await db.flush()
-        return reaped
+        return {
+            "pending_failed": pending_failed,
+            "tickets_expired": tickets_expired,
+            "orphan_claims_reaped": orphan_claims_reaped,
+        }
 
     async def try_allocate(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
         # Liveness heartbeat: a still-polling client proves it is alive on every tick.

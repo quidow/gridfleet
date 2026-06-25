@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from app.appium_nodes.exceptions import NodeAlreadyRunningError
@@ -43,6 +43,8 @@ class DesiredRow:
     pid: int | None
     active_connection_target: str | None
     stop_pending: bool
+    # Carried lock-free from the desired-rows SELECT for the confirm_running pre-check.
+    lifecycle_policy_state: dict[str, Any] | None = field(default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +75,20 @@ class ConvergenceAction:
     pid: int | None = None
     active_connection_target: str | None = None
     clear_desired_port: bool = False
+
+
+def _needs_start_failure_reset(state: dict[str, Any] | None) -> bool:
+    """True when ``lifecycle_policy_state`` carries appium-reconciler failure/backoff residue."""
+    if state is None:
+        return False
+    has_reconciler_failure = state.get("last_failure_source") == "appium_reconciler"
+    has_orphaned_reason = bool(state.get("last_failure_reason") and not state.get("last_failure_source"))
+    return bool(
+        state.get("recovery_backoff_attempts")
+        or state.get("backoff_until")
+        or has_reconciler_failure
+        or has_orphaned_reason
+    )
 
 
 StartAgent = Callable[..., Awaitable[dict[str, Any]]]
@@ -312,7 +328,9 @@ async def _execute_action(
     if action.kind == "no_op":
         return
     if action.kind == "confirm_running":
-        await reset_start_failure(row=row)
+        # ponytail: cheap pre-check skips the Device row lock in the steady-state path
+        if _needs_start_failure_reset(row.lifecycle_policy_state):
+            await reset_start_failure(row=row)
         return
     if action.kind == "clear_expired_token":
         APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED.inc()

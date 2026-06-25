@@ -757,7 +757,7 @@ class LifecyclePolicyService:
             await db.commit()
 
         if not current_state.get("stop_pending"):
-            return DeferredStopOutcome.NO_PENDING
+            return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
         # Authoritative check under the device row lock. Callers may have
         # pre-validated outside the lock for early-exit, but a fresh client
@@ -789,7 +789,7 @@ class LifecyclePolicyService:
             # (FastAPI ``get_db``) close before the cleared state is persisted, and
             # the dashboard keeps rendering stale ``stop_pending``.
             await db.commit()
-            return DeferredStopOutcome.CLEARED_RECOVERED
+            return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
         reason = (
             current_state.get("stop_pending_reason")
@@ -1008,23 +1008,20 @@ RECOVERY_NODE_START_WAIT_POLL_SEC = 0.5
 
 
 class DeferredStopOutcome(StrEnum):
-    """Outcome of ``complete_deferred_stop_if_session_ended`` /
-    ``handle_session_finished``.
+    """Outcome of ``complete_deferred_stop_if_session_ended`` / ``handle_session_finished``.
 
-    NO_PENDING: device had no ``stop_pending`` intent.
-    RUNNING_SESSION_EXISTS: another client session is still running, so the
-        helper bailed without touching state.
-    CLEARED_RECOVERED: device became healthy before the session ended; the
-        intent was cleared and no auto-stop was performed. The caller should
-        restore device availability the same way it would for any session-end
-        on a healthy device.
-    AUTO_STOPPED: the deferred stop was completed; the device is offline (and
-        excluded from any active run).
+    NO_PENDING_OR_RECOVERED: either the device had no ``stop_pending`` intent, or it
+        became healthy before the session ended and the intent was cleared without an
+        auto-stop. In both cases the caller restores availability via the normal
+        session-end-on-healthy-device path.
+    RUNNING_SESSION_EXISTS: another client session is still running, so the helper
+        bailed without touching state.
+    AUTO_STOPPED: the deferred stop was completed; the device is offline (and excluded
+        from any active run).
     """
 
-    NO_PENDING = "no_pending"
+    NO_PENDING_OR_RECOVERED = "no_pending_or_recovered"
     RUNNING_SESSION_EXISTS = "running_session_exists"
-    CLEARED_RECOVERED = "cleared_recovered"
     AUTO_STOPPED = "auto_stopped"
 
 

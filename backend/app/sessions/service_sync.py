@@ -464,6 +464,7 @@ class SessionSyncService:
             # A fresh client session arrived between our running-set check and
             # the locked check inside the helper; leave the device busy.
             return
+        # NO_PENDING_OR_RECOVERED: restore availability via the normal session-end path.
         # Authoritative recheck under the row lock. ``handle_session_finished``
         # may have already derived the correct state; a fresh session inserted
         # between it and this lock must override that derivation. Always recheck.

@@ -169,7 +169,7 @@ async def test_run_listing_cursor_and_state_transition_branches(db_session: Asyn
     terminal.completed_at = datetime.now(UTC)
     await db_session.commit()
 
-    listed, total = await _query_svc.list_runs(db_session, sort_by="duration", sort_dir="asc")
+    listed, total = await _query_svc.list_runs(db_session)
     assert total == 3
     assert {run.name for run in listed} == {"older", "active", "terminal"}
 

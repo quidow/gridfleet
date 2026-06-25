@@ -387,7 +387,6 @@ def compose_app(
         ),
         plugins=PluginServices(
             plugin=PluginService(settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool),
-            session_factory=session_factory,
         ),
         appium_nodes=AppiumNodeServices(
             reconciler=reconciler_svc,
@@ -424,7 +423,6 @@ def compose_app(
         webhooks=WebhookServices(
             crud=WebhookCrudService(),
             dispatch=WebhookDispatchService(session_factory=session_factory),
-            session_factory=session_factory,
         ),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
         leader_keepalive=LeaderKeepaliveLoop(settings=settings_svc),

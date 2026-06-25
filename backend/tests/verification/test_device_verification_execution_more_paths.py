@@ -11,9 +11,25 @@ from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.verification.services import execution
-from app.verification.services.execution import AgentCallContext, FailureFinalizers, VerificationExecutionService
+from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
+
+
+def _make_svc(**overrides: object) -> VerificationExecutionService:
+    """Minimal service instance for unit-testing _finalize_* methods."""
+    defaults: dict[str, object] = {
+        "publisher": event_bus,
+        "agent": AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
+        "crud": AsyncMock(),
+        "viability": AsyncMock(),
+        "capability": AsyncMock(),
+        "reconciler": AsyncMock(),
+        "node_manager": AsyncMock(),
+        "review": build_review_service(),
+    }
+    defaults.update(overrides)
+    return VerificationExecutionService(**defaults)  # type: ignore[arg-type]
 
 
 def _device(**overrides: object) -> SimpleNamespace:
@@ -119,19 +135,15 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     mock_crud.delete_device = AsyncMock()
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value="cleanup failed"))
 
+    create_node_manager = AsyncMock()
+    create_svc = _make_svc(publisher=event_bus, crud=mock_crud, node_manager=create_node_manager)
     create_context = SimpleNamespace(mode="create", save_device_id=uuid.uuid4(), transient_device=transient)
-    outcome = await execution._finalize_failure(
+    outcome = await create_svc._finalize_failure(
         db,
         create_context,
         error="bad",
         job=job,
         node=node,
-        finalizers=FailureFinalizers(
-            publisher=event_bus,
-            crud=mock_crud,
-            node_manager=AsyncMock(),
-            review=AsyncMock(),
-        ),
     )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
@@ -149,19 +161,14 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     mark_mock = AsyncMock(return_value=True)
     review_mock = MagicMock()
     review_mock.mark_review_required = mark_mock
+    update_svc = _make_svc(publisher=event_bus, crud=mock_crud, node_manager=AsyncMock(), review=review_mock)
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
-    outcome = await execution._finalize_failure(
+    outcome = await update_svc._finalize_failure(
         db,
         update_context,
         error="bad",
         job=job,
         original_fields={"name": "original"},
-        finalizers=FailureFinalizers(
-            publisher=event_bus,
-            crud=mock_crud,
-            node_manager=AsyncMock(),
-            review=review_mock,
-        ),
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -209,8 +216,6 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         transient_device=_device(),
         save_payload={},
     )
-    finalize = AsyncMock(return_value=execution.VerificationExecutionOutcome(status="failed"))
-    monkeypatch.setattr(execution, "_finalize_failure", finalize)
     _s6 = FakeSettingsReader({})
     svc2 = VerificationExecutionService(
         review=build_review_service(),
@@ -222,6 +227,8 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         reconciler=AsyncMock(),
         node_manager=AsyncMock(),
     )
+    finalize = AsyncMock(return_value=execution.VerificationExecutionOutcome(status="failed"))
+    monkeypatch.setattr(svc2, "_finalize_failure", finalize)
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
         await svc2.execute_verification_context(
@@ -276,14 +283,12 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
 
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke)
 
-    outcome = await execution._finalize_success(
+    svc = _make_svc(publisher=event_bus, crud=AsyncMock(), viability=_mock_viability)
+    outcome = await svc._finalize_success(
         db,
         context,
         job={"stages": []},
         node=SimpleNamespace(port=4723, pid=22),
-        publisher=event_bus,
-        crud=AsyncMock(),
-        viability=_mock_viability,
     )
 
     assert outcome.status == "completed"
@@ -327,19 +332,14 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     call_order_manager.attach_mock(strip_revoke, "strip")
     call_order_manager.attach_mock(db.commit, "commit")
 
+    shelve_svc = _make_svc(publisher=event_bus, crud=AsyncMock(), node_manager=AsyncMock(), review=review_mock)
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
-    outcome = await execution._finalize_failure(
+    outcome = await shelve_svc._finalize_failure(
         db,
         update_context,
         error="adb probe timed out",
         job=job,
         original_fields={},
-        finalizers=FailureFinalizers(
-            publisher=event_bus,
-            crud=AsyncMock(),
-            node_manager=AsyncMock(),
-            review=review_mock,
-        ),
     )
 
     assert outcome.status == "failed"
