@@ -115,14 +115,6 @@ async def run_device_intent_reconciler_once(
     await _reconcile_expired_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
-    try:
-        await _sweep_orphaned_intents(db)
-    except Exception:
-        await db.rollback()
-        logger.exception("stale_intent_sweep_failed")
-    await _reconcile_terminal_run_intents(
-        db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-    )
     precondition_affected = await reconcile_unsatisfied_preconditions(db)
     for affected_id in sorted(precondition_affected):
         await reconcile_device(db, affected_id, publisher=publisher)
@@ -131,6 +123,14 @@ async def run_device_intent_reconciler_once(
             db, affected_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
     if cycle % full_scan_every == 0:
+        try:
+            await _sweep_orphaned_intents(db)
+        except Exception:
+            await db.rollback()
+            logger.exception("stale_intent_sweep_failed")
+        await _reconcile_terminal_run_intents(
+            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
         await _reconcile_all_devices_once(
             db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
