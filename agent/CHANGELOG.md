@@ -2,6 +2,17 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.29.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.28.0...gridfleet-agent-v0.29.0) (2026-06-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** the agent no longer supports Python 3.12 or 3.13.
+
+### Build System
+
+* **agent:** require python 3.14 ([6503936](https://github.com/quidow/gridfleet/commit/65039369422f7ae70f1d4e5281af08af535f4a58))
+
 ## [0.28.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.27.2...gridfleet-agent-v0.28.0) (2026-06-25)
 
 
