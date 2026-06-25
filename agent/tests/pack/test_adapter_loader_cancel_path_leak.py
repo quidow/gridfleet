@@ -1,10 +1,13 @@
 import asyncio
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from agent_app.pack import adapter_loader
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.asyncio
 
@@ -35,7 +38,7 @@ async def test_cancelled_adapter_call_does_not_leak_import_state(tmp_path: Path)
         slow_started = asyncio.Event()
 
         class _SlowInstance:
-            def slow(self) -> "asyncio.Future[None]":
+            def slow(self) -> asyncio.Future[None]:
                 import adapter  # type: ignore[import-not-found]
 
                 assert adapter.PACK_LABEL == "pack_a"

@@ -1,6 +1,6 @@
 import asyncio
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,6 +17,9 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult
 from agent_app.pack.runtime import RuntimeEnv
 from agent_app.pack.runtime_registry import RuntimeRegistry
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_resolve_uses_runtime_env_when_registered() -> None:

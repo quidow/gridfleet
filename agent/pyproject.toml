@@ -9,7 +9,7 @@ description = "GridFleet agent — runs on each host"
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "GridFleet contributors" }]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 keywords = ["appium", "gridfleet", "selenium", "testing"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -17,7 +17,7 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -63,7 +63,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]
@@ -72,6 +72,32 @@ ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLC0415"]  # tests often need lazy imports for fixture and patch ordering
+# AppiumProcessManager.start()'s signature is introspected at runtime via
+# inspect.signature (see test_launch_spec_fields_match_start_parameters), which on
+# Python 3.14 evaluates its annotations (PEP 649/749). Imports used only in those
+# annotations must stay importable at module scope, so don't relocate them to
+# TYPE_CHECKING.
+"agent_app/appium/process.py" = ["TC001", "TC003"]
+
+[tool.ruff.lint.flake8-type-checking]
+# On Python 3.14 annotations are lazy (PEP 649), so ruff offers to move type-only
+# imports into `if TYPE_CHECKING:`. Pydantic resolves model/settings field annotations
+# at runtime when building the schema, and FastAPI resolves route-handler signatures via
+# get_type_hints, so imports used in those annotations must stay at module scope.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+]
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.delete",
+    "fastapi.APIRouter.websocket",
+    "fastapi.APIRouter.head",
+    "fastapi.APIRouter.options",
+]
 
 [tool.ruff.format]
 quote-style = "double"

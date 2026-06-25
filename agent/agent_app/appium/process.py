@@ -134,7 +134,7 @@ def _macos_java_home() -> str | None:
             text=True,
             timeout=5,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         logger.debug("/usr/libexec/java_home probe failed", exc_info=True)
         return None
     if result.returncode != 0:

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, status
 
-from agent_app.appium.dependencies import AppiumMgrDep  # noqa: TC001 - FastAPI resolves at runtime
+from agent_app.appium.dependencies import AppiumMgrDep
 from agent_app.appium.exceptions import (
     AlreadyRunningError,
     DeviceNotFoundError,

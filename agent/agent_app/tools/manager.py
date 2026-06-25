@@ -92,7 +92,7 @@ async def _run_optional(
 ) -> CommandResult | None:
     try:
         return await _run_command(cmd, timeout=timeout, env=env)
-    except (FileNotFoundError, TimeoutError, OSError):
+    except FileNotFoundError, TimeoutError, OSError:
         return None
 
 

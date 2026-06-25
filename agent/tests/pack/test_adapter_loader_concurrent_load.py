@@ -1,12 +1,15 @@
 import asyncio
 import tarfile
 import zipfile
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from agent_app.pack import adapter_loader
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.asyncio
 

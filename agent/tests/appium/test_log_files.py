@@ -1,8 +1,6 @@
 import asyncio
 import sys
-from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from agent_app.appium import log_files
 from agent_app.appium.log_files import (
@@ -14,6 +12,11 @@ from agent_app.appium.log_files import (
     truncate_if_oversized,
     truncate_oversized_logs,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 
 def test_log_path_lives_under_runtime_root(tmp_path: Path) -> None:

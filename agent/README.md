@@ -35,7 +35,7 @@ The script refuses to run as root. The service runs as the operator that invoked
 
 ## Prerequisites
 
-The agent itself only needs Python 3.12, which `uv` fetches automatically. Host-level tools the agent uses — only Node.js is probed during `install` and wired onto the service `PATH`:
+The agent itself only needs Python 3.14, which `uv` fetches automatically. Host-level tools the agent uses — only Node.js is probed during `install` and wired onto the service `PATH`:
 
 | Tool | Needed for | Detection |
 |---|---|---|
@@ -56,7 +56,7 @@ AGENT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gridfleet-agent"
 #    macOS:
 #    AGENT_DIR="$HOME/Library/Application Support/gridfleet-agent"
 mkdir -p "$AGENT_DIR"
-uv venv --python 3.12 "$AGENT_DIR/venv"
+uv venv --python 3.14 "$AGENT_DIR/venv"
 uv pip install --python "$AGENT_DIR/venv/bin/python" "gridfleet-agent==0.10.0"
 
 # 3. Provision the service from the dedicated venv. No sudo.

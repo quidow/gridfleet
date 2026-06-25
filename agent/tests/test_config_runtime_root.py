@@ -1,6 +1,9 @@
-import pytest
+from typing import TYPE_CHECKING
 
 from agent_app.config import AgentSettings
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_runtime_root_default() -> None:

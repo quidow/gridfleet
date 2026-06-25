@@ -1,8 +1,25 @@
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from agent_app import http_client
 from agent_app.config import agent_settings
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+async def reset_shared_http_client() -> object:
+    """Close the process-wide httpx client after each test on its own event loop.
+
+    The client is cached module-globally and only recreated when closed, so a
+    pooled connection created on one test's loop would otherwise be reused on the
+    next, raising "Event loop is closed" when httpcore tears it down (surfaced on
+    Python 3.14's stricter loop lifecycle).
+    """
+    yield
+    await http_client.close()
 
 
 @pytest.fixture(autouse=True)

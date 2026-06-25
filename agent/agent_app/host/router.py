@@ -8,8 +8,8 @@ from typing import Any
 from fastapi import APIRouter, status
 
 from agent_app import __version__
-from agent_app.appium.dependencies import AppiumMgrDep  # noqa: TC001 - FastAPI resolves at runtime
-from agent_app.host.dependencies import (  # noqa: TC001 - FastAPI resolves at runtime
+from agent_app.appium.dependencies import AppiumMgrDep
+from agent_app.host.dependencies import (
     CapabilitiesDep,
     HostTelemetryDep,
     RegisteredFlagDep,

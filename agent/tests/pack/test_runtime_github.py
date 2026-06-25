@@ -1,5 +1,5 @@
 import dataclasses
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -9,6 +9,9 @@ from agent_app.pack.runtime import (
     _driver_install_commands,
     _github_npm_install_spec,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class RecordingRunner:

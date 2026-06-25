@@ -22,7 +22,7 @@ _SUBPROCESS_TIMEOUT_SEC = 5
 def _safe[T](fn: Callable[[], T]) -> T | None:
     try:
         return fn()
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except OSError, subprocess.SubprocessError, ValueError:
         return None
 
 

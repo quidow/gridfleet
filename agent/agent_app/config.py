@@ -35,7 +35,7 @@ class ManagerSettings(BaseSettings):
     backend_url: str | None = None
 
     @model_validator(mode="after")
-    def validate_auth_pair(self) -> "ManagerSettings":
+    def validate_auth_pair(self) -> ManagerSettings:
         has_username = bool(self.manager_auth_username)
         has_password = self.manager_auth_password is not None and bool(self.manager_auth_password.get_secret_value())
         if has_username != has_password:
@@ -54,7 +54,7 @@ class ApiAuthSettings(BaseSettings):
     api_auth_password: SecretStr | None = None
 
     @model_validator(mode="after")
-    def validate_auth_pair(self) -> "ApiAuthSettings":
+    def validate_auth_pair(self) -> ApiAuthSettings:
         has_username = bool(self.api_auth_username)
         has_password = self.api_auth_password is not None and bool(self.api_auth_password.get_secret_value())
         if has_username != has_password:

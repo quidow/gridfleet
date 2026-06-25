@@ -48,7 +48,7 @@ async def tcp_reachable(host: str, port: int, *, timeout: float = 5.0) -> bool:
         writer.close()
         await writer.wait_closed()
         return True
-    except (OSError, TimeoutError):
+    except OSError, TimeoutError:
         return False
 
 

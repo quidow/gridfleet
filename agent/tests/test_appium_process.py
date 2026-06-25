@@ -4,8 +4,7 @@ import dataclasses
 import inspect
 import json
 from collections import deque
-from collections.abc import Awaitable, Callable
-from typing import Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -35,6 +34,9 @@ from agent_app.appium.process import (
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
 from agent_app.tools.paths import _parse_node_version
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
 PACK_START_KWARGS = {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}
@@ -76,10 +78,10 @@ def _seed_log_file(port: int, *lines: str) -> None:
     path.write_text("".join(f"{line}\n" for line in lines))
 
 
-def _spawn_writing(proc: "FakeProcess", *lines: str) -> Callable[..., Awaitable["FakeProcess"]]:
+def _spawn_writing(proc: FakeProcess, *lines: str) -> Callable[..., Awaitable[FakeProcess]]:
     """create_subprocess_exec side effect: simulate child output landing in the log file."""
 
-    async def _spawn(*args: object, **kwargs: object) -> "FakeProcess":
+    async def _spawn(*args: object, **kwargs: object) -> FakeProcess:
         stdout = cast("BinaryIO", kwargs["stdout"])
         for line in lines:
             stdout.write(f"{line}\n".encode())
