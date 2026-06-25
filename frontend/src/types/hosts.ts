@@ -68,7 +68,6 @@ export type HostResourceTelemetry = Omit<Schemas['HostResourceTelemetryResponse'
 export type HostToolStatus = Schemas['HostToolStatusRead'];
 export type ToolEntry = Schemas['ToolEntry'];
 export type HostEventEntry = Schemas['HostEventEntry'];
-export type AgentLogPage = Schemas['AgentLogPage'];
 export type HostEventsPage = Schemas['HostEventsPage'];
 export type HostToolEnvRead = Schemas['HostToolEnvRead'];
 export type HostCreate = Schemas['HostCreate'];

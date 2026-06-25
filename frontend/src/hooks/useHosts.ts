@@ -5,7 +5,6 @@ import {
   createHost,
   deleteHost,
   discoverDevices,
-  fetchHostAgentLogs,
   fetchHostEvents,
   fetchIntakeCandidates,
   fetchHost,
@@ -15,7 +14,7 @@ import {
   fetchHosts,
   rejectHost,
 } from '../api/hosts';
-import type { AgentLogQuery, HostEventsQuery } from '../api/hosts';
+import type { HostEventsQuery } from '../api/hosts';
 import type { DiscoveryConfirm, HostCreate } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
 import { sseAdaptivePolling, POLL_FAST_MS, POLL_DEFAULT_MS, POLL_RELAXED_MS, POLL_SLOW_MS } from './polling';
@@ -66,17 +65,6 @@ export function useHostToolStatus(id: string, enabled = true) {
     queryFn: () => fetchHostToolStatus(id),
     ...sseAdaptivePolling(connected, POLL_RELAXED_MS),
     enabled: !!id && enabled,
-  });
-}
-
-export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
-  const { connected } = useEventStreamStatus();
-  return useQuery({
-    queryKey: qk.hostAgentLogs.list(hostId, filters),
-    queryFn: () => fetchHostAgentLogs(hostId, filters),
-    ...sseAdaptivePolling(connected, POLL_FAST_MS, POLL_SLOW_MS),
-    refetchIntervalInBackground: false,
-    enabled: Boolean(hostId),
   });
 }
 

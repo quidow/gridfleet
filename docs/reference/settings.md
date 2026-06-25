@@ -87,7 +87,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `retention.audit_log_days` | `retention` | `int` | `180` | none | `1..3650` | Delete device config audit entries older than N days |
 | `retention.device_events_days` | `retention` | `int` | `90` | none | `1..3650` | Delete device incident events older than N days |
 | `retention.agent_reconfigure_outbox_days` | `retention` | `int` | `7` | none | `1..3650` | Delete delivered or abandoned agent reconfigure outbox rows older than N days |
-| `retention.agent_log_days` | `retention` | `int` | `7` | `GRIDFLEET_AGENT_LOG_RETENTION_DAYS` | `1..30` | Delete shipped agent-process log entries older than N days |
 | `retention.host_resource_telemetry_hours` | `retention` | `int` | `24` | none | `1..720` | Delete host resource telemetry older than N hours |
 | `retention.capacity_snapshots_days` | `retention` | `int` | `30` | none | `1..3650` | Delete fleet capacity snapshots older than N days |
 | `retention.system_events_days` | `retention` | `int` | `30` | none | `1..3650` | Delete system events older than N days |

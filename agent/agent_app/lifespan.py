@@ -12,16 +12,14 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from agent_app import observability as agent_observability
 from agent_app.appium import appium_mgr
 from agent_app.config import agent_settings
 from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.host.version_guidance import VersionGuidanceStore
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
-from agent_app.logs.shipper import LogShipperTask
 from agent_app.pack.adapter_loader import load_adapter
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
@@ -169,31 +167,6 @@ async def _start_pack_loop_when_ready(
     await loop.run_forever()
 
 
-async def _start_log_shipper_when_ready(
-    host_identity: HostIdentity,
-    backend_url: str,
-    *,
-    boot_id: UUID,
-) -> None:
-    if agent_observability.shipper_queue is None:
-        return
-    host_id_raw = await host_identity.wait()
-    try:
-        UUID(host_id_raw)
-    except ValueError:
-        logger.warning("log shipper disabled because host_id is not a UUID: %s", host_id_raw)
-        return
-    shipper = LogShipperTask(
-        client=get_shared_http_client(),
-        host_identity=host_identity,
-        boot_id=boot_id,
-        queue=agent_observability.shipper_queue,
-        base_url=backend_url,
-        auth=_manager_auth(),
-    )
-    await shipper.run()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     host_identity = HostIdentity()
@@ -247,7 +220,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     appium_mgr.start_log_maintenance()
 
     pack_task: asyncio.Task[None] | None = None
-    log_shipper_task: asyncio.Task[None] | None = None
     if backend_url:
         pack_task = asyncio.create_task(
             _start_pack_loop_when_ready(
@@ -255,18 +227,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         )
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
-        log_shipper_task = asyncio.create_task(
-            _start_log_shipper_when_ready(host_identity, backend_url, boot_id=boot_id)
-        )
-        log_shipper_task.add_done_callback(_watchdog("log_shipper"))
 
     try:
         yield
     finally:
         if pack_task is not None:
             pack_task.cancel()
-        if log_shipper_task is not None:
-            log_shipper_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
         await appium_mgr.shutdown()

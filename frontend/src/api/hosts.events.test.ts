@@ -7,21 +7,7 @@ vi.mock('./client', () => ({
 }));
 
 import api from './client';
-import { fetchHostAgentLogs, fetchHostEvents } from './hosts';
-
-describe('fetchHostAgentLogs', () => {
-  beforeEach(() => {
-    vi.mocked(api.get).mockReset();
-  });
-
-  it('GETs /hosts/:id/agent-logs with filters', async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: { lines: [], total: 0, has_more: false } });
-    await fetchHostAgentLogs('host-1', { level: 'WARN', q: 'foo', limit: 500 });
-    expect(api.get).toHaveBeenCalledWith('/hosts/host-1/agent-logs', {
-      params: { level: 'WARN', q: 'foo', limit: 500 },
-    });
-  });
-});
+import { fetchHostEvents } from './hosts';
 
 describe('fetchHostEvents', () => {
   beforeEach(() => {

@@ -67,7 +67,6 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_MIN_AGENT_VERSION` | `agent.min_version` | `0.1.0` | Empty string disables minimum-version enforcement |
 | `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | `agent.recommended_version` | empty | Seeds initial `agent.recommended_version` setting default (empty = disabled). |
 | `GRIDFLEET_HOST_AUTO_ACCEPT` | `agent.auto_accept_hosts` | `true` | Auto-approve self-registering hosts. Production compose sets this to `false` so operators approve new hosts explicitly. |
-| `GRIDFLEET_AGENT_LOG_RETENTION_DAYS` | `retention.agent_log_days` | `7` | Days of shipped agent-process log entries retained before cleanup. Valid range: `1..30`. |
 | `GRIDFLEET_RUN_REAPER_INTERVAL_SEC` | `reservations.reaper_interval_sec` | `15` | Stale-run reaper cadence |
 
 For the full registry surface, including DB-backed settings that do not have env fallbacks, see [settings.md](settings.md).

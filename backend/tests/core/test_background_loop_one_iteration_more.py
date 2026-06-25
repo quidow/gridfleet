@@ -25,7 +25,6 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.hosts.service import HostCrudService
-from app.hosts.service_agent_logs import AgentLogsService
 from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop, HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
@@ -246,7 +245,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             ),
             resource_telemetry=HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=_cb),
             diagnostics=HostDiagnosticsService(circuit_breaker=_cb),
-            agent_logs=AgentLogsService(),
             host_events=HostEventsService(),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.hardware_telemetry_interval_sec": 0.01}),

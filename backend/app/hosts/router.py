@@ -25,7 +25,6 @@ from app.hosts import service_versioning as host_versioning
 from app.hosts.dependencies import HostServicesDep
 from app.hosts.models import Host
 from app.hosts.schemas import (
-    AgentLogPage,
     DiscoveryConfirm,
     DiscoveryConfirmResult,
     DiscoveryResult,
@@ -61,32 +60,6 @@ logger = logging.getLogger(__name__)
 get_agent_tool_status = agent_operations.get_tool_status
 
 _background_tasks: set[asyncio.Task[None]] = set()
-_LEVEL_EXPANSION: dict[str, list[str]] = {
-    "DEBUG": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-    "INFO": ["INFO", "WARNING", "ERROR", "CRITICAL"],
-    "WARN": ["WARNING", "ERROR", "CRITICAL"],
-    "WARNING": ["WARNING", "ERROR", "CRITICAL"],
-    "ERROR": ["ERROR", "CRITICAL"],
-    "CRITICAL": ["CRITICAL"],
-}
-
-
-def _expand_levels(raw: str | None) -> list[str] | None:
-    if not raw:
-        return None
-    out: set[str] = set()
-    for token in raw.split(","):
-        key = token.strip().upper()
-        if not key:
-            continue
-        expansion = _LEVEL_EXPANSION.get(key)
-        if expansion is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"unknown log level: {token!r}; expected one of {sorted(_LEVEL_EXPANSION)}",
-            )
-        out.update(expansion)
-    return sorted(out) or None
 
 
 def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
@@ -261,34 +234,6 @@ async def get_host(
         for device in host.devices
     ]
     return payload
-
-
-@router.get(
-    "/{host_id}/agent-logs",
-    response_model=AgentLogPage,
-    summary="Paginated agent process logs for a host",
-)
-async def get_agent_logs(
-    host_id: uuid.UUID,
-    db: DbDep,
-    host_services: HostServicesDep,
-    level: Annotated[str | None, Query()] = None,
-    q: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
-    since: Annotated[datetime | None, Query()] = None,
-    until: Annotated[datetime | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=2000)] = 200,
-    offset: Annotated[int, Query(ge=0)] = 0,
-) -> AgentLogPage:
-    return await host_services.agent_logs.query_logs(
-        db,
-        host_id=host_id,
-        levels=_expand_levels(level),
-        since=since,
-        until=until,
-        q=q,
-        limit=limit,
-        offset=offset,
-    )
 
 
 @router.get(

@@ -58,7 +58,6 @@ from app.grid import router as grid
 from app.grid import router_internal as grid_router_internal
 from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.hosts import router as hosts
-from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
@@ -335,7 +334,6 @@ app.include_router(pack_routers.catalog.router, dependencies=[Depends(auth_depen
 app.include_router(pack_routers.uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.host_features.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.agent_state.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(host_agent_logs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 
 
 @app.get("/health/live", response_model=LiveHealthRead)

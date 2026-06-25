@@ -12,7 +12,6 @@ import { HostDetailStatusPills } from './hostDetail/HostDetailStatusPills';
 import { HostOverviewPanel } from '../components/hostDetail/HostOverviewPanel';
 import { HostDevicesPanel } from '../components/hostDetail/HostDevicesPanel';
 import { HostDriversPanel } from '../components/hostDetail/HostDriversPanel';
-import { HostAgentLogPanel } from '../components/hostDetail/HostAgentLogPanel';
 import { HostEventsPanel } from '../components/hostDetail/HostEventsPanel';
 import { HostToolEnvPanel } from '../components/hostDetail/HostToolEnvPanel';
 import type { HostDetail as HostDetailType } from '../types';
@@ -23,7 +22,6 @@ const TABS = [
   { id: 'devices', label: 'Devices' },
   { id: 'drivers', label: 'Drivers' },
   { id: 'environment', label: 'Environment' },
-  { id: 'agent-logs', label: 'Agent Logs' },
   { id: 'events', label: 'Events' },
 ] as const;
 
@@ -31,7 +29,6 @@ const TAB_IDS = TABS.map((t) => t.id);
 
 const LEGACY_TAB_MAP: Record<string, string> = {
   diagnostics: 'overview',
-  logs: 'agent-logs',
 };
 
 export function HostDetail() {
@@ -91,12 +88,6 @@ export function HostDetail() {
             onDiscover={() => discoveryFlow.handleDiscover()}
             discoverPending={discoveryFlow.discoverMut.isPending}
           />
-        </SectionErrorBoundary>
-      )}
-
-      {tab === 'agent-logs' && (
-        <SectionErrorBoundary scope="host-agent-logs">
-          <HostAgentLogPanel hostId={id!} />
         </SectionErrorBoundary>
       )}
 
