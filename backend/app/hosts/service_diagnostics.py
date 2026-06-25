@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
+from app.core.coerce import coerce_int as _coerce_int
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.hosts.models import Host
@@ -35,21 +36,6 @@ class ProcessNodePayload(TypedDict, total=False):
     pid: int
     connection_target: str
     platform_id: str
-
-
-def _coerce_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _is_agent_local_recovery_event(event: DeviceEvent) -> bool:

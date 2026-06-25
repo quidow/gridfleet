@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm import operations as agent_operations
 from app.core.background_loop import BackgroundLoop
+from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, parse_timestamp
@@ -84,21 +85,6 @@ def _coerce_support_status(value: object) -> HardwareTelemetrySupportStatus:
         return HardwareTelemetrySupportStatus(value)
     except ValueError:
         return HardwareTelemetrySupportStatus.unknown
-
-
-def _coerce_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _coerce_float(value: object) -> float | None:

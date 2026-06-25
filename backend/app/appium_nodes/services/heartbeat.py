@@ -21,6 +21,7 @@ from app.appium_nodes.services.heartbeat_outcomes import (
     HeartbeatPingResult,
 )
 from app.core.background_loop import BackgroundLoop
+from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
@@ -222,21 +223,6 @@ def _resume_guard_active(
         return False
     threshold = interval_sec * max_missed
     return (now_monotonic - last_cycle_monotonic) > threshold
-
-
-def _coerce_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _restart_process(value: object) -> str:
