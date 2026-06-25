@@ -188,8 +188,8 @@ class HostDiagnosticsService:
     def __init__(self, *, circuit_breaker: CircuitBreakerProtocol) -> None:
         self._circuit_breaker = circuit_breaker
 
-    async def get_host_diagnostics(self, db: AsyncSession, host: Host | UUID) -> HostDiagnosticsRead | None:
-        resolved_host = host if isinstance(host, Host) else await db.get(Host, host)
+    async def get_host_diagnostics(self, db: AsyncSession, host_id: UUID) -> HostDiagnosticsRead | None:
+        resolved_host = await db.get(Host, host_id)
         if resolved_host is None:
             return None
 

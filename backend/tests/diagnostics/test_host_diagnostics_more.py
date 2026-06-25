@@ -83,7 +83,7 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
     with patch(
         "app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=snapshot)
     ):
-        diagnostics = await svc.get_host_diagnostics(db_session, host)
+        diagnostics = await svc.get_host_diagnostics(db_session, host.id)
 
     assert diagnostics is not None
     assert diagnostics.host_id == host.id
@@ -116,8 +116,8 @@ async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(
         "app.hosts.service_diagnostics.control_plane_state_store.get_value",
         new=AsyncMock(side_effect=snapshots),
     ):
-        first = await svc.get_host_diagnostics(db_session, host)
-        second = await svc.get_host_diagnostics(db_session, host)
+        first = await svc.get_host_diagnostics(db_session, host.id)
+        second = await svc.get_host_diagnostics(db_session, host.id)
 
     assert first is not None
     assert first.appium_processes.reported_at == snapshots[0]["reported_at"]
