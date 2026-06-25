@@ -64,8 +64,6 @@ Tabs:
   - current attached device records for that host, with a `Discover Devices` button in the tab header
 - `Drivers`
   - per-pack driver status (see [Driver Status](#driver-status))
-- `Plugins`
-  - host plugin status
 - `Environment`
   - per-host tool environment variables
 - `Agent Logs`

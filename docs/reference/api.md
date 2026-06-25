@@ -198,18 +198,6 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `GET` | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | Download a release tarball | path `pack_id`, `release` | tarball stream |
 | `POST` | `/api/driver-packs/{pack_id}/releases/{release}/export` | Export a release as a gzip tarball | path `pack_id`, `release` | tarball stream (`200`) |
 
-## Plugins
-
-| Method | Path | Purpose | Main input | Primary response |
-| --- | --- | --- | --- | --- |
-| `GET` | `/api/plugins` | List configured Appium plugins | none | `PluginRead[]` |
-| `POST` | `/api/plugins` | Create a plugin | `PluginCreate` | `PluginRead` (`201`) |
-| `PATCH` | `/api/plugins/{plugin_id}` | Update a plugin | `PluginUpdate` | `PluginRead` |
-| `DELETE` | `/api/plugins/{plugin_id}` | Delete a plugin | path `plugin_id` | empty `204` |
-| `POST` | `/api/plugins/sync-all` | Sync plugins across the fleet | none | `FleetPluginSyncResult` |
-| `GET` | `/api/hosts/{host_id}/plugins` | Read plugin status for one host | path `host_id` | `HostPluginStatus[]` |
-| `POST` | `/api/hosts/{host_id}/plugins/sync` | Sync plugins on one host | path `host_id` | `PluginSyncResult` |
-
 ## Runs
 
 | Method | Path | Purpose | Main input | Primary response |

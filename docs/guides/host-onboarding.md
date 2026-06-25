@@ -36,7 +36,7 @@ What happens next:
 
 - if `agent.auto_accept_hosts` is enabled, the new host is created as `online`
 - if `agent.auto_accept_hosts` is disabled, the new host is created as `pending`
-- successful accept also triggers background device discovery and Appium plugin sync
+- successful accept also triggers background device discovery
 
 Use this path when the host is already running the installed agent from the deployment flow in [deployment.md](deployment.md).
 
@@ -75,7 +75,6 @@ Approval behavior:
 
 - sets the host to `online`
 - triggers automatic discovery
-- triggers automatic Appium plugin sync
 
 Driver packs are delivered separately by the pack desired-state pipeline that the agent pulls, not by approval. Appium itself ships inside each driver-pack runtime and is not version-ensured on approval.
 
@@ -116,7 +115,7 @@ Expected flow:
 1. Install and start the agent.
 2. The agent registers itself.
 3. The host appears as `online`.
-4. Automatic discovery and Appium plugin sync begin.
+4. Automatic discovery begins.
 
 ### Auto-Accept Disabled
 
@@ -126,7 +125,7 @@ Expected flow:
 2. The host registers itself.
 3. The host appears as `pending`.
 4. An operator approves it.
-5. Discovery and Appium plugin sync begin after approval.
+5. Discovery begins after approval.
 
 ## Troubleshooting
 

@@ -13,7 +13,6 @@ Current shipped behaviors:
 - `Modified` means the saved value differs from the registry default
 - the reset icon restores one key to its default
 - `Reset All Settings` restores every registry-backed setting to defaults
-- the plugin tab is an operational registry on the same page, not part of the generic settings key registry
 
 Use this page for shared fleet behavior. Do not use it as a replacement for device-specific setup or recovery.
 
@@ -22,14 +21,13 @@ Use this page for shared fleet behavior. Do not use it as a replacement for devi
 | Tab | What It Controls | Main Operational Risk |
 | --- | --- | --- |
 | `General` | manager loops, health timing, session viability, lifecycle backoff | changing these affects fleet-wide recovery and detection timing |
-| `Appium & Grid` | Grid URL, Grid polling, Appium port pool, startup timeout, default plugins | bad values can stop nodes from registering or probing correctly |
+| `Appium & Grid` | Grid URL, Grid polling, Appium port pool, startup timeout | bad values can stop nodes from registering or probing correctly |
 | `Notifications` | in-app toast selection and threshold | too many events create alert fatigue; too few hide incidents |
 | `Device Defaults` | currently empty — no registry settings are backed under this category yet | none today (no settings render here) |
 | `Agent` | host auto-accept, minimum agent version, default port | directly changes host onboarding and version trust behavior |
 | `Reservations` | default TTL, heartbeat timeout, stale-run reaper timing | directly affects how long devices stay locked to runs |
 | `Data Retention` | cleanup age and cleanup cadence | aggressive values reduce history available for triage |
 | `Backup & Restore` | export and import of a device-configuration bundle | importing a stale or wrong bundle can overwrite device config |
-| `Appium Plugins` | plugin registry and per-host plugin sync | bad plugin versions can break node startup |
 
 ## General
 
@@ -85,8 +83,6 @@ Most important settings:
   - how long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it
 - `appium.port_range_start` and `appium.port_range_end`
   - the host-local Appium port pool used when starting nodes
-- `appium.default_plugins`
-  - comma-separated plugins added to every managed Appium node
 - `appium.startup_timeout_sec`
   - how long the manager waits for node readiness during start or verification
 
@@ -164,7 +160,7 @@ Operators can:
 - open the Drivers page to upload, inspect, enable, drain, export, or delete driver packs
 - use Host Detail for per-host driver runtime status and Run Doctor checks
 
-Host Detail exposes a per-pack `Run Doctor` action (plus any driver-pack-defined feature actions) for per-host driver runtime status. Note that `Sync Plugins` / `Sync All Hosts` apply to plugins, not drivers.
+Host Detail exposes a per-pack `Run Doctor` action (plus any driver-pack-defined feature actions) for per-host driver runtime status.
 
 ## Safe Change Playbook
 

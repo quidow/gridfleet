@@ -65,8 +65,6 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/appium/{port}/reconfigure` | `reconfigure_delivery` (wrapper `agent_appium_reconfigure`) | toggle accepting-new-sessions / stop-pending / run scope | 2xx → `dict` |
 | GET | `/agent/appium/{port}/status` | `node_health` reconcile path | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
-| GET | `/agent/plugins` | plugin sync flow | currently-installed plugins | 2xx required |
-| POST | `/agent/plugins/sync` | plugin sync flow | install/remove plugin set | 2xx required |
 | GET | `/agent/tools/status` | host onboarding | Node provider and host helper versions | 2xx required |
 
 Most rows have a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). The one exception is the feature-dispatch endpoint (`/agent/pack/features/{feat}/actions/{act}`), which has no wrapper in `operations.py`: it is issued from `app/packs/services/feature_dispatch.py` via the shared `app.agent_comm.client.request`, so the circuit breaker and metrics still fire. Routers and services should never call `httpx` directly — go through these wrappers (or that shared `request`) so the circuit breaker and metrics fire.
@@ -164,7 +162,6 @@ Per endpoint, a brief contract:
 | `/agent/appium/stop` | yes | Stop on a port that has nothing returns 2xx. Safe to retry. |
 | `/agent/appium/{port}/status` | yes | Read-only. |
 | `/agent/appium/{port}/logs` | yes | Read-only |
-| `/agent/plugins/sync` | yes | Replaces full plugin set; converges to the requested state |
 | `/agent/driver-packs/desired` | yes | Read-only by host_id |
 | `/agent/driver-packs/status` | yes | Replaces previous status; full snapshot |
 
@@ -219,8 +216,6 @@ Each wrapper picks a default. Override via the `timeout=` argument when the call
 | `/agent/appium/stop` | 10 s | bounded shutdown |
 | `/agent/appium/{port}/status` | 5 s | quick check |
 | `/agent/appium/{port}/logs` | 10 s | small payload |
-| `/agent/plugins` | 15 s | adapter-fetched |
-| `/agent/plugins/sync` | 180 s | npm install |
 | `/agent/tools/status` | 15 s | local probe |
 | `/agent/pack/devices` | 45 s | adapter discovery |
 
