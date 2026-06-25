@@ -1393,7 +1393,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     # explicit outcome (not "not AUTO_STOPPED") to decide whether to restore
     # availability — this is the contract that replaces the old True/False
     # boolean.
-    assert stopped is DeferredStopOutcome.CLEARED_RECOVERED
+    assert stopped is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
@@ -1550,7 +1550,7 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
-    assert outcome is DeferredStopOutcome.NO_PENDING
+    assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
 
 async def test_handle_session_finished_clears_stale_session_running_suppression(
@@ -1592,7 +1592,7 @@ async def test_handle_session_finished_clears_stale_session_running_suppression(
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
-    assert outcome is DeferredStopOutcome.NO_PENDING
+    assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state["recovery_suppressed_reason"] is None
@@ -1678,7 +1678,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
-    assert outcome is DeferredStopOutcome.NO_PENDING
+    assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
@@ -1809,7 +1809,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     assert reloaded is not None
     outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     await db_session.commit()
-    assert outcome is DeferredStopOutcome.CLEARED_RECOVERED
+    assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
