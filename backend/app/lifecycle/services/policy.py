@@ -24,6 +24,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     RESERVATION,
     IntentRegistration,
+    failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import (
     CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
@@ -222,11 +223,7 @@ class LifecyclePolicyService:
             # already fires in the start-node branch below.
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
-                sources=[
-                    f"connectivity:{device.id}",
-                    f"health_failure:node:{device.id}",
-                    f"health_failure:recovery:{device.id}",
-                ],
+                sources=failure_stop_sources(device.id),
                 reason=reason,
                 publisher=self._publisher,
             )
@@ -345,11 +342,7 @@ class LifecyclePolicyService:
             device.appium_node = new_node
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
-            sources=[
-                f"connectivity:{device.id}",
-                f"health_failure:node:{device.id}",
-                f"health_failure:recovery:{device.id}",
-            ],
+            sources=failure_stop_sources(device.id),
             reason=reason,
             publisher=self._publisher,
         )
