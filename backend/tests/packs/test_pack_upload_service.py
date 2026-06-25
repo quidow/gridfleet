@@ -96,7 +96,6 @@ async def test_upload_persists_pack_and_writes_audit(db_session: AsyncSession, t
     )
     await db_session.flush()
     assert pack.id == "vendor-foo"
-    assert pack.origin == "uploaded"
     assert pack.state == PackState.enabled
     release = pack.releases[0]
     assert release.release == "0.1.0"

@@ -71,7 +71,7 @@ async def test_drift_detected_when_installed_differs_from_desired(db_session: As
             status=HostStatus.online,
         )
     )
-    db_session.add(DriverPack(id="test-pack", origin="uploaded", display_name="Test", state="enabled"))
+    db_session.add(DriverPack(id="test-pack", display_name="Test", state="enabled"))
     await db_session.flush()
     db_session.add(
         DriverPackRelease(
@@ -141,7 +141,7 @@ async def test_catalog_and_per_host_drift_agree_on_manifest_fallback(db_session:
             status=HostStatus.online,
         )
     )
-    db_session.add(DriverPack(id="test-pack-b1", origin="uploaded", display_name="Test B1", state="enabled"))
+    db_session.add(DriverPack(id="test-pack-b1", display_name="Test B1", state="enabled"))
     await db_session.flush()
     db_session.add(
         DriverPackRelease(

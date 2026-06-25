@@ -71,7 +71,6 @@ async def test_register_intents_batches_dirty_mark(db_session: AsyncSession, db_
     assert [intent.source for intent in intents] == ["batch:grid", "batch:node"]
     assert dirty is not None
     assert dirty.generation == 1
-    assert dirty.reason == "batch"
 
 
 async def test_register_intents_rejects_duplicate_sources_before_upsert(
@@ -132,7 +131,6 @@ async def test_revoke_intent_deletes_and_marks_dirty(db_session: AsyncSession, d
     assert intents == []
     assert dirty is not None
     assert dirty.generation == 2
-    assert dirty.reason == "restored"
 
 
 async def test_mark_dirty_returns_written_generation(db_session: AsyncSession, db_host: Host) -> None:
@@ -148,7 +146,6 @@ async def test_mark_dirty_returns_written_generation(db_session: AsyncSession, d
     assert second == 2
     assert dirty is not None
     assert dirty.generation == 2
-    assert dirty.reason == "second"
 
 
 async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db_host: Host) -> None:

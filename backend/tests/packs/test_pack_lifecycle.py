@@ -18,7 +18,7 @@ transition_pack_state = _lifecycle.transition_pack_state
 
 
 async def _seed_pack(db: AsyncSession, pack_id: str = "test-pack", state: PackState = PackState.enabled) -> DriverPack:
-    pack = DriverPack(id=pack_id, origin="uploaded", display_name="Test", state=state.value)
+    pack = DriverPack(id=pack_id, display_name="Test", state=state.value)
     db.add(pack)
     release = DriverPackRelease(
         pack_id=pack_id,

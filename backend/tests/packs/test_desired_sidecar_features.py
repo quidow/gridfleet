@@ -24,7 +24,6 @@ pytestmark = pytest.mark.asyncio
 async def test_desired_state_includes_manifest_features(db_session: AsyncSession, db_host: Host) -> None:
     pack = DriverPack(
         id="uploaded-sidecar-pack",
-        origin="uploaded",
         display_name="Uploaded Sidecar Pack",
         state=PackState.enabled,
         runtime_policy={"strategy": "recommended"},

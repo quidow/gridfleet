@@ -295,7 +295,6 @@ async def _seed_pack_with_feature(
 ) -> tuple[DriverPack, DriverPackRelease, DriverPackFeature]:
     pack = DriverPack(
         id=PACK_ID,
-        origin="uploaded",
         display_name="B3 Vertical Feature Test",
         maintainer="",
         license="",

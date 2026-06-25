@@ -113,11 +113,10 @@ class IntentService:
         dirty_update_values = {
             "dirty_at": now,
             "generation": DeviceIntentDirty.generation + 1,
-            "reason": reason,
         }
         stmt = (
             insert(DeviceIntentDirty)
-            .values(device_id=device_id, dirty_at=now, generation=1, reason=reason)
+            .values(device_id=device_id, dirty_at=now, generation=1)
             .on_conflict_do_update(
                 index_elements=[DeviceIntentDirty.device_id],
                 set_=dirty_update_values,

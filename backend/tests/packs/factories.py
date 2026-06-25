@@ -37,7 +37,6 @@ async def seed_manifest_pack(
     if existing_pack is None:
         pack = DriverPack(
             id=manifest.id,
-            origin="uploaded",
             display_name=manifest.display_name,
             maintainer=manifest.maintainer,
             license=manifest.license,

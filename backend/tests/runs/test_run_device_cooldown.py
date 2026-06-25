@@ -294,7 +294,7 @@ async def test_cooldown_preserves_desired_grid_run_id(
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    # Set up an AppiumNode with the run's grid_run_id
+    # Set up an AppiumNode with the run's desired_grid_run_id
     with state_write_guard.bypass():
         node = AppiumNode(
             device_id=device.id,
@@ -302,7 +302,6 @@ async def test_cooldown_preserves_desired_grid_run_id(
             pid=1234,
             active_connection_target=device.connection_target,
             desired_grid_run_id=run_id,
-            grid_run_id=run_id,
         )
     db_session.add(node)
     await db_session.commit()
@@ -596,7 +595,6 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
             pid=1234,
             active_connection_target=device.connection_target,
             desired_grid_run_id=run_id,
-            grid_run_id=run_id,
             desired_state=AppiumDesiredState.running,
         )
     db_session.add(node)

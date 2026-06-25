@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 @pytest.mark.asyncio
 async def test_release_has_artifact_path(db_session: AsyncSession) -> None:
-    pack = DriverPack(id="vendor-foo", origin="uploaded", display_name="Vendor", state="enabled")
+    pack = DriverPack(id="vendor-foo", display_name="Vendor", state="enabled")
     db_session.add(pack)
     await db_session.flush()
     release = DriverPackRelease(

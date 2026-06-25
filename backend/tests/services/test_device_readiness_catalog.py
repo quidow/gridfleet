@@ -35,7 +35,6 @@ def _make_device(
 async def _seed_roku_pack(session: AsyncSession) -> None:
     pack = DriverPack(
         id="appium-roku-dlenroc",
-        origin="uploaded",
         display_name="Roku (dlenroc)",
         maintainer="community",
         license="MIT",

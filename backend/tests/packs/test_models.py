@@ -23,13 +23,12 @@ if TYPE_CHECKING:
 
 @pytest.mark.asyncio
 async def test_insert_and_load_driver_pack(db_session: AsyncSession) -> None:
-    pack = DriverPack(id="test-pack", origin="uploaded", display_name="Test Pack")
+    pack = DriverPack(id="test-pack", display_name="Test Pack")
     db_session.add(pack)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DriverPack).where(DriverPack.id == "test-pack"))).scalars().all()
     assert len(rows) == 1
-    assert rows[0].origin == "uploaded"
     assert rows[0].display_name == "Test Pack"
     assert rows[0].maintainer == ""
     assert rows[0].license == ""
@@ -40,7 +39,6 @@ async def test_insert_and_load_driver_pack(db_session: AsyncSession) -> None:
 async def test_driver_pack_defaults_runtime_policy(db_session: AsyncSession) -> None:
     pack = DriverPack(
         id="policy-pack",
-        origin="uploaded",
         display_name="Policy Pack",
         maintainer="tests",
         license="Apache-2.0",
@@ -56,7 +54,7 @@ async def test_driver_pack_defaults_runtime_policy(db_session: AsyncSession) -> 
 
 @pytest.mark.asyncio
 async def test_driver_pack_release_with_pack(db_session: AsyncSession) -> None:
-    pack = DriverPack(id="test-pack", origin="uploaded", display_name="Test Pack")
+    pack = DriverPack(id="test-pack", display_name="Test Pack")
     release = DriverPackRelease(
         pack_id="test-pack",
         release="1.0.0",
@@ -77,7 +75,7 @@ async def test_driver_pack_release_with_pack(db_session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_driver_pack_platform(db_session: AsyncSession) -> None:
-    pack = DriverPack(id="test-pack", origin="uploaded", display_name="Test Pack")
+    pack = DriverPack(id="test-pack", display_name="Test Pack")
     release = DriverPackRelease(
         pack_id="test-pack",
         release="1.0.0",
@@ -112,7 +110,7 @@ async def test_driver_pack_platform(db_session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_driver_pack_feature(db_session: AsyncSession) -> None:
-    pack = DriverPack(id="test-pack", origin="uploaded", display_name="Test Pack")
+    pack = DriverPack(id="test-pack", display_name="Test Pack")
     release = DriverPackRelease(
         pack_id="test-pack",
         release="1.0.0",
@@ -163,13 +161,12 @@ async def test_host_runtime_installation(db_session: AsyncSession, db_host: Host
     assert rows[0].runtime_id == "appium-runtime"
     assert rows[0].appium_server_version == "2.0.0"
     assert len(rows[0].driver_specs) == 2
-    assert rows[0].refcount == 0
     assert rows[0].status == "pending"
 
 
 @pytest.mark.asyncio
 async def test_host_pack_installation(db_session: AsyncSession, db_host: Host) -> None:
-    pack = DriverPack(id="test-pack", origin="uploaded", display_name="Test Pack")
+    pack = DriverPack(id="test-pack", display_name="Test Pack")
     pack_install = HostPackInstallation(
         host_id=db_host.id,
         pack_id="test-pack",
@@ -192,7 +189,7 @@ async def test_host_pack_installation(db_session: AsyncSession, db_host: Host) -
 
 @pytest.mark.asyncio
 async def test_host_pack_doctor_result(db_session: AsyncSession, db_host: Host) -> None:
-    pack = DriverPack(id="test-pack", origin="uploaded", display_name="Test Pack")
+    pack = DriverPack(id="test-pack", display_name="Test Pack")
     doctor_result = HostPackDoctorResult(
         host_id=db_host.id,
         pack_id="test-pack",

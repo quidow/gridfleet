@@ -649,7 +649,7 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dirty")
     await _seed_node(db_session, device.id)
-    dirty = DeviceIntentDirty(device_id=device.id, generation=1, reason="initial")
+    dirty = DeviceIntentDirty(device_id=device.id, generation=1)
     db_session.add(dirty)
     await db_session.commit()
 

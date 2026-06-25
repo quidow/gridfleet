@@ -118,7 +118,6 @@ def _factory(client: StrictAgentClient) -> object:
 async def _seed_pack_with_feature(session: AsyncSession, *, pack_id: str, feature_id: str) -> DriverPackRelease:
     pack = DriverPack(
         id=pack_id,
-        origin="uploaded",
         display_name=pack_id,
         maintainer="",
         license="",

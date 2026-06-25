@@ -2063,7 +2063,6 @@ async def test_device_detail_uses_catalog_readiness_for_local_pack(
 ) -> None:
     pack = DriverPack(
         id="local/test-driver",
-        origin="uploaded",
         display_name="Local Test Driver",
         maintainer="qa",
         license="",

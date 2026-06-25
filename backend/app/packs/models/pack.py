@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -29,15 +28,8 @@ class PackState(enum.StrEnum):
 
 class DriverPack(Base):
     __tablename__ = "driver_packs"
-    __table_args__ = (
-        CheckConstraint(
-            "origin = 'uploaded'",
-            name="driver_packs_origin_ck",
-        ),
-    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    origin: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     maintainer: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     license: Mapped[str] = mapped_column(String, nullable=False, server_default="")
@@ -57,11 +49,6 @@ class DriverPack(Base):
     @property
     def is_runnable(self) -> bool:
         return self.state == PackState.enabled
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
 
     releases: Mapped[list[DriverPackRelease]] = relationship(
         "DriverPackRelease", back_populates="pack", cascade="all, delete-orphan"
