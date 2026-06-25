@@ -45,11 +45,12 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl, LifecycleIncidentRecorder
+    from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
+    from app.lifecycle.protocols import LifecycleIncidentRecorder
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"

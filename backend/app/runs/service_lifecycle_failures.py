@@ -33,9 +33,9 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.lifecycle.protocols import LifecycleIncidentRecorder
     from app.runs.protocols import (
         DeviceLifecycleFailureWriter,
-        LifecycleIncidentRecorder,
         MaintenanceWriter,
         RunReservationProtocol,
     )
