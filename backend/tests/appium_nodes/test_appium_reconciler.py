@@ -58,7 +58,6 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
         settings=FakeSettingsReader(
             {
                 "appium.session_override": True,
-                "appium.default_plugins": "",
             }
         ),
     )

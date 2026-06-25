@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 from app.appium_nodes.services.capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
 
 if TYPE_CHECKING:
-    from app.core.protocols import SettingsReader
     from app.devices.models import Device
     from app.events.catalog import EventSeverity
 
@@ -21,13 +20,6 @@ def node_state_severity(old_state: str, new_state: str) -> EventSeverity:
     if new_state == "running" and old_state != "running":
         return "success"
     return "info"
-
-
-def get_default_plugins(*, settings: SettingsReader) -> list[str]:
-    configured = settings.get("appium.default_plugins")
-    if not isinstance(configured, str):
-        return []
-    return [plugin.strip() for plugin in configured.split(",") if plugin.strip()]
 
 
 def build_appium_driver_caps(

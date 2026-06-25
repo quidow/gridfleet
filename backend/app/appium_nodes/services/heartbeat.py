@@ -35,7 +35,6 @@ from app.devices.services.identity import appium_connection_target
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.plugins.service import PluginService
 
 if TYPE_CHECKING:
     import uuid
@@ -46,7 +45,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import AsyncTaskFactory, SessionFactory
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -59,12 +58,6 @@ LOOP_NAME = "heartbeat"
 BACKGROUND_TASK_DRAIN_TIMEOUT_SEC = 5.0
 APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "restart_exhausted"})
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium"})
-
-
-def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
-    task: asyncio.Task[None] = asyncio.create_task(task_fn(*args, **kwargs))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
 
 async def shutdown_background_tasks(timeout: float = BACKGROUND_TASK_DRAIN_TIMEOUT_SEC) -> None:
@@ -592,7 +585,6 @@ async def _apply_host_ping_result(
     guard: _ResumeGuard,
     publisher: EventPublisher,
     settings: SettingsReader,
-    on_host_recovered: AsyncTaskFactory | None = None,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -628,8 +620,6 @@ async def _apply_host_ping_result(
                 },
             )
             host.status = HostStatus.online
-            if on_host_recovered is not None:
-                _schedule_background_task(on_host_recovered, host.id)
         host.last_heartbeat = now_utc()
         if health_data is not None:
             if "missing_prerequisites" in health_data:
@@ -722,18 +712,6 @@ class HeartbeatService:
         self._loop_iteration += 1
         return self._loop_iteration
 
-    async def _auto_sync_plugins_on_recovery(self, host_id: uuid.UUID) -> None:
-        try:
-            async with self._session_factory() as db:
-                host = await db.get(Host, host_id)
-                if host is None:
-                    return
-                svc = PluginService(settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool)
-                plugins = await svc.list_plugins(db)
-                await svc.auto_sync_host_plugins(host, plugins)
-        except Exception:
-            logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
-
     async def _check_hosts(self, db: AsyncSession) -> None:
         """Ping all non-pending hosts in parallel.
 
@@ -799,7 +777,6 @@ class HeartbeatService:
                             guard=resume_guard,
                             publisher=self._publisher,
                             settings=self._settings,
-                            on_host_recovered=self._auto_sync_plugins_on_recovery,
                         )
                         await host_db.commit()
                 except LeadershipLost:

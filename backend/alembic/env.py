@@ -24,7 +24,7 @@ from app.devices.models import (  # noqa: F401
 )
 from app.events.models import SystemEvent  # noqa: F401
 from app.grid.models import GridSessionQueueTicket  # noqa: F401
-from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample  # noqa: F401
+from app.hosts.models import Host, HostResourceSample  # noqa: F401
 from app.jobs.models import Job  # noqa: F401
 from app.packs.models import (  # noqa: F401
     DriverPack,
@@ -36,7 +36,6 @@ from app.packs.models import (  # noqa: F401
     HostPackInstallation,
     HostRuntimeInstallation,
 )
-from app.plugins.models import AppiumPlugin  # noqa: F401
 from app.runs.models import RunState, TestRun  # noqa: F401
 from app.sessions.models import Session, SessionStatus  # noqa: F401
 from app.settings.models import ConfigAuditLog, Setting  # noqa: F401

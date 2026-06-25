@@ -41,7 +41,6 @@ from app.appium_nodes.services import (
 )
 from app.appium_nodes.services.common import (
     build_appium_driver_caps,
-    get_default_plugins,
     node_state_severity,
 )
 from app.appium_nodes.services.reconciler_allocation import (
@@ -323,7 +322,6 @@ def build_agent_start_payload(
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,
         "port": port,
-        "plugins": get_default_plugins(settings=settings) or None,
         "extra_caps": extra_caps
         if extra_caps is not None
         else (

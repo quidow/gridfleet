@@ -181,23 +181,14 @@ class PackPatch(BaseModel):
     state: str
 
 
-class HostPluginStatusOut(BaseModel):
-    name: str
-    version: str
-    status: str
-    blocked_reason: str | None = None
-
-
 class HostRuntimeStatusOut(BaseModel):
     runtime_id: str
     appium_server_package: str
     appium_server_version: str
     driver_specs: list[dict[str, Any]]
-    plugin_specs: list[dict[str, Any]]
     appium_home: str | None
     status: str
     blocked_reason: str | None
-    plugins: list[HostPluginStatusOut] = Field(default_factory=list)
 
 
 class HostPackDoctorOut(BaseModel):

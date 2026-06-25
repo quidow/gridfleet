@@ -15,7 +15,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "events": ("catalog", "event_bus", "models", "router", "schemas", "schemas_catalog"),
     "jobs": ("kinds", "models", "queue", "statuses"),
     "grid": ("models", "router", "schemas"),
-    "plugins": ("models", "router", "schemas", "service"),
     "agent_comm": (
         "circuit_breaker",
         "client",

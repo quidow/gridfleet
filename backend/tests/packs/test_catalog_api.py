@@ -189,7 +189,6 @@ async def test_catalog_exposes_observed_runtime_versions(
                 appium_server_package="appium",
                 appium_server_version="2.19.0",
                 driver_specs=[{"package": "appium-uiautomator2-driver", "version": "4.2.0"}],
-                plugin_specs=[],
                 status="installed",
                 blocked_reason=None,
             ),

@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.hosts.models import HostPluginRuntimeStatus
 from app.packs.models import (
     DriverPack,
     DriverPackFeature,
@@ -53,24 +52,6 @@ async def test_driver_pack_defaults_runtime_policy(db_session: AsyncSession) -> 
 
     assert row is not None
     assert row.runtime_policy == {"strategy": "recommended"}
-
-
-@pytest.mark.asyncio
-async def test_plugin_runtime_status_stores_blocked_reason(db_session: AsyncSession, db_host: Host) -> None:
-    status = HostPluginRuntimeStatus(
-        host_id=db_host.id,
-        runtime_id="runtime-1",
-        plugin_name="images",
-        version="1.0.0",
-        status="blocked",
-        blocked_reason="plugin_install_failed: peer dependency mismatch",
-    )
-    db_session.add(status)
-    await db_session.commit()
-
-    rows = (await db_session.execute(select(HostPluginRuntimeStatus))).scalars().all()
-
-    assert rows[0].blocked_reason == "plugin_install_failed: peer dependency mismatch"
 
 
 @pytest.mark.asyncio
@@ -182,7 +163,6 @@ async def test_host_runtime_installation(db_session: AsyncSession, db_host: Host
     assert rows[0].runtime_id == "appium-runtime"
     assert rows[0].appium_server_version == "2.0.0"
     assert len(rows[0].driver_specs) == 2
-    assert rows[0].plugin_specs == []
     assert rows[0].refcount == 0
     assert rows[0].status == "pending"
 

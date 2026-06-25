@@ -240,25 +240,6 @@ async def test_appium_logs_raises_on_invalid_json() -> None:
         )
 
 
-async def test_sync_plugins_raises_on_invalid_json() -> None:
-    """sync_plugins should raise AgentUnreachableError when the body is not valid JSON."""
-    client = StrictAgentClient(
-        post_response=_text_response(
-            "POST", "http://10.0.0.5:5100/agent/plugins/sync", status_code=200, text=_INVALID_JSON_TEXT
-        ),
-    )
-    with pytest.raises(AgentUnreachableError):
-        await agent_operations.sync_plugins(
-            "10.0.0.5",
-            5100,
-            plugins=[],
-            http_client_factory=_strict_client_factory(client),
-            timeout=30,
-            settings=SETTINGS,
-            circuit_breaker=_noop_breaker(),
-        )
-
-
 async def test_get_tool_status_raises_on_invalid_json() -> None:
     """get_tool_status should raise AgentUnreachableError when the body is not valid JSON."""
     client = StrictAgentClient(
@@ -286,23 +267,6 @@ async def test_get_pack_devices_raises_on_invalid_json() -> None:
     )
     with pytest.raises(AgentUnreachableError):
         await agent_operations.get_pack_devices(
-            "10.0.0.5",
-            5100,
-            http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
-            circuit_breaker=_noop_breaker(),
-        )
-
-
-async def test_list_plugins_raises_on_invalid_json() -> None:
-    """list_plugins should raise AgentUnreachableError when the body is not valid JSON."""
-    client = StrictAgentClient(
-        get_response=_text_response(
-            "GET", "http://10.0.0.5:5100/agent/plugins", status_code=200, text=_INVALID_JSON_TEXT
-        ),
-    )
-    with pytest.raises(AgentUnreachableError):
-        await agent_operations.list_plugins(
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(client),

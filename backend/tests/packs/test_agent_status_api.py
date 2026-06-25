@@ -20,7 +20,6 @@ def _make_payload(host_id: str) -> dict:
                 "runtime_id": "abc123",
                 "appium_server": {"package": "appium", "version": "2.11.5"},
                 "appium_driver": [{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
-                "appium_plugins": [],
                 "appium_home": "/var/lib/gridfleet-agent/runtimes/abc123",
                 "status": "installed",
                 "blocked_reason": None,

@@ -145,7 +145,6 @@ async def test_temporary_start_forwards_pack_appium_env(
             "connection_target": device.connection_target,
             "platform_id": device.platform_id,
             "port": port,
-            "plugins": None,
             "extra_caps": None,
             "device_type": device.device_type.value,
             "ip_address": device.ip_address,

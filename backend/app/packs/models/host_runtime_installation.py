@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func, text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,9 +34,6 @@ class HostRuntimeInstallation(Base):
     appium_server_package: Mapped[str] = mapped_column(String, nullable=False)
     appium_server_version: Mapped[str] = mapped_column(String, nullable=False)
     driver_specs: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
-    plugin_specs: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSONB, default=list, nullable=False, server_default=text("'[]'::jsonb")
-    )
     appium_home: Mapped[str | None] = mapped_column(String, nullable=True)
     refcount: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False, server_default="pending")

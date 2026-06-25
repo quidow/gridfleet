@@ -521,7 +521,6 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
             "app.appium_nodes.services.reconciler_agent.render_stereotype",
             new=AsyncMock(return_value={"appium:automationName": "XCUITest"}),
         ),
-        patch("app.appium_nodes.services.reconciler_agent.get_default_plugins", return_value=[]),
     ):
         await start_remote_node(
             db_session,

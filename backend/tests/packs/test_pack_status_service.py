@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 from unittest.mock import Mock
 
-from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
+from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
@@ -52,7 +52,6 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
                 "runtime_id": "runtime-ok",
                 "appium_server": {"package": "appium", "version": "2.19.0"},
                 "appium_driver": [{"package": "appium-uiautomator2-driver", "version": "5.0.0"}],
-                "appium_plugins": [],
                 "appium_home": "/runtimes/runtime-ok",
                 "status": "installed",
                 "blocked_reason": None,
@@ -103,47 +102,6 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
     assert len(runtimes) == 1
     assert runtimes[0].runtime_id == "runtime-ok"
     assert runtimes[0].status == "installed"
-
-
-@pytest.mark.asyncio
-async def test_apply_status_persists_plugin_status_per_runtime(db_session: AsyncSession, db_host: Host) -> None:
-    await _status_svc.apply_status(
-        db_session,
-        {
-            "host_id": str(db_host.id),
-            "runtimes": [
-                {
-                    "runtime_id": "runtime-1",
-                    "appium_server": {"package": "appium", "version": "2.11.5"},
-                    "appium_driver": [{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
-                    "appium_plugins": [
-                        {
-                            "name": "images",
-                            "version": "1.0.0",
-                            "source": "npm:appium-plugin-images",
-                            "package": None,
-                            "status": "blocked",
-                            "blocked_reason": "plugin_install_failed: peer dependency mismatch",
-                        }
-                    ],
-                    "appium_home": "/tmp/runtime-1",
-                    "status": "installed",
-                    "blocked_reason": None,
-                }
-            ],
-            "packs": [],
-            "doctor": [],
-        },
-    )
-    await db_session.commit()
-
-    rows = (await db_session.execute(select(HostPluginRuntimeStatus))).scalars().all()
-
-    assert len(rows) == 1
-    assert rows[0].runtime_id == "runtime-1"
-    assert rows[0].plugin_name == "images"
-    assert rows[0].status == "blocked"
-    assert rows[0].blocked_reason == "plugin_install_failed: peer dependency mismatch"
 
 
 @pytest.mark.asyncio
@@ -272,7 +230,6 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
         appium_server_package="appium",
         appium_server_version="2.19.0",
         driver_specs=[{"package": "appium-xcuitest-driver", "version": "9.1.0"}],
-        plugin_specs=[],
         appium_home="/opt/gridfleet-agent/runtimes/runtime-xcuitest",
         status="installed",
         blocked_reason=None,

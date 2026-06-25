@@ -70,8 +70,6 @@ from app.packs.services.service import PackCatalogService
 from app.packs.services.status import PackStatusService
 from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
-from app.plugins.service import PluginService
-from app.plugins.services_container import PluginServices
 from app.portability.services.export import PortabilityExportService
 from app.portability.services.import_bundle import PortabilityImportService
 from app.portability.services.inventory import InventoryExportService
@@ -107,7 +105,6 @@ class AppServices:
     lifecycle: LifecycleServices
     hosts: HostServices
     packs: PackServices
-    plugins: PluginServices
     sessions: SessionServices
     runs: RunServices
     grid: GridServices
@@ -380,9 +377,6 @@ def compose_app(
             publisher=bus,
             circuit_breaker=circuit_breaker,
             session_factory=session_factory,
-        ),
-        plugins=PluginServices(
-            plugin=PluginService(settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool),
         ),
         appium_nodes=AppiumNodeServices(
             reconciler=reconciler_svc,
