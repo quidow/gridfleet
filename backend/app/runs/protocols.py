@@ -76,7 +76,6 @@ class RunReservationProtocol(Protocol):
         device_id: uuid.UUID,
         *,
         reason: str,
-        publisher: EventPublisher,
         commit: bool = ...,
     ) -> TestRun | None: ...
     async def restore_device_to_run(

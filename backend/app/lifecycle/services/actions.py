@@ -185,9 +185,7 @@ class LifecyclePolicyActionsService:
             return None, entry
 
         was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
-        run = await self._reservation.exclude_device_from_run(
-            db, device.id, reason=reason, commit=False, publisher=self._publisher
-        )
+        run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             await IntentService(db).register_intents_and_reconcile(
