@@ -1,7 +1,8 @@
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from app.core.timeutil import now_utc
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
@@ -136,7 +137,7 @@ class MaintenanceService:
         # startup_timeout_sec + session_viability_timeout_sec + 60 s safety margin.
         startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
         viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
-        verify_intent_deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
+        verify_intent_deadline = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[

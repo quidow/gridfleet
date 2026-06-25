@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.metrics_recorders import record_webhook_delivery
 from app.core.observability import get_logger, observe_background_loop
+from app.core.timeutil import now_utc
 from app.events.models import SystemEvent
 from app.webhooks.models import Webhook, WebhookDelivery
 
@@ -54,10 +55,6 @@ POLL_INTERVAL_SEC = 1
 LOOP_NAME = "webhook_delivery"
 
 
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
 async def claim_next_delivery(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> WebhookDelivery | None:
@@ -66,7 +63,7 @@ async def claim_next_delivery(
             select(WebhookDelivery)
             .where(
                 WebhookDelivery.status.in_(("pending", "failed")),
-                or_(WebhookDelivery.next_retry_at.is_(None), WebhookDelivery.next_retry_at <= utcnow()),
+                or_(WebhookDelivery.next_retry_at.is_(None), WebhookDelivery.next_retry_at <= now_utc()),
             )
             .order_by(WebhookDelivery.created_at.asc())
             .limit(1)
@@ -78,7 +75,7 @@ async def claim_next_delivery(
             await db.rollback()
             return None
 
-        delivery.next_retry_at = utcnow() + timedelta(seconds=CLAIM_LEASE_SEC)
+        delivery.next_retry_at = now_utc() + timedelta(seconds=CLAIM_LEASE_SEC)
         await db.commit()
         await db.refresh(delivery)
         return delivery
@@ -111,7 +108,7 @@ class WebhookDispatchService:
                         "status": "pending",
                         "attempts": 0,
                         "max_attempts": MAX_RETRIES,
-                        "next_retry_at": utcnow(),
+                        "next_retry_at": now_utc(),
                     }
                     for webhook in webhooks
                 ]
@@ -158,7 +155,7 @@ class WebhookDispatchService:
         delivery.status = "pending"
         delivery.attempts = 0
         delivery.last_attempt_at = None
-        delivery.next_retry_at = utcnow()
+        delivery.next_retry_at = now_utc()
         delivery.last_error = None
         delivery.last_http_status = None
         await db.commit()
@@ -211,7 +208,7 @@ async def _process_delivery(
             delivery.status = "exhausted"
             delivery.next_retry_at = None
             delivery.last_error = "Webhook or event record is no longer available"
-            delivery.last_attempt_at = utcnow()
+            delivery.last_attempt_at = now_utc()
             await db.commit()
             return
 
@@ -254,7 +251,7 @@ async def _process_delivery(
             return
         delivery.attempts += 1
         delivery.status = "delivered"
-        delivery.last_attempt_at = utcnow()
+        delivery.last_attempt_at = now_utc()
         delivery.next_retry_at = None
         delivery.last_error = None
         delivery.last_http_status = response.status_code
@@ -274,7 +271,7 @@ async def _record_failure(
         delivery = await db.get(WebhookDelivery, delivery_id)
         if delivery is None:
             return
-        now = utcnow()
+        now = now_utc()
         delivery.attempts += 1
         delivery.last_attempt_at = now
         delivery.last_error = error

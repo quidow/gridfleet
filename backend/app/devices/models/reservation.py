@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Integer, String, func, text
@@ -9,12 +9,13 @@ from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID, ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.timeutil import now_utc
 
 
 def _cooldown_remaining_sec(excluded_until: datetime | None) -> int | None:
     if excluded_until is None:
         return None
-    return max(0, int((excluded_until - datetime.now(UTC)).total_seconds()))
+    return max(0, int((excluded_until - now_utc()).total_seconds()))
 
 
 class DeviceReservation(Base):
@@ -77,7 +78,7 @@ class DeviceReservation(Base):
             return False
         if self.excluded_until is None:
             return True
-        return self.excluded_until > datetime.now(UTC)
+        return self.excluded_until > now_utc()
 
     def to_reserved_device_info(self) -> dict[str, Any]:
         device = self.device

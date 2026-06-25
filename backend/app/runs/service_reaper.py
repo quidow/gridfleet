@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, or_, select
@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_, select
 from app.core.background_loop import BackgroundLoop
 from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run_for_update
 
@@ -49,7 +50,7 @@ class RunReaperLoop(BackgroundLoop):
         await self._reap_stale_runs(db)
 
     async def _reap_stale_runs(self, db: AsyncSession) -> None:
-        now = datetime.now(UTC)
+        now = now_utc()
 
         # Postgres make_interval(years, months, weeks, days, hours, mins, secs).
         heartbeat_deadline_expr = TestRun.last_heartbeat + func.make_interval(
@@ -90,7 +91,7 @@ class RunReaperLoop(BackgroundLoop):
             if locked.state in TERMINAL_STATES:
                 await db.commit()
                 continue
-            current_now = datetime.now(UTC)
+            current_now = now_utc()
             heartbeat_stale = _heartbeat_stale(locked, current_now)
             ttl_stale = _ttl_stale(locked, current_now)
             if not (heartbeat_stale or ttl_stale):

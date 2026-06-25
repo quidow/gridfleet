@@ -1,11 +1,12 @@
 import enum
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, model_validator
 
 from app.appium_nodes.services.effective_state import compute_effective_state
+from app.core.timeutil import now_utc
 from app.devices.models import (
     ConnectionType,
     DeviceOperationalState,
@@ -140,7 +141,7 @@ class AppiumNodeRead(BaseModel):
             transition_token=self.transition_token,
             transition_deadline=self.transition_deadline,
             lifecycle_policy_state=self.lifecycle_policy_state,
-            now=datetime.now(UTC),
+            now=now_utc(),
         )
 
 

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
 
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.jobs import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.jobs.models import Job
@@ -22,10 +22,6 @@ if TYPE_CHECKING:
     from app.lifecycle.services.policy import LifecyclePolicyService
 
 logger = get_logger(__name__)
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 class RecoveryJobService:
@@ -59,9 +55,9 @@ class RecoveryJobService:
             snapshot["note"] = note
         if error is not None:
             snapshot["error"] = error
-        snapshot["finished_at"] = utcnow().isoformat()
+        snapshot["finished_at"] = now_utc().isoformat()
         row.snapshot = snapshot
-        row.completed_at = utcnow()
+        row.completed_at = now_utc()
         await db.commit()
 
     async def _lock_and_recover(

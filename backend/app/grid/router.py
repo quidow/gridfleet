@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
@@ -10,6 +9,7 @@ from app.appium_nodes.services.node_viability import (
     device_node_is_viable,
 )
 from app.core.dependencies import DbDep
+from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.filters import DeviceQueryFilters
@@ -137,7 +137,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
 
     template_cache: StereotypeTemplateCache = {}
-    now = datetime.now(UTC)
+    now = now_utc()
 
     # Seed the per-operational-state buckets from the enum itself so that adding a 6th
     # DeviceOperationalState cannot turn the `counts[...] += 1` below into a fleet-wide

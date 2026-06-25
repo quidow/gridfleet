@@ -10,6 +10,7 @@ import jwt
 from starlette.requests import cookie_parser
 
 from app.auth import auth_settings as settings
+from app.core.timeutil import now_utc
 
 _ALGORITHM = "HS256"
 
@@ -77,7 +78,7 @@ def machine_password() -> str:
 
 def issue_session() -> tuple[str, SessionState]:
     username = operator_username()
-    now = datetime.now(UTC)
+    now = now_utc()
     expires_at = now + timedelta(seconds=settings.auth_session_ttl_sec)
     csrf_token = secrets.token_urlsafe(24)
     payload = {

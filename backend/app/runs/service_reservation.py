@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation
 from app.devices.services.intent import IntentService
@@ -19,10 +19,6 @@ if TYPE_CHECKING:
 
     from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
-
-
-def _now_utc() -> datetime:
-    return datetime.now(UTC)
 
 
 def _reservation_entry_matches(entry: DeviceReservation, device_id: uuid.UUID | str) -> bool:
@@ -51,7 +47,7 @@ def _reservation_entry_is_excluded(entry: DeviceReservation) -> bool:
         return False
     if entry.excluded_until is None:
         return True
-    return entry.excluded_until > _now_utc()
+    return entry.excluded_until > now_utc()
 
 
 async def get_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
@@ -181,7 +177,7 @@ class RunReservationService:
             return run
         locked_entry.excluded = True
         locked_entry.exclusion_reason = reason
-        locked_entry.excluded_at = _now_utc()
+        locked_entry.excluded_at = now_utc()
         locked_entry.excluded_until = None
         if commit:
             await db.commit()
@@ -198,7 +194,7 @@ class RunReservationService:
         run, entry = await get_device_reservation_with_entry(db, device_id)
         if run is None or entry is None:
             return None
-        if entry.excluded_until is not None and entry.excluded_until > _now_utc():
+        if entry.excluded_until is not None and entry.excluded_until > now_utc():
             return run
         if not _reservation_entry_is_excluded(entry):
             return run
@@ -262,7 +258,7 @@ class RunReservationService:
         # Set released_at + reason, and clear any pre-existing exclusion so a released
         # row is never `excluded` (invariant `not (released_at and excluded)`) and carries
         # no live excluded_window for the GiST exclusion constraint.
-        locked_entry.released_at = _now_utc()
+        locked_entry.released_at = now_utc()
         locked_entry.exclusion_reason = reason
         locked_entry.excluded = False
         locked_entry.excluded_at = None

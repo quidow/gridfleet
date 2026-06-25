@@ -7,7 +7,7 @@ import os
 import socket
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
@@ -20,7 +20,7 @@ from app.core.metrics_recorders import (
     record_background_loop_overrun,
     record_background_loop_run,
 )
-from app.core.timeutil import parse_iso
+from app.core.timeutil import now_utc, parse_iso
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
@@ -70,10 +70,6 @@ BACKGROUND_LOOP_NAMES = (
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
 _GRIDFLEET_BACKEND_HANDLER_ATTR = "_gridfleet_backend_logging_handler"
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _is_development_logging() -> bool:
@@ -205,7 +201,7 @@ def loop_heartbeat_fresh(
     next_expected_at = parse_timestamp(snapshot.get("next_expected_at"))
     if next_expected_at is None:
         return False
-    current_time = now or _now()
+    current_time = now or now_utc()
     grace = timedelta(seconds=LOOP_HEARTBEAT_STALE_GRACE_SEC + max(extra_grace_seconds, 0.0))
     return current_time <= next_expected_at + grace
 
@@ -252,7 +248,7 @@ class _HeartbeatBuffer:
     ) -> None:
         previous = self.snapshots.get(loop_name, {})
         snapshot = dict(previous)
-        reference_time = succeeded_at or error_at or started_at or _now()
+        reference_time = succeeded_at or error_at or started_at or now_utc()
 
         snapshot.update(
             {
@@ -388,7 +384,7 @@ class BackgroundLoopObservation:
 
     @asynccontextmanager
     async def cycle(self) -> AsyncGenerator[None]:
-        started_at = _now()
+        started_at = now_utc()
         started_monotonic = perf_counter()
         _update_loop_snapshot(
             self.loop_name,
@@ -403,7 +399,7 @@ class BackgroundLoopObservation:
             try:
                 yield
             except Exception as exc:
-                finished_at = _now()
+                finished_at = now_utc()
                 duration = perf_counter() - started_monotonic
                 _update_loop_snapshot(
                     self.loop_name,
@@ -417,7 +413,7 @@ class BackgroundLoopObservation:
                 record_background_loop_overrun(self.loop_name, duration, interval_seconds=self.interval_seconds)
                 raise
             else:
-                finished_at = _now()
+                finished_at = now_utc()
                 duration = perf_counter() - started_monotonic
                 _update_loop_snapshot(
                     self.loop_name,

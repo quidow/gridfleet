@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -8,6 +8,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, deliver_agent_reconfigures
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -265,7 +266,7 @@ class RunFailureService:
             )
             return None, cooldown_count_after, True, threshold, entered_maintenance
 
-        excluded_at = datetime.now(UTC)
+        excluded_at = now_utc()
         excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
         entry.excluded = True
         entry.exclusion_reason = clean_reason

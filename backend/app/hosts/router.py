@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -15,6 +15,7 @@ from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.http_errors import found_or_404
+from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
@@ -422,7 +423,7 @@ async def get_host_resource_telemetry(
     until: datetime | None = None,
     bucket_minutes: Annotated[int, Query(ge=1, le=1440)] = 5,
 ) -> HostResourceTelemetryResponse:
-    window_end = until or datetime.now(UTC)
+    window_end = until or now_utc()
     default_window_minutes = int(settings_services.service.get("general.host_resource_telemetry_window_minutes"))
     window_start = since or (window_end - timedelta(minutes=default_window_minutes))
     try:

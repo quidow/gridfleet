@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, delete, or_, select
@@ -13,6 +13,7 @@ from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger, schedule_background_loop
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.events.models import SystemEvent
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -279,7 +280,7 @@ class DataCleanupService:
             )
 
     async def cleanup_old_data(self, db: AsyncSession) -> None:
-        now = datetime.now(UTC)
+        now = now_utc()
         started = time.monotonic()
         counts = _CleanupCounts()
 

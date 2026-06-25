@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import exists, select
@@ -16,6 +16,7 @@ from app.agent_comm.reconfigure_delivery import (
 )
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
+from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.intent import IntentService
@@ -432,7 +433,7 @@ class RunAllocatorService:
         ttl_minutes: int,
         heartbeat_timeout_sec: int,
     ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
-        now = datetime.now(UTC)
+        now = now_utc()
         all_matched: list[Device] = []
 
         for req in data.requirements:

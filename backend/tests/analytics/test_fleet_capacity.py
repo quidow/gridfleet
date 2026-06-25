@@ -12,7 +12,6 @@ from app.devices.services import state_write_guard
 from app.devices.services.fleet_capacity import (
     FleetCapacityService,
     _count_schedulable_capacity,
-    _now,
     is_unmet_demand_session,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -131,8 +130,6 @@ async def test_unmet_demand_classifier_counts_only_capacity_failures() -> None:
 
 
 async def test_fleet_capacity_helper_guard_paths(db_session: AsyncSession) -> None:
-    assert _now().tzinfo == UTC
-
     svc = FleetCapacityService()
     with pytest.raises(ValueError, match="bucket_minutes"):
         await svc.get_fleet_capacity_timeline(

@@ -59,6 +59,7 @@ from app.core.metrics_recorders import (
     APPIUM_RECONCILER_STOP_FAILURES,
 )
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
@@ -489,9 +490,7 @@ async def _touch_last_observed(
     async with session_factory() as db:
         await assert_current_leader(db, settings=settings)
         node_ids = [row.node_id for row in rows]
-        await db.execute(
-            update(AppiumNode).where(AppiumNode.id.in_(node_ids)).values(last_observed_at=datetime.now(UTC))
-        )
+        await db.execute(update(AppiumNode).where(AppiumNode.id.in_(node_ids)).values(last_observed_at=now_utc()))
         await db.commit()
 
 
@@ -530,7 +529,7 @@ async def _record_start_failure(
         attempts = int(current.get("recovery_backoff_attempts", 0)) + 1
         backoff_until = None
         if attempts >= threshold:
-            backoff_until = (datetime.now(UTC) + timedelta(seconds=backoff_seconds)).isoformat()
+            backoff_until = (now_utc() + timedelta(seconds=backoff_seconds)).isoformat()
         record_reconciler_start_failure_state(
             device,
             reason=reason,
@@ -672,7 +671,7 @@ class ReconcilerService:
         require_leader: bool = True,
     ) -> None:
         semaphore = asyncio.Semaphore(self._settings.get_int("appium_reconciler.host_parallelism"))
-        now = datetime.now(UTC)
+        now = now_utc()
         rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
         active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
         for row in desired:
@@ -799,7 +798,7 @@ class ReconcilerService:
         observed_by_target = {entry.connection_target: entry for entry in observed}
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
             obs = match_observed_entry(row, observed_by_target)
-            action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+            action = decide_convergence_action(row, observed=obs, now=now_utc())
             try:
                 await _execute_action(
                     host_id=host_id,

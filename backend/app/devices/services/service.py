@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, asc, case, desc, func, select
@@ -6,6 +5,7 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.core.leader import state_store as control_plane_state_store
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import (
     Device,
@@ -73,7 +73,7 @@ class DeviceCrudService:
     ) -> Device:
         payload = await self.prepare_device_create_payload(db, data)
         if mark_verified:
-            payload["verified_at"] = datetime.now(UTC)
+            payload["verified_at"] = now_utc()
         payload["operational_state"] = initial_operational_state
         await self._identity.ensure_device_payload_identity_available(db, payload)
         try:

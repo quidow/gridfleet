@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.db_retry import retry_on_serialization_failure
+from app.core.timeutil import now_utc
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
@@ -56,7 +56,7 @@ class RunLifecycleService:
         if run.state != RunState.preparing:
             raise ValueError(f"Cannot signal ready from state '{run.state.value}', expected 'preparing'")
 
-        now = datetime.now(UTC)
+        now = now_utc()
         run.state = RunState.active
         run.started_at = now
         run.last_heartbeat = now
@@ -76,7 +76,7 @@ class RunLifecycleService:
         if run.state != RunState.preparing:
             raise ValueError(f"Cannot signal active from state '{run.state.value}', expected 'preparing' or 'active'")
 
-        now = datetime.now(UTC)
+        now = now_utc()
         run.state = RunState.active
         run.started_at = now
         run.last_heartbeat = now
@@ -94,7 +94,7 @@ class RunLifecycleService:
             await db.commit()
             return run
 
-        run.last_heartbeat = datetime.now(UTC)
+        run.last_heartbeat = now_utc()
         await db.commit()
         run = await get_run(db, run_id)
         assert run is not None
@@ -116,7 +116,7 @@ class RunLifecycleService:
         if run.state in TERMINAL_STATES:
             raise ValueError(f"Run is already in terminal state '{run.state.value}'")
 
-        now = datetime.now(UTC)
+        now = now_utc()
         await self._release.clear_desired_grid_run_id_for_run(db, run=run, caller="run_complete")
         run.state = RunState.completed
         run.completed_at = now
@@ -156,7 +156,7 @@ class RunLifecycleService:
 
         await self._release.clear_desired_grid_run_id_for_run(db, run=run, caller="run_cancel")
         run.state = RunState.cancelled
-        run.completed_at = datetime.now(UTC)
+        run.completed_at = now_utc()
         cleanup_ids = await self._release.release_devices(db, run, commit=False, terminate_grid_sessions=True)
         self._publisher.queue_for_session(
             db,
@@ -199,7 +199,7 @@ class RunLifecycleService:
         )
         run.state = RunState.cancelled
         run.error = "Force released by admin"
-        run.completed_at = datetime.now(UTC)
+        run.completed_at = now_utc()
         cleanup_ids = await self._release.release_devices(db, run, commit=False, terminate_grid_sessions=True)
         self._publisher.queue_for_session(
             db,
@@ -236,7 +236,7 @@ class RunLifecycleService:
         )
         locked_run.state = RunState.expired
         locked_run.error = effective_reason
-        locked_run.completed_at = datetime.now(UTC)
+        locked_run.completed_at = now_utc()
         cleanup_ids = await self._release.release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
 
         if expired_from_preparing:

@@ -97,7 +97,7 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
 
     service = _make_service(db_session)
     with patch(
-        "app.jobs.queue.utcnow",
+        "app.jobs.queue.now_utc",
         return_value=datetime.now(UTC),
     ):
         with patch(

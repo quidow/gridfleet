@@ -6,12 +6,12 @@ state. Hardware-detected fields (``os_version``, ``manufacturer``, ``model``,
 the verification pipeline after a device is re-imported.
 """
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.core.timeutil import now_utc
 from app.devices.models import Device
 from app.portability.schemas import (
     SCHEMA_VERSION,
@@ -32,7 +32,7 @@ class PortabilityExportService:
         exported = [_exported_device(d) for d in devices]
         return ExportBundle(
             schema_version=SCHEMA_VERSION,
-            exported_at=datetime.now(UTC),
+            exported_at=now_utc(),
             source_instance=None,
             devices=exported,
         )

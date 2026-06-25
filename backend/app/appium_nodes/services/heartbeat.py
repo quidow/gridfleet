@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
@@ -27,6 +26,7 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
 from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.services.event import build_device_crashed_payload, record_event
@@ -290,7 +290,7 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
         APPIUM_PROCESSES_NAMESPACE,
         str(host.id),
         {
-            "reported_at": datetime.now(UTC).isoformat(),
+            "reported_at": now_utc().isoformat(),
             "running_nodes": _normalize_running_nodes(health_data),
         },
     )
@@ -630,7 +630,7 @@ async def _apply_host_ping_result(
             host.status = HostStatus.online
             if on_host_recovered is not None:
                 _schedule_background_task(on_host_recovered, host.id)
-        host.last_heartbeat = datetime.now(UTC)
+        host.last_heartbeat = now_utc()
         if health_data is not None:
             if "missing_prerequisites" in health_data:
                 host_service.update_missing_prerequisites_from_health(host, health_data.get("missing_prerequisites"))
