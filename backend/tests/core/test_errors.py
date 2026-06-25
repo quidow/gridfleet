@@ -8,7 +8,7 @@ def test_agent_response_error_is_agent_call_error_but_not_unreachable() -> None:
     assert isinstance(err, AgentCallError)
     assert not isinstance(err, AgentUnreachableError)
     assert not isinstance(err, CircuitOpenError)
-    assert err.error_code == "AGENT_RESPONSE_ERROR"
+    assert err.code == "AGENT_RESPONSE_ERROR"
     assert err.status_code == 502
     assert err.http_status == 503
     assert err.host == "host-a"

@@ -36,7 +36,6 @@ def _browser_session(
 
 
 def _attach_and_return(request: Request, result: auth.RequestAuthResult) -> auth.RequestAuthResult:
-    request.state.auth_mode = result.mode
     request.state.auth_username = result.username
     return result
 
