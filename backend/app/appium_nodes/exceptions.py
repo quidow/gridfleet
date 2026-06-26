@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from app.core.errors import AppError
+
 if TYPE_CHECKING:
     import asyncio
 
 
-class NodeManagerError(Exception):
-    pass
+class NodeManagerError(AppError):
+    status_code = 400
+    code = "VALIDATION_ERROR"
 
 
 class NodePortConflictError(NodeManagerError):

@@ -12,7 +12,6 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.config import agent_settings
 from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
-from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
 from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.node_health import NodeHealthLoop
@@ -311,7 +310,6 @@ app = FastAPI(**_fastapi_app_kwargs())
 app.add_middleware(StaticPathsAuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
-appium_node_exception_handlers.register(app)
 
 app.include_router(auth_router_module.router)
 app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

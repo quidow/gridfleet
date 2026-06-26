@@ -68,7 +68,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "services.storage",
     ),
     "appium_nodes": (
-        "exception_handlers",
         "exceptions",
         "models",
         "routers",
