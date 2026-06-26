@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm import operations as agent_operations
 from app.core.background_loop import BackgroundLoop
+from app.core.coerce import coerce_float as _coerce_float
 from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
@@ -82,19 +83,6 @@ def _coerce_support_status(value: object) -> HardwareTelemetrySupportStatus:
         return HardwareTelemetrySupportStatus(value)
     except ValueError:
         return HardwareTelemetrySupportStatus.unknown
-
-
-def _coerce_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
 
 
 def current_hardware_health_status(device: Device) -> HardwareHealthStatus:

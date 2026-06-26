@@ -9,6 +9,7 @@ from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
 from app.core.background_loop import BackgroundLoop
+from app.core.coerce import coerce_float as _coerce_float
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
@@ -42,14 +43,6 @@ def _coerce_int(value: object) -> int | None:
         return value
     if isinstance(value, (float, Decimal)):
         return round(value)
-    return None
-
-
-def _coerce_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float, Decimal)):
-        return float(value)
     return None
 
 
