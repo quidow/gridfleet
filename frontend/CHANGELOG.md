@@ -12,6 +12,44 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.3.0...gridfleet-frontend-v0.4.0) (2026-06-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** OpenAPI schema BulkMaintenanceEnter removed; enter-maintenance endpoints now reference BulkDeviceIds.
+* **frontend:** the Appium Plugins settings tab and host-detail Plugins tab are removed.
+* **frontend:** the operator dashboard no longer exposes webhooks.
+* **backend:** the /api/webhooks endpoints and the webhooks / webhook_deliveries tables are removed.
+
+### Features
+
+* **backend:** remove webhooks feature and drop its tables ([5382dda](https://github.com/quidow/gridfleet/commit/5382ddafc6236cb7995cbee8927ec3b60d83462c))
+* **frontend:** align dark theme with github palette ([52c8faf](https://github.com/quidow/gridfleet/commit/52c8faff0ad5f03e307607e6662b05f6a0dd2640))
+* **frontend:** align dark theme with github palette ([9a218b3](https://github.com/quidow/gridfleet/commit/9a218b37ff6f0d0e18b624019c4c6a2536d1882c))
+* **frontend:** remove appium plugins panels and api client ([637db8f](https://github.com/quidow/gridfleet/commit/637db8fa9ff98e5e9f1c508f8f309c073f3d6df6))
+* **frontend:** remove webhooks dashboard and api client ([0ba76dc](https://github.com/quidow/gridfleet/commit/0ba76dc3ec39f92ee97726bf2128699ec811864b))
+* **frontend:** show routing buckets on the router page ([cc13b6e](https://github.com/quidow/gridfleet/commit/cc13b6e44b7fb2c650baed03388c5f69ae93a906))
+
+
+### Bug Fixes
+
+* **frontend:** point empty device settings tab at device_checks category ([7c7ef30](https://github.com/quidow/gridfleet/commit/7c7ef307bfdc496e0a2bba4577d949420d2e9c2d))
+* **frontend:** point empty device settings tab at device_checks category ([f7cff47](https://github.com/quidow/gridfleet/commit/f7cff4734f5091e48fda6b44fc6e414639a573a6))
+* **frontend:** unify status tones and resolve dashboard/settings UI drift ([ad4e2c5](https://github.com/quidow/gridfleet/commit/ad4e2c541a9c4da3944049a90726cf98169022bf))
+* **frontend:** unify status tones and resolve dashboard/settings UI drift ([7125331](https://github.com/quidow/gridfleet/commit/7125331e4e692e1416028c5bcdc8d3c95aa12c61))
+
+
+### Performance Improvements
+
+* **backend:** gate DeviceDetail.orchestration behind ?include=orchestration ([9a029b4](https://github.com/quidow/gridfleet/commit/9a029b42b7321d282ff4bb2899e555033a6cbfb9))
+* **backend:** trim FleetOverview to the two fields the dashboard reads ([fae48d2](https://github.com/quidow/gridfleet/commit/fae48d270d4e894e19fdec51707606c9690cc8e0))
+
+
+### Code Refactoring
+
+* **backend:** fold bulk-maintenance-enter into bulk-device-ids ([e7abf48](https://github.com/quidow/gridfleet/commit/e7abf48ead0d3aa15aa6579a786d7cb2102e6291))
+
 ## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.2.0...gridfleet-frontend-v0.3.0) (2026-06-22)
 
 
