@@ -36,7 +36,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       title: 'Session Management',
       description: 'Grid queue timeouts and viability probes for idle devices.',
       settingKeys: [
-        'general.session_queue_timeout_sec',
         'general.session_viability_interval_sec',
         'general.session_viability_timeout_sec',
         'general.fleet_capacity_snapshot_interval_sec',
