@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.runs.protocols import RunReleaseProtocol
+    from app.runs.service_lifecycle_release import RunReleaseService
 
 # A terminal run transition touches the run row, every reserved device row and
 # their session rows in one transaction, racing teardown traffic on the same
@@ -43,7 +43,7 @@ class RunLifecycleService:
         *,
         publisher: EventPublisher,
         settings: SettingsReader,
-        release: RunReleaseProtocol,
+        release: RunReleaseService,
     ) -> None:
         self._publisher = publisher
         self._settings = settings

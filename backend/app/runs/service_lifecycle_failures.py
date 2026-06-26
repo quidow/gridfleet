@@ -34,12 +34,12 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.lifecycle.protocols import LifecycleIncidentRecorder
+    from app.lifecycle.services.incidents import LifecycleIncidentService
     from app.runs.protocols import (
         DeviceLifecycleFailureWriter,
         MaintenanceWriter,
-        RunReservationProtocol,
     )
+    from app.runs.service_reservation import RunReservationService
 
 
 def _cooldown_intents(
@@ -99,8 +99,8 @@ class RunFailureService:
         circuit_breaker: CircuitBreakerProtocol,
         maintenance: MaintenanceWriter,
         lifecycle_actions: DeviceLifecycleFailureWriter,
-        reservation: RunReservationProtocol,
-        incidents: LifecycleIncidentRecorder,
+        reservation: RunReservationService,
+        incidents: LifecycleIncidentService,
         pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher

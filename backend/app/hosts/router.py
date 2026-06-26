@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from app.core.type_defs import AsyncTaskFactory
     from app.events.protocols import EventPublisher
     from app.events.services_container import EventServices
-    from app.hosts.protocols import HostCrudProtocol
+    from app.hosts.service import HostCrudService
     from app.hosts.services_container import HostServices
     from app.packs.protocols import PackDiscoveryProtocol
     from app.packs.services_container import PackServices
@@ -106,7 +106,7 @@ async def _auto_discover(
     host_id: uuid.UUID,
     publisher: EventPublisher,
     discovery: PackDiscoveryProtocol,
-    crud: HostCrudProtocol,
+    crud: HostCrudService,
 ) -> None:
     """Background task: trigger device discovery for a newly accepted host."""
     try:

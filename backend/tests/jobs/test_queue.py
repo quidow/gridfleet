@@ -60,7 +60,6 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
-            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=sf,

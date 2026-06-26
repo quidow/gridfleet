@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -49,32 +48,13 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
-_background_tasks: set[asyncio.Task[None]] = set()
 
 
 HEARTBEAT_NAMESPACE = "heartbeat.failure_count"
 APPIUM_RESTART_SEQUENCE_NAMESPACE = "heartbeat.appium_restart_sequence"
 LOOP_NAME = "heartbeat"
-BACKGROUND_TASK_DRAIN_TIMEOUT_SEC = 5.0
 APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "restart_exhausted"})
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium"})
-
-
-async def shutdown_background_tasks(timeout: float = BACKGROUND_TASK_DRAIN_TIMEOUT_SEC) -> None:
-    tasks = {task for task in _background_tasks if not task.done()}
-    if not tasks:
-        _background_tasks.clear()
-        return
-
-    done, pending = await asyncio.wait(tasks, timeout=timeout)
-    if pending:
-        logger.warning("Cancelling %d heartbeat background task(s) during shutdown", len(pending))
-        for task in pending:
-            task.cancel()
-
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(*done, *pending, return_exceptions=True)
-    _background_tasks.clear()
 
 
 _TRANSPORT_TO_OUTCOME = {

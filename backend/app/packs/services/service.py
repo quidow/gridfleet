@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.packs.protocols import PackLifecycleProtocol
+    from app.packs.services.lifecycle import PackLifecycleService
 
 from app.devices.models import Device
 from app.packs.models import (
@@ -149,7 +149,7 @@ def _platform_out(platform: DriverPackPlatform) -> PlatformOut:
 
 
 class PackCatalogService:
-    def __init__(self, *, lifecycle: PackLifecycleProtocol) -> None:
+    def __init__(self, *, lifecycle: PackLifecycleService) -> None:
         self._lifecycle = lifecycle
 
     async def list_catalog(self, db: AsyncSession) -> PackCatalog:

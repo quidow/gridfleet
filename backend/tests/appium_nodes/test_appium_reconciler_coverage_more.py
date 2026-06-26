@@ -54,36 +54,6 @@ async def test_lock_device_for_reconciler_returns_none_when_row_deleted(
     assert result is None
 
 
-async def test_reconcile_host_and_loop_tick_skip_invalid_payloads_and_hosts() -> None:
-    host_id = uuid.uuid4()
-    stopped = await appium_reconciler.reconcile_host_orphans(
-        host_id=host_id,
-        host_ip="10.0.0.1",
-        agent_port=5100,
-        db_running_rows=[{"host_id": uuid.uuid4(), "device_connection_target": "other", "node_port": 4723}],
-        fetch_health=AsyncMock(return_value={"appium_processes": []}),
-        appium_stop=AsyncMock(),
-    )
-    assert stopped == []
-
-    reconcile_host = AsyncMock(side_effect=[RuntimeError("host failed"), []])
-    total = await appium_reconciler.appium_reconciler_loop_tick(
-        list_online_hosts=AsyncMock(
-            return_value=[
-                {"id": "bad-id", "ip": "10.0.0.1", "agent_port": 5100},
-                {"id": uuid.uuid4(), "ip": "10.0.0.2", "agent_port": "bad-port"},
-                {"id": uuid.uuid4(), "ip": "10.0.0.3", "agent_port": 5100},
-                {"id": uuid.uuid4(), "ip": "10.0.0.4", "agent_port": 5100},
-            ]
-        ),
-        list_db_running_rows=AsyncMock(return_value=[]),
-        reconcile_host=reconcile_host,
-    )
-
-    assert total == 0
-    assert reconcile_host.await_count == 2
-
-
 async def test_appium_reconciler_fetches_db_rows_and_backoff(
     db_session: AsyncSession,
     db_host: Host,
@@ -118,14 +88,12 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
     await db_session.commit()
 
     hosts = await appium_reconciler._fetch_online_hosts(db_session)
-    rows = await appium_reconciler._fetch_node_rows(db_session)
     desired = await appium_reconciler._fetch_desired_rows(db_session)
     desired_one = await appium_reconciler._fetch_desired_row(db_session, device.id)
     missing = await appium_reconciler._fetch_desired_row(db_session, uuid.uuid4())
     backoff = await appium_reconciler._fetch_backoff_until(db_session)
 
     assert hosts == [{"id": db_host.id, "ip": db_host.ip, "agent_port": db_host.agent_port}]
-    assert rows[0]["node_desired_state"] == "running"
     assert desired[0].transition_token == token
     assert desired_one is not None
     assert desired_one.stop_pending is True
@@ -155,8 +123,10 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     }
     touch = AsyncMock()
     converge = AsyncMock()
+    agent_health = AsyncMock()
     monkeypatch.setattr("app.appium_nodes.services.reconciler._touch_last_observed", touch)
     monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.agent_health", agent_health)
 
     @asynccontextmanager
     async def _mock_session_factory() -> AsyncMock:
@@ -172,7 +142,6 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     await svc._drive_convergence(
         [
             {"id": "bad", "ip": "10.0.0.1", "agent_port": 5100},
-            {"id": uuid.uuid4(), "ip": "10.0.0.2", "agent_port": 5100},
             {"id": host_id, "ip": "10.0.0.3", "agent_port": 5100},
         ],
         [active, backed_off],
@@ -182,6 +151,8 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     )
 
     touch.assert_awaited_once()
+    # The matching host's health came from the cache — no agent fetch.
+    agent_health.assert_not_awaited()
     converge.assert_awaited_once()
     # desired_rows (active_rows) is 2nd positional arg to converge_host_rows(None, active_rows, observed, ...)
     assert converge.call_args.args[1] == [active]

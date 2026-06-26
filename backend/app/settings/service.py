@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import math
 from typing import TYPE_CHECKING, Any
@@ -114,11 +113,6 @@ def _validate_json_allowed_items(key: str, value: SettingValue, allowed_values: 
 
 
 def _validate_json(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
-    # JSON values must be serializable (they already are if they got here via Pydantic)
-    try:
-        json.dumps(value)
-    except TypeError, ValueError:
-        return f"Value for {key} is not JSON-serializable"
     if defn.item_allowed_values is not None:
         error = _validate_json_allowed_items(key, value, defn.item_allowed_values)
         if error:

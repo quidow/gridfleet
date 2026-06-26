@@ -18,7 +18,6 @@ from app.agent_comm.http_pool import AgentHttpPool
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.dependencies import get_appium_node_services
 from app.appium_nodes.services.heartbeat import HeartbeatService
-from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
@@ -184,10 +183,6 @@ async def _ensure_test_database_exists() -> None:
         await test_engine.dispose()
 
 
-async def _shutdown_control_plane_services() -> None:
-    await shutdown_heartbeat_background_tasks()
-
-
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         fixture_names = set(getattr(item, "fixturenames", ()))
@@ -227,14 +222,12 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
             )
         )
     yield engine
-    # Drain heartbeat background tasks and event-bus handler tasks before
-    # DROP SCHEMA. After-commit handlers spawned during the test query tables
-    # in the per-test schema; if they outlive the test body they hold
-    # AccessShareLock that deadlocks the AccessExclusiveLock taken by
-    # DROP SCHEMA CASCADE. autouse reset_test_event_bus runs its post-yield
-    # shutdown LATER than this fixture's teardown, so we must shut the event
-    # bus down here too.
-    await _shutdown_control_plane_services()
+    # Drain event-bus handler tasks before DROP SCHEMA. After-commit handlers
+    # spawned during the test query tables in the per-test schema; if they
+    # outlive the test body they hold AccessShareLock that deadlocks the
+    # AccessExclusiveLock taken by DROP SCHEMA CASCADE. autouse
+    # reset_test_event_bus runs its post-yield shutdown LATER than this
+    # fixture's teardown, so we must shut the event bus down here too.
     await test_event_bus.shutdown()
     async with engine.begin() as conn:
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
@@ -277,10 +270,8 @@ async def reset_process_config() -> AsyncGenerator[None]:
     auth_snapshot = auth_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
-    await _shutdown_control_plane_services()
     shutdown_coordinator.reset()
     yield
-    await _shutdown_control_plane_services()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
     # snapshots taken before yield so auth, agent, and pack state
@@ -332,10 +323,7 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
 @pytest_asyncio.fixture
 async def db_session(db_session_maker: async_sessionmaker[AsyncSession]) -> AsyncGenerator[AsyncSession]:
     async with db_session_maker() as session:
-        try:
-            yield session
-        finally:
-            await _shutdown_control_plane_services()
+        yield session
 
 
 @pytest_asyncio.fixture

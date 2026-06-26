@@ -12,9 +12,8 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.config import agent_settings
 from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
-from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes.services.heartbeat import HeartbeatLoop, shutdown_background_tasks
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.node_health import NodeHealthLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
 from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
@@ -45,12 +44,22 @@ from app.core.observability import (
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
-from app.devices import services as device_services
 from app.devices.dependencies import (
     DeviceServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
 )
 from app.devices.schemas.filters import DeviceQueryFilters
-from app.devices.services import state_write_guard
+from app.devices.services import (
+    connectivity,
+    data_cleanup,
+    fleet_capacity,
+    intent_reconciler,
+    property_refresh,
+    readiness,
+    state_write_guard,
+)
+from app.devices.services import (
+    health as device_health,
+)
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import appium_direct
@@ -92,14 +101,13 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
-DataCleanupLoop = device_services.data_cleanup.DataCleanupLoop
-DeviceConnectivityLoop = device_services.connectivity.DeviceConnectivityLoop
-device_health = device_services.health
-DeviceIntentReconcilerLoop = device_services.intent_reconciler.DeviceIntentReconcilerLoop
-FleetCapacityLoop = device_services.fleet_capacity.FleetCapacityLoop
-assess_devices_async = device_services.readiness.assess_devices_async
-is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
-PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
+DataCleanupLoop = data_cleanup.DataCleanupLoop
+DeviceConnectivityLoop = connectivity.DeviceConnectivityLoop
+DeviceIntentReconcilerLoop = intent_reconciler.DeviceIntentReconcilerLoop
+FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
+assess_devices_async = readiness.assess_devices_async
+is_ready_for_use_async = readiness.is_ready_for_use_async
+PropertyRefreshLoop = property_refresh.PropertyRefreshLoop
 
 
 def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
@@ -283,7 +291,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.exception("background_loop_final_flush_failed")
         if watcher_task is not None:
             await _cancel_and_wait_for_tasks([watcher_task], label="leader watcher")
-        await shutdown_background_tasks()
         await svc.shutdown()
         await control_plane_leader.release()
         await bus.shutdown()
@@ -312,7 +319,6 @@ app = FastAPI(**_fastapi_app_kwargs())
 app.add_middleware(StaticPathsAuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
-appium_node_exception_handlers.register(app)
 
 app.include_router(auth_router_module.router)
 app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

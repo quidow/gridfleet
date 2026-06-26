@@ -9,14 +9,12 @@ import httpx2 as httpx
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.sessions.service_viability import build_probe_capabilities
 from app.verification.services.job_state import finish_job, hydrate_job
 
 if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
-    from app.devices.protocols import SessionViabilityProbe
     from app.events.protocols import EventPublisher
     from app.verification.services.execution import VerificationExecutionService
     from app.verification.services.preparation import VerificationPreparationService
@@ -34,7 +32,6 @@ class VerificationRunnerService:
         circuit_breaker: CircuitBreakerProtocol,
         preparation: VerificationPreparationService,
         execution: VerificationExecutionService,
-        viability: SessionViabilityProbe,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -42,20 +39,6 @@ class VerificationRunnerService:
         self._circuit_breaker = circuit_breaker
         self._preparation = preparation
         self._execution = execution
-        self._viability = viability
-
-    async def _probe_session_via_gridfleet_marker(
-        self,
-        capabilities: dict[str, Any],
-        timeout_sec: int,
-        *,
-        target: str | None = None,
-    ) -> tuple[bool, str | None]:
-        return await self._viability.probe_session_direct(
-            build_probe_capabilities(capabilities),
-            timeout_sec,
-            target=target,
-        )
 
     async def _load_persisted_job(
         self,
@@ -101,9 +84,6 @@ class VerificationRunnerService:
                     db,
                     context,
                     http_client_factory=httpx.AsyncClient,
-                    probe_session_fn=lambda caps, timeout, target=None: self._probe_session_via_gridfleet_marker(
-                        caps, timeout, target=target
-                    ),
                 )
                 await finish_job(
                     job,

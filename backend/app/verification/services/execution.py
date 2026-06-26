@@ -28,7 +28,7 @@ from app.lifecycle.services.operator_node import operator_start_source, operator
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
 from app.sessions.service_probes import ProbeSource, record_probe_session
-from app.sessions.service_viability import grid_probe_response_to_result
+from app.sessions.service_viability import build_probe_capabilities, grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.verification.services.job_state import enum_value, set_stage
 
@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
     from app.devices.protocols import (
         DeviceCapabilityProtocol,
@@ -83,7 +82,6 @@ class AgentCallContext:
 class FailureFinalizers:
     """Collaborators the verification failure-finalization path drives together."""
 
-    publisher: EventPublisher
     crud: DeviceCrudProtocol
     node_manager: RemoteNodeManager
     review: ReviewProtocol
@@ -111,7 +109,6 @@ class VerificationExecutionService:
         self._node_manager = node_manager
         self._review = review
         self._failure_finalizers = FailureFinalizers(
-            publisher=publisher,
             crud=crud,
             node_manager=node_manager,
             review=review,
@@ -203,7 +200,7 @@ class VerificationExecutionService:
         return None
 
     async def run_probe(
-        self, job: dict[str, Any], db: AsyncSession, device: Device, *, probe_session_fn: ProbeSessionFn
+        self, job: dict[str, Any], db: AsyncSession, device: Device
     ) -> tuple[AppiumNode | None, str | None]:
         await set_stage(job, "node_start", "running")
         await _register_verification_node_intent(db, device, settings=self._agent.settings, publisher=self._publisher)
@@ -258,7 +255,9 @@ class VerificationExecutionService:
             device_key = str(device.id)
             probe_inflight.mark_probe_started(device_key)
             try:
-                ok, error = await probe_session_fn(capabilities, timeout_sec, target=node_target(device))
+                ok, error = await self._viability.probe_session_direct(
+                    build_probe_capabilities(capabilities), timeout_sec, target=node_target(device)
+                )
             finally:
                 probe_inflight.mark_probe_finished(device_key)
             await record_probe_session(
@@ -286,7 +285,6 @@ class VerificationExecutionService:
         context: PreparedVerificationContext,
         *,
         http_client_factory: AgentClientFactory,
-        probe_session_fn: ProbeSessionFn,
     ) -> VerificationExecutionOutcome:
         device = context.transient_device
         node: AppiumNode | None = None
@@ -330,12 +328,7 @@ class VerificationExecutionService:
                     original_fields=original_fields,
                 )
 
-            node, probe_error = await self.run_probe(
-                job,
-                db,
-                device,
-                probe_session_fn=probe_session_fn,
-            )
+            node, probe_error = await self.run_probe(job, db, device)
             if probe_error is not None:
                 return await self._finalize_failure(
                     db,

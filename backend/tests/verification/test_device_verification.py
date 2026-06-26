@@ -196,7 +196,6 @@ async def _wait_for_job(
                         ),
                     ),
                 ),
-                viability=_viability,
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,
@@ -1641,7 +1640,6 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                         ),
                     ),
                 ),
-                viability=_viability2,
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,

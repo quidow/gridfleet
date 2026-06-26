@@ -27,7 +27,6 @@ These are read directly by `backend/app/core/config.py` and domain config module
 | `GRIDFLEET_MACHINE_AUTH_PASSWORD` | unset | backend auth gate | Basic-auth password accepted for machine clients such as agents, CI helpers, and metrics scrapers |
 | `GRIDFLEET_AGENT_AUTH_USERNAME` | unset | backend process | Username sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_PASSWORD`. |
 | `GRIDFLEET_AGENT_AUTH_PASSWORD` | unset | backend process | Password sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_USERNAME`. |
-| `GRIDFLEET_RECONCILER_CONVERGENCE_ENABLED` | `true` (when unset) | backend process | When set to anything other than `1`/`true`/`yes`/`on`, disables Appium reconciler desired-state convergence. |
 | `GRIDFLEET_DRIVER_PACK_STORAGE_DIR` | `/var/lib/gridfleet/driver-packs` | backend process | Filesystem root where verified driver-pack tarballs are stored (`PackStorageService`). |
 
 ## Router Process Variables
@@ -50,7 +49,6 @@ These are not the authoritative settings store. They only provide the initial se
 | --- | --- | --- | --- |
 | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Agent heartbeat loop cadence |
 | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `general.max_missed_heartbeats` | `3` | Missed heartbeats before host becomes offline |
-| `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `general.session_queue_timeout_sec` | `300` | Session queue timeout |
 | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
 | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |
 | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |

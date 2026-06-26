@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services.reconciler import _fetch_node_rows, reconcile_host_orphans
+from app.appium_nodes.services.reconciler import _fetch_desired_rows
+from app.appium_nodes.services.reconciler_convergence import ObservedEntry, reap_orphan_nodes
 from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
 from tests.helpers import create_device
@@ -17,6 +19,15 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
+
+
+async def _observed_from_payload(payload: dict[str, object]) -> list[ObservedEntry]:
+    appium_processes = payload["appium_processes"]
+    assert isinstance(appium_processes, dict)
+    return [
+        ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+        for entry in parse_running_nodes(appium_processes)
+    ]
 
 
 async def test_reconciler_does_not_stop_node_during_verification(
@@ -38,31 +49,26 @@ async def test_reconciler_does_not_stop_node_during_verification(
     db_session.add(node)
     await db_session.commit()
 
-    agent_payload = {
-        "appium_processes": {
-            "running_nodes": [
-                {
-                    "port": 4723,
-                    "pid": 12345,
-                    "connection_target": device.connection_target,
-                    "platform_id": device.platform_id,
-                }
-            ]
+    observed = await _observed_from_payload(
+        {
+            "appium_processes": {
+                "running_nodes": [
+                    {
+                        "port": 4723,
+                        "pid": 12345,
+                        "connection_target": device.connection_target,
+                        "platform_id": device.platform_id,
+                    }
+                ]
+            }
         }
-    }
-    appium_stop = AsyncMock()
-
-    stopped = await reconcile_host_orphans(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
-        db_running_rows=await _fetch_node_rows(db_session),
-        fetch_health=AsyncMock(return_value=agent_payload),
-        appium_stop=appium_stop,
     )
+    stop_agent = AsyncMock()
 
-    assert stopped == []
-    appium_stop.assert_not_awaited()
+    reaped = await reap_orphan_nodes(observed, await _fetch_desired_rows(db_session), stop_agent=stop_agent)
+
+    assert reaped == []
+    stop_agent.assert_not_awaited()
 
 
 async def test_reconciler_does_not_stop_emulator_node_reporting_live_serial(
@@ -71,7 +77,7 @@ async def test_reconciler_does_not_stop_emulator_node_reporting_live_serial(
 ) -> None:
     # A virtual emulator registers with the stable AVD name as its
     # connection_target, but the running node reports the live ADB serial
-    # (cached on AppiumNode.active_connection_target). The orphan reconciler
+    # (cached on AppiumNode.active_connection_target). The orphan reaper
     # must recognise the node by its live serial and leave it running.
     device = await create_device(
         db_session,
@@ -96,28 +102,23 @@ async def test_reconciler_does_not_stop_emulator_node_reporting_live_serial(
     db_session.add(node)
     await db_session.commit()
 
-    agent_payload = {
-        "appium_processes": {
-            "running_nodes": [
-                {
-                    "port": 4723,
-                    "pid": 12345,
-                    "connection_target": "emulator-5554",
-                    "platform_id": device.platform_id,
-                }
-            ]
+    observed = await _observed_from_payload(
+        {
+            "appium_processes": {
+                "running_nodes": [
+                    {
+                        "port": 4723,
+                        "pid": 12345,
+                        "connection_target": "emulator-5554",
+                        "platform_id": device.platform_id,
+                    }
+                ]
+            }
         }
-    }
-    appium_stop = AsyncMock()
-
-    stopped = await reconcile_host_orphans(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
-        db_running_rows=await _fetch_node_rows(db_session),
-        fetch_health=AsyncMock(return_value=agent_payload),
-        appium_stop=appium_stop,
     )
+    stop_agent = AsyncMock()
 
-    assert stopped == []
-    appium_stop.assert_not_awaited()
+    reaped = await reap_orphan_nodes(observed, await _fetch_desired_rows(db_session), stop_agent=stop_agent)
+
+    assert reaped == []
+    stop_agent.assert_not_awaited()

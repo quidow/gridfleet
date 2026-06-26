@@ -211,35 +211,6 @@ async def test_session_scope_reuses_existing_db() -> None:
         assert yielded is db
 
 
-async def test_reconcile_all_stop_callback_raises_for_agent_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    host_id = uuid.uuid4()
-
-    async def fake_reconcile_host_orphans(**kwargs: object) -> list[object]:
-        stop_agent = kwargs["appium_stop"]
-        await stop_agent(host="10.0.0.1", agent_port=5100, port=4723)
-        return []
-
-    response = MagicMock()
-    response.raise_for_status.side_effect = RuntimeError("stop failed")
-    monkeypatch.setattr(appium_reconciler, "reconcile_host_orphans", fake_reconcile_host_orphans)
-    monkeypatch.setattr(appium_reconciler, "appium_stop", AsyncMock(return_value=response))
-
-    assert (
-        await ReconcilerService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            pool=Mock(),
-            circuit_breaker=Mock(),
-            session_factory=Mock(),
-        )._reconcile_all(
-            [{"id": host_id, "ip": "10.0.0.1", "agent_port": 5100}],
-            [{"host_id": host_id, "device_connection_target": "dev", "node_port": 4723}],
-        )
-        == {}
-    )
-    response.raise_for_status.assert_called_once()
-
-
 async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core import background_loop
 
@@ -327,11 +298,8 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
     converge.assert_not_awaited()
 
     monkeypatch.setattr(appium_reconciler, "_fetch_online_hosts", AsyncMock(return_value=[]))
-    monkeypatch.setattr(appium_reconciler, "_fetch_node_rows", AsyncMock(return_value=[]))
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_rows", AsyncMock(return_value=[]))
     monkeypatch.setattr(appium_reconciler, "_fetch_backoff_until", AsyncMock(return_value={}))
-    monkeypatch.setattr(ReconcilerService, "_reconcile_all", AsyncMock(return_value={}))
-    monkeypatch.setattr(appium_reconciler, "reconciler_convergence_enabled", lambda: True)
     drive_mock = AsyncMock()
     monkeypatch.setattr(ReconcilerService, "_drive_convergence", drive_mock)
 

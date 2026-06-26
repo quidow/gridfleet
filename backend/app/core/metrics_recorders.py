@@ -62,11 +62,6 @@ BACKGROUND_LOOP_EFFECTIVE_PERIOD_SECONDS = Gauge(
     "Wall-clock seconds between the start of one cycle and the next (cycle duration + inter-cycle sleep).",
     labelnames=("loop_name",),
 )
-APPIUM_RECONCILER_ORPHANS_STOPPED = Counter(
-    "appium_reconciler_orphans_stopped_total",
-    "Agent appium processes stopped by the reconciler because no DB row claimed them.",
-    labelnames=("reason",),
-)
 APPIUM_RECONCILER_CYCLE_FAILURES = Counter(
     "appium_reconciler_cycle_failures_total",
     "Reconciler cycles that raised before completing.",

@@ -23,6 +23,7 @@ from app.devices.services.intent_types import (
     verification_intent_source,
 )
 from app.devices.services.service import DeviceCrudService
+from app.sessions.service_viability import build_probe_capabilities
 from app.verification.services import execution, preparation
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.job_state import new_job
@@ -226,7 +227,6 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         _job(),
         db_session,
         existing,
-        probe_session_fn=AsyncMock(),
     )
     assert started is None
     assert error == "no node"
@@ -251,7 +251,6 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         _job(),
         db_session,
         existing,
-        probe_session_fn=AsyncMock(),
     )
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
@@ -271,7 +270,8 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
     )
-    probe_session = AsyncMock(return_value=(False, "probe failed"))
+    viability_probe_mock = AsyncMock()
+    viability_probe_mock.probe_session_direct = AsyncMock(return_value=(False, "probe failed"))
     started, error = await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
@@ -279,7 +279,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
-        viability=Mock(),
+        viability=viability_probe_mock,
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
         node_manager=nm_probe_fail,
@@ -287,12 +287,11 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         _job(),
         db_session,
         existing,
-        probe_session_fn=probe_session,
     )
     assert started is running_node
     assert error == "probe failed"
-    probe_session.assert_awaited_once_with(
-        {"platformName": "Android"},
+    viability_probe_mock.probe_session_direct.assert_awaited_once_with(
+        build_probe_capabilities({"platformName": "Android"}),
         120,
         target=f"http://{db_host.ip}:4723",
     )
@@ -359,7 +358,6 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         _job(),
         db_session,
         existing,
-        probe_session_fn=AsyncMock(),
     )
 
     converge_mock.assert_awaited_once()
@@ -451,7 +449,6 @@ async def test_run_probe_swallows_transient_converge_kick_failure(
         _job(),
         db_session,
         existing,
-        probe_session_fn=AsyncMock(),
     )
 
     converge_mock.assert_awaited_once()
@@ -498,9 +495,13 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
     device_key = str(existing.id)
     seen_inflight: list[bool] = []
 
-    async def fake_probe_session(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, None]:
+    viability_inflight_mock = AsyncMock()
+
+    async def _probe_direct(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, None]:
         seen_inflight.append(probe_inflight.is_probe_inflight(device_key))
         return True, None
+
+    viability_inflight_mock.probe_session_direct = _probe_direct
 
     assert probe_inflight.is_probe_inflight(device_key) is False
     await VerificationExecutionService(
@@ -510,7 +511,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         crud=DeviceCrudService(
             settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
         ),
-        viability=Mock(),
+        viability=viability_inflight_mock,
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
         node_manager=nm_inflight,
@@ -518,7 +519,6 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         _job(),
         db_session,
         existing,
-        probe_session_fn=fake_probe_session,
     )
     assert seen_inflight == [True]
     assert probe_inflight.is_probe_inflight(device_key) is False
@@ -559,8 +559,8 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
 
     device_key = str(existing.id)
 
-    async def failing_probe_session(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, str | None]:
-        raise RuntimeError("probe blew up")
+    viability_raises_mock = AsyncMock()
+    viability_raises_mock.probe_session_direct = AsyncMock(side_effect=RuntimeError("probe blew up"))
 
     with pytest.raises(RuntimeError, match="probe blew up"):
         await VerificationExecutionService(
@@ -570,7 +570,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             crud=DeviceCrudService(
                 settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
             ),
-            viability=Mock(),
+            viability=viability_raises_mock,
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
             node_manager=nm_raises,
@@ -578,7 +578,6 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             _job(),
             db_session,
             existing,
-            probe_session_fn=failing_probe_session,
         )
     assert probe_inflight.is_probe_inflight(device_key) is False
 
@@ -775,7 +774,6 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         db,
         context,
         http_client_factory=object,
-        probe_session_fn=AsyncMock(),
     )
     assert outcome.status == "failed"
     assert outcome.error == "stop failed"
@@ -859,7 +857,6 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
             db,
             update_context,
             http_client_factory=object,
-            probe_session_fn=AsyncMock(),
         )
 
     assert update_device.name == "new"

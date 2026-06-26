@@ -151,16 +151,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
-        key="general.session_queue_timeout_sec",
-        category="general",
-        setting_type="int",
-        default=300,
-        description="Grid session queue timeout",
-        env_var="GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC",
-        min_value=30,
-        max_value=3600,
-    ),
-    SettingDefinition(
         key="general.device_cooldown_max_sec",
         category="general",
         setting_type="int",

@@ -1,4 +1,3 @@
-import importlib
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
@@ -8,33 +7,7 @@ from app.core.metrics_recorders import ACTIVE_SESSIONS
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
-    from types import ModuleType
-
     from sqlalchemy.ext.asyncio import AsyncSession
-
-_SUBMODULES = frozenset(
-    {
-        "filters",
-        "models",
-        "probe_constants",
-        "router",
-        "service",
-        "service_sync",
-        "service_viability",
-        "viability_types",
-    }
-)
-
-__all__ = [
-    "filters",
-    "models",
-    "probe_constants",
-    "router",
-    "service",
-    "service_sync",
-    "service_viability",
-    "viability_types",
-]
 
 
 async def _refresh_sessions_gauges(db: AsyncSession) -> None:
@@ -50,11 +23,3 @@ async def _refresh_sessions_gauges(db: AsyncSession) -> None:
 
 
 register_gauge_refresher(_refresh_sessions_gauges)
-
-
-def __getattr__(name: str) -> ModuleType:
-    if name in _SUBMODULES:
-        module = importlib.import_module(f"{__name__}.{name}")
-        globals()[name] = module
-        return module
-    raise AttributeError(name)

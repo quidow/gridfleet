@@ -369,7 +369,6 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         circuit_breaker=cb,
         preparation=prep,
         execution=exec_svc,
-        viability=Mock(),
     )
     assert await runner._load_persisted_job(str(uuid.uuid4())) is None
     await runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"})
@@ -426,14 +425,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     listeners["after_commit"](sync_session)  # type: ignore[operator]
     assert event_bus._handler_tasks == set()
 
-    assert (
-        appium_reconciler.detect_orphans(
-            host_id=uuid.uuid4(),
-            agent_running=[],
-            db_running_rows=[{"host_id": uuid.uuid4(), "device_connection_target": "serial"}],
-        )
-        == []
-    )
     assert await bulk_service._load_existing_device_ids(AsyncMock(), []) == []
 
     class SessionCtx:
@@ -837,7 +828,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
-            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=QueueCtx,
