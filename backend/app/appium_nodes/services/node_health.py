@@ -393,10 +393,8 @@ class NodeHealthService:
 class NodeHealthLoop(BackgroundLoop):
     """Background loop that checks Appium node health.
 
-    Wakes on either the doorbell (``wake()`` — currently no production
-    caller since the hub event-bus subscriber was removed; kept for a
-    future direct-observation trigger) or the registry-configured
-    timeout, whichever comes first. The poll runs as a drift reconciler.
+    Polls Appium node health on the registry-configured interval, running
+    as a drift reconciler.
     """
 
     loop_name = LOOP_NAME
