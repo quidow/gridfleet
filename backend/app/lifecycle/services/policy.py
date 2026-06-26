@@ -180,25 +180,18 @@ class LifecyclePolicyService:
     async def _pre_reservation_suppression(
         self, db: AsyncSession, device: Device, current_state: dict[str, Any], *, source: str, reason: str
     ) -> bool | None:
-        if device.review_required:
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason=device.review_reason or "Device shelved — operator review required",
-                run=None,
-            )
-
-        if not device.recovery_allowed:
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason=device.recovery_blocked_reason or "Recovery is blocked by orchestration intent",
-                run=None,
-            )
+        guards: list[tuple[bool, str]] = [
+            (device.review_required, device.review_reason or "Device shelved — operator review required"),
+            (
+                not device.recovery_allowed,
+                device.recovery_blocked_reason or "Recovery is blocked by orchestration intent",
+            ),
+        ]
+        for tripped, suppression_reason in guards:
+            if tripped:
+                return await self._actions.record_recovery_suppressed(
+                    db, device, source=source, reason=reason, suppression_reason=suppression_reason, run=None
+                )
         return None
 
     async def _revoke_if_already_healthy(
@@ -240,51 +233,21 @@ class LifecyclePolicyService:
         source: str,
         reason: str,
     ) -> bool | None:
+        async def _suppress(suppression_reason: str) -> bool | None:
+            return await self._actions.record_recovery_suppressed(
+                db, device, source=source, reason=reason, suppression_reason=suppression_reason, run=run
+            )
+
         if not await is_ready_for_use_async(db, device):
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason="Device setup or verification is incomplete",
-                run=run,
-            )
+            return await _suppress("Device setup or verification is incomplete")
         if in_maintenance(device):
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
-                run=run,
-            )
+            return await _suppress(MAINTENANCE_HOLD_SUPPRESSION_REASON)
         if entry is not None and entry.excluded and entry.excluded_until is not None and entry.excluded_until > now():
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason="Device is in active cooldown",
-                run=run,
-            )
+            return await _suppress("Device is in active cooldown")
         if current_state.get("stop_pending"):
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason="Waiting for active client session to finish",
-                run=run,
-            )
+            return await _suppress("Waiting for active client session to finish")
         if await self._actions.has_running_client_session(db, device.id):
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason=CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
-                run=run,
-            )
+            return await _suppress(CLIENT_SESSION_RUNNING_SUPPRESSION_REASON)
         return None
 
     async def _evaluate_recovery_guards(
@@ -406,6 +369,48 @@ class LifecyclePolicyService:
         await db.commit()
         await db.refresh(device.appium_node)
 
+    async def _record_backoff_incident_pair(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reason: str,
+        failure_detail: str,
+        source: str,
+        run: TestRun | None,
+        backoff_until_iso: str | None,
+    ) -> None:
+        run_id = run.id if run is not None else None
+        run_name = run.name if run is not None else None
+        await self._incidents.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_recovery_failed,
+            LifecycleIncidentDetails(
+                summary_state=DeviceLifecyclePolicySummaryState.backoff,
+                reason=reason,
+                detail=failure_detail,
+                source=source,
+                run_id=run_id,
+                run_name=run_name,
+                backoff_until=backoff_until_iso,
+            ),
+        )
+        await self._incidents.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_recovery_backoff,
+            LifecycleIncidentDetails(
+                summary_state=DeviceLifecyclePolicySummaryState.backoff,
+                reason=reason,
+                detail="Automatic recovery is backing off before the next retry",
+                source=source,
+                run_id=run_id,
+                run_name=run_name,
+                backoff_until=backoff_until_iso,
+            ),
+        )
+
     async def _record_recovery_node_start_failure(
         self,
         db: AsyncSession,
@@ -424,33 +429,14 @@ class LifecyclePolicyService:
             suppression_reason="Automatic restart failed",
         )
         write_state(device, current_state)
-        await self._incidents.record_lifecycle_incident(
+        await self._record_backoff_incident_pair(
             db,
             device,
-            DeviceEventType.lifecycle_recovery_failed,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.backoff,
-                reason=str(exc),
-                detail=current_state["recovery_suppressed_reason"],
-                source=source,
-                run_id=run.id if run is not None else None,
-                run_name=run.name if run is not None else None,
-                backoff_until=backoff_until_iso,
-            ),
-        )
-        await self._incidents.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_recovery_backoff,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.backoff,
-                reason=str(exc),
-                detail="Automatic recovery is backing off before the next retry",
-                source=source,
-                run_id=run.id if run is not None else None,
-                run_name=run.name if run is not None else None,
-                backoff_until=backoff_until_iso,
-            ),
+            reason=str(exc),
+            failure_detail=current_state["recovery_suppressed_reason"],
+            source=source,
+            run=run,
+            backoff_until_iso=backoff_until_iso,
         )
         await db.commit()
         return False
@@ -492,33 +478,14 @@ class LifecyclePolicyService:
             suppression_reason="Recovery probe failed",
         )
         write_state(device, fresh_state)
-        await self._incidents.record_lifecycle_incident(
+        await self._record_backoff_incident_pair(
             db,
             device,
-            DeviceEventType.lifecycle_recovery_failed,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.backoff,
-                reason=failure_reason,
-                detail=fresh_state["recovery_suppressed_reason"],
-                source="session_viability",
-                run_id=run.id if run is not None else None,
-                run_name=run.name if run is not None else None,
-                backoff_until=backoff_until_iso,
-            ),
-        )
-        await self._incidents.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_recovery_backoff,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.backoff,
-                reason=failure_reason,
-                detail="Automatic recovery is backing off before the next retry",
-                source="session_viability",
-                run_id=run.id if run is not None else None,
-                run_name=run.name if run is not None else None,
-                backoff_until=backoff_until_iso,
-            ),
+            reason=failure_reason,
+            failure_detail=fresh_state["recovery_suppressed_reason"],
+            source="session_viability",
+            run=run,
+            backoff_until_iso=backoff_until_iso,
         )
         # Promote to review_required once consecutive failures cross the
         # operator-configurable threshold. After this point the device drops
