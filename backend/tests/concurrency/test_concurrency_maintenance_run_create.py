@@ -73,8 +73,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
             publisher=event_bus,
             subscriber=event_bus,
             reader=event_bus,
-            session_factory=db_session_maker,
-            engine=db_session_maker.kw["bind"],
         )
 
     async def maintenance_request() -> int:

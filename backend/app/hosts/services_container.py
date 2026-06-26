@@ -8,10 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.agent_comm.http_pool import AgentHttpPool
-    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.events.protocols import EventPublisher
     from app.hosts.protocols import HostCrudProtocol
     from app.hosts.service_diagnostics import HostDiagnosticsService
     from app.hosts.service_hardware_telemetry import HardwareTelemetryService
@@ -26,8 +23,5 @@ class HostServices:
     resource_telemetry: HostResourceTelemetryService
     diagnostics: HostDiagnosticsService
     host_events: HostEventsService
-    publisher: EventPublisher
     settings: SettingsReader
-    pool: AgentHttpPool
-    circuit_breaker: CircuitBreakerProtocol
     session_factory: async_sessionmaker[AsyncSession]

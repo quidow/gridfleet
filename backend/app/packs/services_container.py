@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.events.protocols import EventPublisher
     from app.packs.protocols import PackDiscoveryProtocol, PackLifecycleProtocol
     from app.packs.services.feature_dispatch import FeatureService
     from app.packs.services.release import PackReleaseService
@@ -27,6 +25,4 @@ class PackServices:
     feature: FeatureService
     discovery: PackDiscoveryProtocol
     storage: PackStorageService
-    publisher: EventPublisher
-    circuit_breaker: CircuitBreakerProtocol
     session_factory: async_sessionmaker[AsyncSession]

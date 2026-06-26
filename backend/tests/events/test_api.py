@@ -75,7 +75,7 @@ async def test_event_catalog_lists_public_emitted_events(client: AsyncClient) ->
 
 async def test_event_stream_filters_types_and_device_ids() -> None:
     event_services = EventServices(  # type: ignore[arg-type]
-        publisher=event_bus, subscriber=event_bus, reader=event_bus, session_factory=None, engine=None
+        publisher=event_bus, subscriber=event_bus, reader=event_bus
     )
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
@@ -104,7 +104,7 @@ async def test_event_stream_filters_types_and_device_ids() -> None:
 
 async def test_event_stream_emits_keepalive_on_timeout() -> None:
     event_services = EventServices(  # type: ignore[arg-type]
-        publisher=event_bus, subscriber=event_bus, reader=event_bus, session_factory=None, engine=None
+        publisher=event_bus, subscriber=event_bus, reader=event_bus
     )
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
@@ -124,7 +124,7 @@ async def test_event_stream_emits_keepalive_on_timeout() -> None:
 @pytest.mark.filterwarnings("ignore:coroutine 'Queue.get' was never awaited:RuntimeWarning")
 async def test_event_stream_unsubscribes_after_client_disconnect() -> None:
     event_services = EventServices(  # type: ignore[arg-type]
-        publisher=event_bus, subscriber=event_bus, reader=event_bus, session_factory=None, engine=None
+        publisher=event_bus, subscriber=event_bus, reader=event_bus
     )
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
@@ -154,8 +154,6 @@ async def test_verification_job_event_stream_emits_initial_summary_and_scoped_up
         publisher=event_bus,
         subscriber=event_bus,
         reader=event_bus,
-        session_factory=session_factory,
-        engine=db_session.bind,
     )
     response = await stream_device_verification_job_events(
         job["job_id"],
@@ -215,8 +213,6 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
         publisher=event_bus,
         subscriber=event_bus,
         reader=event_bus,
-        session_factory=session_factory,
-        engine=db_session.bind,
     )
     response = await stream_device_verification_job_events(
         job["job_id"],
