@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+
+from app.core.service_deps import make_services_getter
 
 if TYPE_CHECKING:
     from app.portability.services_container import PortabilityServices
 
-
-def get_portability_services(request: Request) -> PortabilityServices:
-    return request.app.state.services.portability  # type: ignore[no-any-return]
-
-
+get_portability_services = make_services_getter("portability")
 PortabilityServicesDep = Annotated["PortabilityServices", Depends(get_portability_services)]

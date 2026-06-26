@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+
+from app.core.service_deps import make_services_getter
 
 if TYPE_CHECKING:
     from app.events.services_container import EventServices
 
-
-def get_event_services(request: Request) -> EventServices:
-    """Extract EventServices from the app-level container."""
-    return request.app.state.services.events  # type: ignore[no-any-return]
-
-
+get_event_services = make_services_getter("events")
 EventServicesDep = Annotated["EventServices", Depends(get_event_services)]
