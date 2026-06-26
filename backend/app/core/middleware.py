@@ -84,6 +84,17 @@ class RequestContextMiddleware:
         status_code = 500
         response_started = False
 
+        def _record(status_code: int) -> None:
+            route_path = self._route_path(scope, path)
+            record_http_request(
+                method=method,
+                path=route_path,
+                status_code=status_code,
+                duration_seconds=perf_counter() - started,
+                include_duration=route_path not in _DURATION_EXEMPT_PATHS,
+            )
+            clear_request_context()
+
         async def send_wrapper(message: Message) -> None:
             nonlocal response_started, status_code
             if message["type"] == "http.response.start":
@@ -92,15 +103,7 @@ class RequestContextMiddleware:
                 mutable_headers = MutableHeaders(raw=message.setdefault("headers", []))
                 mutable_headers[REQUEST_ID_HEADER] = request_id
             elif message["type"] == "http.response.body" and not message.get("more_body", False):
-                route_path = self._route_path(scope, path)
-                record_http_request(
-                    method=method,
-                    path=route_path,
-                    status_code=status_code,
-                    duration_seconds=perf_counter() - started,
-                    include_duration=route_path not in _DURATION_EXEMPT_PATHS,
-                )
-                clear_request_context()
+                _record(status_code)
             await send(message)
 
         if shutdown_coordinator.is_shutting_down() and not self._is_health_path(path):
@@ -132,15 +135,7 @@ class RequestContextMiddleware:
             clear_request_context()
             raise
         except Exception:
-            route_path = self._route_path(scope, path)
-            record_http_request(
-                method=method,
-                path=route_path,
-                status_code=500,
-                duration_seconds=perf_counter() - started,
-                include_duration=route_path not in _DURATION_EXEMPT_PATHS,
-            )
-            clear_request_context()
+            _record(500)
             raise
         finally:
             shutdown_coordinator.request_finished()
