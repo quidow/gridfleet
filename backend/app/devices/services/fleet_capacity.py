@@ -342,7 +342,6 @@ class FleetCapacityService:
             total_capacity_slots=total_capacity_slots,
             active_sessions=active_sessions,
             queued_requests=queued_requests,
-            available_capacity_slots=max(total_capacity_slots - active_sessions, 0),
             hosts_total=hosts_total,
             hosts_online=hosts_online,
             devices_total=devices_total,

@@ -423,7 +423,6 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
                 total_capacity_slots=3,
                 active_sessions=1,
                 queued_requests=0,
-                available_capacity_slots=2,
             )
             for index in range(5)
         ]
@@ -433,7 +432,6 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
                 total_capacity_slots=4,
                 active_sessions=2,
                 queued_requests=1,
-                available_capacity_slots=2,
             )
         ]
     )
