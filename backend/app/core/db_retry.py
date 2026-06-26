@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import DBAPIError
 
+from app.core.errors import pg_sqlstate
 from app.core.metrics_recorders import DB_SERIALIZATION_RETRY_TOTAL
 
 if TYPE_CHECKING:
@@ -33,18 +34,8 @@ _DEFAULT_BACKOFF_SEC = 0.1
 
 
 def is_retryable_serialization_error(exc: DBAPIError) -> bool:
-    """True when the DBAPI error chain carries a retryable Postgres sqlstate.
-
-    The asyncpg dialect wraps the driver exception (which carries ``sqlstate``)
-    in adapter layers chained via ``__cause__``; walk the chain rather than
-    assuming a fixed nesting depth.
-    """
-    cause: BaseException | None = exc.orig
-    while cause is not None:
-        if getattr(cause, "sqlstate", None) in _RETRYABLE_SQLSTATES:
-            return True
-        cause = cause.__cause__
-    return False
+    """True when the DBAPI error chain carries a retryable Postgres sqlstate."""
+    return pg_sqlstate(exc) in _RETRYABLE_SQLSTATES
 
 
 async def retry_on_serialization_failure[T](
