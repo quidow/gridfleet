@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import uuid
@@ -12,6 +12,5 @@ if TYPE_CHECKING:
     from app.devices.models import Device
 
 
-@runtime_checkable
 class VerificationEnqueuer(Protocol):
     async def enqueue_for_device(self, db: AsyncSession, device: Device) -> uuid.UUID: ...

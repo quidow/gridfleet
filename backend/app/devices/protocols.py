@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     import uuid
@@ -27,13 +27,11 @@ if TYPE_CHECKING:
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
-@runtime_checkable
 class ReviewProtocol(Protocol):
     async def mark_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
     async def clear_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
 
 
-@runtime_checkable
 class PackDevicePropertiesProvider(Protocol):
     """Narrow cross-domain view of pack discovery needed by the property-refresh loop."""
 
@@ -43,7 +41,6 @@ class PackDevicePropertiesProvider(Protocol):
     ) -> None: ...
 
 
-@runtime_checkable
 class MaintenanceProtocol(Protocol):
     async def enter_maintenance(
         self,
@@ -58,7 +55,6 @@ class MaintenanceProtocol(Protocol):
     async def schedule_device_recovery(self, db: AsyncSession, device_id: uuid.UUID) -> None: ...
 
 
-@runtime_checkable
 class DeviceCrudProtocol(Protocol):
     async def prepare_device_create_payload(
         self, db: AsyncSession, data: DeviceVerificationCreate
@@ -91,7 +87,6 @@ class DeviceCrudProtocol(Protocol):
     async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
 
 
-@runtime_checkable
 class SessionViabilityProbe(Protocol):
     async def run_session_viability_probe(
         self, db: AsyncSession, device: Device, *, checked_by: SessionViabilityCheckedBy
@@ -110,7 +105,6 @@ class SessionViabilityProbe(Protocol):
     ) -> tuple[bool, str | None]: ...
 
 
-@runtime_checkable
 class RunReservationWriter(Protocol):
     async def exclude_device_from_run(
         self,
@@ -125,21 +119,18 @@ class RunReservationWriter(Protocol):
     ) -> TestRun | None: ...
 
 
-@runtime_checkable
 class DeviceCapabilityProtocol(Protocol):
     async def get_device_capabilities(
         self, db: AsyncSession, device: Device, *, active_connection_target: str | None = ...
     ) -> dict[str, Any]: ...
 
 
-@runtime_checkable
 class NodeConvergence(Protocol):
     async def converge_device_now(
         self, device_id: uuid.UUID, *, db: AsyncSession | None = ...
     ) -> AppiumNode | None: ...
 
 
-@runtime_checkable
 class RemoteNodeManager(Protocol):
     async def start_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
     async def stop_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
@@ -148,7 +139,6 @@ class RemoteNodeManager(Protocol):
     ) -> AppiumNode | None: ...
 
 
-@runtime_checkable
 class OperatorNodeLifecycleProtocol(Protocol):
     async def request_start(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
@@ -163,7 +153,6 @@ class OperatorNodeLifecycleProtocol(Protocol):
     ) -> AppiumNode: ...
 
 
-@runtime_checkable
 class HealthFailureHandler(Protocol):
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str: ...
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool: ...
@@ -172,7 +161,6 @@ class HealthFailureHandler(Protocol):
     async def restore_run_after_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool: ...
 
 
-@runtime_checkable
 class DeviceHealthProtocol(Protocol):
     async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None: ...
     async def update_session_viability(

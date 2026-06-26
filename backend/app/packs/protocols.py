@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     import uuid
@@ -16,14 +16,12 @@ if TYPE_CHECKING:
     from app.packs.models import DriverPack, PackState
 
 
-@runtime_checkable
 class FeatureStatusRecorder(Protocol):
     async def record_feature_status(
         self, db: AsyncSession, *, host_id: uuid.UUID, pack_id: str, feature_id: str, ok: bool, detail: str
     ) -> bool: ...
 
 
-@runtime_checkable
 class PackLifecycleProtocol(Protocol):
     async def count_active_work_for_pack(self, db: AsyncSession, pack_id: str) -> dict[str, int]: ...
     async def try_complete_drain(self, db: AsyncSession, pack_id: str) -> DriverPack: ...
@@ -32,7 +30,6 @@ class PackLifecycleProtocol(Protocol):
     ) -> DriverPack: ...
 
 
-@runtime_checkable
 class PackDiscoveryProtocol(Protocol):
     async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]: ...
     async def discover_devices(self, session: AsyncSession, host: Host) -> DiscoveryResult: ...
@@ -50,12 +47,10 @@ class PackDiscoveryProtocol(Protocol):
     ) -> DiscoveryConfirmResult: ...
 
 
-@runtime_checkable
 class DeviceSerializer(Protocol):
     async def serialize_device(self, db: AsyncSession, device: Device) -> dict[str, Any]: ...
 
 
-@runtime_checkable
 class DeviceIdentityGuard(Protocol):
     async def ensure_device_payload_identity_available(
         self,

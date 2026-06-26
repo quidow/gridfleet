@@ -21,13 +21,6 @@ from tests.helpers import create_device_record
 CAPS_V2 = {"orchestration_contract_version": 2}
 
 
-def test_host_crud_service_satisfies_protocol() -> None:
-    from app.hosts.protocols import HostCrudProtocol
-    from app.hosts.service import HostCrudService
-
-    assert issubclass(HostCrudService, HostCrudProtocol)
-
-
 def test_coerce_missing_prerequisites_filters_duplicates_and_invalid_items() -> None:
     assert host_service._coerce_missing_prerequisites(["adb", "adb", 1, "java"]) == ["adb", "java"]
     assert host_service._coerce_missing_prerequisites("bad") is None

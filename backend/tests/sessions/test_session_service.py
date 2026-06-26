@@ -21,7 +21,6 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from app.sessions.protocols import SessionCrudProtocol
 from app.sessions.service import SessionCrudService, _session_ended_severity
 from tests.fakes import build_review_service
 from tests.helpers import create_device_record, settle_after_commit_tasks
@@ -444,10 +443,6 @@ async def test_device_has_running_session_counts_pending(
     )
     await db_session.commit()
     assert await device_has_running_session(db_session, device.id) is True
-
-
-def test_session_crud_service_satisfies_protocol() -> None:
-    assert issubclass(SessionCrudService, SessionCrudProtocol)
 
 
 async def test_update_session_status_records_session_ended_event(

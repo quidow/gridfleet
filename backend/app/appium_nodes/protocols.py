@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import uuid
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from app.devices.models import Device
 
 
-@runtime_checkable
 class ReconcilerProtocol(Protocol):
     async def run_cycle(self, db: AsyncSession) -> None: ...
     async def converge_device_now(
@@ -23,7 +22,6 @@ class ReconcilerProtocol(Protocol):
     ) -> AppiumNode | None: ...
 
 
-@runtime_checkable
 class DeviceRecoveryControl(Protocol):
     async def record_control_action(
         self,
@@ -48,7 +46,6 @@ class DeviceRecoveryControl(Protocol):
     ) -> bool: ...
 
 
-@runtime_checkable
 class OperatorNodeManager(Protocol):
     async def request_start(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
@@ -63,7 +60,6 @@ class OperatorNodeManager(Protocol):
     ) -> AppiumNode: ...
 
 
-@runtime_checkable
 class DeviceNodeHealthWriter(Protocol):
     async def apply_node_state_transition(
         self,

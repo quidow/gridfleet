@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import uuid
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from app.runs.models import TestRun
 
 
-@runtime_checkable
 class RunReleaseProtocol(Protocol):
     async def release_devices(
         self, db: AsyncSession, run: TestRun, *, commit: bool = True, terminate_grid_sessions: bool = False
@@ -34,7 +33,6 @@ class RunReleaseProtocol(Protocol):
     async def terminate_run_sessions_and_probe_survivors(self, db: AsyncSession, run: TestRun) -> set[uuid.UUID]: ...
 
 
-@runtime_checkable
 class MaintenanceWriter(Protocol):
     async def enter_maintenance(
         self,
@@ -47,12 +45,10 @@ class MaintenanceWriter(Protocol):
     ) -> Device: ...
 
 
-@runtime_checkable
 class DeviceDeferredStop(Protocol):
     async def complete_deferred_stop_if_session_ended(self, db: AsyncSession, device: Device) -> object: ...
 
 
-@runtime_checkable
 class DeviceLifecycleFailureWriter(Protocol):
     async def exclude_run_if_needed(
         self,
@@ -68,7 +64,6 @@ class DeviceLifecycleFailureWriter(Protocol):
     ) -> None: ...
 
 
-@runtime_checkable
 class RunReservationProtocol(Protocol):
     async def exclude_device_from_run(
         self,
