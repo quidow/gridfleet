@@ -704,7 +704,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
         publisher=event_bus,
-        settings=_gs1,
         crud=DeviceCrudService(settings=_gs1, identity=DeviceIdentityConflictService(), publisher=event_bus),
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
@@ -714,7 +713,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     assert (
         await device_group_service.DeviceGroupsService(
             publisher=event_bus,
-            settings=_gs2,
             crud=DeviceCrudService(settings=_gs2, identity=DeviceIdentityConflictService(), publisher=event_bus),
         ).delete_group(missing_group_db, uuid.uuid4())
         is False

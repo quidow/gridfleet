@@ -186,6 +186,5 @@ class DeviceHealthProtocol(Protocol):
         health_running: bool | None | UnsetType = ...,
         health_state: str | None | UnsetType = ...,
         mark_offline: bool = ...,
-        reason: str | None = ...,
     ) -> None: ...
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None: ...

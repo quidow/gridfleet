@@ -14,14 +14,12 @@ from app.devices.services.health_view import (
     build_public_summary,
     device_allows_allocation,
     merged_liveness,
-    node_running_signal,
 )
 from app.devices.services.intent import IntentService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
     from app.events.protocols import EventPublisher
 
@@ -31,12 +29,6 @@ __all__ = [
     "device_allows_allocation",
     "merged_liveness",
 ]
-
-
-def _node_reason_label(node: AppiumNode) -> str:
-    if node.health_state:
-        return node.health_state
-    return "running" if node_running_signal(node) else "stopped"
 
 
 async def _lock(db: AsyncSession, device: Device) -> Device | None:
@@ -140,7 +132,6 @@ class DeviceHealthService:
         health_running: bool | None | UnsetType = UNSET,
         health_state: str | None | UnsetType = UNSET,
         mark_offline: bool = True,
-        reason: str | None = None,
     ) -> None:
         locked = await _lock(db, device)
         if locked is None:

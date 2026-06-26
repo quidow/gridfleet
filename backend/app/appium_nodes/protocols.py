@@ -73,5 +73,4 @@ class DeviceNodeHealthWriter(Protocol):
         health_running: bool | None | UnsetType = ...,
         health_state: str | None | UnsetType = ...,
         mark_offline: bool = ...,
-        reason: str | None = ...,
     ) -> None: ...

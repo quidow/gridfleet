@@ -301,7 +301,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_fake_publisher, settings=_fake_settings, crud=_fake_crud),
+            groups=DeviceGroupsService(publisher=_fake_publisher, crud=_fake_crud),
             maintenance=_fake_maintenance,
             bulk=BulkOperationsService(
                 publisher=_fake_publisher,

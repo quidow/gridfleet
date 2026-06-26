@@ -79,7 +79,5 @@ def derive_pack_identity(
     connection_target, ip_address)`` with all resolved values filled in.
     """
     resolved_value = (identity_value or connection_target or ip_address or "").strip()
-    if not resolved_value:
-        resolved_value = ""
     resolved_target = connection_target or ip_address or resolved_value
     return identity_scheme, identity_scope, resolved_value, resolved_target, ip_address

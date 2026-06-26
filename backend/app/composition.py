@@ -203,7 +203,7 @@ def compose_app(
         health=device_health_svc,
         pool=http_pool,
     )
-    groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc, crud=crud_svc)
+    groups_svc = DeviceGroupsService(publisher=bus, crud=crud_svc)
     bulk_svc = BulkOperationsService(
         publisher=bus,
         settings=settings_svc,

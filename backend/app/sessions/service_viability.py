@@ -91,12 +91,6 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 # state (``busy``, ``maintenance``) is never probed.
 _RECOVERY_PROBE_ADMISSIBLE_STATES = frozenset({DeviceOperationalState.offline, DeviceOperationalState.verifying})
 
-_VIABILITY_PROBE_SOURCE_MAP: dict[SessionViabilityCheckedBy, ProbeSource] = {
-    SessionViabilityCheckedBy.scheduled: ProbeSource.scheduled,
-    SessionViabilityCheckedBy.manual: ProbeSource.manual,
-    SessionViabilityCheckedBy.recovery: ProbeSource.recovery,
-    SessionViabilityCheckedBy.verification: ProbeSource.verification,
-}
 logger = get_logger(__name__)
 LOOP_NAME = "session_viability"
 is_ready_for_use_async = device_readiness.is_ready_for_use_async
@@ -345,7 +339,7 @@ class SessionViabilityService:
                 device=device,
                 attempted_at=_parse_timestamp(attempted_at) or now_utc(),
                 result=grid_probe_response_to_result((ok, error)),
-                source=_VIABILITY_PROBE_SOURCE_MAP[checked_by],
+                source=ProbeSource(checked_by),
                 capabilities=capabilities,
             )
 

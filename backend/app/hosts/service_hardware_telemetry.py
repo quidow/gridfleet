@@ -12,8 +12,8 @@ from app.core.background_loop import BackgroundLoop
 from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
-from app.core.observability import get_logger, parse_timestamp
-from app.core.timeutil import now_utc
+from app.core.observability import get_logger
+from app.core.timeutil import now_utc, parse_iso
 from app.devices.models import (
     Device,
     DeviceEventType,
@@ -244,7 +244,7 @@ class HardwareTelemetryService:
         device.charging_state = _coerce_charging_state(sample.get("charging_state"))
         device.hardware_telemetry_support_status = _coerce_support_status(sample.get("support_status"))
 
-        reported_at = parse_timestamp(sample.get("reported_at"))
+        reported_at = parse_iso(sample.get("reported_at"))
         device.hardware_telemetry_reported_at = reported_at or now_utc()
 
         previous_status = current_hardware_health_status(device)

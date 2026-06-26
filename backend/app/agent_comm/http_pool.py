@@ -78,10 +78,6 @@ class _DeferredEntry:
     close_after: float
 
 
-def _timeout_seconds(timeout: float | int) -> float:
-    return float(timeout)
-
-
 class AgentHttpPool:
     def __init__(self, *, agent_auth: httpx.BasicAuth | None = None) -> None:
         self._entries: dict[tuple[str, int], _PooledEntry] = {}
@@ -114,7 +110,7 @@ class AgentHttpPool:
             max_keepalive=int(max_keepalive),
             keepalive_expiry=float(keepalive_expiry),
         )
-        timeout_seconds = _timeout_seconds(timeout)
+        timeout_seconds = float(timeout)
 
         # Collect anything that needs aclose()ing outside the lock so we
         # do not block other callers on network teardown work.

@@ -450,7 +450,6 @@ async def _handle_restart_failure(
         health_running=False,
         health_state=degraded_state,
         mark_offline=False,
-        reason=error_message,
     )
 
 

@@ -10,8 +10,8 @@ from sqlalchemy import func, select, text
 from app.agent_comm import operations as agent_operations
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
-from app.core.observability import get_logger, parse_timestamp
-from app.core.timeutil import now_utc
+from app.core.observability import get_logger
+from app.core.timeutil import now_utc, parse_iso
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
 
@@ -87,7 +87,7 @@ class HostResourceTelemetryService:
         host: Host,
         sample: dict[str, Any],
     ) -> HostResourceSample:
-        recorded_at = parse_timestamp(sample.get("recorded_at")) or now_utc()
+        recorded_at = parse_iso(sample.get("recorded_at")) or now_utc()
         row = HostResourceSample(
             host_id=host.id,
             recorded_at=recorded_at,

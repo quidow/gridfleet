@@ -521,10 +521,6 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
     return node
 
 
-# Keep the private alias for internal callers.
-_verification_intent_source = verification_intent_source
-
-
 async def _register_verification_node_intent(
     db: AsyncSession, device: Device, *, settings: SettingsReader, publisher: EventPublisher
 ) -> None:
@@ -576,7 +572,7 @@ async def _register_verification_node_intent(
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source=_verification_intent_source(device.id),
+                source=verification_intent_source(device.id),
                 axis=NODE_PROCESS,
                 payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
                 expires_at=deadline,
@@ -597,7 +593,7 @@ async def _revoke_verification_node_intent(db: AsyncSession, device: Device, *, 
     """
     await IntentService(db).revoke_intents_and_reconcile(
         device_id=device.id,
-        sources=[_verification_intent_source(device.id)],
+        sources=[verification_intent_source(device.id)],
         publisher=publisher,
     )
 

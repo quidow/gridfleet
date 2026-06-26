@@ -24,7 +24,6 @@ def _svc() -> DeviceGroupsService:
     _settings = FakeSettingsReader({})
     return DeviceGroupsService(
         publisher=event_bus,
-        settings=_settings,
         crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
     )
 

@@ -93,9 +93,9 @@ def test_configure_logging_installs_structlog_when_handlers_preexist(monkeypatch
 def test_parse_timestamp_and_loop_heartbeat_freshness() -> None:
     now = datetime.now(UTC)
     snapshot = {"next_expected_at": (now + timedelta(seconds=5)).isoformat()}
-    assert observability.parse_timestamp(snapshot["next_expected_at"]) is not None
-    assert observability.parse_timestamp("") is None
-    assert observability.parse_timestamp("not-a-date") is None
+    assert observability.parse_iso(snapshot["next_expected_at"]) is not None
+    assert observability.parse_iso("") is None
+    assert observability.parse_iso("not-a-date") is None
     assert observability.loop_heartbeat_fresh(snapshot, now=now) is True
     stale = {"next_expected_at": (now - timedelta(minutes=1)).isoformat()}
     assert observability.loop_heartbeat_fresh(stale, now=now) is False
@@ -129,7 +129,7 @@ def test_update_loop_snapshot_merges_previous_and_truncates_errors() -> None:
         "last_started_at": "old",
         "custom": "keep",
     }
-    observability._update_loop_snapshot(
+    observability._heartbeat_buffer.update(
         "heartbeat",
         interval_seconds=15.0,
         started_at=datetime(2024, 1, 1, tzinfo=UTC),
