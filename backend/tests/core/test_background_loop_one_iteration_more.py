@@ -193,7 +193,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_fc_publisher, settings=_fc_settings, crud=_fc_crud),
+            groups=DeviceGroupsService(publisher=_fc_publisher, crud=_fc_crud),
             maintenance=_fc_maintenance,
             bulk=BulkOperationsService(
                 publisher=_fc_publisher,

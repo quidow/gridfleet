@@ -177,12 +177,6 @@ def clear_request_context() -> None:
     structlog.contextvars.clear_contextvars()
 
 
-def parse_timestamp(raw: object) -> datetime | None:
-    # Thin re-export of the shared ISO parser (Q10); kept under this name so the host
-    # telemetry services that import it from observability do not change.
-    return parse_iso(raw)
-
-
 def loop_heartbeat_fresh(
     snapshot: dict[str, Any],
     *,
@@ -197,7 +191,7 @@ def loop_heartbeat_fresh(
     on-schedule is never reported stale just because the flusher has not yet
     persisted the latest ``next_expected_at``.
     """
-    next_expected_at = parse_timestamp(snapshot.get("next_expected_at"))
+    next_expected_at = parse_iso(snapshot.get("next_expected_at"))
     if next_expected_at is None:
         return False
     current_time = now or now_utc()
@@ -292,34 +286,13 @@ class _HeartbeatBuffer:
 _heartbeat_buffer = _HeartbeatBuffer()
 
 
-def _update_loop_snapshot(
-    loop_name: str,
-    *,
-    interval_seconds: float,
-    started_at: datetime | None = None,
-    succeeded_at: datetime | None = None,
-    duration_seconds: float | None = None,
-    error_at: datetime | None = None,
-    error: str | None = None,
-) -> None:
-    _heartbeat_buffer.update(
-        loop_name,
-        interval_seconds=interval_seconds,
-        started_at=started_at,
-        succeeded_at=succeeded_at,
-        duration_seconds=duration_seconds,
-        error_at=error_at,
-        error=error,
-    )
-
-
 async def schedule_background_loop(loop_name: str, interval_seconds: float) -> None:
     """Seed an in-memory snapshot for ``loop_name`` so a flush picks it up.
 
     Kept ``async`` for call-site backward compatibility with callers that
     historically awaited a DB write.
     """
-    _update_loop_snapshot(loop_name, interval_seconds=interval_seconds)
+    _heartbeat_buffer.update(loop_name, interval_seconds=interval_seconds)
 
 
 async def flush_background_loop_snapshots(
@@ -385,7 +358,7 @@ class BackgroundLoopObservation:
     async def cycle(self) -> AsyncGenerator[None]:
         started_at = now_utc()
         started_monotonic = perf_counter()
-        _update_loop_snapshot(
+        _heartbeat_buffer.update(
             self.loop_name,
             interval_seconds=self.interval_seconds,
             started_at=started_at,
@@ -400,7 +373,7 @@ class BackgroundLoopObservation:
             except Exception as exc:
                 finished_at = now_utc()
                 duration = perf_counter() - started_monotonic
-                _update_loop_snapshot(
+                _heartbeat_buffer.update(
                     self.loop_name,
                     interval_seconds=self.interval_seconds,
                     started_at=started_at,
@@ -414,7 +387,7 @@ class BackgroundLoopObservation:
             else:
                 finished_at = now_utc()
                 duration = perf_counter() - started_monotonic
-                _update_loop_snapshot(
+                _heartbeat_buffer.update(
                     self.loop_name,
                     interval_seconds=self.interval_seconds,
                     started_at=started_at,

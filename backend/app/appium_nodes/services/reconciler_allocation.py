@@ -94,12 +94,8 @@ async def reserve_appium_port(
     raise NodePortConflictError(f"Appium port {port} is already reserved on host {host_id}")
 
 
-release_managed = resource_claims.release_managed
-
-
 __all__ = [
     "APPIUM_PORT_CAPABILITY",
     "candidate_ports",
-    "release_managed",
     "reserve_appium_port",
 ]

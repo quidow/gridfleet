@@ -77,7 +77,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_1, settings=_svc_settings_1, crud=_svc_crud_1),
+            groups=DeviceGroupsService(publisher=_svc_pub_1, crud=_svc_crud_1),
             maintenance=_svc_maint_1,
             bulk=BulkOperationsService(
                 publisher=_svc_pub_1,
@@ -139,7 +139,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_2, settings=_svc_settings_2, crud=_svc_crud_2),
+            groups=DeviceGroupsService(publisher=_svc_pub_2, crud=_svc_crud_2),
             maintenance=_svc_maint_2,
             bulk=BulkOperationsService(
                 publisher=_svc_pub_2,
@@ -271,7 +271,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_3, settings=_svc_settings_3, crud=_svc_crud_3),
+            groups=DeviceGroupsService(publisher=_svc_pub_3, crud=_svc_crud_3),
             maintenance=_svc_maint_3,
             bulk=BulkOperationsService(
                 publisher=_svc_pub_3,
@@ -383,7 +383,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_4, settings=_svc_settings_4, crud=_svc_crud_4),
+            groups=DeviceGroupsService(publisher=_svc_pub_4, crud=_svc_crud_4),
             maintenance=_svc_maint_4,
             bulk=BulkOperationsService(
                 publisher=_svc_pub_4,

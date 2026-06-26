@@ -22,7 +22,6 @@ def _svc(settings: object | None = None) -> DeviceGroupsService:
     _settings = settings or FakeSettingsReader({})
     return DeviceGroupsService(
         publisher=event_bus,
-        settings=_settings,
         crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
     )
 
@@ -84,7 +83,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     mock_crud = AsyncMock()
     mock_crud.count_devices_by_filters = AsyncMock(return_value=5)
     mock_crud.list_devices_by_filters = AsyncMock(return_value=[device])
-    svc_mocked = DeviceGroupsService(publisher=event_bus, settings=FakeSettingsReader({}), crud=mock_crud)
+    svc_mocked = DeviceGroupsService(publisher=event_bus, crud=mock_crud)
     groups = await svc_mocked.list_groups(db_session)
     detail = await svc_mocked.get_group(db_session, group.id)
     device_ids = await svc_mocked.get_group_device_ids(db_session, group.id)
@@ -108,7 +107,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     assert updated.filters == {"platform_id": "ios"}
     mock_crud2 = AsyncMock()
     mock_crud2.list_devices_by_filters = AsyncMock(return_value=[device])
-    svc_mocked2 = DeviceGroupsService(publisher=event_bus, settings=FakeSettingsReader({}), crud=mock_crud2)
+    svc_mocked2 = DeviceGroupsService(publisher=event_bus, crud=mock_crud2)
     assert await svc_mocked2.get_group_device_ids(db_session, group.id) == [device.id]
 
 

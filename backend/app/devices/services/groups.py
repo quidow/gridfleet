@@ -14,14 +14,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.events.protocols import EventPublisher
 
 
 class DeviceGroupsService:
-    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader, crud: DeviceCrudProtocol) -> None:
+    def __init__(self, *, publisher: EventPublisher, crud: DeviceCrudProtocol) -> None:
         self._publisher = publisher
         self._crud = crud
 

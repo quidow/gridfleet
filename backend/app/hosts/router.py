@@ -17,8 +17,8 @@ from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404
 from app.core.http_errors import found_or_404
 from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
-from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
+from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.events.dependencies import EventServicesDep
 from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning

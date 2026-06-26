@@ -94,7 +94,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 fleet_capacity=FleetCapacityService(),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
-                groups=DeviceGroupsService(publisher=event_bus, settings=settings_service, crud=_crud_svc),
+                groups=DeviceGroupsService(publisher=event_bus, crud=_crud_svc),
                 maintenance=_maintenance_svc,
                 bulk=BulkOperationsService(
                     publisher=event_bus,

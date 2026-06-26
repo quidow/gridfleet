@@ -363,7 +363,6 @@ async def test_apply_node_state_transition_mark_offline_false_preserves_hysteres
         health_running=False,
         health_state="error",
         mark_offline=False,
-        reason="below threshold",
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])

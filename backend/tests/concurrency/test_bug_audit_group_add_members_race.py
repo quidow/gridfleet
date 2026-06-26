@@ -87,7 +87,6 @@ async def test_add_members_races_concurrent_duplicate_insert(
             _settings = FakeSettingsReader({})
             await DeviceGroupsService(
                 publisher=event_bus,
-                settings=_settings,
                 crud=DeviceCrudService(
                     settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus
                 ),

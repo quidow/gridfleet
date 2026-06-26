@@ -306,7 +306,7 @@ def reservation_gating_run_id(reservation_run: TestRun | None, device_id: uuid.U
     entry).
 
     Single source for both the grid allocator's reservation gate
-    (``app.grid.allocation._reservation_run_id``) and the read-side allocatability
+    (called directly in ``app.grid.allocation``) and the read-side allocatability
     projection (``app.devices.services.allocatability``), so a UI "reserved"/
     ``allocatable`` signal cannot contradict what the allocator actually refuses.
     """

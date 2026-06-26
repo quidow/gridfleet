@@ -2,13 +2,7 @@ from app.runs.service_query import (
     build_run_read,
 )
 from app.runs.service_reservation import (
-    _reservation_entry_for_device as _reserved_entry_for_device,
-)
-from app.runs.service_reservation import (
     _reservation_entry_is_excluded as _reserved_entry_is_excluded,
-)
-from app.runs.service_reservation import (
-    _reservation_entry_matches as _reserved_entry_matches,
 )
 from app.runs.service_reservation import (
     get_device_reservation,
@@ -20,15 +14,9 @@ from app.runs.service_reservation import (
     reservation_entry_is_excluded,
     reservation_gating_run_id,
 )
-from app.runs.service_reservation import (
-    get_run_for_update as _get_run_for_update,
-)
 
 __all__ = [
-    "_get_run_for_update",
-    "_reserved_entry_for_device",
     "_reserved_entry_is_excluded",
-    "_reserved_entry_matches",
     "build_run_read",
     "get_device_reservation",
     "get_device_reservation_map",

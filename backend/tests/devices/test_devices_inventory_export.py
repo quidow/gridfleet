@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.portability.schemas import (
-    DEFAULT_INVENTORY_COLUMNS,
     InventoryColumn,
     parse_columns_param,
 )
@@ -71,10 +70,6 @@ def test_parse_columns_param_validates_each_token() -> None:
 def test_parse_columns_param_rejects_unknown() -> None:
     with pytest.raises(ValueError):
         parse_columns_param("name,nope")
-
-
-def test_default_inventory_columns_is_subset_of_enum() -> None:
-    assert set(DEFAULT_INVENTORY_COLUMNS) <= set(InventoryColumn)
 
 
 @pytest.mark.asyncio

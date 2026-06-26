@@ -43,7 +43,7 @@ from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs import service as run_service
-from app.runs.models import TERMINAL_STATES, TestRun
+from app.runs.models import TERMINAL_STATES
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -257,21 +257,6 @@ def _ticket_passes_reservation(ticket_run_id: uuid.UUID | None, reservation_run_
     ticket may take only devices reserved for its run; a free ticket may take
     only unreserved devices. No spillover in either direction."""
     return ticket_run_id == reservation_run_id
-
-
-def _candidate_can_take(
-    candidate: dict[str, Any],
-    stereotype: dict[str, Any],
-    ticket_run_id: uuid.UUID | None,
-    reservation_run_id: uuid.UUID | None,
-) -> bool:
-    """Shared two-step gate (harness Q14): does *candidate* match the device's
-    *stereotype* AND does its ticket clear the device's reservation state? Used
-    by both ``try_allocate`` (to claim) and ``_older_waiter_blocks`` (the FIFO
-    veto), which must apply identical admission rules."""
-    if not candidate_matches_stereotype(candidate, stereotype):
-        return False
-    return _ticket_passes_reservation(ticket_run_id, reservation_run_id)
 
 
 class AllocationService:
@@ -599,9 +584,12 @@ class AllocationService:
             if stereotype is None:
                 stereotype = await self._stereotype_provider(db, device, template_cache=template_cache)
                 stereotype_cache[device.id] = stereotype
-            reservation_run_id = self._reservation_run_id(reservation_map.get(device.id), device.id)
+            reservation_run_id = run_service.reservation_gating_run_id(reservation_map.get(device.id), device.id)
             for candidate in candidates:
-                if not _candidate_can_take(candidate, stereotype, ticket.run_id, reservation_run_id):
+                if not (
+                    candidate_matches_stereotype(candidate, stereotype)
+                    and _ticket_passes_reservation(ticket.run_id, reservation_run_id)
+                ):
                     continue
                 # FIFO veto, reservation-aware: only count older waiters that could
                 # actually take THIS device — i.e. whose ticket clears the same
@@ -668,21 +656,6 @@ class AllocationService:
         devices = list((await db.execute(stmt)).scalars().all())
         GRID_ELIGIBLE_DEVICES.set(len(devices))
         return devices
-
-    @staticmethod
-    def _reservation_run_id(reservation_run: TestRun | None, device_id: uuid.UUID) -> uuid.UUID | None:
-        """Return the reservation's run id for *device_id*, or ``None`` if the
-        device carries no admitting reservation (open to any ticket).
-
-        Pure projection over the run loaded once by ``get_device_reservation_map``: a
-        live (non-terminal), non-excluded reservation gates the device to its owning
-        run (spec §3). The reservation is honoured from run creation (`preparing`)
-        onward — not only once `active` — so the run can take ITS reserved devices
-        during preparation and free tickets cannot steal them in that window.
-        Anything else (no reservation, terminal run, excluded entry) leaves it
-        unreserved.
-        """
-        return run_service.reservation_gating_run_id(reservation_run, device_id)
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket

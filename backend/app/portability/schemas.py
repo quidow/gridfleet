@@ -159,18 +159,6 @@ class InventoryColumn(enum.StrEnum):
     VERIFICATION_DEVICE_CHECKS_CHECKED_AT = "verification.device_checks_checked_at"
 
 
-DEFAULT_INVENTORY_COLUMNS = (
-    InventoryColumn.NAME,
-    InventoryColumn.HOST_HOSTNAME,
-    InventoryColumn.IDENTITY_VALUE,
-    InventoryColumn.PACK_ID,
-    InventoryColumn.PLATFORM_ID,
-    InventoryColumn.OS_VERSION,
-    InventoryColumn.OPERATIONAL_STATE,
-    InventoryColumn.VERIFICATION_VERIFIED_AT,
-)
-
-
 _VALID_VALUES = {c.value for c in InventoryColumn}
 
 

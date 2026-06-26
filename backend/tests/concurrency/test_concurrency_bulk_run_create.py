@@ -98,7 +98,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 fleet_capacity=FleetCapacityService(),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
-                groups=DeviceGroupsService(publisher=event_bus, settings=settings_service, crud=_crud_svc),
+                groups=DeviceGroupsService(publisher=event_bus, crud=_crud_svc),
                 maintenance=_maintenance_svc,
                 bulk=BulkOperationsService(
                     publisher=event_bus,

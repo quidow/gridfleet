@@ -170,7 +170,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             property_refresh=mock_property_refresh_svc,
-            groups=DeviceGroupsService(publisher=_pr_publisher, settings=_pr_settings, crud=_pr_crud),
+            groups=DeviceGroupsService(publisher=_pr_publisher, crud=_pr_crud),
             maintenance=_pr_maintenance,
             bulk=BulkOperationsService(
                 publisher=_pr_publisher,
