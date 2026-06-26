@@ -48,6 +48,7 @@ from app.sessions.models import Session
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,6 +99,26 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
         self._cycle += 1
 
 
+async def _reconcile_commit_deliver(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
+    pool: AgentHttpPool | None = None,
+    packs: dict[str, DriverPack] | None = None,
+) -> None:
+    if packs is not None:
+        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
+    else:
+        await reconcile_device(db, device_id, publisher=publisher)
+    await db.commit()
+    await deliver_agent_reconfigures(
+        db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+    )
+
+
 async def run_device_intent_reconciler_once(
     db: AsyncSession,
     *,
@@ -117,9 +138,7 @@ async def run_device_intent_reconciler_once(
     )
     precondition_affected = await reconcile_unsatisfied_preconditions(db)
     for affected_id in sorted(precondition_affected):
-        await reconcile_device(db, affected_id, publisher=publisher)
-        await db.commit()
-        await deliver_agent_reconfigures(
+        await _reconcile_commit_deliver(
             db, affected_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
     if cycle % full_scan_every == 0:
@@ -169,10 +188,14 @@ async def _reconcile_all_devices_once(
         pack_ids = (await db.execute(select(Device.pack_id).where(Device.id.in_(scan_ids)))).scalars().all()
         packs = await load_packs_by_ids(db, {pid for pid in pack_ids if pid})
     for device_id in scan_ids:
-        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
-        await db.commit()
-        await deliver_agent_reconfigures(
-            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        await _reconcile_commit_deliver(
+            db,
+            device_id,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
+            publisher=publisher,
+            pool=pool,
+            packs=packs,
         )
 
 
@@ -235,9 +258,7 @@ async def _reconcile_expired_intents(
         return
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
     for device_id in sorted(set(device_ids)):
-        await reconcile_device(db, device_id, publisher=publisher)
-        await db.commit()
-        await deliver_agent_reconfigures(
+        await _reconcile_commit_deliver(
             db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
 
@@ -346,9 +367,7 @@ async def _reconcile_terminal_run_intents(
         delete(DeviceIntent).where(DeviceIntent.run_id.is_not(None)).where(DeviceIntent.run_id.in_(terminal_run_subq))
     )
     for device_id in sorted(set(device_ids)):
-        await reconcile_device(db, device_id, publisher=publisher)
-        await db.commit()
-        await deliver_agent_reconfigures(
+        await _reconcile_commit_deliver(
             db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
 
@@ -576,6 +595,17 @@ async def _apply_reservation_decision(db: AsyncSession, device_id: uuid.UUID, de
         await _clear_reservation_exclusion(db, reservation, decision.reason)
 
 
+def _exclusion_snapshot(
+    *, excluded: bool, exclusion_reason: str | None, excluded_until: datetime | None, cooldown_count: int
+) -> dict[str, object]:
+    return {
+        "excluded": excluded,
+        "exclusion_reason": exclusion_reason,
+        "excluded_until": excluded_until.isoformat() if excluded_until else None,
+        "cooldown_count": cooldown_count,
+    }
+
+
 async def _update_reservation_exclusion(
     db: AsyncSession,
     reservation: DeviceReservation,
@@ -595,46 +625,36 @@ async def _update_reservation_exclusion(
     )
     if not changed:
         return
-    old = {
-        "excluded": reservation.excluded,
-        "exclusion_reason": reservation.exclusion_reason,
-        "excluded_until": reservation.excluded_until.isoformat() if reservation.excluded_until else None,
-        "cooldown_count": reservation.cooldown_count,
-    }
+    old = _exclusion_snapshot(
+        excluded=reservation.excluded,
+        exclusion_reason=reservation.exclusion_reason,
+        excluded_until=reservation.excluded_until,
+        cooldown_count=reservation.cooldown_count,
+    )
     reservation.excluded = True
     reservation.exclusion_reason = decision.exclusion_reason
     reservation.excluded_until = decision.expires_at
     reservation.cooldown_count = next_cooldown_count
     if reservation.excluded_at is None:
         reservation.excluded_at = now_utc()
-    await record_event(
-        db,
-        reservation.device_id,
-        DeviceEventType.desired_state_changed,
-        {
-            "field": "reservation_exclusion",
-            "old_value": old,
-            "new_value": {
-                "excluded": reservation.excluded,
-                "exclusion_reason": reservation.exclusion_reason,
-                "excluded_until": reservation.excluded_until.isoformat() if reservation.excluded_until else None,
-                "cooldown_count": reservation.cooldown_count,
-            },
-            "caller": "intent_reconciler",
-            "reason": decision.reason,
-        },
+    new = _exclusion_snapshot(
+        excluded=reservation.excluded,
+        exclusion_reason=reservation.exclusion_reason,
+        excluded_until=reservation.excluded_until,
+        cooldown_count=reservation.cooldown_count,
     )
+    await _record_field_change(db, reservation.device_id, "reservation_exclusion", old, new, decision.reason)
 
 
 async def _clear_reservation_exclusion(db: AsyncSession, reservation: DeviceReservation, reason: str) -> None:
     if not reservation.excluded and reservation.exclusion_reason is None and reservation.excluded_until is None:
         return
-    old = {
-        "excluded": reservation.excluded,
-        "exclusion_reason": reservation.exclusion_reason,
-        "excluded_until": reservation.excluded_until.isoformat() if reservation.excluded_until else None,
-        "cooldown_count": reservation.cooldown_count,
-    }
+    old = _exclusion_snapshot(
+        excluded=reservation.excluded,
+        exclusion_reason=reservation.exclusion_reason,
+        excluded_until=reservation.excluded_until,
+        cooldown_count=reservation.cooldown_count,
+    )
     reservation.excluded = False
     reservation.exclusion_reason = None
     reservation.excluded_until = None
@@ -643,23 +663,13 @@ async def _clear_reservation_exclusion(db: AsyncSession, reservation: DeviceRese
     # of the reservation, so the escalation threshold is reachable even when
     # the cooldown TTL keeps lapsing between flakes. The counter is zeroed
     # only when the reservation is released or explicitly restored.
-    await record_event(
-        db,
-        reservation.device_id,
-        DeviceEventType.desired_state_changed,
-        {
-            "field": "reservation_exclusion",
-            "old_value": old,
-            "new_value": {
-                "excluded": False,
-                "exclusion_reason": None,
-                "excluded_until": None,
-                "cooldown_count": reservation.cooldown_count,
-            },
-            "caller": "intent_reconciler",
-            "reason": reason,
-        },
+    new = _exclusion_snapshot(
+        excluded=reservation.excluded,
+        exclusion_reason=reservation.exclusion_reason,
+        excluded_until=reservation.excluded_until,
+        cooldown_count=reservation.cooldown_count,
     )
+    await _record_field_change(db, reservation.device_id, "reservation_exclusion", old, new, reason)
 
 
 async def _stage_agent_reconfigure(db: AsyncSession, node: AppiumNode) -> None:
