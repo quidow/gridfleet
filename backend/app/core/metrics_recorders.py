@@ -230,8 +230,8 @@ def record_background_loop_error(loop_name: str, duration_seconds: float) -> Non
 def record_background_loop_overrun(loop_name: str, duration_seconds: float, *, interval_seconds: float) -> None:
     """Count a cycle that missed its cadence (took longer than its interval).
 
-    ``interval_seconds <= 0``
-    (doorbell-woken loops with no fixed cadence) never counts as an overrun.
+    When ``interval_seconds <= 0`` (doorbell-woken loops with no fixed cadence), the cycle is never counted as an
+    overrun.
     """
     if interval_seconds > 0 and duration_seconds > interval_seconds:
         BACKGROUND_LOOP_OVERRUN_TOTAL.labels(loop_name=loop_name).inc()
