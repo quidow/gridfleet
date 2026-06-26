@@ -19,7 +19,6 @@ class AnalyticsCapacitySnapshot(Base):
     total_capacity_slots: Mapped[int] = mapped_column(Integer, nullable=False)
     active_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
     queued_requests: Mapped[int] = mapped_column(Integer, nullable=False)
-    available_capacity_slots: Mapped[int] = mapped_column(Integer, nullable=False)
     hosts_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     hosts_online: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     devices_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

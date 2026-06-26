@@ -17,10 +17,18 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.hosts.schemas import HostCreate, HostRegister
+    from app.hosts.schemas import HostCreate, HostHardwareInfo, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
 MIN_ORCHESTRATION_CONTRACT_VERSION = 2
+
+
+def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
+    if host_info is None:
+        return
+    for field, value in host_info.model_dump(exclude_none=True).items():
+        assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
+        setattr(host, field, value)
 
 
 def _host_status_severity(old_status: str | None, new_status: str) -> EventSeverity:
@@ -131,10 +139,7 @@ class HostCrudService:
             host.agent_port = data.agent_port
         host.agent_version = data.agent_version
         host.capabilities = normalize_capabilities(data.capabilities)
-        if data.host_info is not None:
-            for field, value in data.host_info.model_dump(exclude_none=True).items():
-                assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
-                setattr(host, field, value)
+        _apply_host_info(host, data.host_info)
         if host.status == HostStatus.offline:
             host.status = HostStatus.online
         await db.commit()
@@ -163,10 +168,7 @@ class HostCrudService:
             capabilities=normalize_capabilities(data.capabilities),
             status=status,
         )
-        if data.host_info is not None:
-            for field, value in data.host_info.model_dump(exclude_none=True).items():
-                assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
-                setattr(host, field, value)
+        _apply_host_info(host, data.host_info)
         db.add(host)
         try:
             await db.flush()

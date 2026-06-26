@@ -150,7 +150,7 @@ class HostToolStatusRead(BaseModel):
     packs: dict[str, list[ToolEntry]]
 
 
-class DiscoveredDevice(BaseModel):
+class IntakeCandidateBase(BaseModel):
     pack_id: str
     platform_id: str
     platform_label: str | None = None
@@ -168,6 +168,9 @@ class DiscoveredDevice(BaseModel):
     device_type: DeviceType | None = None
     connection_type: ConnectionType | None = None
     ip_address: str | None = None
+
+
+class DiscoveredDevice(IntakeCandidateBase):
     readiness_state: str = "verification_required"
     missing_setup_fields: list[str] = []
     can_verify_now: bool = True
@@ -191,24 +194,7 @@ class DiscoveryConfirmResult(BaseModel):
     added_devices: list[DeviceRead] = []
 
 
-class IntakeCandidateRead(BaseModel):
-    pack_id: str
-    platform_id: str
-    platform_label: str | None = None
-    identity_scheme: str
-    identity_scope: str
-    identity_value: str
-    connection_target: str | None = None
-    name: str
-    os_version: str
-    manufacturer: str = ""
-    model: str = ""
-    model_number: str = ""
-    software_versions: dict[str, Any] | None = None
-    detected_properties: dict[str, Any] | None = None
-    device_type: DeviceType | None = None
-    connection_type: ConnectionType | None = None
-    ip_address: str | None = None
+class IntakeCandidateRead(IntakeCandidateBase):
     already_registered: bool = False
     registered_device_id: uuid.UUID | None = None
 

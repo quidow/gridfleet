@@ -1,5 +1,8 @@
 import re
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 import yaml
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -16,6 +19,19 @@ ALLOWED_TEMPLATE_VARS: frozenset[str] = frozenset(
 )
 _TEMPLATE_VAR_RE = re.compile(r"\{([^{}]+)\}")
 _GITHUB_REPO_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?:#[a-zA-Z0-9_.:/-]+)?$")
+
+
+def _validate_capability_templates(default_capabilities: Mapping[str, object], *, where: str) -> None:
+    for key, value in (default_capabilities or {}).items():
+        if not isinstance(value, str):
+            continue
+        for match in _TEMPLATE_VAR_RE.finditer(value):
+            var = match.group(1)
+            if var not in ALLOWED_TEMPLATE_VARS:
+                raise ValueError(
+                    f"{where}: default_capabilities[{key!r}] uses unknown "
+                    f"template variable {{{var}}}; allowed: {sorted(ALLOWED_TEMPLATE_VARS)}"
+                )
 
 
 class ManifestValidationError(ValueError):
@@ -205,16 +221,7 @@ class PlatformDeviceTypeOverride(BaseModel):
 
     @model_validator(mode="after")
     def _check_default_capability_templates(self) -> PlatformDeviceTypeOverride:
-        for key, value in (self.default_capabilities or {}).items():
-            if not isinstance(value, str):
-                continue
-            for match in _TEMPLATE_VAR_RE.finditer(value):
-                var = match.group(1)
-                if var not in ALLOWED_TEMPLATE_VARS:
-                    raise ValueError(
-                        f"device_type_overrides: default_capabilities[{key!r}] uses unknown "
-                        f"template variable {{{var}}}; allowed: {sorted(ALLOWED_TEMPLATE_VARS)}"
-                    )
+        _validate_capability_templates(self.default_capabilities or {}, where="device_type_overrides")
         return self
 
 
@@ -246,16 +253,7 @@ class Platform(BaseModel):
 
     @model_validator(mode="after")
     def _check_default_capability_templates(self) -> Platform:
-        for key, value in self.default_capabilities.items():
-            if not isinstance(value, str):
-                continue
-            for match in _TEMPLATE_VAR_RE.finditer(value):
-                var = match.group(1)
-                if var not in ALLOWED_TEMPLATE_VARS:
-                    raise ValueError(
-                        f"platform {self.id}: default_capabilities[{key!r}] uses unknown "
-                        f"template variable {{{var}}}; allowed: {sorted(ALLOWED_TEMPLATE_VARS)}"
-                    )
+        _validate_capability_templates(self.default_capabilities, where=f"platform {self.id}")
         return self
 
 

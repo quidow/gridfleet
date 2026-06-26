@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from starlette.responses import StreamingResponse
 
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.timeutil import now_utc
 from app.devices.routers.core import build_device_query_filters
 from app.devices.schemas.filters import DeviceQueryFilters
@@ -23,7 +23,7 @@ from app.portability.services.import_bundle import BundleHashMismatchError
 router = APIRouter(
     prefix="/api/portability",
     tags=["portability"],
-    responses={**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409},
+    responses=STANDARD_ERROR_RESPONSES,
 )
 
 

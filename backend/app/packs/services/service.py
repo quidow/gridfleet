@@ -49,7 +49,13 @@ class _RuntimeSummaryAccumulator:
     driver_drift_hosts: int = 0
 
 
-def build_pack_out(pack: DriverPack, runtime_summary: PackRuntimeSummaryOut | None = None) -> PackOut:
+def build_pack_out(
+    pack: DriverPack,
+    runtime_summary: PackRuntimeSummaryOut | None = None,
+    *,
+    active_runs: int = 0,
+    live_sessions: int = 0,
+) -> PackOut:
     latest = selected_release(pack.releases, pack.current_release)
     manifest = latest.manifest_json if latest else {}
     return PackOut(
@@ -67,6 +73,8 @@ def build_pack_out(pack: DriverPack, runtime_summary: PackRuntimeSummaryOut | No
         insecure_features=manifest.get("insecure_features", []),
         features=_features_out(latest) if latest else {},
         runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
+        active_runs=active_runs,
+        live_sessions=live_sessions,
         runtime_summary=runtime_summary or PackRuntimeSummaryOut(),
     )
 
@@ -176,30 +184,15 @@ class PackCatalogService:
         runtime_summaries = await self._runtime_summaries_by_pack(db, [pack.id for pack in rows])
         out: list[PackOut] = []
         for pack in rows:
-            latest = selected_release(pack.releases, pack.current_release)
-            manifest = latest.manifest_json if latest else {}
             drain_info: dict[str, int] = {"active_runs": 0, "live_sessions": 0}
             if pack.state == PackState.draining:
                 drain_info = await self._lifecycle.count_active_work_for_pack(db, pack.id)
             out.append(
-                PackOut(
-                    id=pack.id,
-                    display_name=pack.display_name,
-                    maintainer=pack.maintainer,
-                    license=pack.license,
-                    state=pack.state,
-                    current_release=latest.release if latest else None,
-                    platforms=[_platform_out(platform) for platform in latest.platforms] if latest else [],
-                    appium_server=_installable_out(manifest.get("appium_server")),
-                    appium_driver=_installable_out(manifest.get("appium_driver")),
-                    appium_env=_appium_env_out(manifest.get("appium_env", [])),
-                    doctor=_doctor_out(manifest.get("doctor", [])),
-                    insecure_features=manifest.get("insecure_features", []),
-                    features=_features_out(latest) if latest else {},
-                    runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
+                build_pack_out(
+                    pack,
+                    runtime_summaries.get(pack.id, PackRuntimeSummaryOut()),
                     active_runs=drain_info["active_runs"],
                     live_sessions=drain_info["live_sessions"],
-                    runtime_summary=runtime_summaries.get(pack.id, PackRuntimeSummaryOut()),
                 )
             )
         return PackCatalog(packs=out)

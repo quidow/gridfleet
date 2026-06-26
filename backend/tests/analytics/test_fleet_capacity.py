@@ -151,7 +151,6 @@ async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejecti
                 total_capacity_slots=4,
                 active_sessions=1,
                 queued_requests=0,
-                available_capacity_slots=3,
                 devices_total=4,
                 devices_available=3,
                 devices_offline=1,
@@ -162,7 +161,6 @@ async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejecti
                 total_capacity_slots=4,
                 active_sessions=4,
                 queued_requests=2,
-                available_capacity_slots=0,
                 devices_total=5,
                 devices_available=1,
                 devices_offline=1,
@@ -173,7 +171,6 @@ async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejecti
                 total_capacity_slots=5,
                 active_sessions=2,
                 queued_requests=0,
-                available_capacity_slots=3,
                 devices_total=6,
                 devices_available=4,
                 devices_offline=0,
@@ -255,7 +252,6 @@ async def test_fleet_capacity_timeline_picks_latest_snapshot_per_bucket(
                 total_capacity_slots=4,
                 active_sessions=0,
                 queued_requests=0,
-                available_capacity_slots=4,
                 devices_total=2,
                 devices_available=0,
                 devices_offline=2,
@@ -266,7 +262,6 @@ async def test_fleet_capacity_timeline_picks_latest_snapshot_per_bucket(
                 total_capacity_slots=4,
                 active_sessions=0,
                 queued_requests=0,
-                available_capacity_slots=4,
                 devices_total=2,
                 devices_available=0,
                 devices_offline=0,
@@ -435,7 +430,6 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
     assert snapshot.total_capacity_slots == 2
     assert snapshot.active_sessions == 4
     assert snapshot.queued_requests == 2
-    assert snapshot.available_capacity_slots == 0
 
     stored = (await db_session.execute(select(AnalyticsCapacitySnapshot))).scalars().all()
     assert len(stored) == 1

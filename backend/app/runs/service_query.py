@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Select, and_, asc, desc, func, or_, select
+from sqlalchemy import Select, asc, desc, func, select
 from sqlalchemy.orm import selectinload
 
-from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor, keyset_newer, keyset_older
 from app.devices.models import DeviceReservation
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
@@ -18,20 +18,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
-
-
-def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
-    return or_(
-        TestRun.created_at < cursor.timestamp,
-        and_(TestRun.created_at == cursor.timestamp, TestRun.id < cursor.item_id),
-    )
-
-
-def _newer_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
-    return or_(
-        TestRun.created_at > cursor.timestamp,
-        and_(TestRun.created_at == cursor.timestamp, TestRun.id > cursor.item_id),
-    )
 
 
 def build_run_read(run: TestRun, counts: SessionCounts | None = None) -> RunRead:
@@ -106,7 +92,11 @@ class RunQueryService:
         page_stmt = stmt
         cursor_token = decode_cursor(cursor) if cursor else None
         if cursor_token is not None:
-            predicate = _newer_than_cursor(cursor_token) if direction == "newer" else _older_than_cursor(cursor_token)
+            predicate = (
+                keyset_newer(TestRun.created_at, TestRun.id, cursor_token)
+                if direction == "newer"
+                else keyset_older(TestRun.created_at, TestRun.id, cursor_token)
+            )
             page_stmt = page_stmt.where(predicate)
 
         if direction == "newer":
@@ -125,10 +115,10 @@ class RunQueryService:
         first_item = items[0]
         last_item = items[-1]
         has_newer = await self._has_run_rows(
-            db, stmt, _newer_than_cursor(CursorToken(first_item.created_at, first_item.id))
+            db, stmt, keyset_newer(TestRun.created_at, TestRun.id, CursorToken(first_item.created_at, first_item.id))
         )
         has_older = await self._has_run_rows(
-            db, stmt, _older_than_cursor(CursorToken(last_item.created_at, last_item.id))
+            db, stmt, keyset_older(TestRun.created_at, TestRun.id, CursorToken(last_item.created_at, last_item.id))
         )
         return CursorPage(
             items=items,

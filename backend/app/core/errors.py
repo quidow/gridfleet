@@ -32,17 +32,20 @@ def _templated_path(request: Request) -> str:
     return request.url.path
 
 
-def _pgcode(exc: BaseException) -> str:
-    """Postgres SQLSTATE for a DBAPIError, walking the driver cause chain; else ""."""
-    if not isinstance(exc, DBAPIError):
-        return ""
-    cause: BaseException | None = exc.orig
+def pg_sqlstate(exc: BaseException) -> str:
+    """First non-empty Postgres SQLSTATE on the driver cause chain; else ""."""
+    cause: BaseException | None = getattr(exc, "orig", None)
     while cause is not None:
         sqlstate = getattr(cause, "sqlstate", None)
         if isinstance(sqlstate, str) and sqlstate:
             return sqlstate
         cause = cause.__cause__
     return ""
+
+
+def _pgcode(exc: BaseException) -> str:
+    """Postgres SQLSTATE for a DBAPIError, walking the driver cause chain; else ""."""
+    return pg_sqlstate(exc) if isinstance(exc, DBAPIError) else ""
 
 
 class AppError(Exception):

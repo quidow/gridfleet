@@ -12,7 +12,7 @@ from app.core.errors import PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
 from app.devices.routers import core as devices_core
 from app.devices.routers import groups as device_groups
-from app.devices.schemas.device import BulkMaintenanceEnter, DevicePatch, DeviceVerificationCreate
+from app.devices.schemas.device import BulkDeviceIds, DevicePatch, DeviceVerificationCreate
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.runs import router as runs
@@ -370,7 +370,7 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     assert await device_groups.group_bulk_restart(group_id, db=db, device_services=ds_bulk) == {"ok": "restart"}
     assert await device_groups.group_bulk_enter_maintenance(
         group_id,
-        BulkMaintenanceEnter(device_ids=[device_id]),
+        BulkDeviceIds(device_ids=[device_id]),
         db=db,
         device_services=ds_bulk,
     ) == {"ok": "enter"}
@@ -504,7 +504,7 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
         await devices_verification.get_device_verification_job("job", db=db, verification_services=mock_vs_no_job)
 
     queue: asyncio.Queue[devices_verification.Event] = asyncio.Queue()
-    task = asyncio.create_task(devices_verification._read_queue_event(queue))
+    task = asyncio.create_task(devices_verification.wait_for_queue_event(queue))
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)

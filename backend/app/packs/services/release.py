@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import PackReleaseOut, PackReleasesOut
-from app.packs.services.export import _read_artifact, _synthesise_tarball
 from app.packs.services.ingest import ingest_pack_tarball
 from app.packs.services.release_ordering import parse_release_key, selected_release
 from app.packs.services.storage import PackStorageError
@@ -20,6 +22,32 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.packs.services.storage import PackStorageService
+
+
+def _read_artifact(storage: PackStorageService, path: str) -> bytes:
+    with storage.open(path) as handle:
+        return handle.read()
+
+
+def _synthesise_tarball(manifest_json: dict[str, object]) -> bytes:
+    """Build a gzip tarball with a single ``manifest.yaml`` entry.
+
+    Args:
+        manifest_json: The manifest dict stored in ``DriverPackRelease.manifest_json``.
+
+    Returns:
+        Compressed tarball bytes.
+    """
+    manifest_text = yaml.safe_dump(manifest_json, sort_keys=False)
+    manifest_bytes = manifest_text.encode("utf-8")
+
+    buf = io.BytesIO()
+    with tarfile.open(mode="w:gz", fileobj=buf) as tar:
+        info = tarfile.TarInfo(name="manifest.yaml")
+        info.size = len(manifest_bytes)
+        tar.addfile(info, io.BytesIO(manifest_bytes))
+
+    return buf.getvalue()
 
 
 class PackReleaseService:

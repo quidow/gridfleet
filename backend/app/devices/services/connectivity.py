@@ -52,9 +52,30 @@ if TYPE_CHECKING:
     from app.devices.protocols import DeviceHealthProtocol, HealthFailureHandler
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
+    from app.packs.services.platform_resolver import ResolvedPackPlatform
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+
+
+async def _resolve_platform_or_none(db: AsyncSession, device: Device) -> ResolvedPackPlatform | None:
+    try:
+        return await resolve_pack_platform(
+            db,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            device_type=device.device_type.value if device.device_type else None,
+        )
+    except LookupError:
+        return None
+
+
+async def _is_held_or_reserved(db: AsyncSession, device: Device) -> bool:
+    return device.operational_state in (
+        DeviceOperationalState.busy,
+        DeviceOperationalState.maintenance,
+    ) or await device_is_reserved(db, device.id)
+
 
 logger = get_logger(__name__)
 # DB-backed flag (control_plane_state_store, namespace key per device identity_value).
@@ -210,14 +231,8 @@ async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
     """True when the device's platform manifest declares a ``state`` lifecycle
     action. DB-only — runs in the sequential pre-pass so the concurrent probe
     phase below stays free of shared-session access."""
-    try:
-        resolved = await resolve_pack_platform(
-            db,
-            pack_id=device.pack_id,
-            platform_id=device.platform_id,
-            device_type=device.device_type.value if device.device_type else None,
-        )
-    except LookupError:
+    resolved = await _resolve_platform_or_none(db, device)
+    if resolved is None:
         return False
     return platform_has_lifecycle_action(resolved.lifecycle_actions, "state")
 
@@ -429,14 +444,8 @@ class ConnectivityService:
         Resolved from the device's pack/platform manifest so core stays driver-agnostic.
         Empty when the platform cannot be resolved.
         """
-        try:
-            resolved = await resolve_pack_platform(
-                db,
-                pack_id=device.pack_id,
-                platform_id=device.platform_id,
-                device_type=device.device_type.value if device.device_type else None,
-            )
-        except LookupError:
+        resolved = await _resolve_platform_or_none(db, device)
+        if resolved is None:
             return set()
         return {
             str(check["id"])
@@ -486,14 +495,8 @@ class ConnectivityService:
         action = health_result.get("recommended_action")
         if not isinstance(action, str) or not action:
             return False
-        try:
-            resolved = await resolve_pack_platform(
-                db,
-                pack_id=device.pack_id,
-                platform_id=device.platform_id,
-                device_type=device.device_type.value if device.device_type else None,
-            )
-        except LookupError:
+        resolved = await _resolve_platform_or_none(db, device)
+        if resolved is None:
             return False
         if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
             return False
@@ -729,10 +732,7 @@ class ConnectivityService:
         """
         await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
         locked_device = await device_locking.lock_device(db, device.id)
-        held_after = locked_device.operational_state in (
-            DeviceOperationalState.busy,
-            DeviceOperationalState.maintenance,
-        ) or await device_is_reserved(db, locked_device.id)
+        held_after = await _is_held_or_reserved(db, locked_device)
         if held_after != held:
             logger.info(
                 "Device %s (%s) changed held/reserved classification to %s before disconnect write — skipping",
@@ -906,10 +906,7 @@ class ConnectivityService:
             await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
             if device.operational_state == DeviceOperationalState.offline:
                 return
-            if device.operational_state in (
-                DeviceOperationalState.busy,
-                DeviceOperationalState.maintenance,
-            ) or await device_is_reserved(db, device.id):
+            if await _is_held_or_reserved(db, device):
                 logger.warning(
                     "Device %s (%s) appears disconnected on host %s but is %s",
                     device.name,

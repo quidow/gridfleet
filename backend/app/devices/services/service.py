@@ -128,13 +128,7 @@ class DeviceCrudService:
     async def list_devices_paginated(
         self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
     ) -> tuple[list[Device], int]:
-        has_post_filters = (
-            filters.needs_attention is not None
-            or filters.hardware_telemetry_state is not None
-            or filters.device_health is not None
-            or filters.node_health is not None
-            or filters.viability is not None
-        )
+        has_post_filters = _has_post_filters(filters)
 
         if has_post_filters:
             all_devices = await self.list_devices_by_filters(db, filters)
@@ -151,13 +145,7 @@ class DeviceCrudService:
         return page, total
 
     async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int:
-        if (
-            filters.needs_attention is not None
-            or filters.hardware_telemetry_state is not None
-            or filters.device_health is not None
-            or filters.node_health is not None
-            or filters.viability is not None
-        ):
+        if _has_post_filters(filters):
             return len(await self.list_devices_by_filters(db, filters))
 
         result = await db.execute(_build_device_count_stmt(filters))
@@ -227,6 +215,16 @@ class DeviceCrudService:
         await db.delete(device)
         await db.commit()
         return True
+
+
+def _has_post_filters(filters: DeviceQueryFilters) -> bool:
+    return (
+        filters.needs_attention is not None
+        or filters.hardware_telemetry_state is not None
+        or filters.device_health is not None
+        or filters.node_health is not None
+        or filters.viability is not None
+    )
 
 
 def _apply_status_filter(stmt: DeviceQueryStatement, status: str) -> DeviceQueryStatement:

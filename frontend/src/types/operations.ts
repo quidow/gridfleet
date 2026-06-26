@@ -25,7 +25,6 @@ export type BulkDeviceIds = Schemas['BulkDeviceIds'];
 export type BulkTagsUpdate = Omit<Schemas['BulkTagsUpdate'], 'merge'> & {
   merge?: boolean;
 };
-export type BulkMaintenanceEnter = Schemas['BulkMaintenanceEnter'];
 export type BulkOperationResult = Omit<Schemas['BulkOperationResult'], 'errors'> & {
   errors: Record<string, string>;
 };

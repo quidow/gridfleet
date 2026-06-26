@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 
@@ -44,7 +44,7 @@ from app.sessions.dependencies import SessionServicesDep
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 
-DEVICE_CORE_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+DEVICE_CORE_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
 router = APIRouter(responses=DEVICE_CORE_ERROR_RESPONSES)
 

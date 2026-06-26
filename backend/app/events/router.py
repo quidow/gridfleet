@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from app.core.sse import wait_for_queue_event
 from app.events import (
     EVENT_CATEGORY_DISPLAY_NAMES,
     PUBLIC_EVENT_CATALOG,
-    Event,
     validate_public_event_names,
 )
 from app.events.catalog import ALL_SEVERITIES
@@ -24,18 +24,6 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/api", tags=["events"])
 
 KEEPALIVE_INTERVAL = 15
-
-
-async def _wait_for_queue_event(queue: asyncio.Queue[Event], *, timeout: float | None = None) -> Event:
-    get_task = asyncio.create_task(queue.get())
-    try:
-        if timeout is None:
-            return await get_task
-        return await asyncio.wait_for(get_task, timeout=timeout)
-    finally:
-        if not get_task.done():
-            get_task.cancel()
-            _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
 @router.get("/events/catalog", response_model=EventCatalogRead)
@@ -72,7 +60,7 @@ async def event_stream(
         try:
             while True:
                 try:
-                    event = await _wait_for_queue_event(queue, timeout=KEEPALIVE_INTERVAL)
+                    event = await wait_for_queue_event(queue, timeout=KEEPALIVE_INTERVAL)
                 except TimeoutError:
                     yield {"comment": "keepalive"}
                     continue

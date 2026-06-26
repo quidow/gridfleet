@@ -3,16 +3,15 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     BulkDeviceIds,
-    BulkMaintenanceEnter,
     BulkOperationResult,
     BulkTagsUpdate,
 )
 
-DEVICE_BULK_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+DEVICE_BULK_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
 router = APIRouter(prefix="/api/devices/bulk", tags=["bulk"], responses=DEVICE_BULK_ERROR_RESPONSES)
 
@@ -43,9 +42,7 @@ async def bulk_delete(body: BulkDeviceIds, db: DbDep, device_services: DeviceSer
 
 
 @router.post("/enter-maintenance", response_model=BulkOperationResult)
-async def bulk_enter_maintenance(
-    body: BulkMaintenanceEnter, db: DbDep, device_services: DeviceServicesDep
-) -> dict[str, Any]:
+async def bulk_enter_maintenance(body: BulkDeviceIds, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     return await device_services.bulk.bulk_enter_maintenance(db, body.device_ids)
 
 

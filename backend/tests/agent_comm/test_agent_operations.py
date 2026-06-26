@@ -464,8 +464,8 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
         monkeypatch.setattr("app.agent_comm.circuit_breaker.monotonic", fake_monotonic)
         monkeypatch.setattr("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={}))
         breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=SETTINGS, session_factory=AsyncMock())
-        monkeypatch.setattr(breaker, "_failure_threshold", lambda: threshold)
-        monkeypatch.setattr(breaker, "_cooldown_seconds", lambda: 30.0)
+        monkeypatch.setattr(breaker, "failure_threshold", lambda: threshold)
+        monkeypatch.setattr(breaker, "cooldown_seconds", lambda: 30.0)
 
         for _ in range(threshold):
             with pytest.raises(AgentUnreachableError):

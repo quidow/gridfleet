@@ -9,7 +9,7 @@ Operators see clusters of `host.heartbeat_lost`, `host.status_changed online→o
 1. Confirm new metrics are live:
    - `gridfleet_agent_heartbeat_total{outcome=...,client_mode=...,host_id=...}`
    - `gridfleet_agent_heartbeat_duration_seconds{...}`
-   - `gridfleet_heartbeat_cycle_overrun_total`
+   - `background_loop_overrun_total{loop_name="heartbeat"}` (replaces retired `gridfleet_heartbeat_cycle_overrun_total`)
 2. From the backend container, run `scripts/diagnose_heartbeat_probe.py` against:
    - the host's currently registered IP (e.g. `192.168.88.249`)
    - the docker bridge gateway (`172.17.0.1` on default bridge — confirm via `ip route`)
@@ -22,7 +22,7 @@ Operators see clusters of `host.heartbeat_lost`, `host.status_changed online→o
 |-----------------------------------------------------------------------------|--------------------------------------------|-----------|
 | Pooled outcomes show timeout while fresh outcomes succeed                    | Stale pooled connection                    | B1 / B3   |
 | `192.168.88.249` fails while `172.17.0.1` and `host.docker.internal` succeed | Hairpin routing                            | B2        |
-| All targets succeed but cycle-overrun metric is high                         | Backend overload or pause                  | already mitigated by Tasks 8–10 |
+| All targets succeed but `background_loop_overrun_total{loop_name="heartbeat"}` is high | Backend overload or pause     | already mitigated by Tasks 8–10 |
 | All targets fail uniformly                                                   | Agent process / port issue                 | None — file separately |
 
 ## Phase A — Stop Criteria

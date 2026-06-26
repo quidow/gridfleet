@@ -15,6 +15,24 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def missing_auth_settings(
+    *,
+    auth_username: str | None,
+    auth_password: str | None,
+    auth_session_secret: str | None,
+    machine_auth_username: str | None,
+    machine_auth_password: str | None,
+) -> list[str]:
+    required_values = {
+        "GRIDFLEET_AUTH_USERNAME": auth_username,
+        "GRIDFLEET_AUTH_PASSWORD": auth_password,
+        "GRIDFLEET_AUTH_SESSION_SECRET": auth_session_secret,
+        "GRIDFLEET_MACHINE_AUTH_USERNAME": machine_auth_username,
+        "GRIDFLEET_MACHINE_AUTH_PASSWORD": machine_auth_password,
+    }
+    return [name for name, value in required_values.items() if not value]
+
+
 class AuthConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="",
@@ -43,14 +61,13 @@ class AuthConfig(BaseSettings):
         if not self.auth_enabled:
             return self
 
-        required_values = {
-            "GRIDFLEET_AUTH_USERNAME": self.auth_username,
-            "GRIDFLEET_AUTH_PASSWORD": self.auth_password,
-            "GRIDFLEET_AUTH_SESSION_SECRET": self.auth_session_secret,
-            "GRIDFLEET_MACHINE_AUTH_USERNAME": self.machine_auth_username,
-            "GRIDFLEET_MACHINE_AUTH_PASSWORD": self.machine_auth_password,
-        }
-        missing = [name for name, value in required_values.items() if not value]
+        missing = missing_auth_settings(
+            auth_username=self.auth_username,
+            auth_password=self.auth_password,
+            auth_session_secret=self.auth_session_secret,
+            machine_auth_username=self.machine_auth_username,
+            machine_auth_password=self.machine_auth_password,
+        )
         if missing:
             joined = ", ".join(missing)
             raise ValueError(f"Auth is enabled but required settings are missing: {joined}")
