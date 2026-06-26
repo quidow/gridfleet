@@ -136,7 +136,7 @@ wheels = [
 
 [[package]]
 name = "gridfleet-testkit"
-version = "0.14.1"
+version = "0.14.2"
 source = { editable = "." }
 dependencies = [
     { name = "appium-python-client" },
