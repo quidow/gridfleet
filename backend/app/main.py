@@ -44,12 +44,22 @@ from app.core.observability import (
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
-from app.devices import services as device_services
 from app.devices.dependencies import (
     DeviceServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
 )
 from app.devices.schemas.filters import DeviceQueryFilters
-from app.devices.services import state_write_guard
+from app.devices.services import (
+    connectivity,
+    data_cleanup,
+    fleet_capacity,
+    intent_reconciler,
+    property_refresh,
+    readiness,
+    state_write_guard,
+)
+from app.devices.services import (
+    health as device_health,
+)
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import appium_direct
@@ -91,14 +101,13 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
-DataCleanupLoop = device_services.data_cleanup.DataCleanupLoop
-DeviceConnectivityLoop = device_services.connectivity.DeviceConnectivityLoop
-device_health = device_services.health
-DeviceIntentReconcilerLoop = device_services.intent_reconciler.DeviceIntentReconcilerLoop
-FleetCapacityLoop = device_services.fleet_capacity.FleetCapacityLoop
-assess_devices_async = device_services.readiness.assess_devices_async
-is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
-PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
+DataCleanupLoop = data_cleanup.DataCleanupLoop
+DeviceConnectivityLoop = connectivity.DeviceConnectivityLoop
+DeviceIntentReconcilerLoop = intent_reconciler.DeviceIntentReconcilerLoop
+FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
+assess_devices_async = readiness.assess_devices_async
+is_ready_for_use_async = readiness.is_ready_for_use_async
+PropertyRefreshLoop = property_refresh.PropertyRefreshLoop
 
 
 def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
