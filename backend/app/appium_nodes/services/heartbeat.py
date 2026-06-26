@@ -23,7 +23,7 @@ from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
-from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
+from app.core.metrics_recorders import record_heartbeat_ping
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -788,6 +788,3 @@ class HeartbeatLoop(BackgroundLoop):
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.heartbeat.run_cycle(db)
-
-    def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
-        record_heartbeat_cycle(elapsed_seconds, interval_seconds=interval)

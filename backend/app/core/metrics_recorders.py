@@ -230,7 +230,7 @@ def record_background_loop_error(loop_name: str, duration_seconds: float) -> Non
 def record_background_loop_overrun(loop_name: str, duration_seconds: float, *, interval_seconds: float) -> None:
     """Count a cycle that missed its cadence (took longer than its interval).
 
-    Mirrors ``record_heartbeat_cycle``'s overrun signal. ``interval_seconds <= 0``
+    ``interval_seconds <= 0``
     (doorbell-woken loops with no fixed cadence) never counts as an overrun.
     """
     if interval_seconds > 0 and duration_seconds > interval_seconds:
@@ -261,14 +261,6 @@ HEARTBEAT_PING_TOTAL = Counter(
     "Total backend->agent heartbeat pings.",
     labelnames=("host_id", "outcome", "client_mode"),
 )
-HEARTBEAT_CYCLE_DURATION_SECONDS = Histogram(
-    "gridfleet_heartbeat_cycle_duration_seconds",
-    "Wall clock duration of one full _check_hosts iteration.",
-)
-HEARTBEAT_CYCLE_OVERRUN_TOTAL = Counter(
-    "gridfleet_heartbeat_cycle_overrun_total",
-    "Heartbeat cycles whose duration exceeded heartbeat_interval_sec.",
-)
 
 
 def record_heartbeat_ping(
@@ -282,12 +274,6 @@ def record_heartbeat_ping(
     HEARTBEAT_PING_DURATION_SECONDS.labels(host_id=host_id, outcome=outcome, client_mode=client_mode).observe(
         duration_seconds
     )
-
-
-def record_heartbeat_cycle(duration_seconds: float, *, interval_seconds: float) -> None:
-    HEARTBEAT_CYCLE_DURATION_SECONDS.observe(duration_seconds)
-    if duration_seconds > interval_seconds:
-        HEARTBEAT_CYCLE_OVERRUN_TOTAL.inc()
 
 
 ip_ping_failures_total = Counter(
