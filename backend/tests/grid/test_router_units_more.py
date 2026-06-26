@@ -40,7 +40,7 @@ from app.devices.routers import (
     test_data as devices_test_data,
 )
 from app.devices.schemas.device import (
-    BulkMaintenanceEnter,
+    BulkDeviceIds,
     BulkTagsUpdate,
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
@@ -1981,7 +1981,7 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     await assert_bulk(
         device_groups.group_bulk_enter_maintenance,
         "bulk_enter_maintenance",
-        BulkMaintenanceEnter(device_ids=device_ids),
+        BulkDeviceIds(device_ids=device_ids),
     )
     await assert_bulk(device_groups.group_bulk_exit_maintenance, "bulk_exit_maintenance")
     mock_bulk_reconnect = AsyncMock(bulk_reconnect=AsyncMock(return_value={"ok": 1}))

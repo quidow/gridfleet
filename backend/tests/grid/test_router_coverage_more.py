@@ -12,7 +12,7 @@ from app.core.errors import PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
 from app.devices.routers import core as devices_core
 from app.devices.routers import groups as device_groups
-from app.devices.schemas.device import BulkMaintenanceEnter, DevicePatch, DeviceVerificationCreate
+from app.devices.schemas.device import BulkDeviceIds, DevicePatch, DeviceVerificationCreate
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.runs import router as runs
@@ -370,7 +370,7 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     assert await device_groups.group_bulk_restart(group_id, db=db, device_services=ds_bulk) == {"ok": "restart"}
     assert await device_groups.group_bulk_enter_maintenance(
         group_id,
-        BulkMaintenanceEnter(device_ids=[device_id]),
+        BulkDeviceIds(device_ids=[device_id]),
         db=db,
         device_services=ds_bulk,
     ) == {"ok": "enter"}
