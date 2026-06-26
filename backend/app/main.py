@@ -14,7 +14,7 @@ from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes.services.heartbeat import HeartbeatLoop, shutdown_background_tasks
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.node_health import NodeHealthLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
 from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
@@ -283,7 +283,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.exception("background_loop_final_flush_failed")
         if watcher_task is not None:
             await _cancel_and_wait_for_tasks([watcher_task], label="leader watcher")
-        await shutdown_background_tasks()
         await svc.shutdown()
         await control_plane_leader.release()
         await bus.shutdown()
