@@ -176,6 +176,46 @@ async def test_attempt_auto_recovery_probes_verifying_device(
     assert probe_called, "attempt_auto_recovery early-returned instead of probing a verifying device"
 
 
+async def test_run_recovery_probe_retries_until_passed(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retry contract: probe retries on 'failed' and returns the first 'passed' result."""
+    from app.lifecycle.services import policy as policy_mod
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
+    from app.runs.service_reservation import RunReservationService
+
+    monkeypatch.setattr(policy_mod, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(policy_mod, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
+
+    device = await _seed_verifying_device(db_session, db_host.id, identity="repro-retry-until-passed")
+
+    viability = Mock()
+    viability.run_session_viability_probe = AsyncMock(
+        side_effect=[{"status": "failed", "error": "boom"}, {"status": "passed"}]
+    )
+
+    svc = LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=viability,
+        node_manager=AsyncMock(),
+    )
+
+    out = await svc._run_recovery_probe(db_session, device)
+    assert out == {"status": "passed"}
+    assert viability.run_session_viability_probe.await_count == 2
+
+
 async def test_run_recovery_probe_skips_on_in_progress_collision(
     db_session: AsyncSession,
     db_host: Host,

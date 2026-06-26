@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
-
-from tenacity import AsyncRetrying, RetryError, retry_if_result, stop_after_attempt, wait_fixed, wait_random
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
@@ -615,65 +615,40 @@ class LifecyclePolicyService:
 
     async def _run_recovery_probe(self, db: AsyncSession, device: Device) -> dict[str, Any]:
         last_result: dict[str, Any] = {}
-        try:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(max(1, RECOVERY_PROBE_ATTEMPTS)),
-                wait=wait_fixed(RECOVERY_PROBE_RETRY_DELAY_SEC) + wait_random(0, RECOVERY_PROBE_JITTER_MAX_SEC),
-                retry=retry_if_result(lambda value: value.get("status") != "passed"),
-            ):
-                with attempt:
-                    reloaded = await _reload_device(db, device)
-                    try:
-                        last_result = await self._viability.run_session_viability_probe(
-                            db,
-                            reloaded,
-                            checked_by=SessionViabilityCheckedBy.recovery,
-                        )
-                    except SessionViabilityProbeInProgressError:
-                        # Another viability probe (typically an active verification job) already
-                        # holds this device's probe lock. That is a concurrency collision, not a
-                        # device-health signal — counting it as a failed attempt would feed
-                        # recovery backoff/review and could shelve a healthy device. Skip and let
-                        # the lifecycle loop retry on its next cycle once the lock frees; do NOT
-                        # retry here (the lock will not free within the short retry window).
-                        logger.info(
-                            "Recovery viability probe for device %s skipped — another viability probe is in progress",
-                            device.id,
-                        )
-                        return {"status": "skipped"}
-                    except SessionViabilityProbeNotPermittedError:
-                        # The device left a probeable state (e.g. it was allocated and went
-                        # ``busy``, or an operator parked it in ``maintenance``) between the
-                        # recovery decision and the probe. That is a gating rejection, not a
-                        # health signal — counting it as a failed attempt would feed
-                        # backoff/review and could shelve a healthy device. Skip and let the
-                        # lifecycle loop retry on its next cycle (mirrors the in-progress
-                        # collision above); do NOT retry here (the state will not flip back
-                        # within the short retry window).
-                        logger.info(
-                            "Recovery viability probe for device %s skipped — device state no longer permits a probe",
-                            device.id,
-                        )
-                        return {"status": "skipped"}
-                    except Exception as exc:  # noqa: BLE001 — a probe error must not crash the recovery job
-                        # Fold an unexpected probe error (transient "already in
-                        # progress" race, concurrent state change, etc.) into a failed
-                        # result so the retry loop re-probes and, if it persists, the
-                        # caller's failure terminal applies backoff and schedules a later
-                        # retry — rather than propagating out of attempt_auto_recovery and
-                        # stranding the device until the verification lease's expires_at
-                        # safety net fires.
-                        logger.warning(
-                            "Recovery viability probe for device %s raised %s; treating as a failed attempt",
-                            device.id,
-                            type(exc).__name__,
-                            exc_info=True,
-                        )
-                        last_result = {"status": "failed", "error": str(exc)}
-                if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
-                    attempt.retry_state.set_result(last_result)
-        except RetryError:
-            pass  # Exhausted attempts — return last_result below
+        attempts = max(1, RECOVERY_PROBE_ATTEMPTS)
+        for attempt in range(attempts):
+            reloaded = await _reload_device(db, device)
+            try:
+                last_result = await self._viability.run_session_viability_probe(
+                    db,
+                    reloaded,
+                    checked_by=SessionViabilityCheckedBy.recovery,
+                )
+            except SessionViabilityProbeInProgressError:
+                logger.info(
+                    "Recovery viability probe for device %s skipped — another viability probe is in progress",
+                    device.id,
+                )
+                return {"status": "skipped"}
+            except SessionViabilityProbeNotPermittedError:
+                logger.info(
+                    "Recovery viability probe for device %s skipped — device state no longer permits a probe",
+                    device.id,
+                )
+                return {"status": "skipped"}
+            except Exception as exc:  # noqa: BLE001 — a probe error must not crash the recovery job
+                logger.warning(
+                    "Recovery viability probe for device %s raised %s; treating as a failed attempt",
+                    device.id,
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                last_result = {"status": "failed", "error": str(exc)}
+            if last_result.get("status") == "passed":
+                return last_result
+            if attempt < attempts - 1:
+                # ponytail: stdlib retry; fixed delay + jitter, no third-party retry lib
+                await asyncio.sleep(RECOVERY_PROBE_RETRY_DELAY_SEC + random.uniform(0, RECOVERY_PROBE_JITTER_MAX_SEC))
         return last_result
 
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
