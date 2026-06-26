@@ -183,6 +183,10 @@ async def _build_and_start_app_services(
         await _validate_online_agent_contracts(db)
     _validate_leader_keepalive_settings(settings=svc)
 
+    pool.configure_limits(
+        max_keepalive=svc.get_int("agent.http_pool_max_keepalive"),
+        keepalive_expiry=svc.get_int("agent.http_pool_idle_seconds"),
+    )
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
     await bus.start()
