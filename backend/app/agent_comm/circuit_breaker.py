@@ -64,19 +64,13 @@ class AgentCircuitBreaker:
         self._settings = settings
         self._session_factory = session_factory
 
-    def _failure_threshold(self) -> int:
+    def failure_threshold(self) -> int:
+        """Current failure threshold (reads from settings)."""
         return self._settings.get_int("agent.circuit_breaker_failure_threshold")
 
-    def _cooldown_seconds(self) -> float:
-        return self._settings.get_float("agent.circuit_breaker_cooldown_seconds")
-
-    def failure_threshold(self) -> int:
-        """Public read accessor for the current failure threshold (reads from settings)."""
-        return self._failure_threshold()
-
     def cooldown_seconds(self) -> float:
-        """Public read accessor for the current cooldown duration (reads from settings)."""
-        return self._cooldown_seconds()
+        """Current cooldown duration in seconds (reads from settings)."""
+        return self._settings.get_float("agent.circuit_breaker_cooldown_seconds")
 
     async def before_request(self, host: str) -> float | None:
         async with self._lock:
@@ -125,8 +119,8 @@ class AgentCircuitBreaker:
     async def record_failure(self, host: str, *, error: str) -> None:
         publish_opened = False
         failure_count = 0
-        threshold = self._failure_threshold()
-        cooldown = self._cooldown_seconds()
+        threshold = self.failure_threshold()
+        cooldown = self.cooldown_seconds()
         async with self._lock:
             state = self._states.setdefault(host, CircuitState())
             state.last_error = error
@@ -190,7 +184,7 @@ class AgentCircuitBreaker:
         return {
             "status": state.status,
             "consecutive_failures": state.consecutive_failures,
-            "cooldown_seconds": self._cooldown_seconds(),
+            "cooldown_seconds": self.cooldown_seconds(),
             "retry_after_seconds": retry_after_seconds,
             "probe_in_flight": state.probe_in_flight,
             "last_error": state.last_error,

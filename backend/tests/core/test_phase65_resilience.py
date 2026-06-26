@@ -56,8 +56,8 @@ async def test_breaker_opens_then_recovers() -> None:
         patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
         patch.object(breaker._publisher, "publish", new=publish_mock),
         patch("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={})),
-        patch.object(breaker, "_failure_threshold", return_value=_threshold),
-        patch.object(breaker, "_cooldown_seconds", return_value=float(_cooldown)),
+        patch.object(breaker, "failure_threshold", return_value=_threshold),
+        patch.object(breaker, "cooldown_seconds", return_value=float(_cooldown)),
     ):
         for _ in range(_threshold):
             await breaker.record_failure("10.0.0.31", error="boom")
@@ -96,8 +96,8 @@ async def test_agent_request_short_circuits_when_circuit_is_open() -> None:
         patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
         patch.object(breaker._publisher, "publish", new=AsyncMock()),
         patch("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={})),
-        patch.object(breaker, "_failure_threshold", return_value=5),
-        patch.object(breaker, "_cooldown_seconds", return_value=30.0),
+        patch.object(breaker, "failure_threshold", return_value=5),
+        patch.object(breaker, "cooldown_seconds", return_value=30.0),
     ):
         for _ in range(5):
             await breaker.record_failure("10.0.0.32", error="boom")
