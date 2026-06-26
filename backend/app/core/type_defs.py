@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -12,17 +12,6 @@ type JsonObject = dict[str, JsonValue]
 type SettingValue = Any
 type ControlPlaneValue = Any
 type AsyncTaskFactory = Callable[..., Coroutine[object, object, None]]
-
-
-class ProbeSessionFn(Protocol):
-    def __call__(
-        self,
-        capabilities: JsonObject,
-        timeout_sec: int,
-        *,
-        target: str | None = None,
-    ) -> Awaitable[tuple[bool, str | None]]:
-        raise NotImplementedError
 
 
 class AsyncSessionContextManager(Protocol):

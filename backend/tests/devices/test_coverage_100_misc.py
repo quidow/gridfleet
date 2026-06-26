@@ -369,7 +369,6 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         circuit_breaker=cb,
         preparation=prep,
         execution=exec_svc,
-        viability=Mock(),
     )
     assert await runner._load_persisted_job(str(uuid.uuid4())) is None
     await runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"})
@@ -837,7 +836,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
-            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=QueueCtx,

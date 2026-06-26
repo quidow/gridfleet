@@ -207,7 +207,6 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             db,
             context,
             http_client_factory=MagicMock(),
-            probe_session_fn=AsyncMock(),
         )
 
     context = SimpleNamespace(
@@ -236,7 +235,6 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             db,
             context,
             http_client_factory=MagicMock(),
-            probe_session_fn=AsyncMock(),
         )
     finalize.assert_awaited_once()
 

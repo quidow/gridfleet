@@ -265,7 +265,6 @@ def compose_app(
         circuit_breaker=circuit_breaker,
         preparation=verification_preparation_svc,
         execution=verification_execution_svc,
-        viability=viability_svc,
     )
     recovery_runner_svc = RecoveryJobService(
         session_factory=session_factory,

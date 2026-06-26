@@ -123,7 +123,6 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                 reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
-            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=_sf,
@@ -261,7 +260,6 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     reconciler=AsyncMock(),
                     node_manager=AsyncMock(),
                 ),
-                viability=AsyncMock(),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=_sf,
@@ -355,7 +353,6 @@ async def test_device_recovery_job_completed_when_device_missing(
                 reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
-            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=_sf,
