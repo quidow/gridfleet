@@ -1,6 +1,6 @@
 [project]
 name = "gridfleet-backend"
-version = "0.3.0"
+version = "0.4.0"
 description = "GridFleet backend — FastAPI + SQLAlchemy"
 license = "Apache-2.0"
 authors = [{ name = "GridFleet contributors" }]
@@ -20,6 +20,7 @@ dependencies = [
     "pyyaml==6.0.3",
     "packaging>=26.2",
     "python-multipart>=0.0.32",
+    "tenacity>=9.0,<10",
     "PyJWT>=2.10,<3",
 ]
 
