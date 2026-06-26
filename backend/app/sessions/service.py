@@ -4,13 +4,13 @@ import contextlib
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Select, and_, asc, desc, func, or_, select
+from sqlalchemy import Select, asc, desc, func, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.observability import get_logger
-from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor, keyset_newer, keyset_older
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -229,20 +229,6 @@ async def close_running_session(
         )
 
 
-def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
-    return or_(
-        Session.started_at < cursor.timestamp,
-        and_(Session.started_at == cursor.timestamp, Session.id < cursor.item_id),
-    )
-
-
-def _newer_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
-    return or_(
-        Session.started_at > cursor.timestamp,
-        and_(Session.started_at == cursor.timestamp, Session.id > cursor.item_id),
-    )
-
-
 async def _has_session_rows(
     db: AsyncSession,
     stmt: Select[tuple[Session]],
@@ -345,7 +331,11 @@ class SessionCrudService:
         page_stmt = stmt
         cursor_token = decode_cursor(cursor) if cursor else None
         if cursor_token is not None:
-            predicate = _newer_than_cursor(cursor_token) if direction == "newer" else _older_than_cursor(cursor_token)
+            predicate = (
+                keyset_newer(Session.started_at, Session.id, cursor_token)
+                if direction == "newer"
+                else keyset_older(Session.started_at, Session.id, cursor_token)
+            )
             page_stmt = page_stmt.where(predicate)
 
         if direction == "newer":
@@ -364,10 +354,10 @@ class SessionCrudService:
         first_item = items[0]
         last_item = items[-1]
         has_newer = await _has_session_rows(
-            db, stmt, _newer_than_cursor(CursorToken(first_item.started_at, first_item.id))
+            db, stmt, keyset_newer(Session.started_at, Session.id, CursorToken(first_item.started_at, first_item.id))
         )
         has_older = await _has_session_rows(
-            db, stmt, _older_than_cursor(CursorToken(last_item.started_at, last_item.id))
+            db, stmt, keyset_older(Session.started_at, Session.id, CursorToken(last_item.started_at, last_item.id))
         )
         return CursorPage(
             items=items,

@@ -6,6 +6,12 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import SQLColumnExpression, and_, or_
+
+if TYPE_CHECKING:
+    from sqlalchemy.sql.elements import ColumnElement
 
 
 class CursorPaginationError(ValueError):
@@ -24,6 +30,24 @@ class CursorPage[T]:
     limit: int
     next_cursor: str | None
     prev_cursor: str | None
+
+
+def keyset_older(
+    ts_col: SQLColumnExpression[Any], id_col: SQLColumnExpression[Any], cursor: CursorToken
+) -> ColumnElement[bool]:
+    return or_(
+        ts_col < cursor.timestamp,
+        and_(ts_col == cursor.timestamp, id_col < cursor.item_id),
+    )
+
+
+def keyset_newer(
+    ts_col: SQLColumnExpression[Any], id_col: SQLColumnExpression[Any], cursor: CursorToken
+) -> ColumnElement[bool]:
+    return or_(
+        ts_col > cursor.timestamp,
+        and_(ts_col == cursor.timestamp, id_col > cursor.item_id),
+    )
 
 
 def encode_cursor(timestamp: datetime, item_id: uuid.UUID) -> str:
