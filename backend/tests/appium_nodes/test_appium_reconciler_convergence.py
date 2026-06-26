@@ -16,6 +16,7 @@ from app.appium_nodes.services.reconciler_convergence import (
     _execute_action,
     decide_convergence_action,
     match_observed_entry,
+    reap_orphan_nodes,
 )
 
 
@@ -608,3 +609,33 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
             reset_start_failure=AsyncMock(),
             raise_errors=True,
         )
+
+
+def _stop_recorder(stopped: list[int]) -> object:
+    async def _stop(*, row: object = None, port: int) -> None:
+        stopped.append(port)
+
+    return _stop
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_nodes_stops_row_less_host_process() -> None:
+    # A running process whose target matches no desired row must be stopped,
+    # otherwise a stray Appium process leaks (the case the deleted Phase-1
+    # ``no_db_row`` path used to cover).
+    observed = [ObservedEntry(port=4731, pid=1, connection_target="10.0.0.5:4731")]
+    stopped: list[int] = []
+    reaped = await reap_orphan_nodes(observed, [], stop_agent=_stop_recorder(stopped))
+    assert stopped == [4731]
+    assert reaped == [4731]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_nodes_keeps_backed_off_node() -> None:
+    # A node present in desired rows (even one in recovery backoff, which the
+    # reaper is keyed off the FULL desired set to protect) must NOT be reaped.
+    row = _row(desired_state="running", connection_target="10.0.0.6:4732")
+    observed = [ObservedEntry(port=4732, pid=1, connection_target="10.0.0.6:4732")]
+    stopped: list[int] = []
+    await reap_orphan_nodes(observed, [row], stop_agent=_stop_recorder(stopped))
+    assert stopped == []

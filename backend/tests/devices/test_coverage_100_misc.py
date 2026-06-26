@@ -425,14 +425,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     listeners["after_commit"](sync_session)  # type: ignore[operator]
     assert event_bus._handler_tasks == set()
 
-    assert (
-        appium_reconciler.detect_orphans(
-            host_id=uuid.uuid4(),
-            agent_running=[],
-            db_running_rows=[{"host_id": uuid.uuid4(), "device_connection_target": "serial"}],
-        )
-        == []
-    )
     assert await bulk_service._load_existing_device_ids(AsyncMock(), []) == []
 
     class SessionCtx:

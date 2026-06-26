@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,11 +18,3 @@ class Settings(BaseSettings):
 DOCS_ENABLED_ENVIRONMENTS = frozenset({"local", "test", "staging"})
 
 settings = Settings()
-
-
-def reconciler_convergence_enabled() -> bool:
-    """Return whether the Appium reconciler should drive desired-state convergence."""
-    value = os.getenv("GRIDFLEET_RECONCILER_CONVERGENCE_ENABLED", "").strip().lower()
-    if value == "":
-        return True
-    return value in {"1", "true", "yes", "on"}
