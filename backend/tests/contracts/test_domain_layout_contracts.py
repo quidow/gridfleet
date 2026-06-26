@@ -143,7 +143,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     ),
     "lifecycle": (
         "dependencies",
-        "protocols",
         "router",
         "services_container",
         "services.actions",

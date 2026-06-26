@@ -13,21 +13,12 @@ if TYPE_CHECKING:
     from app.devices.models import Device
     from app.hosts.models import Host
     from app.hosts.schemas import DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
-    from app.packs.models import DriverPack, PackState
 
 
 class FeatureStatusRecorder(Protocol):
     async def record_feature_status(
         self, db: AsyncSession, *, host_id: uuid.UUID, pack_id: str, feature_id: str, ok: bool, detail: str
     ) -> bool: ...
-
-
-class PackLifecycleProtocol(Protocol):
-    async def count_active_work_for_pack(self, db: AsyncSession, pack_id: str) -> dict[str, int]: ...
-    async def try_complete_drain(self, db: AsyncSession, pack_id: str) -> DriverPack: ...
-    async def transition_pack_state(
-        self, db: AsyncSession, pack_id: str, target: PackState, *, override: bool = False
-    ) -> DriverPack: ...
 
 
 class PackDiscoveryProtocol(Protocol):

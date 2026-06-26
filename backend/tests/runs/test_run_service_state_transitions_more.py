@@ -29,7 +29,7 @@ def _db() -> AsyncMock:
 
 
 def _mock_release() -> AsyncMock:
-    """Return a mock RunReleaseProtocol."""
+    """Return a mock RunReleaseService."""
     mock = AsyncMock()
     mock.release_devices = AsyncMock(return_value=[])
     mock.clear_desired_grid_run_id_for_run = AsyncMock()

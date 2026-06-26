@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.jobs.protocols import DurableJobProtocol, RecoveryJobRunner, VerificationJobRunner
+    from app.jobs.protocols import RecoveryJobRunner, VerificationJobRunner
 
 logger = get_logger(__name__)
 JOB_POLL_INTERVAL_SEC = 1
@@ -179,7 +179,7 @@ class DurableJobService:
 
 
 class DurableJobWorkerLoop:
-    def __init__(self, *, service: DurableJobProtocol) -> None:
+    def __init__(self, *, service: DurableJobService) -> None:
         self._service = service
 
     async def run(self) -> None:

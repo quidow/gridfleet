@@ -10,14 +10,14 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.sessions.protocols import SessionCrudProtocol
+    from app.sessions.service import SessionCrudService
     from app.sessions.service_sync import SessionSyncService
     from app.sessions.service_viability import SessionViabilityService
 
 
 @dataclass(frozen=True, slots=True)
 class SessionServices:
-    crud: SessionCrudProtocol
+    crud: SessionCrudService
     sync: SessionSyncService
     viability: SessionViabilityService
     settings: SettingsReader

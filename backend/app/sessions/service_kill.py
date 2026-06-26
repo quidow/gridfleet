@@ -24,7 +24,7 @@ from app.sessions.models import Session, SessionStatus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.sessions.protocols import SessionCrudProtocol
+    from app.sessions.service import SessionCrudService
 
 OPERATOR_KILL_ERROR_TYPE = "operator_kill"
 
@@ -39,7 +39,7 @@ class KillOutcome:
     terminated: bool
 
 
-async def kill_session(db: AsyncSession, *, crud: SessionCrudProtocol, session_id: str) -> KillOutcome | None:
+async def kill_session(db: AsyncSession, *, crud: SessionCrudService, session_id: str) -> KillOutcome | None:
     """Returns None for an unknown session; raises SessionNotKillableError for
     a row that is not running (pending rows belong to the allocation reaper)."""
     # Own query instead of crud.get_session: resolve_router_target -> node_target

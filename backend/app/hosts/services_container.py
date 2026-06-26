@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
-    from app.hosts.protocols import HostCrudProtocol
+    from app.hosts.service import HostCrudService
     from app.hosts.service_diagnostics import HostDiagnosticsService
     from app.hosts.service_hardware_telemetry import HardwareTelemetryService
     from app.hosts.service_host_events import HostEventsService
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class HostServices:
-    crud: HostCrudProtocol
+    crud: HostCrudService
     hardware_telemetry: HardwareTelemetryService
     resource_telemetry: HostResourceTelemetryService
     diagnostics: HostDiagnosticsService

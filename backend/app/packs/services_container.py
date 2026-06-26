@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.packs.protocols import PackDiscoveryProtocol, PackLifecycleProtocol
+    from app.packs.protocols import PackDiscoveryProtocol
     from app.packs.services.feature_dispatch import FeatureService
+    from app.packs.services.lifecycle import PackLifecycleService
     from app.packs.services.release import PackReleaseService
     from app.packs.services.service import PackCatalogService
     from app.packs.services.status import PackStatusService
@@ -21,7 +22,7 @@ class PackServices:
     catalog: PackCatalogService
     release: PackReleaseService
     status: PackStatusService
-    lifecycle: PackLifecycleProtocol
+    lifecycle: PackLifecycleService
     feature: FeatureService
     discovery: PackDiscoveryProtocol
     storage: PackStorageService

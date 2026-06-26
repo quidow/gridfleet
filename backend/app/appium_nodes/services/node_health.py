@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
-    from app.lifecycle.protocols import LifecycleIncidentRecorder
+    from app.lifecycle.services.incidents import LifecycleIncidentService
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
@@ -75,7 +75,7 @@ class NodeHealthService:
         circuit_breaker: CircuitBreakerProtocol,
         recovery_control: DeviceRecoveryControl,
         health: DeviceNodeHealthWriter,
-        incidents: LifecycleIncidentRecorder,
+        incidents: LifecycleIncidentService,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
