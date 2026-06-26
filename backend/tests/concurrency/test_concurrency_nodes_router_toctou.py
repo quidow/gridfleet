@@ -76,8 +76,6 @@ async def test_start_node_locks_device_before_reservation_check(
             publisher=event_bus,
             subscriber=event_bus,
             reader=event_bus,
-            session_factory=db_session_maker,
-            engine=db_session_maker.kw["bind"],
         )
 
     def _override_run_services() -> RunServices:

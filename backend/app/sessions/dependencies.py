@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+
+from app.core.service_deps import make_services_getter
 
 if TYPE_CHECKING:
     from app.sessions.services_container import SessionServices
 
-
-def get_session_services(request: Request) -> SessionServices:
-    return request.app.state.services.sessions  # type: ignore[no-any-return]
-
-
+get_session_services = make_services_getter("sessions")
 SessionServicesDep = Annotated["SessionServices", Depends(get_session_services)]

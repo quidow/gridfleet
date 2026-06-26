@@ -81,6 +81,8 @@ def _setting_value(key: str) -> int:
         "appium.startup_timeout_sec": 30,
         "general.leader_keepalive_interval_sec": 5,
         "general.leader_stale_threshold_sec": 30,
+        "agent.http_pool_max_keepalive": 10,
+        "agent.http_pool_idle_seconds": 60,
     }
     return values[key]
 

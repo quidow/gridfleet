@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+
+from app.core.service_deps import make_services_getter
 
 if TYPE_CHECKING:
     from app.grid.services_container import GridServices
 
-
-def get_grid_services(request: Request) -> GridServices:
-    return request.app.state.services.grid  # type: ignore[no-any-return]
-
-
+get_grid_services = make_services_getter("grid")
 GridServicesDep = Annotated["GridServices", Depends(get_grid_services)]

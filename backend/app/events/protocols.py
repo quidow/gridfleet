@@ -6,7 +6,7 @@ The EventBus class satisfies all of them.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     import asyncio
@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from app.events.catalog import EventSeverity
 
 
-@runtime_checkable
 class EventPublisher(Protocol):
     async def publish(
         self, event_type: str, data: dict[str, Any], *, severity: EventSeverity | None = None

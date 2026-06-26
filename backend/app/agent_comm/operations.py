@@ -86,15 +86,7 @@ async def _send_request(
     )
     if use_pool:
         assert pool is not None  # narrowing for mypy
-        max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10, settings=settings)
-        idle_seconds = _settings_int("agent.http_pool_idle_seconds", default=60, settings=settings)
-        client = await pool.get_client(
-            host,
-            agent_port,
-            timeout=timeout,
-            max_keepalive=max_keepalive,
-            keepalive_expiry=idle_seconds,
-        )
+        client = await pool.get_client(host, agent_port, timeout=timeout)
         return await agent_request(
             method,
             url,
@@ -134,13 +126,6 @@ def _pool_enabled(*, settings: SettingsReader) -> bool:
         return bool(settings.get("agent.http_pool_enabled"))
     except KeyError, RuntimeError:
         return False
-
-
-def _settings_int(key: str, *, default: int, settings: SettingsReader) -> int:
-    try:
-        return int(settings.get(key))
-    except KeyError, RuntimeError, TypeError, ValueError:
-        return default
 
 
 def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> None:

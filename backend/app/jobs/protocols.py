@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 from app.jobs.kinds import JOB_KIND_DEVICE_VERIFICATION
 
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 STALE_JOB_TIMEOUT = timedelta(minutes=10)
 
 
-@runtime_checkable
 class DurableJobProtocol(Protocol):
     async def reset_stale_running_jobs(
         self, *, kind: str = JOB_KIND_DEVICE_VERIFICATION, timeout: timedelta = STALE_JOB_TIMEOUT
@@ -24,11 +23,9 @@ class DurableJobProtocol(Protocol):
     async def run_pending_once(self, *, kind: str | None = None) -> bool: ...
 
 
-@runtime_checkable
 class VerificationJobRunner(Protocol):
     async def run_persisted_verification_job(self, job_id: str, request: dict[str, Any]) -> None: ...
 
 
-@runtime_checkable
 class RecoveryJobRunner(Protocol):
     async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None: ...

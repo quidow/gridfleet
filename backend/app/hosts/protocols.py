@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import uuid
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     )
 
 
-@runtime_checkable
 class HostCrudProtocol(Protocol):
     async def create_host(self, db: AsyncSession, data: HostCreate) -> Host: ...
     async def register_host(self, db: AsyncSession, data: HostRegister) -> tuple[Host, bool]: ...

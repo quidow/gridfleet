@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 
-@runtime_checkable
 class LifecycleIncidentRecorder(Protocol):
     async def record_lifecycle_incident(
         self,

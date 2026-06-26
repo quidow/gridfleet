@@ -129,8 +129,6 @@ def compose_app(
         publisher=bus,
         subscriber=bus,
         reader=bus,
-        session_factory=session_factory,
-        engine=engine,
     )
     settings_services = SettingsServices(
         service=settings_svc,
@@ -330,10 +328,7 @@ def compose_app(
             ),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
-            publisher=bus,
             settings=settings_svc,
-            pool=http_pool,
-            circuit_breaker=circuit_breaker,
             session_factory=session_factory,
         ),
         sessions=SessionServices(
@@ -372,8 +367,6 @@ def compose_app(
             feature=pack_feature,
             discovery=pack_discovery_svc,
             storage=pack_storage,
-            publisher=bus,
-            circuit_breaker=circuit_breaker,
             session_factory=session_factory,
         ),
         appium_nodes=AppiumNodeServices(

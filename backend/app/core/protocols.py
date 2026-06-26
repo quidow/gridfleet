@@ -6,13 +6,12 @@ Concrete implementations satisfy these structurally (no inheritance).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from app.core.type_defs import SettingValue
 
 
-@runtime_checkable
 class SettingsReader(Protocol):
     def get(self, key: str) -> SettingValue: ...
     def get_int(self, key: str) -> int: ...

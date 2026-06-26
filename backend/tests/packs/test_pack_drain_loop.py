@@ -49,8 +49,6 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(db_sess
             feature=Mock(),
             discovery=Mock(),
             storage=Mock(),
-            publisher=Mock(),
-            circuit_breaker=Mock(),
             session_factory=Mock(),
         )
     )
@@ -86,8 +84,6 @@ async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
                 feature=Mock(),
                 discovery=Mock(),
                 storage=Mock(),
-                publisher=Mock(),
-                circuit_breaker=Mock(),
                 session_factory=SessionScope,
             )
         )
@@ -112,8 +108,6 @@ async def test_pack_drain_cycle_failure_does_not_kill_loop(monkeypatch: pytest.M
         feature=Mock(),
         discovery=Mock(),
         storage=Mock(),
-        publisher=Mock(),
-        circuit_breaker=Mock(),
         session_factory=_SessionScope,
     )
     loop = PackDrainLoop(services=services)

@@ -14,7 +14,6 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
-from app.jobs.protocols import DurableJobProtocol
 from app.jobs.queue import DurableJobService
 from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
@@ -236,7 +235,3 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
 
     assert mock_service.reset_stale_running_jobs.await_count == 2
     sleep.assert_awaited()
-
-
-def test_durable_job_service_satisfies_protocol() -> None:
-    assert issubclass(DurableJobService, DurableJobProtocol)

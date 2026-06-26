@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+
+from app.core.service_deps import make_services_getter
 
 if TYPE_CHECKING:
     from app.packs.services_container import PackServices
 
-
-def get_pack_services(request: Request) -> PackServices:
-    return request.app.state.services.packs  # type: ignore[no-any-return]
-
-
+get_pack_services = make_services_getter("packs")
 PackServicesDep = Annotated["PackServices", Depends(get_pack_services)]

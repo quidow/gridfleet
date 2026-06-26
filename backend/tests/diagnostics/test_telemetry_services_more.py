@@ -449,10 +449,7 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
             resource_telemetry=resource_telemetry_svc,
             diagnostics=HostDiagnosticsService(circuit_breaker=Mock()),
             host_events=HostEventsService(),
-            publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
-            pool=Mock(),
-            circuit_breaker=Mock(),
             session_factory=fake_session,
         )
     )

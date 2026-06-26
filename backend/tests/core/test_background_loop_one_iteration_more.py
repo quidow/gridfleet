@@ -246,10 +246,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             resource_telemetry=HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=_cb),
             diagnostics=HostDiagnosticsService(circuit_breaker=_cb),
             host_events=HostEventsService(),
-            publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.hardware_telemetry_interval_sec": 0.01}),
-            pool=Mock(),
-            circuit_breaker=_cb,
             session_factory=_Session,
         )
     )

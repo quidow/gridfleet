@@ -362,16 +362,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         yield db_session
 
     def override_get_event_services() -> EventServices:
-        assert db_session.bind is not None
-        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            db_session.bind, class_=AsyncSession, expire_on_commit=False
-        )
         return EventServices(  # type: ignore[arg-type]
             publisher=test_event_bus,
             subscriber=test_event_bus,
             reader=test_event_bus,
-            session_factory=sf,
-            engine=db_session.bind,
         )
 
     def override_get_settings_services() -> SettingsServices:
@@ -507,10 +501,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             diagnostics=HostDiagnosticsService(circuit_breaker=test_circuit_breaker),
             host_events=HostEventsService(),
-            publisher=test_event_bus,
             settings=settings_service,
-            pool=test_http_pool,
-            circuit_breaker=test_circuit_breaker,
             session_factory=sf,
         )
 
@@ -650,8 +641,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 identity_guard=DeviceIdentityConflictService(),
             ),
             storage=storage,
-            publisher=test_event_bus,
-            circuit_breaker=test_circuit_breaker,
             session_factory=sf,
         )
 

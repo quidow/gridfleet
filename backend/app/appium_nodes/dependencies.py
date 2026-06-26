@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+
+from app.core.service_deps import make_services_getter
 
 if TYPE_CHECKING:
     from app.appium_nodes.services_container import AppiumNodeServices
 
-
-def get_appium_node_services(request: Request) -> AppiumNodeServices:
-    return request.app.state.services.appium_nodes  # type: ignore[no-any-return]
-
-
+get_appium_node_services = make_services_getter("appium_nodes")
 AppiumNodeServicesDep = Annotated["AppiumNodeServices", Depends(get_appium_node_services)]

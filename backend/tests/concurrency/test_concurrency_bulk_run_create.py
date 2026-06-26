@@ -77,8 +77,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             publisher=event_bus,
             subscriber=event_bus,
             reader=event_bus,
-            session_factory=db_session_maker,
-            engine=db_session_maker.kw["bind"],
         )
 
     async def bulk_maintenance() -> int:
