@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.timeutil import parse_iso
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.hosts import service_diagnostics as host_diagnostics
@@ -28,13 +29,9 @@ def test_host_diagnostics_normalizers_reject_invalid_shapes() -> None:
         details={},
     )
     assert host_diagnostics._is_agent_local_recovery_event(other_event) is False
-    assert (
-        host_diagnostics._normalize_occurred_at("2026-05-01T12:00:00Z", fallback)
-        .isoformat()
-        .startswith("2026-05-01T12:00:00")
-    )
-    assert host_diagnostics._normalize_occurred_at(fallback, datetime.now(UTC)) == fallback
-    assert host_diagnostics._normalize_occurred_at("not-a-date", fallback) == fallback
+    assert parse_iso("2026-05-01T12:00:00Z") is not None
+    assert (parse_iso(fallback) or datetime.now(UTC)) == fallback
+    assert (parse_iso("not-a-date") or fallback) == fallback
     assert host_diagnostics._normalize_process_nodes("bad") == []
     assert host_diagnostics._normalize_process_nodes([{"port": True}, "bad", {"port": "4731", "pid": "123"}]) == [
         {"port": 4731, "pid": 123}

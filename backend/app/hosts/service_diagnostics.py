@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.appium_nodes.models import AppiumNode
 from app.core.coerce import coerce_int as _coerce_int
 from app.core.leader import state_store as control_plane_state_store
+from app.core.timeutil import parse_iso
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.hosts.models import Host
 from app.hosts.schemas import (
@@ -45,18 +46,6 @@ def _is_agent_local_recovery_event(event: DeviceEvent) -> bool:
     if event.event_type == DeviceEventType.node_restart:
         return details.get("recovered_from") == "agent_auto_restart"
     return False
-
-
-def _normalize_occurred_at(value: object, fallback: datetime) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        with_value = value.replace("Z", "+00:00")
-        try:
-            return datetime.fromisoformat(with_value)
-        except ValueError:
-            return fallback
-    return fallback
 
 
 def _normalize_process_nodes(raw_nodes: object) -> list[ProcessNodePayload]:
@@ -175,7 +164,7 @@ async def _list_recent_recovery_events(db: AsyncSession, host: Host) -> list[Hos
                 delay_sec=_coerce_int(details.get("delay_sec")),
                 exit_code=_coerce_int(details.get("exit_code")),
                 will_restart=details.get("will_restart") if isinstance(details.get("will_restart"), bool) else None,
-                occurred_at=_normalize_occurred_at(details.get("occurred_at"), event.created_at),
+                occurred_at=parse_iso(details.get("occurred_at")) or event.created_at,
                 recorded_at=event.created_at,
             )
         )
