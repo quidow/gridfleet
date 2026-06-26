@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.agent_comm.reconfigure_delivery import InlineReconfigureDeliveryFailedError
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
+from app.core.error_responses import RESPONSES_422, STANDARD_ERROR_RESPONSES
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.http_errors import found_or_404
 from app.core.pagination import CursorPaginationError
@@ -27,7 +27,7 @@ from app.runs.schemas import (
     RunRead,
 )
 
-RUN_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
+RUN_ERROR_RESPONSES = {**STANDARD_ERROR_RESPONSES, **RESPONSES_422}
 
 router = APIRouter(prefix="/api/runs", tags=["runs"], responses=RUN_ERROR_RESPONSES)
 

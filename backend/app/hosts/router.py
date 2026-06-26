@@ -13,7 +13,7 @@ from app.agent_comm import operations as agent_operations
 from app.agent_comm.dependencies import AgentCommServicesDep
 from app.core.database import async_session
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
 from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from app.packs.protocols import PackDiscoveryProtocol
     from app.packs.services_container import PackServices
 
-HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+HOST_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"], responses=HOST_ERROR_RESPONSES)
 logger = logging.getLogger(__name__)

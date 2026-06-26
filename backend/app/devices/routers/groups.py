@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
@@ -25,7 +25,7 @@ from app.devices.schemas.group import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-DEVICE_GROUP_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+DEVICE_GROUP_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
 router = APIRouter(prefix="/api/device-groups", tags=["device-groups"], responses=DEVICE_GROUP_ERROR_RESPONSES)
 

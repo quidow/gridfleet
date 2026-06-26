@@ -31,3 +31,9 @@ RESPONSES_409: dict[int | str, dict[str, Any]] = {
 RESPONSES_422: dict[int | str, dict[str, Any]] = {
     422: {"model": ErrorResponse, "description": "Request body validation failed"},
 }
+STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **RESPONSES_400,
+    **RESPONSES_401,
+    **RESPONSES_404,
+    **RESPONSES_409,
+}
