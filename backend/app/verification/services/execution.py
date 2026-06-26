@@ -83,7 +83,6 @@ class AgentCallContext:
 class FailureFinalizers:
     """Collaborators the verification failure-finalization path drives together."""
 
-    publisher: EventPublisher
     crud: DeviceCrudProtocol
     node_manager: RemoteNodeManager
     review: ReviewProtocol
@@ -111,7 +110,6 @@ class VerificationExecutionService:
         self._node_manager = node_manager
         self._review = review
         self._failure_finalizers = FailureFinalizers(
-            publisher=publisher,
             crud=crud,
             node_manager=node_manager,
             review=review,
