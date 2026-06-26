@@ -18,7 +18,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
@@ -124,73 +124,26 @@ async def _fetch_online_hosts(db: AsyncSession) -> list[dict[str, object]]:
     return [{"id": row.id, "ip": row.ip, "agent_port": row.agent_port} for row in result.all()]
 
 
-async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
+def _desired_select() -> Select[Any]:
     target_expr = func.coalesce(Device.connection_target, Device.identity_value)
-    stmt = (
-        select(
-            Device.id.label("device_id"),
-            Device.host_id,
-            Device.lifecycle_policy_state,
-            AppiumNode.id.label("node_id"),
-            target_expr.label("connection_target"),
-            AppiumNode.desired_state,
-            AppiumNode.desired_port,
-            AppiumNode.transition_token,
-            AppiumNode.transition_deadline,
-            AppiumNode.port,
-            AppiumNode.pid,
-            AppiumNode.active_connection_target,
-            AppiumNode.stop_pending,
-        )
-        .join(AppiumNode, AppiumNode.device_id == Device.id)
-        .join(Host, Host.id == Device.host_id)
-        .where(Host.status == HostStatus.online)
-    )
-    rows = (await db.execute(stmt)).all()
-    return [
-        DesiredRow(
-            device_id=row.device_id,
-            host_id=row.host_id,
-            node_id=row.node_id,
-            connection_target=row.connection_target,
-            desired_state=row.desired_state.value,
-            desired_port=row.desired_port,
-            transition_token=row.transition_token,
-            transition_deadline=row.transition_deadline,
-            port=row.port,
-            pid=row.pid,
-            active_connection_target=row.active_connection_target,
-            stop_pending=row.stop_pending,
-            lifecycle_policy_state=row.lifecycle_policy_state,
-        )
-        for row in rows
-    ]
+    return select(
+        Device.id.label("device_id"),
+        Device.host_id,
+        Device.lifecycle_policy_state,
+        AppiumNode.id.label("node_id"),
+        target_expr.label("connection_target"),
+        AppiumNode.desired_state,
+        AppiumNode.desired_port,
+        AppiumNode.transition_token,
+        AppiumNode.transition_deadline,
+        AppiumNode.port,
+        AppiumNode.pid,
+        AppiumNode.active_connection_target,
+        AppiumNode.stop_pending,
+    ).join(AppiumNode, AppiumNode.device_id == Device.id)
 
 
-async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredRow | None:
-    target_expr = func.coalesce(Device.connection_target, Device.identity_value)
-    stmt = (
-        select(
-            Device.id.label("device_id"),
-            Device.host_id,
-            Device.lifecycle_policy_state,
-            AppiumNode.id.label("node_id"),
-            target_expr.label("connection_target"),
-            AppiumNode.desired_state,
-            AppiumNode.desired_port,
-            AppiumNode.transition_token,
-            AppiumNode.transition_deadline,
-            AppiumNode.port,
-            AppiumNode.pid,
-            AppiumNode.active_connection_target,
-            AppiumNode.stop_pending,
-        )
-        .join(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(Device.id == device_id)
-    )
-    row = (await db.execute(stmt)).first()
-    if row is None:
-        return None
+def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
     return DesiredRow(
         device_id=row.device_id,
         host_id=row.host_id,
@@ -206,6 +159,18 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
         stop_pending=row.stop_pending,
         lifecycle_policy_state=row.lifecycle_policy_state,
     )
+
+
+async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
+    stmt = _desired_select().join(Host, Host.id == Device.host_id).where(Host.status == HostStatus.online)
+    rows = (await db.execute(stmt)).all()
+    return [_row_to_desired(row) for row in rows]
+
+
+async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredRow | None:
+    stmt = _desired_select().where(Device.id == device_id)
+    row = (await db.execute(stmt)).first()
+    return _row_to_desired(row) if row is not None else None
 
 
 async def _fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
