@@ -66,6 +66,58 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 
 * **backend:** fold bulk-maintenance-enter into bulk-device-ids ([e7abf48](https://github.com/quidow/gridfleet/commit/e7abf48ead0d3aa15aa6579a786d7cb2102e6291))
 
+## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.3.0...gridfleet-backend-v0.4.0) (2026-06-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** OpenAPI schema BulkMaintenanceEnter removed; enter-maintenance endpoints now reference BulkDeviceIds.
+* **agent:** the /agent/plugins and /agent/plugins/sync endpoints are removed and AppiumStartRequest no longer accepts a plugins field.
+* **backend:** the /api/plugins and /api/hosts/{id}/plugins endpoints and the appium.default_plugins setting are removed.
+* **backend:** the /api/webhooks endpoints and the webhooks / webhook_deliveries tables are removed.
+
+### Features
+
+* **agent:** remove appium plugins endpoints and runtime wiring ([45b78f6](https://github.com/quidow/gridfleet/commit/45b78f6f95add5bf32d0bd85c92bf48794b3fb79))
+* **backend:** add eligible count and node routability reason to grid router ([6e945f6](https://github.com/quidow/gridfleet/commit/6e945f6e1f2dd8fd1b14fa5afd10b8ce42735a66))
+* **backend:** remove appium plugins feature and drop its tables ([a1b513f](https://github.com/quidow/gridfleet/commit/a1b513fa4afe46b11616a1dde473f42912225e5b))
+* **backend:** remove webhooks feature and drop its tables ([5382dda](https://github.com/quidow/gridfleet/commit/5382ddafc6236cb7995cbee8927ec3b60d83462c))
+
+
+### Bug Fixes
+
+* **backend:** unify driver-version drift so catalog and per-host surfaces agree ([4bf4de7](https://github.com/quidow/gridfleet/commit/4bf4de779bb801a95ffb364f3631dee12b9cce18))
+* **backend:** update reconfigure call assertions for explicit timeout ([7934d3f](https://github.com/quidow/gridfleet/commit/7934d3f3ac3ea71f1d34412842c2497d57c248b9))
+
+
+### Performance Improvements
+
+* **backend:** drop never-surfaced per-stage verification data payload ([755528f](https://github.com/quidow/gridfleet/commit/755528f96bcb1407c570b676d880d2121a94979c))
+* **backend:** fold orphan-claim reaping into reap_expired ([3fa9b77](https://github.com/quidow/gridfleet/commit/3fa9b77e4571f16a5e0362baa67528f48831fb82))
+* **backend:** gate DeviceDetail.orchestration behind ?include=orchestration ([9a029b4](https://github.com/quidow/gridfleet/commit/9a029b42b7321d282ff4bb2899e555033a6cbfb9))
+* **backend:** run orphaned-intent sweeps only on full-scan cycles ([4510ad7](https://github.com/quidow/gridfleet/commit/4510ad7f19a37ee72c74ec2dd973350e09e4413a))
+* **backend:** skip no-op device row lock in confirm_running steady state ([84db417](https://github.com/quidow/gridfleet/commit/84db417d57aecaefd5fa521cdb32163c05641d06))
+* **backend:** trim FleetOverview to the two fields the dashboard reads ([fae48d2](https://github.com/quidow/gridfleet/commit/fae48d270d4e894e19fdec51707606c9690cc8e0))
+
+
+### Dependencies
+
+* **backend:** bump pyjwt to 2.13.0 ([c88444d](https://github.com/quidow/gridfleet/commit/c88444d1a432bf349401657eeae0bb33df0e18d2))
+* **deps:** bump ruff ([#674](https://github.com/quidow/gridfleet/issues/674)) ([b5fb7be](https://github.com/quidow/gridfleet/commit/b5fb7be8b4a5808869a8aa1c3ae7889e770a8c23))
+* **deps:** bump the python-dependencies group ([#656](https://github.com/quidow/gridfleet/issues/656)) ([d5f3e3f](https://github.com/quidow/gridfleet/commit/d5f3e3f46375d6b1532194f807d1f21b6aab6156))
+* **deps:** bump the python-dependencies group ([#698](https://github.com/quidow/gridfleet/issues/698)) ([4bdd76c](https://github.com/quidow/gridfleet/commit/4bdd76c18f378e98db85aae726b4e34d47241bbc))
+
+
+### Documentation
+
+* **backend:** correct stale metrics and grid router_internal docstrings ([4fa8f2f](https://github.com/quidow/gridfleet/commit/4fa8f2fa386e9984fccd32855f33f247179088bf))
+* **backend:** fix record_background_loop_overrun docstring fragment ([8de2548](https://github.com/quidow/gridfleet/commit/8de2548d2a1976754f9918f767cc1684b085a094))
+
+
+### Code Refactoring
+
+* **backend:** fold bulk-maintenance-enter into bulk-device-ids ([e7abf48](https://github.com/quidow/gridfleet/commit/e7abf48ead0d3aa15aa6579a786d7cb2102e6291))
+
 ## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.2.0...gridfleet-backend-v0.3.0) (2026-06-22)
 
 
