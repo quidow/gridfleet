@@ -504,7 +504,7 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
         await devices_verification.get_device_verification_job("job", db=db, verification_services=mock_vs_no_job)
 
     queue: asyncio.Queue[devices_verification.Event] = asyncio.Queue()
-    task = asyncio.create_task(devices_verification._read_queue_event(queue))
+    task = asyncio.create_task(devices_verification.wait_for_queue_event(queue))
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)

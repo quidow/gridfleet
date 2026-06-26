@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -13,6 +12,7 @@ from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.http_errors import found_or_404
+from app.core.sse import wait_for_queue_event
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     DeviceVerificationCreate,
@@ -28,21 +28,9 @@ from app.verification.services.job_state import public_snapshot
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from app.events import Event
-
 DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
 
 router = APIRouter(prefix="/api/verification", tags=["verification"], responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
-
-
-async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
-    get_task = asyncio.create_task(queue.get())
-    try:
-        return await get_task
-    finally:
-        if not get_task.done():
-            get_task.cancel()
-            _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
 @router.post("/jobs", response_model=DeviceVerificationJobRead, status_code=202)
@@ -128,7 +116,7 @@ async def stream_device_verification_job_events(
             while True:
                 if await request.is_disconnected():
                     return
-                event = await _read_queue_event(queue)
+                event = await wait_for_queue_event(queue)
                 if event.type != "device.verification.updated":
                     continue
                 if str(event.data.get("job_id")) != job_id:

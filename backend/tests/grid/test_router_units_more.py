@@ -402,7 +402,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         return "queued"
 
     queue = SimpleNamespace(get=fake_get)
-    assert await events._wait_for_queue_event(queue) == "queued"  # type: ignore[arg-type]
+    assert await events.wait_for_queue_event(queue) == "queued"  # type: ignore[arg-type]
 
     wait_calls = 0
 
@@ -417,7 +417,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
             raise TimeoutError()
         raise asyncio.CancelledError()
 
-    monkeypatch.setattr(events, "_wait_for_queue_event", fake_wait_then_cancel)
+    monkeypatch.setattr(events, "wait_for_queue_event", fake_wait_then_cancel)
     monkeypatch.setattr(events, "KEEPALIVE_INTERVAL", 0.01)
     mock_event_services = SimpleNamespace(
         subscriber=SimpleNamespace(subscribe=Mock(return_value=asyncio.Queue()), unsubscribe=Mock()),
@@ -487,9 +487,11 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         def cancel(self) -> None:
             return None
 
-    monkeypatch.setattr(devices_verification_router.asyncio, "create_task", Mock(return_value=FakeTask()))
-    monkeypatch.setattr(devices_verification_router.asyncio, "gather", AsyncMock(return_value=[]))
-    assert (await devices_verification_router._read_queue_event(empty_queue)).type == "x"  # type: ignore[arg-type]
+    import app.core.sse as _sse
+
+    monkeypatch.setattr(_sse.asyncio, "create_task", Mock(return_value=FakeTask()))
+    monkeypatch.setattr(_sse.asyncio, "gather", AsyncMock(return_value=[]))
+    assert (await devices_verification_router.wait_for_queue_event(empty_queue)).type == "x"  # type: ignore[arg-type]
 
 
 async def test_device_verification_router_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
