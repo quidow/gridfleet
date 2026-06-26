@@ -9,7 +9,6 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 import httpx2 as httpx
-from prometheus_client import Counter
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
@@ -56,16 +55,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
 
-NODE_HEALTH_WAKE_SOURCE_TOTAL = Counter(
-    "gridfleet_node_health_wake_source",
-    "Why node_health_loop ran a cycle: doorbell (bus event) or tick (timeout).",
-    labelnames=("source",),
-)
-# Pre-register both wake sources: an absent series on a dashboard is
-# indistinguishable from broken doorbell wiring; an explicit 0 is not.
-for _wake_source in ("doorbell", "tick"):
-    NODE_HEALTH_WAKE_SOURCE_TOTAL.labels(source=_wake_source)
-
 
 @dataclass(frozen=True)
 class NodeHealthCheckRequest:
@@ -95,33 +84,6 @@ class NodeHealthService:
         self._recovery_control = recovery_control
         self._health = health
         self._incidents = incidents
-        self._doorbell: asyncio.Event | None = None  # lazy: created on first access on the running loop
-
-    def _get_doorbell(self) -> asyncio.Event:
-        if self._doorbell is None:
-            self._doorbell = asyncio.Event()
-        return self._doorbell
-
-    # NOTE (2026-06-21): no production caller — the hub event-bus subscriber that rang this
-    # doorbell was removed; the loop is currently tick-only.  Kept intentionally: the
-    # NodeHealthLoop docstring records the intent to wire a direct-observation trigger here.
-    # Removal deferred pending that wiring decision; see Stage-4 P7 investigation.
-    def wake(self) -> None:
-        self._get_doorbell().set()
-
-    async def wait_for_wake(self, timeout: float) -> bool:
-        """Wait for a doorbell wake or timeout; clear and report which fired.
-
-        Returns True if doorbell-woken, False on timeout.
-        """
-        doorbell = self._get_doorbell()
-        try:
-            await asyncio.wait_for(doorbell.wait(), timeout=timeout)
-            woke = True
-        except TimeoutError:
-            woke = False
-        doorbell.clear()
-        return woke
 
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (
@@ -453,7 +415,3 @@ class NodeHealthLoop(BackgroundLoop):
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.node_health.check_nodes(db)
-
-    async def _wait(self, interval: float) -> None:
-        woke = await self._services.node_health.wait_for_wake(interval)
-        NODE_HEALTH_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()
