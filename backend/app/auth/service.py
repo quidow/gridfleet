@@ -10,6 +10,7 @@ import jwt
 from starlette.requests import cookie_parser
 
 from app.auth import auth_settings as settings
+from app.auth.config import missing_auth_settings
 from app.core.timeutil import now_utc
 
 _ALGORITHM = "HS256"
@@ -43,14 +44,13 @@ class RequestAuthResult:
 def validate_process_configuration() -> None:
     if not settings.auth_enabled:
         return
-    required_values = {
-        "GRIDFLEET_AUTH_USERNAME": settings.auth_username,
-        "GRIDFLEET_AUTH_PASSWORD": settings.auth_password,
-        "GRIDFLEET_AUTH_SESSION_SECRET": settings.auth_session_secret,
-        "GRIDFLEET_MACHINE_AUTH_USERNAME": settings.machine_auth_username,
-        "GRIDFLEET_MACHINE_AUTH_PASSWORD": settings.machine_auth_password,
-    }
-    missing = [name for name, value in required_values.items() if not value]
+    missing = missing_auth_settings(
+        auth_username=settings.auth_username,
+        auth_password=settings.auth_password,
+        auth_session_secret=settings.auth_session_secret,
+        machine_auth_username=settings.machine_auth_username,
+        machine_auth_password=settings.machine_auth_password,
+    )
     if missing:
         joined = ", ".join(missing)
         raise RuntimeError(f"Auth is enabled but required settings are missing: {joined}")
