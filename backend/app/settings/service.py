@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _LEGACY_EVENT_RENAMES = {
-    "device.availability_changed": ("device.operational_state_changed",),
+    "device.availability_changed": "device.operational_state_changed",
 }
 
 
@@ -44,10 +44,8 @@ def _migrate_legacy_event_names(values: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for name in values:
-        replacements = _LEGACY_EVENT_RENAMES.get(name, (name,))
-        for replacement in replacements:
-            if replacement in seen:
-                continue
+        replacement = _LEGACY_EVENT_RENAMES.get(name, name)
+        if replacement not in seen:
             out.append(replacement)
             seen.add(replacement)
     return out
