@@ -7,7 +7,6 @@ from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     BulkDeviceIds,
-    BulkMaintenanceEnter,
     BulkOperationResult,
     BulkTagsUpdate,
 )
@@ -43,9 +42,7 @@ async def bulk_delete(body: BulkDeviceIds, db: DbDep, device_services: DeviceSer
 
 
 @router.post("/enter-maintenance", response_model=BulkOperationResult)
-async def bulk_enter_maintenance(
-    body: BulkMaintenanceEnter, db: DbDep, device_services: DeviceServicesDep
-) -> dict[str, Any]:
+async def bulk_enter_maintenance(body: BulkDeviceIds, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     return await device_services.bulk.bulk_enter_maintenance(db, body.device_ids)
 
 

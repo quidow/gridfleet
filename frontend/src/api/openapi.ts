@@ -2065,11 +2065,6 @@ export interface components {
             /** Device Ids */
             device_ids: string[];
         };
-        /** BulkMaintenanceEnter */
-        BulkMaintenanceEnter: {
-            /** Device Ids */
-            device_ids: string[];
-        };
         /** BulkOperationResult */
         BulkOperationResult: {
             /** Errors */
@@ -5792,7 +5787,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BulkMaintenanceEnter"];
+                "application/json": components["schemas"]["BulkDeviceIds"];
             };
         };
         responses: {
@@ -6570,7 +6565,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BulkMaintenanceEnter"];
+                "application/json": components["schemas"]["BulkDeviceIds"];
             };
         };
         responses: {

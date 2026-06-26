@@ -1,6 +1,6 @@
 import api from './client';
 import type {
-  BulkMaintenanceEnter,
+  BulkDeviceIds,
   BulkOperationResult,
   BulkTagsUpdate,
   DeviceGroupCreate,
@@ -39,7 +39,7 @@ export const groupStopNodes = (groupId: string) =>
 export const groupRestartNodes = (groupId: string) =>
   api.post<BulkOperationResult>(`/device-groups/${groupId}/bulk/restart-nodes`).then(r => r.data);
 
-export const groupEnterMaintenance = (groupId: string, body: BulkMaintenanceEnter) =>
+export const groupEnterMaintenance = (groupId: string, body: BulkDeviceIds) =>
   api.post<BulkOperationResult>(`/device-groups/${groupId}/bulk/enter-maintenance`, body).then(r => r.data);
 
 export const groupExitMaintenance = (groupId: string) =>

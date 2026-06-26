@@ -1,7 +1,6 @@
 import api from './client';
 import type {
   BulkDeviceIds,
-  BulkMaintenanceEnter,
   BulkOperationResult,
   BulkTagsUpdate,
 } from '../types';
@@ -23,7 +22,7 @@ export const bulkUpdateTags = (body: BulkTagsUpdate) =>
 export const bulkDelete = (body: BulkDeviceIds) =>
   api.post<BulkOperationResult>(`${BASE}/delete`, body).then(r => r.data);
 
-export const bulkEnterMaintenance = (body: BulkMaintenanceEnter) =>
+export const bulkEnterMaintenance = (body: BulkDeviceIds) =>
   api.post<BulkOperationResult>(`${BASE}/enter-maintenance`, body).then(r => r.data);
 
 export const bulkExitMaintenance = (body: BulkDeviceIds) =>

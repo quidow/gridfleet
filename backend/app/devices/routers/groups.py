@@ -10,7 +10,7 @@ from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
-    BulkMaintenanceEnter,
+    BulkDeviceIds,
     BulkOperationResult,
     BulkTagsUpdate,
 )
@@ -128,7 +128,7 @@ async def group_bulk_restart(group_id: uuid.UUID, db: DbDep, device_services: De
 @router.post("/{group_id}/bulk/enter-maintenance", response_model=BulkOperationResult)
 async def group_bulk_enter_maintenance(
     group_id: uuid.UUID,
-    body: BulkMaintenanceEnter,
+    body: BulkDeviceIds,
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:

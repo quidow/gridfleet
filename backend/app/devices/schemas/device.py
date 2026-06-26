@@ -417,10 +417,6 @@ class BulkTagsUpdate(BaseModel):
     merge: bool = True
 
 
-class BulkMaintenanceEnter(BaseModel):
-    device_ids: list[uuid.UUID]
-
-
 class BulkOperationResult(BaseModel):
     total: int
     succeeded: int

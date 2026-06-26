@@ -17,8 +17,8 @@ import {
   updateDeviceGroup,
 } from '../api/deviceGroups';
 import type {
+  BulkDeviceIds,
   BulkOperationResult,
-  BulkMaintenanceEnter,
   BulkTagsUpdate,
   DeviceGroupCreate,
   DeviceGroupUpdate,
@@ -117,7 +117,7 @@ export const useGroupReconnect = () => useGroupBulkMutation(groupReconnect);
 export const useGroupExitMaintenance = () => useGroupBulkMutation(groupExitMaintenance);
 export const useGroupDeleteDevices = () => useGroupBulkMutation(groupDeleteDevices);
 export const useGroupEnterMaintenance = () =>
-  useGroupBulkMutation(({ groupId, body }: { groupId: string; body: BulkMaintenanceEnter }) =>
+  useGroupBulkMutation(({ groupId, body }: { groupId: string; body: BulkDeviceIds }) =>
     groupEnterMaintenance(groupId, body));
 export const useGroupUpdateTags = () =>
   useGroupBulkMutation(({ groupId, body }: { groupId: string; body: BulkTagsUpdate }) =>
