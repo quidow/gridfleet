@@ -93,7 +93,7 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     with pytest.raises(KeyError, match="Unknown setting"):
         await service.bulk_update(AsyncMock(), {"missing.setting": 1}, publisher=event_bus)
 
-    assert "JSON-serializable" in (service._validate_value("notifications.toast_events", [object()]) or "")
+    assert "item" in (service._validate_value("notifications.toast_events", [object()]) or "")
     assert "Unknown item" in (service._validate_value("notifications.toast_events", ["../private.event"]) or "")
 
     row = SimpleNamespace(value=None)
