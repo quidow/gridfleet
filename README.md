@@ -4,9 +4,9 @@
 [![Security](https://github.com/quidow/gridfleet/actions/workflows/security.yml/badge.svg)](https://github.com/quidow/gridfleet/actions/workflows/security.yml)
 
 GridFleet is an Appium control plane for device labs and CI
-fleets. It gives operators one place to register hosts, discover devices, start
+fleets. From one place, operators register hosts, discover devices, start
 Appium nodes, route WebDriver sessions, reserve capacity for test runs, and
-inspect fleet health. A built-in Rust WebDriver router on `:4444` allocates a
+check fleet health. A built-in Rust WebDriver router on `:4444` allocates a
 device and proxies each session directly to Appium on the host.
 
 Driver-specific behavior lives in driver packs. The core manager owns Appium
@@ -17,7 +17,7 @@ adapter code.
 
 ![GridFleet dashboard demo](docs/assets/gridfleet-dashboard.png)
 
-## What You Get
+## What you get
 
 - FastAPI backend with PostgreSQL, async SQLAlchemy, Alembic migrations, and
   leader-owned background workers.
@@ -32,7 +32,7 @@ adapter code.
 - Curated Appium driver-pack manifests and adapter source for Android,
   Apple/XCUITest, and Roku lanes.
 
-## Repository Layout
+## Repository layout
 
 ```text
 gridfleet/
@@ -46,7 +46,7 @@ gridfleet/
 └── scripts/       Backup/restore, agent install, and driver-pack helpers
 ```
 
-## Quick Start
+## Quick start
 
 The fastest local trial is the Docker stack:
 
@@ -68,7 +68,7 @@ cd docker
 docker compose down
 ```
 
-## Driver Pack Tarballs
+## Driver pack tarballs
 
 GridFleet does not check in generated `.tar.gz` driver-pack artifacts. Build
 them locally when you want uploadable packs for another GridFleet instance or
@@ -102,7 +102,7 @@ hosts, so only upload code you trust.
 Read the full upload guide in
 [docs/guides/driver-pack-tarball-upload.md](docs/guides/driver-pack-tarball-upload.md).
 
-## Production Compose
+## Production compose
 
 For a production-style manager deployment:
 
@@ -116,7 +116,7 @@ Before using production compose, edit `docker/.env` and replace all placeholder
 passwords and session secrets. Deployment, backup, restore, and rollback notes
 are in [docs/guides/deployment.md](docs/guides/deployment.md).
 
-## Development Setup
+## Development setup
 
 Prerequisites:
 
@@ -198,14 +198,14 @@ Start with [SECURITY.md](SECURITY.md) and
 [docs/guides/security.md](docs/guides/security.md). Do not expose backend,
 agent, WebDriver router, device-host Appium, or host-terminal ports directly to the public internet.
 
-## Project Status
+## Project status
 
 GridFleet is in an initial public preview. The system is usable for lab and CI
 experiments, but pre-1.0 API, deployment, driver-pack, and testkit contracts may
 change across minor releases. Real-device smoke coverage remains a local/manual
 release gate.
 
-## Community And License
+## Community and license
 
 - License: [Apache License 2.0](LICENSE)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
