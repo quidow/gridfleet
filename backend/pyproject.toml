@@ -6,13 +6,13 @@ license = "Apache-2.0"
 authors = [{ name = "GridFleet contributors" }]
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi==0.138.1",
+    "fastapi==0.138.2",
     "uvicorn[standard]==0.49.0",
     "sqlalchemy[asyncio]==2.0.51",
     "asyncpg==0.31.0",
     "pydantic-settings==2.14.2",
     "alembic==1.18.5",
-    "greenlet==3.5.2",
+    "greenlet==3.5.3",
     "httpx2==2.5.0",
     "sse-starlette==3.4.5",
     "prometheus-client==0.25.0",
@@ -37,7 +37,7 @@ dev = [
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
     "ruff>=0.15.20",
-    "datamodel-code-generator==0.65.1",
+    "datamodel-code-generator==0.66.0",
 ]
 
 [tool.pytest.ini_options]
