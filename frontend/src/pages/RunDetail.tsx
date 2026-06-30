@@ -31,7 +31,7 @@ function formatDate(dateStr: string | null): string {
 type ReservedDevice = {
   device_id: string;
   identity_value: string;
-  name: string | null;
+  name?: string | null;
   connection_target: string | null;
   pack_id: string;
   platform_id: string;
