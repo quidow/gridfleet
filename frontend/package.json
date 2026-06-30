@@ -1,7 +1,7 @@
 {
   "name": "gridfleet-frontend",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "React operator UI for GridFleet",
   "license": "Apache-2.0",
   "repository": {
@@ -36,13 +36,13 @@
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@monaco-editor/react": "^4.7.0",
-    "@tailwindcss/vite": "^4.3.2",
-    "@tanstack/react-query": "^5.101.2",
+    "@tailwindcss/vite": "^4.3.1",
+    "@tanstack/react-query": "^5.101.1",
     "axios": "^1.18.1",
-    "lucide-react": "^1.22.0",
+    "lucide-react": "^1.21.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.1",
+    "react-router-dom": "^7.18.0",
     "recharts": "^3.9.0",
     "sonner": "^2.0.7",
     "tailwindcss": "^4.3.0"
@@ -63,10 +63,10 @@
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
-    "knip": "^6.23.0",
+    "knip": "^6.21.0",
     "openapi-typescript": "^7.13.0",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.62.1",
+    "typescript-eslint": "^8.62.0",
     "vite": "^8.1.0",
     "vitest": "^4.1.9"
   },

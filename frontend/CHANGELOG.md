@@ -12,6 +12,14 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.4.1](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.4.0...gridfleet-frontend-v0.4.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **frontend:** use relative dates for session outcome heatmap e2e fixture ([c1b45b3](https://github.com/quidow/gridfleet/commit/c1b45b36c3f24c0e1f60662ef52895e4c00b2b98))
+* **frontend:** use relative dates for session outcome heatmap e2e fixture ([2a85778](https://github.com/quidow/gridfleet/commit/2a85778ae096beb1654adad5790f7742cf09c836))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.3.0...gridfleet-frontend-v0.4.0) (2026-06-26)
 
 
