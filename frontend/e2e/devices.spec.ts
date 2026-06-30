@@ -119,10 +119,17 @@ const DEFAULT_DEVICE_DETAIL = {
   sessions: [],
 } as const;
 
+function daysAgoIso(daysAgo: number, hourUtc = 12): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - daysAgo);
+  date.setUTCHours(hourUtc, 0, 0, 0);
+  return date.toISOString();
+}
+
 const DEFAULT_HEATMAP_ROWS = [
-  { timestamp: '2026-03-29T12:00:00Z', status: 'passed' },
-  { timestamp: '2026-03-30T12:00:00Z', status: 'failed' },
-  { timestamp: '2026-03-30T15:00:00Z', status: 'error' },
+  { timestamp: daysAgoIso(2), status: 'passed' },
+  { timestamp: daysAgoIso(1), status: 'failed' },
+  { timestamp: daysAgoIso(1, 15), status: 'error' },
 ] as const;
 
 function mockHealthSummary(healthy = false, detail: string | null = null) {
