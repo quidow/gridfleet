@@ -31,6 +31,7 @@ function formatDate(dateStr: string | null): string {
 type ReservedDevice = {
   device_id: string;
   identity_value: string;
+  name: string | null;
   connection_target: string | null;
   pack_id: string;
   platform_id: string;
@@ -46,18 +47,13 @@ type ReservedDevice = {
 
 const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
   {
-    key: 'identity',
-    header: 'Identity',
+    key: 'device',
+    header: 'Device',
     render: (d) => (
-      <Link to={`/devices/${d.device_id}`} className="text-accent hover:underline text-sm font-mono">
-        {d.identity_value}
+      <Link to={`/devices/${d.device_id}`} className="text-accent hover:underline text-sm">
+        {d.name ?? d.identity_value}
       </Link>
     ),
-  },
-  {
-    key: 'target',
-    header: 'Target',
-    render: (d) => <span className="text-sm font-mono text-text-3">{d.connection_target ?? '-'}</span>,
   },
   {
     key: 'platform',
