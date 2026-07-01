@@ -298,11 +298,13 @@ async def test_device_match_surface_template_cache_collapses_lookups(
 async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Report ⑤ safety net: the pack stereotype base is an open dict[str, Any], so an
-    # uploaded pack could carry a constraining key. Identity/tag keys MUST survive into
-    # the match surface (so by-tag/by-udid routing is unchanged); non-matcher base keys
-    # (platform/os_version) and appium:automationName MUST NOT — the matcher ignores them
-    # and they only bloat the surface.
+    # Report ⑤ safety net, revised: the pack stereotype base is an open dict[str, Any],
+    # so an uploaded pack could carry a constraining key. Identity/tag keys AND the
+    # pack's appium:platform routing key (the driver-pack platform_id — distinguishes
+    # e.g. android_mobile/android_tv/firetv_real, which otherwise share platformName +
+    # automationName) MUST survive into the match surface; non-matcher base keys
+    # (os_version) and appium:automationName MUST NOT — the matcher ignores them and
+    # they only bloat the surface.
     import app.grid.allocation as allocation_module
     from app.packs.services.capability import StereotypeTemplate
 
@@ -313,7 +315,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
             platform_name="Android",
             automation_name="UiAutomator2",
             stereotype_base={
-                "appium:platform": "{device.platform_id}",  # non-constraining -> dropped
+                "appium:platform": "{device.platform_id}",  # constraining + templated -> kept, interpolated
                 "appium:os_version": "{device.os_version}",  # non-constraining -> dropped
                 "gridfleet:tag:pool": "ci",  # constraining literal -> kept verbatim
                 "appium:udid": "{device.identity_value}",  # constraining + templated -> kept, interpolated
@@ -330,7 +332,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
     # not merely survive key selection — pins that _interpolate actually substitutes.
     assert surface["appium:udid"] == device.identity_value
     assert surface["gridfleet:deviceId"] == str(device.id)
-    assert "appium:platform" not in surface
+    assert surface["appium:platform"] == device.platform_id
     assert "appium:os_version" not in surface
     assert "appium:automationName" not in surface
 

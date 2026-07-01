@@ -1,21 +1,30 @@
 """W3C new-session capability merge and slot matching.
 
 The router forwards the raw new-session body; this module is the only place that
-reads it. Matching is identity-only — with one deliberate exception: ``platformName``
+reads it. Matching is identity-only — with two deliberate exceptions: ``platformName``
 is matched as a case-insensitive constraint (W3C clients send "Android"/"android"/
-"iOS" interchangeably). Appium remains the W3C authority for everything else
+"iOS" interchangeably), and ``appium:platform`` (the driver-pack's per-platform routing
+id, e.g. ``android_mobile`` vs ``android_tv`` vs ``firetv_real``) is matched so devices
+that share ``platformName``/``automationName`` but serve different driver-pack platforms
+are not interchangeable. Appium remains the W3C authority for everything else
 (spec §2).
 """
 
 from typing import Any
 
 # Identity keys: if requested, the stereotype must define them with an equal value.
+# appium:platform is the pack-declared platform_id routing key (see driver-pack
+# manifests' capabilities.stereotype) — without it, devices sharing platformName +
+# automationName but different platform_id (e.g. android_mobile/android_tv/firetv_real,
+# all Android/UiAutomator2) are indistinguishable to the allocator and a request for
+# one can silently be satisfied by another.
 IDENTITY_KEYS = frozenset(
     {
         "appium:udid",
         "appium:deviceName",
         "gridfleet:deviceId",
         "gridfleet:deviceName",
+        "appium:platform",
     }
 )
 TAG_PREFIX = "gridfleet:tag:"
