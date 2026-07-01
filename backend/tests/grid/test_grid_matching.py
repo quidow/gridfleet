@@ -66,6 +66,7 @@ class TestCandidateMatchesStereotype:
         "appium:udid": "emulator-5554",
         "gridfleet:deviceId": "11111111-1111-1111-1111-111111111111",
         "gridfleet:tag:pool": "ci",
+        "appium:platform": "android_tv",
     }
 
     @pytest.mark.parametrize(
@@ -84,6 +85,8 @@ class TestCandidateMatchesStereotype:
             ({"appium:newCommandTimeout": 120}, True),  # non-identity appium caps are Appium's problem
             ({"gridfleet:somethingCustom": "x"}, True),  # unknown vendor keys do not constrain slot identity
             ({"appium:deviceName": "whatever"}, False),  # identity key absent from stereotype -> no match
+            ({"appium:platform": "android_tv"}, True),  # matching pack platform_id
+            ({"appium:platform": "firetv_real"}, False),  # different pack platform_id -> no match
         ],
     )
     def test_matrix(self, candidate: dict[str, Any], expected: bool) -> None:

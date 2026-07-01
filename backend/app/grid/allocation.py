@@ -807,11 +807,12 @@ class AllocationService:
 
 
 def _match_relevant_base(template: StereotypeTemplate, device: Device) -> dict[str, Any]:
-    """Identity/tag keys an uploaded pack's stereotype base declares — the only base
-    keys the allocation matcher (``candidate_matches_stereotype``) consults. Curated
-    packs declare none, so the common path renders nothing and skips the device
-    snapshot. When present, the keys are interpolated per-device (reusing the node-start
-    template engine) and projected down to just the matcher-relevant subset."""
+    """Identity/tag/platform-routing keys a pack's stereotype base declares — the only
+    base keys the allocation matcher (``candidate_matches_stereotype``) consults. Every
+    curated pack declares ``appium:platform``, so this renders and interpolates
+    per-device on the common path too, not just for uploaded packs. When present, the
+    keys are interpolated per-device (reusing the node-start template engine) and
+    projected down to just the matcher-relevant subset."""
     keys = [k for k in template.stereotype_base if is_match_relevant_key(k)]
     if not keys:
         return {}
@@ -828,11 +829,12 @@ async def device_match_surface(
     """The minimal routing surface the allocator matches a W3C request against.
 
     Only the keys ``candidate_matches_stereotype`` consults: ``platformName`` (the
-    pack's advertised platform-name scalar), any identity/tag keys an uploaded pack
-    declares in its stereotype base, and the manager-owned deviceId + tag fanout. The
-    rest of the pack stereotype (``appium:platform``/``os_version``/``device_type``/
-    ``appium:automationName``) is rendered only at node-start (``render_stereotype`` in
-    ``reconciler_agent``), never for matching.
+    pack's advertised platform-name scalar), ``appium:platform`` (the pack's per-device
+    platform_id routing key) plus any other identity/tag keys a pack declares in its
+    stereotype base, and the manager-owned deviceId + tag fanout. The rest of the pack
+    stereotype (``appium:os_version``/``device_type``/``appium:automationName``) is
+    rendered only at node-start (``render_stereotype`` in ``reconciler_agent``), never
+    for matching.
 
     When the device's pack/platform cannot be resolved (pack deleted, platform dropped
     from the release) the pack half falls back to empty so one broken pack cannot wedge
