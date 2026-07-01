@@ -26,7 +26,7 @@ from app.grid.allocation import (
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
-from tests.helpers import seed_host_and_device, seed_host_and_running_node
+from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
@@ -333,6 +333,65 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
     assert "appium:platform" not in surface
     assert "appium:os_version" not in surface
     assert "appium:automationName" not in surface
+
+
+@pytest.mark.db
+async def test_try_allocate_does_not_cross_route_platform_ids(db_session: AsyncSession) -> None:
+    """Regression: android_mobile/android_tv/firetv_real share platformName=Android +
+    appium:automationName=UiAutomator2, but are physically distinct devices. A request
+    pinning appium:platform must be satisfied only by a device of that platform_id —
+    previously the allocator ignored appium:platform entirely and could hand back
+    whichever same-platformName device it reached first (regression: a firetv_real
+    request was silently allocated to an android_mobile device)."""
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.grid.allocation import device_match_surface
+
+    await seed_test_packs(db_session)
+    host, mobile_device, _ = await seed_host_and_running_node(
+        db_session, identity=f"grid-mobile-{uuid.uuid4().hex[:8]}"
+    )
+    tv_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value=f"grid-tv-{uuid.uuid4().hex[:8]}",
+        name="Chromecast HD",
+        platform_id="android_tv",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        tv_node = AppiumNode(
+            device_id=tv_device.id,
+            port=4731,
+            pid=12346,
+            active_connection_target=tv_device.connection_target,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4731,
+        )
+    db_session.add(tv_node)
+    await db_session.commit()
+
+    service = AllocationService(
+        intent_factory=IntentService,
+        publisher=event_bus,
+        stereotype_provider=device_match_surface,
+    )
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(
+            **{
+                "platformName": "Android",
+                "appium:automationName": "UiAutomator2",
+                "appium:platform": "android_tv",
+            }
+        )
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    result = await service.try_allocate(db_session, ticket=ticket)
+
+    assert result is not None
+    assert result.device_id == tv_device.id
+    assert result.device_id != mobile_device.id
 
 
 @pytest.mark.db
