@@ -14,6 +14,20 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.4.1](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.4.0...gridfleet-backend-v0.4.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **backend:** route grid allocation by pack platform_id ([1fe409a](https://github.com/quidow/gridfleet/commit/1fe409ad6d2c33d34dbfce1acabe804c83c746dd))
+* **backend:** route grid allocation by pack platform_id, not just platformName ([375a01e](https://github.com/quidow/gridfleet/commit/375a01eeece0dfd6a9e446fa2a8b22c6cb46aee0))
+
+
+### Dependencies
+
+* **deps:** bump datamodel-code-generator ([#726](https://github.com/quidow/gridfleet/issues/726)) ([a212a20](https://github.com/quidow/gridfleet/commit/a212a20d7afde865fec5a92dbe52c945196ca246))
+* **deps:** bump the python-dependencies group across 1 directory with 3 updates ([#716](https://github.com/quidow/gridfleet/issues/716)) ([3fe7839](https://github.com/quidow/gridfleet/commit/3fe783966461fa403b9e184d4aef1860abd9614e))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.3.0...gridfleet-backend-v0.4.0) (2026-06-26)
 
 
