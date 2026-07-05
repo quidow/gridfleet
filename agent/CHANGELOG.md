@@ -2,6 +2,19 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.29.4](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.29.3...gridfleet-agent-v0.29.4) (2026-07-05)
+
+
+### Performance Improvements
+
+* **agent:** import adapters under unique module names, drop global hook lock ([5e9d597](https://github.com/quidow/gridfleet/commit/5e9d597c8a164d88d2d6c07c03bdbe75a01895e2))
+* **agent:** import adapters under unique module names, drop global hook lock ([1319b3a](https://github.com/quidow/gridfleet/commit/1319b3a614978f0387fc2e1c26c1f2621a4fa889))
+
+
+### Dependencies
+
+* **deps:** bump fastapi ([#728](https://github.com/quidow/gridfleet/issues/728)) ([2956c13](https://github.com/quidow/gridfleet/commit/2956c13bd41a21f43d9f19c44a8b6a9caab84b6c))
+
 ## [0.29.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.29.2...gridfleet-agent-v0.29.3) (2026-06-30)
 
 
