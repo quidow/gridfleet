@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from appium import webdriver
 from appium.options.common import AppiumOptions
+from appium.webdriver.client_config import AppiumClientConfig
 
 from . import config
 from .catalog import _required_platform_string, _resolve_pack_platform
@@ -13,8 +14,15 @@ from .catalog import _required_platform_string, _resolve_pack_platform
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from appium.webdriver.client_config import AppiumClientConfig
     from appium.webdriver.webdriver import WebDriver
+
+# The stock selenium client reads responses with NO timeout (and no TCP
+# keepalive), so a silently dropped client<->router connection blocks the test
+# process forever. Every driver gets this read-timeout floor unless the caller
+# sets an explicit one. It sits above the router's worst-case new-session path
+# (allocate long-poll + Appium create + confirm retries, ~9 min), so a healthy
+# stack can never trip it.
+_DEFAULT_HTTP_TIMEOUT_SEC = 720
 
 
 def build_appium_options(
@@ -59,9 +67,16 @@ def _remote_with_owned_endpoint(
 
     Appium's ``webdriver.Remote`` ignores the URL argument when a ``client_config``
     is supplied, so the resolved grid endpoint is written onto the config in place.
+    The testkit also owns hang-safety: with no config (or a config without an
+    explicit ``timeout``) it applies ``_DEFAULT_HTTP_TIMEOUT_SEC`` so a lost
+    response surfaces as an exception instead of an unbounded socket read.
     """
-    if client_config is not None:
+    if client_config is None:
+        client_config = AppiumClientConfig(remote_server_addr=grid_endpoint, timeout=_DEFAULT_HTTP_TIMEOUT_SEC)
+    else:
         client_config.remote_server_addr = grid_endpoint
+        if client_config.timeout is None:
+            client_config.timeout = _DEFAULT_HTTP_TIMEOUT_SEC
     return webdriver.Remote(grid_endpoint, options=options, client_config=client_config)
 
 
@@ -80,7 +95,9 @@ def create_appium_driver(
     ``client_config`` lets callers tune the HTTP transport (connection retries,
     timeouts, proxy, TLS, headers). The testkit still owns the endpoint: any
     ``remote_server_addr`` set on the config is overwritten with the resolved
-    grid URL.
+    grid URL. Unless the config carries an explicit ``timeout``, a default read
+    timeout is applied so a silently dropped connection cannot hang the caller
+    forever.
     """
     options = build_appium_options(
         pack_id=pack_id,

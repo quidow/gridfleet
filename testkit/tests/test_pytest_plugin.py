@@ -168,6 +168,7 @@ def test_appium_driver_forwards_client_config(monkeypatch):
     class FakeClientConfig:
         def __init__(self) -> None:
             self.remote_server_addr = "placeholder"
+            self.timeout: float | None = None
 
     config = FakeClientConfig()
     request = FakeRequest(
