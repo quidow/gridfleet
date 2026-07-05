@@ -30,7 +30,12 @@ import {
 } from './deviceVerificationWorkflow';
 import { resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
-import { findPlatformDescriptor, makePlatformKey, parsePlatformKey } from '../../hooks/usePlatformDescriptor';
+import {
+  findPlatformDescriptor,
+  makePlatformKey,
+  parsePlatformKey,
+  platformDescriptorForDeviceType,
+} from '../../hooks/usePlatformDescriptor';
 
 type Props = {
   isOpen: boolean;
@@ -83,9 +88,13 @@ export function SetupVerificationModal({
     onClose,
     extraInvalidationKeys,
   });
+  const effectiveDescriptor = platformDescriptorForDeviceType(
+    activeDescriptor,
+    activeForm.device_type as DeviceType | null | undefined,
+  );
   const configPreview = generatedConfigPreview(activeForm, activeDescriptor);
   const fieldPrefix = `device-verification-${existingDevice.id}`;
-  const setupFieldLabels = buildDeviceFieldLabelMap(activeDescriptor?.deviceFieldsSchema ?? []);
+  const setupFieldLabels = buildDeviceFieldLabelMap(effectiveDescriptor?.deviceFieldsSchema ?? []);
 
   function closeModal() {
     if (isVerificationRunning) return;
@@ -261,9 +270,9 @@ export function SetupVerificationModal({
             />
           </Field>
           )}
-          {activeDescriptor && activeDescriptor.deviceFieldsSchema.length > 0 && (
+          {effectiveDescriptor && effectiveDescriptor.deviceFieldsSchema.length > 0 && (
             <DeviceManifestFields
-              fields={activeDescriptor.deviceFieldsSchema}
+              fields={effectiveDescriptor.deviceFieldsSchema}
               value={(activeForm.device_config ?? {}) as Record<string, string | number | boolean>}
               onChange={(nextConfig) => setExistingForm({ ...existingForm, device_config: nextConfig })}
               idPrefix={`${fieldPrefix}-config`}

@@ -17,7 +17,7 @@ import {
   type VerificationRequest,
 } from './devicePageHelpers';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
-import { findPlatformDescriptor } from '../../hooks/usePlatformDescriptor';
+import { findPlatformDescriptor, platformDescriptorForDeviceType } from '../../hooks/usePlatformDescriptor';
 
 type Props = {
   device: DeviceRead | null;
@@ -46,7 +46,10 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
   const updateDevice = useUpdateDevice();
   const { data: catalog = [] } = useDriverPackCatalog();
   const platformId = device.platform_id;
-  const descriptor = findPlatformDescriptor(catalog, device.pack_id, platformId);
+  const descriptor = platformDescriptorForDeviceType(
+    findPlatformDescriptor(catalog, device.pack_id, platformId),
+    device.device_type,
+  );
   const [editForm, setEditForm] = useState<DevicePatch>(() => ({
     name: device.name,
     connection_target:
