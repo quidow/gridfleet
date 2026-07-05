@@ -231,13 +231,14 @@ def fixture_artifacts(tmp_path: Path) -> tuple[bytes, str]:
 def _reset_adapter_cache() -> None:
     adapter_loader._cache.clear()
     adapter_loader._cache_install_locks.clear()
-    sys.path[:] = [entry for entry in sys.path if not entry or Path(entry).exists()]
-    adapter_loader._drop_adapter_modules()
+    for name in list(sys.modules):
+        if name.startswith("gridfleet_adapter_"):
+            sys.modules.pop(name, None)
 
 
 @pytest.fixture(autouse=True)
 def _clear_adapter_cache() -> Iterator[None]:
-    """Ensure the per-test adapter cache + ``sys.path`` state is fresh."""
+    """Ensure the per-test adapter cache + loaded adapter modules are fresh."""
 
     _reset_adapter_cache()
     yield

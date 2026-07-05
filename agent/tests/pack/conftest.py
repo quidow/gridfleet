@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -20,13 +19,13 @@ def _clear_discovery_sweep_cache() -> None:
 
 @pytest.fixture(autouse=True)
 def _clear_adapter_cache() -> None:
-    """Reset the process-global adapter cache and prune stale ``sys.path`` entries.
+    """Reset the process-global adapter cache and drop loaded adapter modules.
 
-    Tests create runtime directories under ``tmp_path`` that disappear between
-    cases; leaving their ``site/`` entries on ``sys.path`` causes ``importlib``
-    to resolve a stale ``adapter`` module on the next load.
+    Adapters import under unique ``gridfleet_adapter_*`` module names backed by
+    runtime directories under ``tmp_path`` that disappear between cases.
     """
     adapter_loader._cache.clear()
     adapter_loader._cache_install_locks.clear()
-    sys.path[:] = [entry for entry in sys.path if not entry or Path(entry).exists()]
-    adapter_loader._drop_adapter_modules()
+    for name in list(sys.modules):
+        if name.startswith("gridfleet_adapter_"):
+            sys.modules.pop(name, None)

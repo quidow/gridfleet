@@ -7,8 +7,8 @@ import re
 from agent_app.pack.adapter_types import FieldError, NormalizedDevice, NormalizeDeviceContext
 from agent_app.pack.adapter_utils import run_cmd
 
-from adapter.device_info import model_name, model_number, software_versions
-from adapter.tools import find_adb, get_android_properties, get_running_emulator_avd_name
+from .device_info import model_name, model_number, software_versions
+from .tools import find_adb, get_android_properties, get_running_emulator_avd_name
 
 _IP_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 _IP_PORT_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+:\d+$")

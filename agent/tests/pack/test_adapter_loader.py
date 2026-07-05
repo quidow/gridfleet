@@ -2,8 +2,8 @@
 
 The driver-pack tarball ships a wheel under ``adapter/<name>.whl``. The loader
 extracts that wheel, installs it into a per-runtime ``site/`` directory and
-dynamically imports the ``adapter`` package, returning the ``Adapter``
-instance.
+imports the ``adapter`` package under a unique per-(pack, release, runtime)
+module name, returning the ``Adapter`` instance.
 
 To avoid taking a build-tool dependency on ``build`` (not in the agent's dev
 deps), the tests construct a minimal pure-Python ``py3-none-any`` wheel by
@@ -26,7 +26,6 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from agent_app.pack import adapter_loader
 from agent_app.pack.adapter_loader import (
     AdapterLoadError,
     load_adapter,
@@ -149,12 +148,15 @@ async def test_load_adapter_extracts_and_imports(tmp_path: Path) -> None:
 
     assert adapter is not None
     site_dir = str((runtime_dir / "site").resolve())
-    assert site_dir in sys.path
+    assert site_dir not in sys.path
 
     extra = await adapter.pre_session(spec=type("S", (), {"capabilities": {}})())
 
     assert extra == {"appium:vendorMagic": "set"}
+    # Loading never touches sys.path and never claims the literal name
+    # ``adapter`` — each pack imports under its own unique module name.
     assert site_dir not in sys.path
+    assert _adapter_module_names() == []
 
 
 @pytest.mark.asyncio
@@ -197,14 +199,14 @@ async def test_load_adapter_uses_cache(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_adapter_drops_stale_adapter_submodules_between_packs(tmp_path: Path) -> None:
+async def test_load_adapter_isolates_lazy_submodule_imports_between_packs(tmp_path: Path) -> None:
     body = """\
 from typing import Any
 
 
 class Adapter:
     async def normalize_device(self, ctx: Any) -> str:
-        from adapter.normalize import normalize_device
+        from .normalize import normalize_device
 
         return normalize_device()
 """
@@ -240,79 +242,81 @@ class Adapter:
 
 
 @pytest.mark.asyncio
-async def test_load_adapter_does_not_reactivate_site_during_in_flight_hook(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_path = list(sys.path)
-    original_modules = {name: sys.modules[name] for name in _adapter_module_names()}
-    pack_a_dir = (tmp_path / "runtime-a" / "site").resolve()
-    (pack_a_dir / "adapter").mkdir(parents=True)
-    (pack_a_dir / "adapter" / "__init__.py").write_text(
-        "PACK_LABEL = 'pack_a'\n",
-        encoding="utf-8",
-    )
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class _SlowInstance:
-        async def import_after_interleaved_load(self) -> str:
-            import adapter  # type: ignore[import-not-found]
-
-            assert adapter.PACK_LABEL == "pack_a"
-            started.set()
-            await release.wait()
-            import adapter as adapter_after  # type: ignore[import-not-found]
-
-            return adapter_after.PACK_LABEL
-
+async def test_hooks_from_different_packs_run_concurrently(tmp_path: Path) -> None:
+    """Hook calls are not serialized: a blocked hook on one pack must not
+    prevent another pack's hook from starting."""
     body = """\
+from typing import Any
+
+
 class Adapter:
-    PACK_LABEL = "pack_b"
-
-PACK_LABEL = "pack_b"
+    async def health_check(self, ctx: Any) -> str:
+        ctx.started.set()
+        await ctx.release.wait()
+        return ctx.label
 """
-    pack_b_tarball = _build_named_tarball_with_adapter_wheel(tmp_path, "pack-b", body=body)
-    real_install = adapter_loader._install_wheel
-    installed = asyncio.Event()
+    first = await load_adapter(
+        pack_id="pack-a",
+        release="1.0.0",
+        tarball_path=_build_named_tarball_with_adapter_wheel(tmp_path, "pack-a", body=body),
+        runtime_dir=tmp_path / "runtime-a",
+    )
+    second = await load_adapter(
+        pack_id="pack-b",
+        release="1.0.0",
+        tarball_path=_build_named_tarball_with_adapter_wheel(tmp_path, "pack-b", body=body),
+        runtime_dir=tmp_path / "runtime-b",
+    )
 
-    async def tracked_install(wheel: Path, target_dir: Path) -> None:
-        await real_install(wheel, target_dir)
-        installed.set()
+    class _Ctx:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
 
-    monkeypatch.setattr(adapter_loader, "_install_wheel", tracked_install)
-
+    ctx_a, ctx_b = _Ctx("a"), _Ctx("b")
+    task_a = asyncio.create_task(first.health_check(ctx_a))
+    task_b = asyncio.create_task(second.health_check(ctx_b))
     try:
-        wrapped_a = adapter_loader._IsolatedAdapter(
-            _SlowInstance(),
-            pack_a_dir,
-            pack_id="pack-a",
-            release="0.0.1",
+        # Both hooks must be in flight at the same time.
+        await asyncio.wait_for(
+            asyncio.gather(ctx_a.started.wait(), ctx_b.started.wait()),
+            timeout=1,
         )
-        hook_task = asyncio.create_task(wrapped_a.import_after_interleaved_load())
-        await asyncio.wait_for(started.wait(), timeout=1)
-
-        load_task = asyncio.create_task(
-            load_adapter(
-                pack_id="pack-b",
-                release="0.0.1",
-                tarball_path=pack_b_tarball,
-                runtime_dir=tmp_path / "runtime-b",
-            )
-        )
-        await asyncio.wait_for(installed.wait(), timeout=1)
-        await asyncio.sleep(0)
-        release.set()
-
-        assert await hook_task == "pack_a"
-        loaded_b = await load_task
-        assert loaded_b.pack_id == "pack-b"
     finally:
-        release.set()
-        sys.path[:] = original_path
-        for name in _adapter_module_names():
-            sys.modules.pop(name, None)
-        sys.modules.update(original_modules)
+        ctx_a.release.set()
+        ctx_b.release.set()
+
+    assert await task_a == "a"
+    assert await task_b == "b"
+
+
+@pytest.mark.asyncio
+async def test_load_adapter_rejects_absolute_self_imports(tmp_path: Path) -> None:
+    body = """\
+from typing import Any
+
+from adapter.normalize import normalize_device
+
+
+class Adapter:
+    async def normalize_device(self, ctx: Any) -> str:
+        return normalize_device()
+"""
+    tarball = _build_named_tarball_with_adapter_wheel(
+        tmp_path,
+        "absolute",
+        body=body,
+        package_files={"normalize.py": "def normalize_device() -> str:\n    return 'x'\n"},
+    )
+
+    with pytest.raises(AdapterLoadError, match="must be relative"):
+        await load_adapter(
+            pack_id="absolute",
+            release="1.0.0",
+            tarball_path=tarball,
+            runtime_dir=tmp_path / "runtime",
+        )
 
 
 @pytest.mark.asyncio

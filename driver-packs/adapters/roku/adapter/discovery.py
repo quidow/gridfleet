@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from agent_app.pack.adapter_types import DiscoveryCandidate, DiscoveryContext, FieldError
 
-from adapter.normalize import fetch_device_info
+from .normalize import fetch_device_info
 
 SSDP_ADDR = ("239.255.255.250", 1900)
 SSDP_TIMEOUT_SECONDS = 2.0

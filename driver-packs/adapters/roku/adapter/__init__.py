@@ -42,7 +42,7 @@ async def _verify_identity(target: str, expected: str) -> HealthCheckResult | No
     reused address); an inconclusive ECP query — timeout, missing serial —
     reports nothing, so transient device-info failures never flap health.
     """
-    from adapter.normalize import fetch_device_info
+    from .normalize import fetch_device_info
 
     try:
         info = await fetch_device_info(target)
@@ -65,7 +65,7 @@ class Adapter:
     discovery_scope: str = "pack"
 
     async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
-        from adapter.discovery import discover_roku_devices
+        from .discovery import discover_roku_devices
 
         return await discover_roku_devices(ctx)
 
@@ -115,7 +115,7 @@ class Adapter:
         return None
 
     async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
-        from adapter.normalize import normalize_device
+        from .normalize import normalize_device
 
         return await normalize_device(ctx)
 
