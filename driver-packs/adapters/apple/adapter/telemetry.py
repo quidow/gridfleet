@@ -7,7 +7,7 @@ import json
 from agent_app.pack.adapter_types import HardwareTelemetry, TelemetryContext
 from agent_app.pack.adapter_utils import run_cmd
 
-from adapter.tools import find_go_ios
+from .tools import find_go_ios
 
 
 async def collect_telemetry(ctx: TelemetryContext) -> HardwareTelemetry:

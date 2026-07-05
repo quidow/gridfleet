@@ -7,7 +7,7 @@ from typing import Any
 from agent_app.pack.adapter_types import LifecycleActionResult, LifecycleContext
 from agent_app.pack.adapter_utils import run_cmd
 
-from adapter.health import _simulator_state
+from .health import _simulator_state
 
 
 async def lifecycle_action(action_id: str, args: dict[str, Any], ctx: LifecycleContext) -> LifecycleActionResult:

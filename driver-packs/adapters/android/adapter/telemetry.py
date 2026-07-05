@@ -5,7 +5,7 @@ from __future__ import annotations
 from agent_app.pack.adapter_types import HardwareTelemetry, TelemetryContext
 from agent_app.pack.adapter_utils import run_cmd
 
-from adapter.tools import find_adb
+from .tools import find_adb
 
 ANDROID_STATUS_MAP: dict[str, str] = {
     "1": "unknown",

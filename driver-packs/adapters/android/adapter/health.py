@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from adapter.tools import find_adb, get_running_emulator_avd_name
+from .tools import find_adb, get_running_emulator_avd_name
 from agent_app.pack.adapter_types import HealthCheckResult, HealthContext
 from agent_app.pack.adapter_utils import icmp_reachable, run_cmd, tcp_reachable
 

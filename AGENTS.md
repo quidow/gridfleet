@@ -99,7 +99,7 @@ See `docs/reference/environment.md` and `docs/reference/settings.md` before addi
 ### Driver-pack model (the most important architectural rule)
 **Core orchestration must stay driver-agnostic.** Platform-specific behavior — discovery probes, readiness fields, lifecycle actions, capability defaults, health labels — lives in driver-pack manifests under `driver-packs/curated/` and adapter wheels under `driver-packs/adapters/`.
 
-Backend pack pipeline: `app/packs/` (ingest, storage, lifecycle, release, desired-state, dispatch, drain). Agent pack pipeline: `agent/agent_app/pack/` (manifest, runtime, adapter_loader, dispatch, state loop, sidecar_supervisor, tarball_fetch). The agent pulls a desired pack list from the backend, downloads the verified tarball (sha256-pinned), installs it into an isolated `APPIUM_HOME` runtime under `AGENT_RUNTIME_ROOT`, and loads the adapter into a separate venv.
+Backend pack pipeline: `app/packs/` (ingest, storage, lifecycle, release, desired-state, dispatch, drain). Agent pack pipeline: `agent/agent_app/pack/` (manifest, runtime, adapter_loader, dispatch, state loop, sidecar_supervisor, tarball_fetch). The agent pulls a desired pack list from the backend, downloads the verified tarball (sha256-pinned), installs it into an isolated `APPIUM_HOME` runtime under `AGENT_RUNTIME_ROOT`, and imports the adapter wheel in-process into the agent interpreter under a unique per-(pack, release) module name (hooks may run concurrently; adapter-internal imports must be relative — there is no venv or process isolation).
 
 If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, stop — push it into the manifest or adapter instead. The agent test `test_no_driver_imports.py` actively guards this for the agent side.
 

@@ -8,8 +8,8 @@ from typing import Any
 from agent_app.pack.adapter_types import LifecycleActionResult, LifecycleContext
 from agent_app.pack.adapter_utils import run_cmd, tcp_reachable
 
-from adapter.health import _adb_shell_echo
-from adapter.tools import find_adb, find_emulator, get_running_emulator_avd_name
+from .health import _adb_shell_echo
+from .tools import find_adb, find_emulator, get_running_emulator_avd_name
 
 
 async def lifecycle_action(

@@ -1,14 +1,17 @@
 """Driver-pack adapter loader.
 
 Extract the adapter wheel that ships in a driver-pack tarball, install it
-into a per-runtime ``site/`` directory and dynamically import the
-``adapter`` package, returning the ``Adapter`` instance declared by the
-pack.
+into a per-runtime ``site/`` directory and import the ``adapter`` package
+under a unique per-(pack, release, runtime) module name, returning the
+``Adapter`` instance declared by the pack.
 
 Convention (B.2): the tarball ships a single wheel under
 ``adapter/<wheel-name>.whl``. The wheel exposes a top-level package named
 ``adapter`` containing a class ``Adapter`` that satisfies the
-``DriverPackAdapter`` protocol.
+``DriverPackAdapter`` protocol. Adapter-internal imports must be relative
+(``from .health import ...``): every adapter is imported under a unique
+module name, so the literal name ``adapter`` never exists in ``sys.modules``
+at runtime and absolute self-imports are rejected at load time.
 
 The agent's uv environment ships without ``pip``, so we treat the wheel as
 what PEP 427 says it is — a zip archive — and extract its contents directly
@@ -18,14 +21,18 @@ wheels (which is all an adapter wheel needs to be), this matches what
 
 Loaded adapters are cached by ``(pack_id, release, runtime_dir)`` so that
 repeated dispatches reuse the same instance instead of paying the install +
-import cost on every call.
+import cost on every call. Because each adapter owns a distinct module tree,
+loading never touches ``sys.path`` and hook calls are not serialized —
+hooks from any packs may run concurrently.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
-import importlib
-import inspect
+import hashlib
+import importlib.util
+import re
 import sys
 import tarfile
 import zipfile
@@ -48,64 +55,77 @@ class _CacheKey:
 _cache: dict[_CacheKey, Any] = {}
 _cache_install_locks: dict[_CacheKey, asyncio.Lock] = {}
 _cache_lock_factory_lock = asyncio.Lock()
-_adapter_call_lock = asyncio.Lock()
 
 
-def _drop_adapter_modules() -> None:
+def _module_name(key: _CacheKey) -> str:
+    """Unique, valid module name for one (pack, release, runtime) adapter tree.
+
+    The sanitized pack id keeps tracebacks readable; the digest guarantees
+    uniqueness across releases and runtime dirs.
+    """
+    digest = hashlib.sha256(f"{key.pack_id}\n{key.release}\n{key.runtime_dir}".encode()).hexdigest()[:12]
+    slug = re.sub(r"[^0-9A-Za-z_]", "_", key.pack_id)
+    return f"gridfleet_adapter_{slug}_{digest}"
+
+
+def _drop_module_tree(module_name: str) -> None:
+    prefix = module_name + "."
     for name in list(sys.modules):
-        if name == "adapter" or name.startswith("adapter."):
+        if name == module_name or name.startswith(prefix):
             sys.modules.pop(name, None)
 
 
-@dataclass(frozen=True)
-class _SiteActivation:
-    install_dir_str: str
+def _assert_relative_imports(package_dir: Path) -> None:
+    """Reject absolute self-imports (``from adapter.x import y``) at load time.
+
+    Adapters are imported under a unique module name, so the literal
+    ``adapter`` package never exists at runtime; an absolute self-import
+    would surface as a confusing ``ModuleNotFoundError`` mid-hook. Fail the
+    install with an actionable message instead.
+    """
+    for source_path in sorted(package_dir.rglob("*.py")):
+        rel = source_path.relative_to(package_dir.parent)
+        try:
+            tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            raise AdapterLoadError(f"adapter module {rel} is not valid Python: {exc}") from exc
+        for node in ast.walk(tree):
+            offending: tuple[int, str] | None = None
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module is not None:
+                if node.module == "adapter" or node.module.startswith("adapter."):
+                    offending = (node.lineno, node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "adapter" or alias.name.startswith("adapter."):
+                        offending = (node.lineno, alias.name)
+            if offending is not None:
+                lineno, name = offending
+                raise AdapterLoadError(
+                    f"adapter module {rel} line {lineno} imports {name!r} absolutely; "
+                    "adapter-internal imports must be relative (e.g. 'from .health import ...')"
+                )
 
 
-def _activate_adapter_site(install_dir: Path) -> _SiteActivation:
-    install_dir_str = str(install_dir)
-    sys.path[:] = [entry for entry in sys.path if entry != install_dir_str]
-    sys.path.insert(0, install_dir_str)
-    _drop_adapter_modules()
-    return _SiteActivation(install_dir_str=install_dir_str)
-
-
-def _deactivate_adapter_site(activation: _SiteActivation) -> None:
-    sys.path[:] = [entry for entry in sys.path if entry != activation.install_dir_str]
-    _drop_adapter_modules()
-
-
-class _IsolatedAdapter:
-    def __init__(
-        self,
-        instance: Any,  # noqa: ANN401 - dynamic adapter instance
-        install_dir: Path,
-        *,
-        pack_id: str,
-        release: str,
-    ) -> None:
-        self._instance = instance
-        self._install_dir = install_dir
-        self.pack_id = pack_id
-        self.pack_release = release
-
-    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - dynamic adapter attribute
-        attr = getattr(self._instance, name)
-        if not callable(attr):
-            return attr
-
-        async def _wrapped(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - dynamic adapter return
-            async with _adapter_call_lock:
-                activation = _activate_adapter_site(self._install_dir)
-                try:
-                    result = attr(*args, **kwargs)
-                    if inspect.isawaitable(result):
-                        return await result
-                    return result
-                finally:
-                    _deactivate_adapter_site(activation)
-
-        return _wrapped
+def _import_adapter(module_name: str, install_dir: Path) -> Any:  # noqa: ANN401 - dynamically loaded module
+    package_dir = install_dir / "adapter"
+    init_py = package_dir / "__init__.py"
+    if not init_py.is_file():
+        raise AdapterLoadError(f"adapter wheel did not install adapter/__init__.py under {install_dir}")
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        init_py,
+        submodule_search_locations=[str(package_dir)],
+    )
+    if spec is None or spec.loader is None:
+        raise AdapterLoadError(f"failed to build import spec for adapter package at {package_dir}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        _drop_module_tree(module_name)
+        raise
+    return module
 
 
 def _extract_wheel(tarball_path: Path, dest_dir: Path) -> Path:
@@ -237,20 +257,23 @@ async def load_adapter(
 
         wheel = _extract_wheel(tarball_path, wheel_dir)
         await _install_wheel(wheel, install_dir)
+        await asyncio.to_thread(_assert_relative_imports, install_dir / "adapter")
 
-        async with _adapter_call_lock:
-            # Drop any cached ``adapter`` package tree imported against a different
-            # ``site/`` directory before resolving against the current one.
-            _ = _activate_adapter_site(install_dir)
-            try:
-                module = importlib.import_module("adapter")
-            except ImportError as exc:
-                raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
+        module_name = _module_name(key)
+        try:
+            module = _import_adapter(module_name, install_dir)
+        except ImportError as exc:
+            raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
 
-            cls = getattr(module, "Adapter", None)
-            if cls is None:
-                raise AdapterLoadError("adapter module does not expose class Adapter")
+        cls = getattr(module, "Adapter", None)
+        if cls is None:
+            _drop_module_tree(module_name)
+            raise AdapterLoadError("adapter module does not expose class Adapter")
 
-            instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
+        instance = cls()
+        # Stamp identity from the load context so dispatch error reporting
+        # never depends on the adapter author setting these correctly.
+        instance.pack_id = pack_id
+        instance.pack_release = release
         _cache[key] = instance
         return instance

@@ -135,6 +135,10 @@ After building, `adapter/__init__.py` (or an import in it) must make `Adapter` i
 from adapter import Adapter
 ```
 
+**Intra-package imports must be relative** (`from .health import ...`, not `from adapter.health import ...`). The agent imports each adapter under a unique per-(pack, release) module name, so the literal name `adapter` never exists at runtime; the loader rejects wheels containing absolute self-imports at install time with an `adapter-internal imports must be relative` error.
+
+**Hooks may be invoked concurrently.** Hook calls are not serialized — health checks, discovery, and session hooks for different devices (and different packs) can interleave on the agent's event loop. An adapter that needs to serialize access to shared state must hold its own `asyncio.Lock`.
+
 ### `DriverPackAdapter` Protocol
 
 The protocol (from `agent_app/pack/adapter_types.py`) defines the hooks the agent may call. Each method's default body raises `NotImplementedError`; implement only the ones your pack needs. The dispatch layer calls each hook directly (it does not check for attribute existence). Any exception a hook raises — including the protocol's default `NotImplementedError` for an unimplemented hook — is caught and re-raised as `AdapterHookExecutionError`, which aborts that operation; it is not a silent no-op. A no-op result (`None` / an empty capabilities dict) occurs only when no adapter is loaded for the pack at all.
@@ -289,7 +293,8 @@ After upload and enable, agents fetch the tarball on the next desired-state sync
 - **sha256 mismatch** — The tarball was modified in transit or storage. The agent verifies the pinned sha256 locally and raises `TarballSha256MismatchError`; this surfaces in the host's status panel and the agent logs (not in the System Event stream). Re-upload a fresh tarball.
 - **Multiple wheel files in `adapter/`** — Only one `.whl` file is permitted. The loader will fail if it finds more than one. Re-build with a single wheel.
 - **Compiled extension in wheel** — The loader extracts each member with `zipfile.ZipFile` (no `extractall`); compiled `.so`/`.pyd` files will extract but will fail to import if they were compiled for a different platform/Python version. Use pure-Python wheels only.
-- **`Adapter` class not found** — After extraction, the loader does `from adapter import Adapter`. Ensure your wheel's top-level package is named `adapter` (not your project name) and that `Adapter` is exported from `adapter/__init__.py`.
+- **`Adapter` class not found** — After extraction, the loader imports the wheel's `adapter` package (under a unique per-pack module name) and looks up the `Adapter` class on it. Ensure your wheel's top-level package is named `adapter` (not your project name) and that `Adapter` is exported from `adapter/__init__.py`.
+- **`adapter-internal imports must be relative`** — Your package imports itself absolutely (`from adapter.x import ...`). Switch intra-package imports to relative form (`from .x import ...`) and re-build the wheel.
 
 ### Audit event not appearing in System Events
 
