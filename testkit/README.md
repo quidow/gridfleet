@@ -106,6 +106,8 @@ If you need raw Appium control instead, omit `pack_id` and `platform_id`, then p
 
 ### Tuning the HTTP Transport
 
+By default every driver gets a 720-second HTTP read timeout: the stock selenium client waits forever for a response, so a silently dropped connection (NAT/VPN idle drop, router host death) would hang the test process indefinitely. Set an explicit `timeout` on a custom config to override it.
+
 To tune the Appium HTTP transport for every `appium_driver` session — connection retries, timeouts, proxy, TLS — override the `gridfleet_client_config` fixture in your `conftest.py`. It defaults to `None`. The testkit still owns the endpoint, so any `remote_server_addr` you set is overwritten with the resolved grid URL:
 
 ```python
@@ -157,7 +159,7 @@ finally:
 
 `create_appium_driver(...)` reuses the same driver-pack catalog resolver as the pytest fixture. Managed nodes still get their host-scoped runtime allocations from the manager, so callers should not hard-code `systemPort`, `chromedriverPort`, `mjpegServerPort`, `wdaLocalPort`, or `derivedDataPath`. `get_device_test_data_for_driver(...)` is the non-pytest equivalent of the `device_test_data` fixture. If you only need the options object, use `build_appium_options(...)`.
 
-To tune the HTTP transport — connection retries, timeouts, proxy, TLS — pass an `AppiumClientConfig` via `client_config`. The testkit still owns the endpoint, so any `remote_server_addr` you set is overwritten with the resolved grid URL:
+To tune the HTTP transport — connection retries, timeouts, proxy, TLS — pass an `AppiumClientConfig` via `client_config`. The testkit still owns the endpoint, so any `remote_server_addr` you set is overwritten with the resolved grid URL, and the default 720-second read timeout applies unless your config sets an explicit `timeout`:
 
 ```python
 from appium.webdriver.client_config import AppiumClientConfig

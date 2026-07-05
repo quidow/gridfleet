@@ -65,7 +65,8 @@ def gridfleet_client_config() -> AppiumClientConfig | None:
     """Override in your conftest to tune the Appium HTTP transport (connection
     retries, timeouts, proxy, TLS) for every ``appium_driver`` session. The
     testkit still owns the endpoint, so any ``remote_server_addr`` is overwritten
-    with the resolved grid URL.
+    with the resolved grid URL, and applies a default read timeout unless the
+    config sets an explicit ``timeout``.
     """
     return None
 

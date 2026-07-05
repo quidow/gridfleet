@@ -185,6 +185,7 @@ def test_create_appium_driver_forwards_client_config(monkeypatch: pytest.MonkeyP
     class FakeClientConfig:
         def __init__(self) -> None:
             self.remote_server_addr = "placeholder"
+            self.timeout: float | None = None
 
     config = FakeClientConfig()
     create_appium_driver(
@@ -217,6 +218,63 @@ def test_create_appium_driver_sets_endpoint_on_real_client_config(monkeypatch: p
 
     assert client_configs == [config]
     assert config.remote_server_addr == "http://grid:4444"
+
+
+def test_create_appium_driver_builds_default_client_config_with_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No client_config → a default one with the endpoint and an HTTP timeout.
+
+    The stock selenium client has no read timeout, so a silently dropped
+    connection (NAT/VPN idle drop, router host death) hangs the test process
+    forever. The testkit default bounds every WebDriver HTTP call instead.
+    """
+    created_drivers: list[tuple[str, JsonObject]] = []
+    client_configs: list[object] = []
+    install_fake_appium(monkeypatch, created_drivers, client_configs)
+
+    create_appium_driver(
+        capabilities={"platformName": "Android"},
+        grid_url="http://grid:4444",
+    )
+
+    (config,) = client_configs
+    assert isinstance(config, AppiumClientConfig)
+    assert config.remote_server_addr == "http://grid:4444"
+    assert config.timeout == appium_mod._DEFAULT_HTTP_TIMEOUT_SEC
+
+
+def test_create_appium_driver_defaults_timeout_on_user_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A user config tuned for other transport knobs (the README example) must
+    # not silently reinstate the unbounded-read hang: an unset timeout is
+    # defaulted, an explicit one is kept.
+    created_drivers: list[tuple[str, JsonObject]] = []
+    client_configs: list[object] = []
+    install_fake_appium(monkeypatch, created_drivers, client_configs)
+
+    config = AppiumClientConfig(remote_server_addr="placeholder")
+    create_appium_driver(
+        capabilities={"platformName": "Android"},
+        grid_url="http://grid:4444",
+        client_config=config,
+    )
+
+    assert client_configs == [config]
+    assert config.timeout == appium_mod._DEFAULT_HTTP_TIMEOUT_SEC
+
+
+def test_create_appium_driver_keeps_explicit_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_drivers: list[tuple[str, JsonObject]] = []
+    client_configs: list[object] = []
+    install_fake_appium(monkeypatch, created_drivers, client_configs)
+
+    config = AppiumClientConfig(remote_server_addr="placeholder", timeout=5)
+    create_appium_driver(
+        capabilities={"platformName": "Android"},
+        grid_url="http://grid:4444",
+        client_config=config,
+    )
+
+    assert client_configs == [config]
+    assert config.timeout == 5
 
 
 def test_create_appium_driver_reads_grid_url_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
