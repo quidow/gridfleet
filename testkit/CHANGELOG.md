@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.14.3](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.14.2...gridfleet-testkit-v0.14.3) (2026-07-05)
+
+
+### Bug Fixes
+
+* **testkit:** default a 720s http read timeout on appium drivers ([c158ec3](https://github.com/quidow/gridfleet/commit/c158ec3e67cbd1e22aea5338b0b31ec23dce93a2))
+* **testkit:** default a 720s http read timeout on appium drivers ([743209d](https://github.com/quidow/gridfleet/commit/743209df8b4cb15b02c89d4d57a2f5779022c792))
+
 ## [0.14.2](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.14.1...gridfleet-testkit-v0.14.2) (2026-06-26)
 
 
