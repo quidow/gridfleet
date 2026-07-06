@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi==0.139.0",
-    "uvicorn[standard]==0.49.0",
+    "uvicorn[standard]==0.50.0",
     "pydantic-settings==2.14.2",
     "httpx2==2.5.0",
     # httpcore probes for sniffio on its hot path with a bare `import sniffio`
