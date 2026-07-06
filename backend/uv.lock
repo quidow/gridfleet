@@ -166,7 +166,7 @@ wheels = [
 
 [[package]]
 name = "datamodel-code-generator"
-version = "0.67.0"
+version = "0.68.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "argcomplete" },
@@ -178,9 +178,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f4/c4/e0e9533afbdccd0d6585e2ef71004e9da592bc51750c6e655fbf35595193/datamodel_code_generator-0.67.0.tar.gz", hash = "sha256:b4396abc3b0869c34c6ad8b0b2a428d5c833500d46c6c49b62f00de407ef97b6", size = 1556991, upload-time = "2026-07-03T04:41:30.177Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/6e/4d9a96931b619d7cf6ceb5bcc0026330fd045455e2b4cd45af168d94ef91/datamodel_code_generator-0.68.0.tar.gz", hash = "sha256:2b5d64a6104478c8b4a04ba17ad285e075871b14e4a374bbdddb689b642d6b7e", size = 1565609, upload-time = "2026-07-06T07:03:23.584Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/34/e504f95b1f393aea1e0121011d03caa2658b37c60bdb12485f0ca5b24a9f/datamodel_code_generator-0.67.0-py3-none-any.whl", hash = "sha256:6fc5eda666928acd8a82035e55305595ae7d1c04ddba9ccf77501ad9de64b124", size = 420697, upload-time = "2026-07-03T04:41:28.095Z" },
+    { url = "https://files.pythonhosted.org/packages/81/84/a33706fe3f19a76227ff63947ed420983c8652de3141a627a29a9c3e3776/datamodel_code_generator-0.68.0-py3-none-any.whl", hash = "sha256:f2f51a3af2e638254fc26cb28358f4d7d9f3675701897c43e612d56f8d00693d", size = 422927, upload-time = "2026-07-06T07:03:21.811Z" },
 ]
 
 [[package]]
@@ -306,7 +306,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = "==1.18.5" },
     { name = "asyncpg", specifier = "==0.31.0" },
-    { name = "datamodel-code-generator", marker = "extra == 'dev'", specifier = "==0.67.0" },
+    { name = "datamodel-code-generator", marker = "extra == 'dev'", specifier = "==0.68.0" },
     { name = "fastapi", specifier = "==0.139.0" },
     { name = "greenlet", specifier = "==3.5.3" },
     { name = "httpx2", specifier = "==2.5.0" },
@@ -324,7 +324,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.51" },
     { name = "sse-starlette", specifier = "==3.4.5" },
     { name = "structlog", specifier = "==26.1.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = "==0.49.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = "==0.50.0" },
 ]
 provides-extras = ["dev"]
 
@@ -950,15 +950,15 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.49.0"
+version = "0.50.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/1f/fa18009dea8469069cca78a4e877a008ab78f08b064bfc9ab891579077ff/uvicorn-0.49.0.tar.gz", hash = "sha256:ebf4271aa580d9de97f93192d4595176df6e91f9aae919ca73e4fc07df1e66a3", size = 91284, upload-time = "2026-06-03T22:01:30.448Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/41/06cce5dbb9f77591512957710ac709e60b12e6216a2f2d0d607fd49706e8/uvicorn-0.50.0.tar.gz", hash = "sha256:0c92e1bc2259cb7faa4fcef774a5966588f2e88542744550b66799fba10b76f1", size = 93257, upload-time = "2026-07-04T05:03:26.33Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/fa/e1388bbcf24ef3274f45c0c1c7b501fd14971037c1b6ee23610553307497/uvicorn-0.49.0-py3-none-any.whl", hash = "sha256:ba3d14c3ee7e41c6c654c46c9eb489d33213cdd30aa1696eab1374337c13f68f", size = 71376, upload-time = "2026-06-03T22:01:29.037Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/3a/eb70620ca2bf8213603d5c731460687c49fee38b0072f0b4a637781f0a53/uvicorn-0.50.0-py3-none-any.whl", hash = "sha256:05f0eb19edf38208f79f43df8a63081b48df31b0cd1e5997be957a4dc97d1b19", size = 72716, upload-time = "2026-07-04T05:03:24.848Z" },
 ]
 
 [package.optional-dependencies]
