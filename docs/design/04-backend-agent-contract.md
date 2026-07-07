@@ -51,11 +51,11 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | Method | Path | Caller (backend) | Purpose | Ack semantics |
 | --- | --- | --- | --- | --- |
 | GET | `/agent/health` | `host_sweep_loop` | liveness, version, missing prerequisites, and Appium convergence snapshot | 200 → ok; non-200 → `None` (treated as missed heartbeat) |
-| GET | `/agent/host/telemetry` | `host_resource_telemetry_loop` | CPU/memory/disk numbers | 200 → snapshot; non-200 → `None` |
+| GET | `/agent/host/telemetry` | `host_sweep` host-resource-telemetry stage | CPU/memory/disk numbers | 200 → snapshot; non-200 → `None` |
 | GET | `/agent/pack/devices` | `host_sweep` connectivity stage, intake/discovery | currently-visible devices per pack | 2xx required (raises on non-2xx) |
-| GET | `/agent/pack/devices/{ct}/properties` | `property_refresh_loop` | per-device props (OS version, model, etc.) | 200 → dict, 404 → `None`, other → raise |
+| GET | `/agent/pack/devices/{ct}/properties` | `host_sweep` property-refresh stage | per-device props (OS version, model, etc.) | 200 → dict, 404 → `None`, other → raise |
 | GET | `/agent/pack/devices/{ct}/health` | verification flow | adapter-driven health probe | 200 → dict, otherwise → raise |
-| GET | `/agent/pack/devices/{ct}/telemetry` | `hardware_telemetry_loop` | adapter-driven hardware telemetry | 200 → dict, 404 → `None` |
+| GET | `/agent/pack/devices/{ct}/telemetry` | `host_sweep` hardware-telemetry stage | adapter-driven hardware telemetry | 200 → dict, 404 → `None` |
 | POST | `/agent/pack/devices/{ct}/lifecycle/{action}` | lifecycle/operator actions | run a pack-defined lifecycle action (e.g. boot, shutdown) | 2xx required |
 | POST | `/agent/pack/devices/normalize` | intake/discovery | normalise raw input to canonical device fields | 200 → dict, 404 → `None` |
 | POST | `/agent/pack/{pack_id}/doctor` | host onboarding/diagnostics (`hosts/router`, wrapper `pack_doctor`) | run pack adapter doctor checks | 2xx → checks list |

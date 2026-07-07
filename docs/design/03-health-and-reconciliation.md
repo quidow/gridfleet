@@ -50,9 +50,9 @@ Scheduler-owned loops are listed in `_build_leader_loop_tasks` in `backend/app/m
 | `session_sync_loop` | 30 s (`grid.session_poll_interval_sec`): the 30 s tick is the drift-reconciler timeout | Per-node Appium session lists (`appium_direct.list_sessions`) | `Session` rows; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Session.state`, run-claim transitions |
 | `device_intent_reconciler_loop` | `general.intent_reconcile_interval_sec` | device intents + durable facts | `Device.operational_state` via `apply_derived_state` → `set_operational_state` | derived `Device.operational_state` (sole runtime writer) |
 | `session_viability_loop` | 60 s wake / per-device 3600 s | Direct-to-Appium WebDriver probe session | `Device.session_viability_*`; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Device.session_viability_*` |
-| `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
-| `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
-| `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_samples` table (model `HostResourceSample`) | host telemetry rows |
+| `host_sweep` host-resource-telemetry stage | 60 s stage (`general.host_resource_telemetry_interval_sec`, rounded to a multiple of the 15 s sweep via `stage_due`); a global pass after the per-host fan-out | Agent `/agent/host/telemetry` | `host_resource_samples` table (model `HostResourceSample`) | host telemetry rows |
+| `host_sweep` hardware-telemetry stage | 300 s stage (`general.hardware_telemetry_interval_sec`, rounded via `stage_due`); global pass after the fan-out | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
+| `host_sweep` property-refresh stage | 600 s stage (`general.property_refresh_interval_sec`, rounded via `stage_due`); global pass after the fan-out | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `run_reaper_loop` | 15 s | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, `DELETE /session/{id}` direct to the device's Appium node through `appium_direct.terminate_session` | abandoned-run reaping |
 | `grid_allocation_reaper_loop` | 5 s (hardcoded `INTERVAL_SEC` in `app/grid/allocation_reaper.py`, not settings-tunable) | Pending `Session` rows past `grid.claim_window_sec`, `GridSessionQueueTicket` rows | `Session.status` (error, via `AllocationService.fail`; calls `IntentService.mark_dirty_and_reconcile`), `GridSessionQueueTicket.status` (expired) | stale allocation/queue-ticket expiry |
 | `durable_job_worker_loop` | 1 s poll | `jobs` table (model `Job`) | durable job state | durable-job state |
@@ -66,6 +66,8 @@ The lifecycle-critical loops are `host_sweep` (which runs the node-health and co
 Node health folded into `host_sweep` (it is no longer a standalone loop). Its probe/apply phase metrics still report under the `node_health` label via `record_background_loop_phase`, but they are now recorded per swept host rather than once per global cycle, so a dashboard sums them across hosts to get a per-tick total.
 
 Device connectivity folded into `host_sweep` too (it is no longer a standalone loop). Unlike node health, it runs as a single **global stage after the per-host fan-out completes** — its three-phase pipeline (DB prepass → cross-host probe gather → serial apply) is preserved byte-for-byte, and the host statuses it reads are the ones this same sweep cycle just wrote. Its cooldown/probe phase metrics still report under the `device_connectivity` label. On a due cycle the sweep's cycle duration grows by the connectivity pass (a timeout-bounded probe phase), so `BackgroundLoop` cadence self-corrects and host-liveness pings may stretch toward the cycle duration on due cycles. Soak criterion: `background_loop_overrun_total{loop="host_sweep"}` stays near zero; if it climbs, raise probe concurrency or the base interval rather than un-folding.
+
+Host-resource telemetry, hardware telemetry, and property refresh folded into `host_sweep` as three more global stages (they are no longer standalone loops), each a `SweepStage` gated by its own interval setting and run in list order after connectivity. Their cycle bodies (`poll_once` / `refresh_all_properties`) are unchanged; the fold is drive-and-gate only. Delta from the old loops: each stage now reads host statuses this same sweep cycle just wrote, so a host taken offline mid-cycle sees zero telemetry attempts rather than one stale pass. The scheduler roster is now 11 loops.
 
 ## The tri-state probe pattern
 
@@ -120,7 +122,7 @@ Every public health fact has exactly one durable home:
 | `heartbeat.appium_processes` | `host_sweep_loop` / host diagnostics | latest agent-reported Appium process snapshot |
 | `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
 | `connectivity.previously_offline` | `host_sweep` connectivity stage | remembers why a reconnect is treated as recovery rather than first startup |
-| `hardware_telemetry.state` | `hardware_telemetry_loop` | stale/fresh telemetry bookkeeping |
+| `hardware_telemetry.state` | `host_sweep` hardware-telemetry stage | stale/fresh telemetry bookkeeping |
 | `session_viability.state` / `session_viability.running` | `session_viability_loop` | cadence and in-progress guard for deeper session probes |
 
 These entries can be rebuilt or expire by behavior; they must not be used as canonical device/node state in new code.
@@ -166,7 +168,7 @@ flowchart TD
 
 ## What a new loop must implement
 
-When adding a new periodic task, copy the `property_refresh_loop` shape:
+When adding a new periodic task, copy the `fleet_capacity_collector_loop` shape:
 
 1. Add a `BackgroundLoop` subclass (`app/core/background_loop.py`) under the owning domain's `services/` package (e.g. `app/devices/services/<name>.py`, `app/appium_nodes/services/<name>.py`), implementing `_session_factory`, `_interval`, and `_run_cycle` and setting the `loop_name` and `cycle_failed_message` class vars. The base class wraps each cycle in `observe_background_loop(loop_name, interval).cycle()` for metrics.
 2. Add it to `_build_leader_loop_tasks` in `app/main.py`. Do not spawn an independent periodic `asyncio.create_task` from another service.

@@ -114,7 +114,7 @@ Every transition is derived by the `device_intent_reconciler` loop via `apply_de
 unknown · healthy · warning · critical
 ```
 
-Defined in `device.py` (`HardwareHealthStatus`). Written exclusively by `hardware_telemetry_loop` from agent battery/temperature reports. Never read or written by node-lifecycle code; it feeds the operator dashboard only. Treat it as out-of-band telemetry.
+Defined in `device.py` (`HardwareHealthStatus`). Written exclusively by the `host_sweep` hardware-telemetry stage from agent battery/temperature reports. Never read or written by node-lifecycle code; it feeds the operator dashboard only. Treat it as out-of-band telemetry.
 
 Live event surface:
 
