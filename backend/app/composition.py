@@ -10,11 +10,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.agent_comm.circuit_breaker import AgentCircuitBreaker
     from app.agent_comm.http_pool import AgentHttpPool
-    from app.core.leader.advisory import ControlPlaneLeader
     from app.events.event_bus import EventBus
     from app.settings.service import SettingsService
 
@@ -25,8 +24,6 @@ from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.appium_nodes.services_container import AppiumNodeServices
-from app.core.leader.keepalive import LeaderKeepaliveLoop
-from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
@@ -110,19 +107,15 @@ class AppServices:
     appium_nodes: AppiumNodeServices
     jobs: DurableJobWorkerLoop
     background_loop_flush: BackgroundLoopFlushLoop
-    leader_keepalive: LeaderKeepaliveLoop
-    leader_watcher: LeaderWatcherLoop
 
 
 def compose_app(
     *,
-    engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession],
     bus: EventBus,
     settings_svc: SettingsService,
     http_pool: AgentHttpPool,
     circuit_breaker: AgentCircuitBreaker,
-    control_plane_leader: ControlPlaneLeader,
 ) -> AppServices:
     """Wire the full dependency graph. Called once at startup."""
     event_services = EventServices(
@@ -401,6 +394,4 @@ def compose_app(
             )
         ),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
-        leader_keepalive=LeaderKeepaliveLoop(settings=settings_svc),
-        leader_watcher=LeaderWatcherLoop(settings=settings_svc, leader=control_plane_leader, engine=engine),
     )

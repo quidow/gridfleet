@@ -47,8 +47,6 @@ REQUEST_ID_HEADER = "X-Request-ID"
 LOOP_HEARTBEAT_NAMESPACE = "observability.background_loops"
 LOOP_HEARTBEAT_STALE_GRACE_SEC = 10
 BACKGROUND_LOOP_NAMES = (
-    "control_plane_leader_keepalive",
-    "control_plane_leader_watcher",
     "heartbeat",
     "session_sync",
     "node_health",

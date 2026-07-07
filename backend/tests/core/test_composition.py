@@ -10,16 +10,8 @@ import pytest
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.http_pool import AgentHttpPool
 from app.composition import AppServices, compose_app
-from app.core.leader.advisory import ControlPlaneLeader
-from app.core.leader.keepalive import LeaderKeepaliveLoop
-from app.core.leader.watcher import LeaderWatcherLoop
 from app.events.event_bus import EventBus
 from app.settings.service import SettingsService
-
-
-@pytest.fixture
-def mock_engine() -> MagicMock:
-    return MagicMock()
 
 
 @pytest.fixture
@@ -31,16 +23,14 @@ def test_app_services_is_frozen() -> None:
     assert dataclasses.fields(AppServices)
 
 
-def test_compose_app_returns_app_services(mock_engine: MagicMock, mock_session_factory: MagicMock) -> None:
+def test_compose_app_returns_app_services(mock_session_factory: MagicMock) -> None:
     settings = SettingsService()
     services = compose_app(
-        engine=mock_engine,
         session_factory=mock_session_factory,
         bus=EventBus(),
         settings_svc=settings,
         http_pool=AgentHttpPool(),
         circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock(), settings=settings),
-        control_plane_leader=MagicMock(spec=ControlPlaneLeader),
     )
     assert isinstance(services, AppServices)
     assert services.events is not None
@@ -54,31 +44,14 @@ def test_compose_app_returns_app_services(mock_engine: MagicMock, mock_session_f
     assert services.grid is not None
 
 
-def test_app_services_immutable(mock_engine: MagicMock, mock_session_factory: MagicMock) -> None:
+def test_app_services_immutable(mock_session_factory: MagicMock) -> None:
     settings = SettingsService()
     services = compose_app(
-        engine=mock_engine,
         session_factory=mock_session_factory,
         bus=EventBus(),
         settings_svc=settings,
         http_pool=AgentHttpPool(),
         circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock(), settings=settings),
-        control_plane_leader=MagicMock(spec=ControlPlaneLeader),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         services.events = None  # type: ignore[misc]
-
-
-def test_compose_app_exposes_leader_loops(mock_engine: MagicMock, mock_session_factory: MagicMock) -> None:
-    settings = SettingsService()
-    services = compose_app(
-        engine=mock_engine,
-        session_factory=mock_session_factory,
-        bus=EventBus(),
-        settings_svc=settings,
-        http_pool=AgentHttpPool(),
-        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock(), settings=settings),
-        control_plane_leader=MagicMock(spec=ControlPlaneLeader),
-    )
-    assert isinstance(services.leader_keepalive, LeaderKeepaliveLoop)
-    assert isinstance(services.leader_watcher, LeaderWatcherLoop)

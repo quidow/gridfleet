@@ -31,7 +31,7 @@ def _started_loop_names() -> set[str]:
     names: set[str] = set()
     for node in ast.walk(tree):
         # Collect the 2nd element of each (coro, "name") tuple in the _leader_loops list
-        # and any asyncio.create_task(..., name="...") (the watcher).
+        # and any asyncio.create_task(..., name="...") (e.g. the stall watchdog).
         if isinstance(node, ast.Tuple) and len(node.elts) == 2 and isinstance(node.elts[1], ast.Constant):
             val = node.elts[1].value
             if isinstance(val, str):

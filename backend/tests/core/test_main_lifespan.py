@@ -79,8 +79,6 @@ def test_main_imports_in_fresh_interpreter() -> None:
 def _setting_value(key: str) -> int:
     values = {
         "appium.startup_timeout_sec": 30,
-        "general.leader_keepalive_interval_sec": 5,
-        "general.leader_stale_threshold_sec": 30,
         "agent.http_pool_max_keepalive": 10,
         "agent.http_pool_idle_seconds": 60,
     }
@@ -171,8 +169,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(composition, "LeaderKeepaliveLoop", _mock_loop)
-    monkeypatch.setattr(composition, "LeaderWatcherLoop", _mock_loop)
     monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
     monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
@@ -192,7 +188,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
-            "control_plane_leader_keepalive",
             "heartbeat_loop",
             "session_sync_loop",
             "node_health_loop",
@@ -211,7 +206,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         }
         task_names = {task.get_name() for task in created_tasks}
         assert task_names >= expected_leader_loop_names
-        assert "control_plane_leader_watcher" in task_names
+        assert "scheduler_stall_watchdog" in task_names
         loop.callbacks[signal.SIGTERM]()
         await asyncio.sleep(0)
 
@@ -255,91 +250,14 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", create_task)
-    monkeypatch.setattr(composition, "LeaderWatcherLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass
 
-    assert create_task.call_count == 1
-    assert create_task.call_args.kwargs["name"] == "control_plane_leader_watcher"
+    # Lock held by another process: warn and start no loop tasks (no self-promotion).
+    assert create_task.call_count == 0
     assert pool_reopen.await_count == 1
     assert pool_close.await_count == 1
-
-
-async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: MonkeyPatch) -> None:
-    db = AsyncMock()
-    session_factory = FakeSessionFactory(db)
-    loop = FakeLoop()
-    engine = SimpleNamespace(dispose=AsyncMock())
-    sequence: list[str] = []
-    real_create_task = asyncio.create_task
-
-    def tracking_create_task(
-        coro: Coroutine[object, object, None],
-        *,
-        name: str | None = None,
-    ) -> asyncio.Task[None]:
-        if name == "control_plane_leader_watcher":
-            sequence.append("watcher_task_created")
-        return real_create_task(coro, name=name)
-
-    async def tracking_try_acquire(*_args: object, **_kwargs: object) -> bool:
-        sequence.append("try_acquire_started")
-        await asyncio.sleep(0)
-        sequence.append("try_acquire_returned")
-        return True
-
-    import app.core.database as database_module
-    from tests.conftest import settings_service as _ss
-    from tests.helpers import test_event_bus
-
-    _patch_compose_app_constructors(monkeypatch)
-    _patch_agent_http_pool(monkeypatch)
-    monkeypatch.setattr(database_module, "async_session", session_factory)
-    monkeypatch.setattr(main, "session_factory", session_factory)
-    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(test_event_bus, "configure", Mock())
-    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
-    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
-    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
-    monkeypatch.setattr(_ss, "initialize", AsyncMock())
-    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
-    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
-    monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
-    monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
-    monkeypatch.setattr(main.control_plane_leader, "try_acquire", tracking_try_acquire)
-    monkeypatch.setattr(main.control_plane_leader, "release", AsyncMock())
-    monkeypatch.setattr(main, "engine", engine)
-    monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
-    monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(composition, "LeaderKeepaliveLoop", _mock_loop)
-    monkeypatch.setattr(composition, "LeaderWatcherLoop", _mock_loop)
-    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
-    monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
-    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
-    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
-    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
-    monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
-    monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
-    monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
-    monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
-    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
-    monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
-    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
-    monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
-    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
-    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
-    monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
-
-    async with main.lifespan(main.app):
-        pass
-
-    assert sequence.index("try_acquire_returned") < sequence.index("watcher_task_created"), (
-        f"watcher created before try_acquire completed: {sequence}"
-    )
 
 
 async def test_startup_marks_unsupported_online_agent_contracts_offline(

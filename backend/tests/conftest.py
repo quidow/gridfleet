@@ -215,12 +215,6 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
     async with engine.begin() as conn:
         await conn.execute(text(f'CREATE SCHEMA "{schema_name}"'))
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
-        await conn.execute(
-            text(
-                "INSERT INTO control_plane_leader_heartbeats (id, holder_id) "
-                "VALUES (1, gen_random_uuid()) ON CONFLICT (id) DO NOTHING"
-            )
-        )
     yield engine
     # Drain event-bus handler tasks before DROP SCHEMA. After-commit handlers
     # spawned during the test query tables in the per-test schema; if they

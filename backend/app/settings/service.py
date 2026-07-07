@@ -51,18 +51,6 @@ def _migrate_legacy_event_names(values: list[str]) -> list[str]:
     return out
 
 
-def validate_leader_keepalive_settings(*, keepalive_interval_sec: int, stale_threshold_sec: int) -> str | None:
-    """Validate leader heartbeat timing leaves room for a missed keepalive."""
-    minimum_stale_threshold = keepalive_interval_sec * 2
-    if stale_threshold_sec < minimum_stale_threshold:
-        return (
-            "general.leader_stale_threshold_sec must be at least 2x "
-            "general.leader_keepalive_interval_sec "
-            f"({minimum_stale_threshold}s for the current keepalive interval)"
-        )
-    return None
-
-
 def _validate_int(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
     if not isinstance(value, int) or isinstance(value, bool):
         return f"Expected integer for {key}, got {type(value).__name__}"
@@ -241,12 +229,6 @@ class SettingsService:
             return _validate_json(key, value, defn)
         return None
 
-    def _validate_leader_keepalive_candidate(self, candidate: dict[str, SettingValue]) -> str | None:
-        return validate_leader_keepalive_settings(
-            keepalive_interval_sec=int(candidate["general.leader_keepalive_interval_sec"]),
-            stale_threshold_sec=int(candidate["general.leader_stale_threshold_sec"]),
-        )
-
     async def update(
         self, db: AsyncSession, key: str, value: SettingValue, *, publisher: EventPublisher
     ) -> dict[str, Any]:
@@ -257,11 +239,6 @@ class SettingsService:
         error = self._validate_value(key, value)
         if error:
             raise ValueError(error)
-        candidate = dict(self._cache)
-        candidate[key] = value
-        leader_keepalive_error = self._validate_leader_keepalive_candidate(candidate)
-        if leader_keepalive_error:
-            raise ValueError(leader_keepalive_error)
         normalized_value = self._normalize_value(key, value)
 
         defn = SETTINGS_REGISTRY[key]
@@ -296,11 +273,6 @@ class SettingsService:
             error = self._validate_value(key, value)
             if error:
                 raise ValueError(error)
-        candidate = dict(self._cache)
-        candidate.update(updates)
-        leader_keepalive_error = self._validate_leader_keepalive_candidate(candidate)
-        if leader_keepalive_error:
-            raise ValueError(leader_keepalive_error)
 
         await self._cancel_refresh_task()
 

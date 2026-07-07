@@ -10,8 +10,6 @@ from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import node_health
 from app.appium_nodes.services.node_health import NodeHealthService
-from app.core.leader import keepalive as control_plane_leader_keepalive
-from app.core.leader.advisory import LeadershipLost
 from app.devices.services import (
     data_cleanup,
     intent_reconciler,
@@ -206,23 +204,3 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
 
     data_cleanup.schedule_background_loop.assert_awaited_once_with(data_cleanup.LOOP_NAME, 3600.0)
     sleep.assert_any_await(3600.0)
-
-
-async def test_control_plane_leader_keepalive_loop_exits_on_leadership_loss(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = FakeSettingsReader({"general.leader_keepalive_interval_sec": 1})
-    monkeypatch.setattr(control_plane_leader_keepalive, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        control_plane_leader_keepalive,
-        "run_keepalive_once",
-        AsyncMock(side_effect=LeadershipLost("stale leader")),
-    )
-    monkeypatch.setattr(control_plane_leader_keepalive.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    loop = control_plane_leader_keepalive.LeaderKeepaliveLoop(settings=settings)
-
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    control_plane_leader_keepalive.os._exit.assert_called_once_with(70)

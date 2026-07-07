@@ -17,7 +17,7 @@ def test_settings_service_validation_and_normalization_edges() -> None:
     ]
     assert service._normalize_value("notifications.toast_events", ["unknown.event"]) == ["host.status_changed"]
 
-    assert "Expected boolean" in (service._validate_value("general.leader_keepalive_enabled", "true") or "")
+    assert "Expected boolean" in (service._validate_value("agent.auto_accept_hosts", "true") or "")
     assert "not in allowed values" in (
         service._validate_value("notifications.toast_severity_threshold", "verbose") or ""
     )

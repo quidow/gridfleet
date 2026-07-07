@@ -1,56 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-import pytest
-
-from app import main
 from tests.conftest import settings_service
-from tests.helpers import test_event_bus as event_bus
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-
-async def test_leader_keepalive_interval_must_leave_stale_threshold_margin(db_session: AsyncSession) -> None:
-    with pytest.raises(ValueError, match="leader_stale_threshold_sec"):
-        await settings_service.update(db_session, "general.leader_keepalive_interval_sec", 60, publisher=event_bus)
-
-    assert settings_service.get("general.leader_keepalive_interval_sec") == 5
-
-
-async def test_bulk_update_rejects_leader_keepalive_without_stale_threshold_margin(
-    db_session: AsyncSession,
-) -> None:
-    with pytest.raises(ValueError, match="leader_stale_threshold_sec"):
-        await settings_service.bulk_update(
-            db_session,
-            {
-                "general.leader_keepalive_interval_sec": 20,
-                "general.leader_stale_threshold_sec": 30,
-            },
-            publisher=event_bus,
-        )
-
-    assert settings_service.get("general.leader_keepalive_interval_sec") == 5
-    assert settings_service.get("general.leader_stale_threshold_sec") == 30
-
-
-def test_startup_rejects_leader_keepalive_without_stale_threshold_margin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    values = {
-        "general.leader_keepalive_interval_sec": 60,
-        "general.leader_stale_threshold_sec": 30,
-    }
-    monkeypatch.setattr(settings_service, "get", lambda key: values[key])
-
-    with pytest.raises(RuntimeError, match="leader_stale_threshold_sec"):
-        main._validate_leader_keepalive_settings(settings=settings_service)
-
-    values["general.leader_stale_threshold_sec"] = 120
-    main._validate_leader_keepalive_settings(settings=settings_service)
-
 
 # ── float validation tests (device_checks.ip_ping.timeout_sec: min=0.5, max=30.0) ──
 

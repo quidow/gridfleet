@@ -7,7 +7,6 @@ from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.appium_nodes.services_container import AppiumNodeServices
-from app.core.leader import keepalive, watcher
 from app.devices.services import fleet_capacity
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
@@ -248,24 +247,3 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
         await loop.run()
 
     assert poll_once_mock.await_count == 2
-
-
-async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = FakeSettingsReader({"general.leader_keepalive_interval_sec": 0.01})
-    monkeypatch.setattr(keepalive, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(keepalive, "run_keepalive_once", AsyncMock())
-    monkeypatch.setattr(keepalive.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-
-    with pytest.raises(asyncio.CancelledError):
-        await keepalive.LeaderKeepaliveLoop(settings=settings).run()
-
-    keepalive.run_keepalive_once.assert_awaited_once()
-
-    monkeypatch.setattr(watcher, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(watcher, "run_watcher_once", AsyncMock(side_effect=[RuntimeError("boom"), None]))
-    monkeypatch.setattr(watcher.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
-
-    with pytest.raises(asyncio.CancelledError):
-        await watcher.LeaderWatcherLoop(settings=settings, leader=Mock(), engine=Mock()).run()
-
-    assert watcher.run_watcher_once.await_count == 2
