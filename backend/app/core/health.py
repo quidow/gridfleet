@@ -23,7 +23,9 @@ async def check_liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def check_readiness(db: AsyncSession, *, settings: SettingsReader) -> tuple[dict[str, Any], int]:
+async def check_readiness(
+    db: AsyncSession, *, settings: SettingsReader, fail_on_stalled_loops: bool = True
+) -> tuple[dict[str, Any], int]:
     checks: dict[str, Any] = {}
     shutting_down = shutdown_coordinator.is_shutting_down()
     checks["shutdown"] = {
@@ -83,10 +85,14 @@ async def check_readiness(db: AsyncSession, *, settings: SettingsReader) -> tupl
     checks["control_plane_leader"] = leader_ready
     checks["background_loops"] = loop_checks
 
+    # API-only workers keep *reporting* loop snapshots (any process can serve the
+    # DB-flushed rows) but must not fail readiness on stale loops — only the
+    # scheduler, whose compose healthcheck must catch stalls, does.
+    ready = leader_ready or not fail_on_stalled_loops
     return (
         {
-            "status": "ok" if leader_ready else "unhealthy",
+            "status": "ok" if ready else "unhealthy",
             "checks": checks,
         },
-        200 if leader_ready else 503,
+        200 if ready else 503,
     )

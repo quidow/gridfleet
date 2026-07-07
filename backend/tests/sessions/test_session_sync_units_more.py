@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.sessions import service_sync as session_sync
 from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -39,7 +38,6 @@ async def test_sweep_stale_stop_pending_handles_deleted_rows() -> None:
 async def test_sync_commits_after_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.commit = AsyncMock()
-    monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
 
     svc = _make_service()
     monkeypatch.setattr(svc, "_check_liveness", AsyncMock())

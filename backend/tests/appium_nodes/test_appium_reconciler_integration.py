@@ -25,11 +25,6 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-@pytest.fixture(autouse=True)
-def disable_reconciler_fencing_for_integration_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.appium_nodes.services.reconciler.assert_current_leader", AsyncMock())
-
-
 class _SharedSessionContext:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db

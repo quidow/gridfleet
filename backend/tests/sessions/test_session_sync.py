@@ -14,13 +14,12 @@ allocation API.
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -34,8 +33,6 @@ from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
@@ -108,13 +105,6 @@ async def _seed_device_with_node(
     db.add(node)
     await db.flush()
     return device
-
-
-@pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> Iterator[None]:
-    """No-op assert_current_leader so unit tests don't need a real leader row."""
-    with patch("app.sessions.service_sync.assert_current_leader"):
-        yield
 
 
 @pytest.fixture(autouse=True)
@@ -998,39 +988,6 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-
-
-async def test_write_phase_drops_when_leadership_lost_after_probes(
-    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
-) -> None:
-    """Re-fence after the slow probe phase (node_health pattern): leadership lost
-    while awaiting Appium must drop the cycle's writes, not close sessions as a
-    stale leader."""
-    device = await _seed_device_with_node(
-        db_session, db_host, identity_value="stale-leader-1", operational_state=DeviceOperationalState.busy
-    )
-    session = Session(session_id="sess-stale-leader", device_id=device.id, status=SessionStatus.running)
-    db_session.add(session)
-    await db_session.commit()
-
-    _stub_appium_direct["alive"]["sess-stale-leader"] = False  # would close if writes proceeded
-
-    calls = {"n": 0}
-
-    async def _fence(db: AsyncSession, *, settings: FakeSettingsReader) -> None:
-        calls["n"] += 1
-        if calls["n"] > 1:  # cycle-start fence passes; post-probe re-fence loses leadership
-            raise LeadershipLost("leadership changed mid-cycle")
-
-    with patch("app.sessions.service_sync.assert_current_leader", _fence), pytest.raises(LeadershipLost):
-        await SessionSyncService(publisher=Mock(), settings=FakeSettingsReader({}), lifecycle=AsyncMock()).sync(
-            db_session
-        )
-
-    await db_session.rollback()
-    await db_session.refresh(session)
-    assert session.status == SessionStatus.running  # untouched: no stale-leader write
-    assert session.ended_at is None
 
 
 # --------------------------------------------------------------------------- #

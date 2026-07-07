@@ -10,7 +10,6 @@ from sqlalchemy import select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentUnreachableError
-from app.core.leader.advisory import LeadershipLost
 from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
@@ -219,7 +218,6 @@ async def test_reconciler_once_forwards_agent_auth_pool(
     await db_session.commit()
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
-    monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
 
     await run_device_intent_reconciler_once(
         db_session,
@@ -273,7 +271,6 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     await db_session.commit()
     reconfigure = AsyncMock(side_effect=[AgentUnreachableError(db_host.ip, "offline"), {"port": 4723}])
     monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
-    monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
 
     await _reconcile_expired_intents(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
@@ -689,24 +686,6 @@ async def test_full_scan_recovers_non_available_device_without_intents(
 
     assert orphan.id in reconciled  # re-derived despite having no intents
     assert idle.id not in reconciled  # steady-state available is still skipped
-
-
-async def test_reconciler_cycle_checks_leadership_before_writes(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    reconcile_expired = AsyncMock()
-    monkeypatch.setattr("app.devices.services.intent_reconciler._reconcile_expired_intents", reconcile_expired)
-    monkeypatch.setattr(
-        "app.devices.services.intent_reconciler.assert_current_leader",
-        AsyncMock(side_effect=LeadershipLost("lost")),
-    )
-
-    with pytest.raises(LeadershipLost):
-        await run_device_intent_reconciler_once(
-            db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
-    reconcile_expired.assert_not_awaited()
 
 
 async def test_maintenance_signal_suppresses_baseline_idle_injection(

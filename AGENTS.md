@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GridFleet is a control plane for Appium device labs. It is a multi-component monorepo, **not** a single application. Each component has its own toolchain and dependency manifest:
 
-- `backend/` — FastAPI manager, async SQLAlchemy + Postgres, Alembic migrations, leader-owned background loops. Python 3.14, managed by `uv`.
+- `backend/` — FastAPI manager, async SQLAlchemy + Postgres, Alembic migrations, background loops run in a dedicated scheduler process. Python 3.14, managed by `uv`.
 - `agent/` — FastAPI host agent that runs on each device host. Spawns Appium processes per device. Python 3.14, managed by `uv`.
 - `router/` — Pingora-based Rust W3C WebDriver router that listens on `:4444`, allocates a device via the backend internal grid API, and proxies session commands directly to Appium on the allocated host. Replaces the Selenium Grid hub.
 - `frontend/` — React 19 + TypeScript + Vite + Tailwind v4 operator dashboard. Node 24, managed by `npm`.
@@ -80,10 +80,10 @@ Adapter builds require `uv` on `PATH`. Uploaded adapter wheels execute on agent 
 
 ## Architecture: What Spans Multiple Files
 
-### Backend control plane and the leader-loop pattern
-The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~17 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, run_reaper, grid_allocation_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher. The `grid_allocation_reaper_loop` expires stale router allocation tickets (devices allocated but never confirmed by the router). `session_sync` is now a direct-to-Appium observation sweep (liveness probes + orphan-session kill via Appium's `/appium/sessions`), not a Grid-hub `/status` poll.
+### Backend control plane and the scheduler-loop pattern
+The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~17 background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, run_reaper, grid_allocation_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush). They run in exactly one **scheduler process** — the prod `backend-scheduler` Compose service (one worker), or the API process itself in local/single-container runs — gated by `GRIDFLEET_RUN_BACKGROUND_LOOPS` (default `true`). A stall watchdog `os._exit(70)`s the scheduler when a loop wedges so the supervisor restarts it. The `grid_allocation_reaper_loop` expires stale router allocation tickets (devices allocated but never confirmed by the router). `session_sync` is now a direct-to-Appium observation sweep (liveness probes + orphan-session kill via Appium's `/appium/sessions`), not a Grid-hub `/status` poll.
 
-Leader election uses **PostgreSQL advisory locks** via `app/core/leader/` (`advisory.py`, `keepalive.py`, `watcher.py`). When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. Domain-specific loops live under their owning `app/<domain>/services/` package.
+A single **PostgreSQL advisory lock** (`app/core/leader/advisory.py`, singleton `control_plane_leader`, lock id `6001`, held for the process lifetime) guards against an accidental second loop-runner — it is a launch guard, **not** a leader election. There is no heartbeat, watcher, or preemption; failover is restart-based (compose `restart: unless-stopped` re-acquires the lock) plus the in-process stall watchdog. When adding a new periodic task, add a `BackgroundLoop` subclass to the roster in `_build_leader_loop_tasks` (`app/main.py`) and expose Prometheus gauges via `observe_background_loop`, rather than spawning bare `asyncio.create_task` loops. Domain-specific loops live under their owning `app/<domain>/services/` package.
 
 ### Settings: env vars vs DB registry
 There are two distinct config surfaces. Do not conflate them:

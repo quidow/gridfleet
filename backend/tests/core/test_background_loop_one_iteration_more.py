@@ -7,8 +7,6 @@ from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.appium_nodes.services_container import AppiumNodeServices
-from app.core.leader import keepalive, watcher
-from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
@@ -61,7 +59,6 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", _Session)
-    monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_fetch_online_hosts", AsyncMock(return_value=[{"id": "bad"}]))
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_rows", AsyncMock(return_value=[]))
     monkeypatch.setattr(appium_reconciler, "_fetch_backoff_until", AsyncMock(return_value={}))
@@ -250,75 +247,3 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
         await loop.run()
 
     assert poll_once_mock.await_count == 2
-
-
-async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = FakeSettingsReader({"general.leader_keepalive_interval_sec": 0.01})
-    monkeypatch.setattr(keepalive, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(keepalive, "run_keepalive_once", AsyncMock())
-    monkeypatch.setattr(keepalive.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-
-    with pytest.raises(asyncio.CancelledError):
-        await keepalive.LeaderKeepaliveLoop(settings=settings).run()
-
-    keepalive.run_keepalive_once.assert_awaited_once()
-
-    monkeypatch.setattr(watcher, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(watcher, "run_watcher_once", AsyncMock(side_effect=[RuntimeError("boom"), None]))
-    monkeypatch.setattr(watcher.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
-
-    with pytest.raises(asyncio.CancelledError):
-        await watcher.LeaderWatcherLoop(settings=settings, leader=Mock(), engine=Mock()).run()
-
-    assert watcher.run_watcher_once.await_count == 2
-
-
-async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    def fake_exit(code: int) -> None:
-        raise RuntimeError(f"exit {code}")
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
-    with pytest.raises(RuntimeError, match="exit 70"):
-        await AppiumReconcilerLoop(
-            services=AppiumNodeServices(
-                settings=FakeSettingsReader({}),
-                reconciler=Mock(run_cycle=AsyncMock(side_effect=LeadershipLost("lost"))),
-                reconciler_agent=Mock(),
-                node_health=Mock(check_nodes=AsyncMock()),
-                heartbeat=Mock(run_cycle=AsyncMock()),
-                session_factory=_Session,
-            )
-        ).run()
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
-    with pytest.raises(RuntimeError, match="exit 70"):
-        await HeartbeatLoop(
-            services=AppiumNodeServices(
-                settings=FakeSettingsReader({"general.heartbeat_interval_sec": 1}),
-                reconciler=Mock(run_cycle=AsyncMock()),
-                reconciler_agent=Mock(),
-                node_health=Mock(check_nodes=AsyncMock()),
-                heartbeat=Mock(run_cycle=AsyncMock(side_effect=LeadershipLost("lost"))),
-                session_factory=_Session,
-            )
-        ).run()
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
-    mock_sync = Mock()
-    mock_sync.sync = AsyncMock(side_effect=LeadershipLost("lost"))
-    mock_sync.wait_for_wake = AsyncMock()
-    services = SessionServices(
-        crud=Mock(),
-        sync=mock_sync,
-        viability=Mock(),
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
-        session_factory=_Session,
-        publisher=event_bus,
-    )
-    with pytest.raises(RuntimeError, match="exit 70"):
-        await SessionSyncLoop(services=services).run()

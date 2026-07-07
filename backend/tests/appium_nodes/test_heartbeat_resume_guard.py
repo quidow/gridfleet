@@ -11,16 +11,7 @@ from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOu
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from app.hosts.models import Host
-
-
-@pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> Iterator[None]:
-    """No-op assert_current_leader so tests don't need a real leader advisory lock."""
-    with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
-        yield
 
 
 def test_resume_guard_helper() -> None:

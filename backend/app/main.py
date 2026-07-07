@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 import signal
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any
@@ -40,9 +41,11 @@ from app.core.observability import (
     configure_logging,
     flush_background_loop_snapshots,
     get_logger,
+    stalled_background_loop_names,
 )
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
+from app.core.timeutil import now_utc
 from app.devices import routers as device_routers
 from app.devices.dependencies import (
     DeviceServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
@@ -81,7 +84,6 @@ from app.sessions import router as sessions_router
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.settings import router as settings
-from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import (
     SettingsServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
 )
@@ -94,7 +96,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.composition import AppServices
-    from app.core.protocols import SettingsReader
 
 configure_logging()
 
@@ -108,17 +109,6 @@ FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
 assess_devices_async = readiness.assess_devices_async
 is_ready_for_use_async = readiness.is_ready_for_use_async
 PropertyRefreshLoop = property_refresh.PropertyRefreshLoop
-
-
-def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
-    keepalive_interval_sec = settings.get_int("general.leader_keepalive_interval_sec")
-    stale_threshold_sec = settings.get_int("general.leader_stale_threshold_sec")
-    error = validate_leader_keepalive_settings(
-        keepalive_interval_sec=keepalive_interval_sec,
-        stale_threshold_sec=stale_threshold_sec,
-    )
-    if error:
-        raise RuntimeError(f"Misconfigured leader keepalive settings: {error}")
 
 
 async def _validate_online_agent_contracts(db: AsyncSession) -> None:
@@ -172,13 +162,11 @@ async def _build_and_start_app_services(
     breaker = AgentCircuitBreaker(publisher=bus, settings=svc, session_factory=session_factory)
 
     app_services = compose_app(
-        engine=engine,
         session_factory=session_factory,
         bus=bus,
         settings_svc=svc,
         http_pool=pool,
         circuit_breaker=breaker,
-        control_plane_leader=control_plane_leader,
     )
     app.state.services = app_services
 
@@ -189,7 +177,6 @@ async def _build_and_start_app_services(
     async with session_factory() as db:
         await svc.initialize(db)
         await _validate_online_agent_contracts(db)
-    _validate_leader_keepalive_settings(settings=svc)
 
     pool.configure_limits(
         max_keepalive=svc.get_int("agent.http_pool_max_keepalive"),
@@ -222,7 +209,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     background_loop_flush = app_services.background_loop_flush
 
     _leader_loops: list[tuple[Any, str]] = [
-        (app_services.leader_keepalive.run(), "control_plane_leader_keepalive"),
         (heartbeat.run(), "heartbeat_loop"),
         (session_sync.run(), "session_sync_loop"),
         (node_health.run(), "node_health_loop"),
@@ -242,6 +228,30 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
         (background_loop_flush.run(), "background_loop_flush_loop"),
     ]
     return [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
+
+
+SCHEDULER_STALL_GRACE_SEC = 600.0
+SCHEDULER_WATCHDOG_INTERVAL_SEC = 60.0
+
+
+async def _scheduler_stall_watchdog() -> None:
+    """Exit the scheduler when its loops wedge, so compose restart recovers them.
+
+    Restart-based failover: this replaces the old cross-process watcher preempt
+    for the realistic stall modes (a loop stuck on a dead await, silent task
+    death). A fully wedged event loop starves this task too — that case is
+    covered by the Prometheus loop-staleness alerts, not automation.
+    """
+    while True:
+        await asyncio.sleep(SCHEDULER_WATCHDOG_INTERVAL_SEC)
+        stalled = stalled_background_loop_names(now=now_utc(), extra_grace_seconds=SCHEDULER_STALL_GRACE_SEC)
+        if stalled:
+            logger.error(
+                "scheduler_loops_stalled",
+                stalled=sorted(stalled),
+                action="exiting_process_for_supervisor_restart",
+            )
+            os._exit(70)
 
 
 @asynccontextmanager
@@ -267,14 +277,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
-    watcher_task: asyncio.Task[None] | None = None
-
-    if await control_plane_leader.try_acquire(engine):
-        tasks = _build_leader_loop_tasks(app_services)
-    watcher_task = asyncio.create_task(
-        app_services.leader_watcher.run(),
-        name="control_plane_leader_watcher",
-    )
+    if process_settings.run_background_loops:
+        if await control_plane_leader.try_acquire(engine):
+            tasks = _build_leader_loop_tasks(app_services)
+            tasks.append(asyncio.create_task(_scheduler_stall_watchdog(), name="scheduler_stall_watchdog"))
+        else:
+            logger.warning(
+                "background_loops_skipped_lock_held",
+                detail="GRIDFLEET_RUN_BACKGROUND_LOOPS is true but another process holds the singleton lock",
+            )
     gc_tuning.tune_after_startup()
     try:
         yield
@@ -289,8 +300,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await flush_background_loop_snapshots(session_factory)
         except Exception:
             logger.exception("background_loop_final_flush_failed")
-        if watcher_task is not None:
-            await _cancel_and_wait_for_tasks([watcher_task], label="leader watcher")
         await svc.shutdown()
         await control_plane_leader.release()
         await bus.shutdown()
@@ -353,13 +362,17 @@ async def live_health() -> dict[str, str]:
 
 @app.get("/health/ready", response_model=HealthStatusRead)
 async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.service)
+    payload, status_code = await check_readiness(
+        db, settings=settings_services.service, fail_on_stalled_loops=process_settings.run_background_loops
+    )
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
 async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.service)
+    payload, status_code = await check_readiness(
+        db, settings=settings_services.service, fail_on_stalled_loops=process_settings.run_background_loops
+    )
     return JSONResponse(content=payload, status_code=status_code)
 
 

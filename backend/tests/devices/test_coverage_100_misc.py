@@ -27,7 +27,6 @@ from app.appium_nodes.services import (
 from app.auth.config import AuthConfig
 from app.core.errors import PackDrainingError, _http_error_code
 from app.core.leader import advisory as control_plane_leader_module
-from app.core.leader import watcher as control_plane_leader_watcher
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState
@@ -398,10 +397,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     await leader.release()
     assert leader._connection is None
 
-    monkeypatch.setattr(control_plane_leader_watcher.os, "_exit", Mock(side_effect=SystemExit(70)))
-    with pytest.raises(SystemExit):
-        await control_plane_leader_watcher._exit_after_preempt()
-
     monkeypatch.setattr(event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
     monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
     await event_bus_mod._publish_pending_events(
@@ -443,10 +438,8 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         circuit_breaker=Mock(),
         session_factory=SessionCtx,
     )._clear_token_factory(require_leader=True, session_scope=SessionCtx)
-    monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
     await clear(row=SimpleNamespace(device_id=uuid.uuid4()))
-    appium_reconciler.assert_current_leader.assert_awaited_once()
 
     row = SimpleNamespace(
         device_id=uuid.uuid4(),

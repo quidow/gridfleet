@@ -83,12 +83,10 @@ def test_no_deleted_layout_shim_imports() -> None:
 
 def test_leader_models_are_imported_via_package_reexports() -> None:
     forbidden = {
-        "app.core.leader.models.heartbeat",
         "app.core.leader.models.state_entry",
     }
     allowed = {
         "app/core/leader/models/__init__.py",
-        "app/core/leader/models/heartbeat.py",
         "app/core/leader/models/state_entry.py",
     }
     for module in _iter_python_modules(BACKEND_APP):

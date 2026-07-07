@@ -71,10 +71,7 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
         return await original_lock(db, rid)  # type: ignore[arg-type]
 
     reaper = _make_reaper()
-    with (
-        patch("app.runs.service_reaper.assert_current_leader"),
-        patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock),
-    ):
+    with patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock):
         await reaper._reap_stale_runs(db_session)
 
     # Re-read the run on a fresh session so we observe the persisted state,

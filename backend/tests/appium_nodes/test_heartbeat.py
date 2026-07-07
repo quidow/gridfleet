@@ -89,11 +89,7 @@ async def _skip_leader_fencing(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> AsyncGenerator[None]:
     """No-op the leader fence and redirect per-host sessions to the test schema engine."""
-    with (
-        patch("app.appium_nodes.services.heartbeat.assert_current_leader"),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        yield
+    yield
 
 
 async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:

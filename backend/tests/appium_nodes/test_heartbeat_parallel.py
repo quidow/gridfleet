@@ -12,7 +12,6 @@ from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     import contextlib
-    from collections.abc import AsyncGenerator
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,13 +23,6 @@ def _hb_services(db: AsyncSession) -> Mock:
     factory.__aexit__ = AsyncMock(return_value=None)
     m.session_factory = lambda: factory
     return m
-
-
-@pytest.fixture(autouse=True)
-async def _skip_leader_fencing() -> AsyncGenerator[None]:
-    """No-op the leader fence."""
-    with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
-        yield
 
 
 def _ok() -> HeartbeatPingResult:

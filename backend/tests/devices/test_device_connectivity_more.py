@@ -218,7 +218,6 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
             "app.devices.services.connectivity.control_plane_state_store.delete_value",
             new=AsyncMock(),
         ) as delete_value,
-        patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await ConnectivityService(
             publisher=event_bus,
@@ -265,7 +264,6 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         patch("app.devices.services.connectivity._lifecycle_state_capable", new=AsyncMock(return_value=True)),
         patch("app.devices.services.connectivity._fetch_lifecycle_state", new=AsyncMock(return_value="booted")),
         patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value={"healthy": True})),
-        patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await ConnectivityService(
             publisher=event_bus,
@@ -401,7 +399,6 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
                 }
             ),
         ),
-        patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await ConnectivityService(
             publisher=event_bus,

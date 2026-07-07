@@ -9,13 +9,7 @@ import pytest
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import node_health
-from app.appium_nodes.services.node_health import NodeHealthLoop, NodeHealthService
-from app.appium_nodes.services_container import AppiumNodeServices
-from app.core.leader import keepalive as control_plane_leader_keepalive
-from app.core.leader.advisory import LeadershipLost
-from app.devices.services import (
-    connectivity as device_connectivity,
-)
+from app.appium_nodes.services.node_health import NodeHealthService
 from app.devices.services import (
     data_cleanup,
     intent_reconciler,
@@ -34,7 +28,6 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from app.runs import service_reaper as run_reaper
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
@@ -51,67 +44,6 @@ class _Observation:
 @asynccontextmanager
 async def _fake_session() -> AsyncGenerator[AsyncMock]:
     yield AsyncMock()
-
-
-async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        intent_reconciler,
-        "run_device_intent_reconciler_once",
-        AsyncMock(side_effect=LeadershipLost("stale leader")),
-    )
-    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
-    _svc_pub_1 = AsyncMock()
-    _svc_maint_1 = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
-    _svc_crud_1 = DeviceCrudService(
-        settings=_svc_settings_1, identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
-    loop = intent_reconciler.DeviceIntentReconcilerLoop(
-        services=DeviceServices(
-            fleet_capacity=FleetCapacityService(),
-            data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
-            property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_1, crud=_svc_crud_1),
-            maintenance=_svc_maint_1,
-            bulk=BulkOperationsService(
-                publisher=_svc_pub_1,
-                settings=_svc_settings_1,
-                circuit_breaker=Mock(),
-                maintenance=_svc_maint_1,
-                crud=_svc_crud_1,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_svc_settings_1, publisher=event_bus
-                ),
-            ),
-            presenter=DevicePresenterService(settings=_svc_settings_1),
-            test_data=TestDataService(publisher=_svc_pub_1),
-            crud=_svc_crud_1,
-            capability=DeviceCapabilityService(),
-            connectivity=ConnectivityService(
-                publisher=_svc_pub_1,
-                settings=_svc_settings_1,
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=AsyncMock(),
-            ),
-            publisher=_svc_pub_1,
-            settings=_svc_settings_1,
-            session_factory=_fake_session,
-            circuit_breaker=Mock(),
-            health=AsyncMock(),
-        )
-    )
-
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    background_loop.os._exit.assert_called_once_with(70)
 
 
 async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,39 +112,6 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     assert slept == pytest.approx(1.0, abs=0.1)
 
 
-async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(NodeHealthService, "check_nodes", AsyncMock(side_effect=LeadershipLost("stale leader")))
-    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    settings = FakeSettingsReader({"general.node_check_interval_sec": 1})
-    node_health_svc = NodeHealthService(
-        publisher=Mock(),
-        settings=settings,
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        recovery_control=AsyncMock(),
-        health=AsyncMock(),
-        incidents=AsyncMock(),
-    )
-    loop = NodeHealthLoop(
-        services=AppiumNodeServices(
-            settings=settings,
-            reconciler=Mock(),
-            reconciler_agent=Mock(),
-            node_health=node_health_svc,
-            heartbeat=Mock(),
-            session_factory=_fake_session,
-        )
-    )
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    background_loop.os._exit.assert_called_once_with(70)
-
-
 async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     device = Mock(id=__import__("uuid").uuid4(), host_id=__import__("uuid").uuid4())
     node = Mock(device=device, port=4723, pid=123, active_connection_target="serial")
@@ -228,7 +127,6 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     db.execute = AsyncMock(return_value=Result())
     db.commit = AsyncMock()
     monkeypatch.setattr(NodeHealthService, "_bounded_check_node_health", AsyncMock(return_value={"healthy": True}))
-    monkeypatch.setattr(node_health, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(node_health.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     from tests.fakes import FakeSettingsReader
@@ -244,119 +142,6 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     ).check_nodes(db)
 
     db.commit.assert_awaited_once()
-
-
-async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(ConnectivityService, "check_expired_cooldowns", AsyncMock())
-    monkeypatch.setattr(
-        ConnectivityService,
-        "check_connectivity",
-        AsyncMock(side_effect=LeadershipLost("stale leader")),
-    )
-    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    _svc_settings_3 = FakeSettingsReader({})
-    _svc_pub_3 = AsyncMock()
-    _svc_maint_3 = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
-    _svc_crud_3 = DeviceCrudService(
-        settings=_svc_settings_3, identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
-    loop = device_connectivity.DeviceConnectivityLoop(
-        services=DeviceServices(
-            fleet_capacity=FleetCapacityService(),
-            data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
-            property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_3, crud=_svc_crud_3),
-            maintenance=_svc_maint_3,
-            bulk=BulkOperationsService(
-                publisher=_svc_pub_3,
-                settings=_svc_settings_3,
-                circuit_breaker=Mock(),
-                maintenance=_svc_maint_3,
-                crud=_svc_crud_3,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_svc_settings_3, publisher=event_bus
-                ),
-            ),
-            presenter=DevicePresenterService(settings=_svc_settings_3),
-            test_data=TestDataService(publisher=_svc_pub_3),
-            crud=_svc_crud_3,
-            capability=DeviceCapabilityService(),
-            connectivity=ConnectivityService(
-                publisher=_svc_pub_3,
-                settings=_svc_settings_3,
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=AsyncMock(),
-            ),
-            publisher=_svc_pub_3,
-            settings=_svc_settings_3,
-            session_factory=_fake_session,
-            circuit_breaker=Mock(),
-            health=AsyncMock(),
-        )
-    )
-
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    background_loop.os._exit.assert_called_once_with(70)
-
-
-async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    from types import SimpleNamespace
-
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        run_reaper.RunReaperLoop, "_reap_stale_runs", AsyncMock(side_effect=LeadershipLost("stale leader"))
-    )
-    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    mock_services = SimpleNamespace(
-        lifecycle=AsyncMock(),
-        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
-        session_factory=_fake_session,
-    )
-    loop = run_reaper.RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
-
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    background_loop.os._exit.assert_called_once_with(70)
-
-
-async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    from types import SimpleNamespace
-
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        run_reaper.RunReaperLoop,
-        "_reap_stale_runs",
-        AsyncMock(side_effect=[None, LeadershipLost("stale leader")]),
-    )
-    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(return_value=None))
-    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    mock_services = SimpleNamespace(
-        lifecycle=AsyncMock(),
-        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
-        session_factory=_fake_session,
-    )
-    loop = run_reaper.RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
-
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    background_loop.os._exit.assert_called_once_with(70)
 
 
 async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -419,23 +204,3 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
 
     data_cleanup.schedule_background_loop.assert_awaited_once_with(data_cleanup.LOOP_NAME, 3600.0)
     sleep.assert_any_await(3600.0)
-
-
-async def test_control_plane_leader_keepalive_loop_exits_on_leadership_loss(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = FakeSettingsReader({"general.leader_keepalive_interval_sec": 1})
-    monkeypatch.setattr(control_plane_leader_keepalive, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        control_plane_leader_keepalive,
-        "run_keepalive_once",
-        AsyncMock(side_effect=LeadershipLost("stale leader")),
-    )
-    monkeypatch.setattr(control_plane_leader_keepalive.os, "_exit", Mock(side_effect=SystemExit(70)))
-
-    loop = control_plane_leader_keepalive.LeaderKeepaliveLoop(settings=settings)
-
-    with pytest.raises(SystemExit):
-        await loop.run()
-
-    control_plane_leader_keepalive.os._exit.assert_called_once_with(70)

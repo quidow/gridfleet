@@ -71,7 +71,6 @@ async def _run_node_health_with_gate(
 
     with (
         patch.object(node_health.NodeHealthService, "_check_node_health", side_effect=unhealthy_probe),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
             await node_health.NodeHealthService(

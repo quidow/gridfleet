@@ -47,8 +47,6 @@ REQUEST_ID_HEADER = "X-Request-ID"
 LOOP_HEARTBEAT_NAMESPACE = "observability.background_loops"
 LOOP_HEARTBEAT_STALE_GRACE_SEC = 10
 BACKGROUND_LOOP_NAMES = (
-    "control_plane_leader_keepalive",
-    "control_plane_leader_watcher",
     "heartbeat",
     "session_sync",
     "node_health",
@@ -318,6 +316,21 @@ async def flush_background_loop_snapshots(
         _heartbeat_buffer.mark_dirty()
         raise
     return len(snapshot_copy)
+
+
+def stalled_background_loop_names(*, now: datetime, extra_grace_seconds: float) -> list[str]:
+    """Loop names whose in-memory heartbeat is past next_expected_at + grace.
+
+    Reads the process-local buffer (no DB): only meaningful on the process that
+    runs the loops. Loops that have not started a first cycle have no buffer
+    entry and are not reported. The scan is synchronous (no await), so iterating
+    the live buffer is atomic with respect to the event loop.
+    """
+    return [
+        name
+        for name, snapshot in _heartbeat_buffer.snapshots.items()
+        if not loop_heartbeat_fresh(snapshot, now=now, extra_grace_seconds=extra_grace_seconds)
+    ]
 
 
 class BackgroundLoopFlushLoop:

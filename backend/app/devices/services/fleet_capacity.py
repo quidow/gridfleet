@@ -357,7 +357,6 @@ class FleetCapacityService:
 
 class FleetCapacityLoop(BackgroundLoop):
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
     cycle_failed_message = "Fleet capacity collector failed"
 
     def __init__(self, *, services: DeviceServices) -> None:
