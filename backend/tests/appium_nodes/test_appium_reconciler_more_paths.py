@@ -1,18 +1,18 @@
-import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock
 
-import pytest
-
 from app.appium_nodes.services import reconciler as appium_reconciler
-from app.appium_nodes.services.reconciler import AppiumReconcilerLoop, ReconcilerService
+from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
-from app.appium_nodes.services_container import AppiumNodeServices
 from app.hosts.models import HostStatus
 from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    import pytest
 
 
 async def test_fetch_backoff_until_parses_valid_rows_and_skips_bad_values() -> None:
@@ -31,7 +31,7 @@ async def test_fetch_backoff_until_parses_valid_rows_and_skips_bad_values() -> N
         )
     )
 
-    backoff = await appium_reconciler._fetch_backoff_until(db)
+    backoff = await appium_reconciler.fetch_backoff_until(db)
 
     assert backoff[valid_id] == datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
     assert backoff[naive_id] == datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
@@ -211,53 +211,7 @@ async def test_session_scope_reuses_existing_db() -> None:
         assert yielded is db
 
 
-async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    class Cycle:
-        def cycle(self) -> Cycle:
-            return self
-
-        async def __aenter__(self) -> Cycle:
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class Session:
-        async def __aenter__(self) -> Session:
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
-    monkeypatch.setattr(appium_reconciler, "async_session", Session)
-    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-
-    reconciler = Mock()
-    reconciler.run_cycle = AsyncMock(side_effect=RuntimeError("boom"))
-    services = AppiumNodeServices(
-        settings=FakeSettingsReader({}),
-        reconciler=reconciler,
-        reconciler_agent=Mock(),
-        node_health=Mock(),
-        heartbeat=Mock(),
-        session_factory=Session,
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        await AppiumReconcilerLoop(services=services).run()
-
-
-async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Session:
-        async def __aenter__(self) -> Session:
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
+async def test_reconcile_host_returns_for_malformed_appium_processes(monkeypatch: pytest.MonkeyPatch) -> None:
     row = DesiredRow(
         device_id=uuid.uuid4(),
         host_id=uuid.uuid4(),
@@ -272,8 +226,6 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
         active_connection_target=None,
         stop_pending=False,
     )
-    monkeypatch.setattr(appium_reconciler, "async_session", Session)
-    monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"appium_processes": "bad"}))
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
     converge = AsyncMock()
     monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
@@ -282,27 +234,19 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
     async def _mock_session_factory() -> AsyncMock:
         yield AsyncMock()
 
-    await ReconcilerService(
+    service = ReconcilerService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=_mock_session_factory,
-    )._drive_convergence(
-        [{"id": row.host_id, "ip": "10.0.0.1", "agent_port": 5100}, {"id": "bad"}],
-        [row],
-        {},
+    )
+    await service.reconcile_host(
+        host_id=row.host_id,
+        host_ip="10.0.0.1",
+        agent_port=5100,
+        rows=[row],
+        backoff_until_by_device={},
+        payload={"appium_processes": "bad"},
     )
     converge.assert_not_awaited()
-
-    monkeypatch.setattr(appium_reconciler, "_fetch_online_hosts", AsyncMock(return_value=[]))
-    monkeypatch.setattr(appium_reconciler, "_fetch_desired_rows", AsyncMock(return_value=[]))
-    monkeypatch.setattr(appium_reconciler, "_fetch_backoff_until", AsyncMock(return_value={}))
-    drive_mock = AsyncMock()
-    monkeypatch.setattr(ReconcilerService, "_drive_convergence", drive_mock)
-
-    from tests.helpers import run_one_reconciler_cycle
-
-    await run_one_reconciler_cycle()
-
-    drive_mock.assert_awaited_once()

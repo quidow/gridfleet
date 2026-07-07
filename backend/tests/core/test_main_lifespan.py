@@ -169,7 +169,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
+    monkeypatch.setattr(main, "HostSweepLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
     monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
@@ -182,13 +182,12 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
     monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
     monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
-    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
     monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
-            "heartbeat_loop",
+            "host_sweep_loop",
             "session_sync_loop",
             "node_health_loop",
             "device_connectivity_loop",
@@ -201,7 +200,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
             "session_viability_loop",
             "fleet_capacity_collector_loop",
             "pack_drain_loop",
-            "appium_reconciler_loop",
             "device_intent_reconciler_loop",
         }
         task_names = {task.get_name() for task in created_tasks}

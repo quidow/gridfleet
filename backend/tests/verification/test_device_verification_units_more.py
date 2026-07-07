@@ -317,8 +317,8 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """run_probe must kick converge_device_now after start_node so verification does
-    not wait for the next reconciler tick. Without this, wait_for_node_running races
-    appium_reconciler.interval_sec (default 30s) against appium.startup_timeout_sec
+    not wait for the next host-sweep tick. Without this, wait_for_node_running races
+    general.heartbeat_interval_sec (default 15s) against appium.startup_timeout_sec
     (default 30s) — a common cause of `node_start failed` → cleanup skipped for new
     devices.
     """

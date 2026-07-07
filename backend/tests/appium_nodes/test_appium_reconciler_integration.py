@@ -471,7 +471,7 @@ async def test_fetch_backoff_until_coerces_naive_datetimes_to_utc(db_session: As
 
     from app.appium_nodes.services import reconciler as appium_reconciler
 
-    backoff = await appium_reconciler._fetch_backoff_until(db_session)
+    backoff = await appium_reconciler.fetch_backoff_until(db_session)
 
     assert backoff[device.id].tzinfo == UTC
 

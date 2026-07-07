@@ -726,7 +726,7 @@ async def populated_hosts_4_slow(
     """Yield an async context manager that opens a session seeded with 4 online hosts.
 
     IPs: 10.10.10.1 through 10.10.10.4. Intended for parallelism timing tests.
-    Usage: ``async with populated_hosts_4_slow as db: await _check_hosts(db)``
+    Usage: run one host sweep with the yielded DB session.
     """
     hosts: list[Host] = []
     async with db_session_maker() as seed_db:
@@ -765,7 +765,7 @@ async def populated_hosts_one_slow_one_fast(
     """Yield an async context manager seeded with 2 hosts: slow (1.1.1.1) and fast (2.2.2.2).
 
     Used for testing that parallel execution logs the fast host before the slow one.
-    Usage: ``async with populated_hosts_one_slow_one_fast as db: await _check_hosts(db)``
+    Usage: run one host sweep with the yielded DB session.
     """
     hosts: list[Host] = []
     async with db_session_maker() as seed_db:

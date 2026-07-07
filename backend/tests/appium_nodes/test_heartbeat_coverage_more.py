@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.appium_nodes.services import heartbeat
-from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.hosts.models import Host, HostStatus, OSType
@@ -135,18 +135,20 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
-    heartbeat_svc = Mock(run_cycle=AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(
+        "app.appium_nodes.services.host_sweep.run_host_sweep_once", AsyncMock(side_effect=RuntimeError("boom"))
+    )
     services = AppiumNodeServices(
         settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
         reconciler=Mock(),
         reconciler_agent=Mock(),
         node_health=Mock(),
-        heartbeat=heartbeat_svc,
+        heartbeat=Mock(),
         session_factory=Session,
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await HeartbeatLoop(services=services).run()
+        await HostSweepLoop(services=services).run()
 
 
 def _dead_result() -> HeartbeatPingResult:
