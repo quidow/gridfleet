@@ -58,7 +58,6 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
             patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
-            patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await ConnectivityService(
@@ -129,7 +128,6 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
-            patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await ConnectivityService(

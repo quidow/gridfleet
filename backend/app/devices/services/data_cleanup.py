@@ -317,7 +317,6 @@ class DataCleanupLoop(BackgroundLoop):
     """Background loop that periodically cleans up old data."""
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
     cycle_failed_message = "Data cleanup failed"
     sleep_before_first_cycle = True  # never run cleanup immediately at boot
 

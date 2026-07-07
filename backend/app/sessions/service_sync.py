@@ -13,7 +13,6 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.background_loop import BackgroundLoop
 from app.core.concurrency import per_key_semaphores
-from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -242,11 +241,6 @@ class SessionSyncService:
         by the allocation API. It also runs the stale ``stop_pending`` sweep,
         which depends on DB state only.
         """
-        # Fence: a foreign leader must not write. The Appium probes below are
-        # slow external calls, but the fence runs first so we drop the whole
-        # cycle's writes if leadership changed before we started.
-        await assert_current_leader(db, settings=self._settings)
-
         await self._check_liveness(db)
         await self._kill_orphans(db)
         await self._sweep_stale_stop_pending(db)
@@ -365,10 +359,6 @@ class SessionSyncService:
                 return _LivenessVerdict(action="leave" if alive else "close_dead", reap_reason=None)
 
         verdicts = await asyncio.gather(*[_probe(s) for s in sessions_with_device])
-
-        # Re-fence after the slow probe phase (node_health pattern): another backend
-        # may have taken leadership while we awaited Appium — drop the write phase.
-        await assert_current_leader(db, settings=self._settings)
 
         device_ids_to_restore: set[uuid.UUID] = set()
         for session, verdict in zip(sessions_with_device, verdicts, strict=True):
@@ -535,10 +525,6 @@ class SessionSyncService:
 
         live_id_lists = await asyncio.gather(*[_enumerate(target, device.host_id) for device, target in candidates])
 
-        # Re-fence after the slow enumeration phase (node_health pattern) before the
-        # terminate/write loop below.
-        await assert_current_leader(db, settings=self._settings)
-
         # Resolve the known (running/pending) session ids for every candidate device in
         # one IN-query, grouped by device (#12), before the write loop.
         known_ids_by_device: defaultdict[uuid.UUID, set[str]] = defaultdict(set)
@@ -656,7 +642,6 @@ class SessionSyncLoop(BackgroundLoop):
     """
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "Session sync failed"
 
     def __init__(self, *, services: SessionServices) -> None:

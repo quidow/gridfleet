@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, func, or_, select
 
 from app.core.background_loop import BackgroundLoop
-from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
@@ -28,7 +27,6 @@ class RunReaperLoop(BackgroundLoop):
     """Background loop that expires stale test runs."""
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "Run reaper check failed"
 
     def __init__(self, *, services: RunServices) -> None:
@@ -71,7 +69,6 @@ class RunReaperLoop(BackgroundLoop):
             if not (_heartbeat_stale(run, now) or _ttl_stale(run, now)):
                 continue
 
-            await assert_current_leader(db, settings=self._services.settings)
             # Re-check staleness under the row lock. The outer SELECT above
             # has no FOR UPDATE, so a concurrent ``heartbeat()`` could
             # refresh ``last_heartbeat`` between that snapshot and the lock

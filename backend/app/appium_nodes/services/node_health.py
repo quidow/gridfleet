@@ -22,7 +22,6 @@ from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.reconciler_agent import require_management_host
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.core.leader.advisory import assert_current_leader
 from app.core.metrics_recorders import record_background_loop_phase
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
@@ -133,10 +132,6 @@ class NodeHealthService:
         record_background_loop_phase(LOOP_NAME, "probe", perf_counter() - probe_started)
 
         apply_started = perf_counter()
-        # Fence: probes (asyncio.gather above) are slow external calls. If
-        # another backend took leadership while we awaited them, drop all
-        # writes from this cycle.
-        await assert_current_leader(db, settings=self._settings)
 
         for request, result in zip(requests, results, strict=True):
             try:
@@ -394,7 +389,6 @@ class NodeHealthLoop(BackgroundLoop):
     """
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "Node health check failed"
 
     def __init__(self, *, services: AppiumNodeServices) -> None:

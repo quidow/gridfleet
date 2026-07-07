@@ -25,11 +25,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
-@pytest.fixture(autouse=True)
-def _noop_assert_current_leader(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.devices.services.connectivity.assert_current_leader", AsyncMock(return_value=None))
-
-
 async def _seed_one_device(db_session: AsyncSession) -> str:
     host = Host(hostname="inslot-host", ip="10.0.0.30", os_type="linux", agent_port=5100, status=HostStatus.online)
     db_session.add(host)

@@ -571,7 +571,6 @@ def grid_probe_response_to_result(result: tuple[bool, str | None]) -> ProbeResul
 
 class SessionViabilityLoop(BackgroundLoop):
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
     cycle_failed_message = "Session viability loop failed"
 
     def __init__(self, *, services: SessionServices) -> None:

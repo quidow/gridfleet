@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -13,15 +12,7 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy.ext.asyncio import AsyncSession
-
-
-@pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> Iterator[None]:
-    with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
-        yield
 
 
 @pytest.mark.asyncio

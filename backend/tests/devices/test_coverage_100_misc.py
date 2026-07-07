@@ -443,10 +443,8 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         circuit_breaker=Mock(),
         session_factory=SessionCtx,
     )._clear_token_factory(require_leader=True, session_scope=SessionCtx)
-    monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
     await clear(row=SimpleNamespace(device_id=uuid.uuid4()))
-    appium_reconciler.assert_current_leader.assert_awaited_once()
 
     row = SimpleNamespace(
         device_id=uuid.uuid4(),

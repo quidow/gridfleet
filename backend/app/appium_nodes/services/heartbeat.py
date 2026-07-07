@@ -22,7 +22,7 @@ from app.core.background_loop import BackgroundLoop
 from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
-from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
+from app.core.leader.advisory import control_plane_leader
 from app.core.metrics_recorders import record_heartbeat_ping
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
@@ -748,7 +748,6 @@ class HeartbeatService:
                             client_mode=ping_result.client_mode.value,
                             duration_seconds=ping_result.duration_ms / 1000.0,
                         )
-                        await assert_current_leader(host_db, settings=self._settings)
                         await _apply_host_ping_result(
                             host_db,
                             host,
@@ -758,8 +757,6 @@ class HeartbeatService:
                             settings=self._settings,
                         )
                         await host_db.commit()
-                except LeadershipLost:
-                    raise
                 except Exception:
                     logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
 
@@ -773,7 +770,6 @@ class HeartbeatLoop(BackgroundLoop):
     """Background loop that pings all host agents."""
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "Heartbeat check failed"
 
     def __init__(self, *, services: AppiumNodeServices) -> None:

@@ -37,7 +37,6 @@ async def test_host_offline_cascade_queues_all_events(
     event_bus_capture.clear()
 
     monkeypatch.setattr("app.appium_nodes.services.heartbeat._ping_agent", AsyncMock(return_value=_DEAD_RESULT))
-    monkeypatch.setattr("app.appium_nodes.services.heartbeat.assert_current_leader", AsyncMock())
     from tests.helpers import test_event_bus as event_bus
 
     # The resume guard uses _last_cycle_monotonic to detect a paused

@@ -15,7 +15,6 @@ from app.appium_nodes.services.desired_state_writer import (
 )
 from app.core import metrics_recorders
 from app.core.background_loop import BackgroundLoop
-from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -63,7 +62,6 @@ LOOP_NAME = "device_intent_reconciler"
 
 class DeviceIntentReconcilerLoop(BackgroundLoop):
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "device_intent_reconciler_cycle_failed"
 
     def __init__(self, *, services: DeviceServices) -> None:
@@ -73,9 +71,6 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
     @property
     def _session_factory(self) -> SessionFactory:
         return self._services.session_factory
-
-    def _leadership_lost_event(self) -> str:
-        return "device_intent_reconciler_leadership_lost"  # historical name: no "_loop" segment
 
     def _interval(self) -> float:
         return float(self._services.settings.get_int("general.intent_reconcile_interval_sec"))
@@ -123,7 +118,6 @@ async def run_device_intent_reconciler_once(
     publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
-    await assert_current_leader(db, settings=settings)
     full_scan_every = settings.get_int("general.intent_reconcile_full_scan_every_cycles")
     await deliver_pending_agent_reconfigures(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool

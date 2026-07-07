@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,19 +16,11 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> Iterator[None]:
-    with patch("app.sessions.service_sync.assert_current_leader"):
-        yield
 
 
 async def _seed(db: AsyncSession, host: Host, identity: str) -> Device:

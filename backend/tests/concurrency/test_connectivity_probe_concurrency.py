@@ -30,11 +30,6 @@ def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.devices.services.connectivity._fetch_lifecycle_state", AsyncMock(return_value=None))
 
 
-@pytest.fixture(autouse=True)
-def _noop_assert_current_leader(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.devices.services.connectivity.assert_current_leader", AsyncMock(return_value=None))
-
-
 async def _seed_host_with_devices(db_session: AsyncSession, count: int) -> tuple[Host, list[str]]:
     host = Host(hostname="probe-host", ip="10.0.0.20", os_type="linux", agent_port=5100, status=HostStatus.online)
     db_session.add(host)

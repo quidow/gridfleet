@@ -32,11 +32,6 @@ def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.devices.services.connectivity._fetch_lifecycle_state", AsyncMock(return_value=None))
 
 
-@pytest.fixture(autouse=True)
-def _noop_assert_current_leader(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.devices.services.connectivity.assert_current_leader", AsyncMock(return_value=None))
-
-
 def _phase_count(loop_name: str, phase: str) -> float:
     return (
         REGISTRY.get_sample_value(

@@ -233,7 +233,6 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", Session)
-    monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     reconciler = Mock()
@@ -274,7 +273,6 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
         stop_pending=False,
     )
     monkeypatch.setattr(appium_reconciler, "async_session", Session)
-    monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"appium_processes": "bad"}))
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
     converge = AsyncMock()

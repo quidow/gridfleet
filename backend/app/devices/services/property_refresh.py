@@ -92,7 +92,6 @@ class PropertyRefreshLoop(BackgroundLoop):
     """Background loop that periodically refreshes device properties."""
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
     cycle_failed_message = "Property refresh cycle failed"
 
     def __init__(self, *, services: DeviceServices) -> None:

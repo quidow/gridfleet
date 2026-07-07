@@ -189,7 +189,6 @@ class HostResourceTelemetryService:
 
 class HostResourceTelemetryLoop(BackgroundLoop):
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
     cycle_failed_message = "Host resource telemetry loop failed"
 
     def __init__(self, *, services: HostServices) -> None:

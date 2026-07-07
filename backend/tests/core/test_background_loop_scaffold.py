@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.core.background_loop import BackgroundLoop
-from app.core.leader.advisory import LeadershipLost
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +28,6 @@ def _fake_session_factory() -> _FakeSession:
 
 class _RecordingLoop(BackgroundLoop):
     loop_name = "scaffold_test"
-    exit_on_leadership_lost = True
     cycle_failed_message = "scaffold test cycle failed"
 
     def __init__(self, *, fail_with: Exception | None = None) -> None:
@@ -96,35 +94,6 @@ async def test_generic_exception_is_contained_and_loop_continues() -> None:
     assert len(loop.ends) >= 2  # _on_cycle_end fired on the failure path too
 
 
-async def test_leadership_lost_exits_process_when_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorded: list[int] = []
-
-    class _Exited(BaseException):
-        pass
-
-    def _fake_exit(code: int) -> None:
-        recorded.append(code)
-        raise _Exited
-
-    monkeypatch.setattr("app.core.background_loop.os._exit", _fake_exit)
-    loop = _RecordingLoop(fail_with=LeadershipLost("stolen"))
-    task = asyncio.create_task(loop.run())
-    with pytest.raises(_Exited):
-        await task
-    assert recorded == [70]
-    assert len(loop.ends) == 1  # cycle observability recorded before exit
-
-
-async def test_leadership_lost_continues_when_not_flagged() -> None:
-    class _TolerantLoop(_RecordingLoop):
-        exit_on_leadership_lost = False
-
-    loop = _TolerantLoop(fail_with=LeadershipLost("stolen"))
-    await _run_cycles(loop, until=lambda: loop.cycles >= 2)
-    assert loop.cycles >= 2  # treated as a generic cycle failure
-    assert len(loop.ends) >= 2  # _on_cycle_end fires on the leadership-loss path too
-
-
 async def test_sleep_before_first_cycle() -> None:
     class _SleepFirstLoop(_RecordingLoop):
         sleep_before_first_cycle = True
@@ -145,14 +114,9 @@ async def test_on_start_runs_once_before_everything() -> None:
     assert loop.events.count("start") == 1
 
 
-def test_default_leadership_event_name() -> None:
-    assert _RecordingLoop()._leadership_lost_event() == "scaffold_test_loop_leadership_lost"
-
-
 async def test_base_default_hooks_are_safe_noops() -> None:
     class _BareLoop(BackgroundLoop):
         loop_name = "scaffold_bare"
-        exit_on_leadership_lost = False
         cycle_failed_message = "scaffold bare cycle failed"
 
         def __init__(self) -> None:
@@ -182,14 +146,6 @@ async def test_base_default_hooks_are_safe_noops() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
     assert loop.cycles >= 3
-
-
-def test_leadership_event_name_override() -> None:
-    class _LegacyNameLoop(_RecordingLoop):
-        def _leadership_lost_event(self) -> str:
-            return "legacy_leadership_lost"
-
-    assert _LegacyNameLoop()._leadership_lost_event() == "legacy_leadership_lost"
 
 
 class _ClockLoop(_RecordingLoop):

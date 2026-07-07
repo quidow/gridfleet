@@ -47,7 +47,6 @@ from app.appium_nodes.services.reconciler_convergence import (
 )
 from app.core.background_loop import BackgroundLoop
 from app.core.database import async_session
-from app.core.leader.advisory import assert_current_leader
 from app.core.metrics_recorders import (
     APPIUM_RECONCILER_CYCLE_FAILURES,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
@@ -93,7 +92,6 @@ class AppiumReconcilerLoop(BackgroundLoop):
     """Leader-owned periodic loop."""
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "appium_reconciler_cycle_failed"
 
     def __init__(self, *, services: AppiumNodeServices) -> None:
@@ -258,7 +256,6 @@ async def _touch_last_observed(
     # reading last_observed_at to make a decision, revisit this ruling and WI-2
     # (the guard cannot see this Core write either).
     async with session_factory() as db:
-        await assert_current_leader(db, settings=settings)
         node_ids = [row.node_id for row in rows]
         await db.execute(update(AppiumNode).where(AppiumNode.id.in_(node_ids)).values(last_observed_at=now_utc()))
         await db.commit()
@@ -290,8 +287,6 @@ async def _record_start_failure(
     backoff_seconds = settings.get_int("appium.startup_timeout_sec") * 4
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
-        if require_leader:
-            await assert_current_leader(db, settings=settings)
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
@@ -318,8 +313,6 @@ async def _reset_start_failure(
 ) -> None:
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
-        if require_leader:
-            await assert_current_leader(db, settings=settings)
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
@@ -359,7 +352,6 @@ class ReconcilerService:
 
         Agent IO and convergence passes open their own sessions internally.
         """
-        await assert_current_leader(db, settings=self._settings)
         hosts = await _fetch_online_hosts(db)
         desired = await _fetch_desired_rows(db)
         backoff = await _fetch_backoff_until(db)
@@ -396,9 +388,6 @@ class ReconcilerService:
             async with semaphore:
                 cycle_start = time.monotonic()
                 try:
-                    async with self._session_factory() as db:
-                        if require_leader:
-                            await assert_current_leader(db, settings=self._settings)
                     payload = (health_by_host or {}).get(host_id)
                     if payload is None:
                         payload = (
@@ -550,8 +539,6 @@ class ReconcilerService:
 
         async def _start(*, row: DesiredRow, port: int | None) -> dict[str, Any]:
             async with resolved_session_scope() as db:
-                if require_leader:
-                    await assert_current_leader(db, settings=self._settings)
                 device = await _load_device_for_reconciler(db, row.device_id)
                 if device is None:
                     raise RuntimeError(f"Device {row.device_id} no longer exists")
@@ -654,8 +641,6 @@ class ReconcilerService:
             allocated_caps: object = None,
         ) -> None:
             async with resolved_session_scope() as db:
-                if require_leader:
-                    await assert_current_leader(db, settings=self._settings)
                 device = await _load_device_for_reconciler(db, row.device_id)
                 if device is None:
                     return
@@ -708,8 +693,6 @@ class ReconcilerService:
 
         async def _clear(*, row: DesiredRow) -> None:
             async with resolved_session_scope() as db:
-                if require_leader:
-                    await assert_current_leader(db, settings=self._settings)
                 await _clear_transition_token(db, row)
 
         return _clear

@@ -21,7 +21,6 @@ POLL_INTERVAL_SEC = 60.0
 
 class PackDrainLoop(BackgroundLoop):
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
     cycle_failed_message = "Pack drain cycle failed"
 
     def __init__(self, *, services: PackServices) -> None:

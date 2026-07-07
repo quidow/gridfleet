@@ -16,7 +16,6 @@ from app.core import metrics_recorders as metrics
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
-from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -855,8 +854,6 @@ class ConnectivityService:
             connected_targets_by_host[host.id] = await _get_agent_devices(
                 host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
             )
-            # Re-fence after the enumeration agent round-trip (another slow I/O).
-            await assert_current_leader(db, settings=self._settings)
         connected_targets = connected_targets_by_host[host.id]
         if connected_targets is None:
             # Agent enumeration unreachable — skip this device (and every other
@@ -891,7 +888,6 @@ class ConnectivityService:
             node = device.appium_node
             if device.device_checks_healthy is False and (node is None or not node.observed_running):
                 return
-            await assert_current_leader(db, settings=self._settings)
             await _stop_disconnected_node(db, device, health=self._health)
             if device.operational_state == DeviceOperationalState.offline:
                 return
@@ -948,12 +944,6 @@ class ConnectivityService:
 
         # Phase 3 — single serial apply loop over all devices on the shared session.
         apply_started = perf_counter()
-        # Re-fence once after the slow probe phase: leadership may have changed while
-        # we awaited the agents (node_health pattern). The device row lock taken
-        # inside each write is the real concurrency guard, so the hot path carries
-        # no per-device leader assert; the cold (enumeration/stop) paths below keep
-        # their fences because they each follow a fresh slow operation.
-        await assert_current_leader(db, settings=self._settings)
 
         # WI-6 lazy presence: the agent enumeration (a discovery sweep — SSDP for
         # network packs) runs at most once per host per cycle, only when a device's
@@ -1048,7 +1038,6 @@ class DeviceConnectivityLoop(BackgroundLoop):
     """Background loop that checks device connectivity via host agents."""
 
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "Device connectivity check failed"
 
     def __init__(self, *, services: DeviceServices) -> None:

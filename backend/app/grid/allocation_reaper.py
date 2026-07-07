@@ -25,7 +25,6 @@ INTERVAL_SEC = 5.0
 
 class GridAllocationReaperLoop(BackgroundLoop):
     loop_name = LOOP_NAME
-    exit_on_leadership_lost = True
     cycle_failed_message = "Grid allocation reaper cycle failed"
 
     def __init__(self, *, services: GridServices) -> None:
