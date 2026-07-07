@@ -35,7 +35,50 @@ from agent_app.pack.adapter_types import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agent_app.pack.manifest import DesiredPack
+
 ADAPTER_HOOK_TIMEOUT_SECONDS: float = 30.0
+
+
+def adapter_supports(adapter: object, hook: str) -> bool:
+    """True when *adapter* implements the named hook.
+
+    Curated adapters are plain classes that implement only the hooks they
+    support — they do NOT subclass the ``DriverPackAdapter`` Protocol — so a
+    ``hasattr`` probe is a truthful capability check. A missing optional hook
+    therefore routes through the same "no adapter" branch as a pack that ships
+    no adapter at all, instead of raising an ``AdapterHookExecutionError``.
+    """
+    return hasattr(adapter, hook)
+
+
+# (manifest declaration that implies a hook, required adapter hook). health_check
+# is intentionally absent: the agent manifest carries no health-check declaration,
+# so it cannot be cross-checked at load time.
+_DECLARATION_HOOKS: tuple[tuple[str, str], ...] = (
+    ("lifecycle_actions", "lifecycle_action"),
+    ("feature_actions", "feature_action"),
+    ("sidecar_feature_ids", "sidecar_lifecycle"),
+)
+
+
+def missing_declared_hooks(pack: DesiredPack, adapter: object) -> list[str]:
+    """Adapter hooks the manifest declares capabilities for but the adapter lacks.
+
+    A non-empty result is a pack-authoring error (the manifest promises behavior
+    the adapter cannot deliver) and blocks the pack at load, mirroring how a
+    runtime-resolution failure blocks it.
+    """
+    declares = {
+        "lifecycle_actions": any(platform.lifecycle_actions for platform in pack.platforms),
+        "feature_actions": any(feature.actions for feature in pack.features),
+        "sidecar_feature_ids": bool(pack.sidecar_feature_ids),
+    }
+    return [
+        hook
+        for declaration, hook in _DECLARATION_HOOKS
+        if declares[declaration] and not adapter_supports(adapter, hook)
+    ]
 
 
 class AdapterHookTimeoutError(Exception):

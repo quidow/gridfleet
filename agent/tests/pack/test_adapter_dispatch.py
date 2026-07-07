@@ -19,6 +19,7 @@ from agent_app.pack.adapter_dispatch import (
     AdapterContractError,
     AdapterHookExecutionError,
     AdapterHookTimeoutError,
+    adapter_supports,
     dispatch_discover,
     dispatch_doctor,
     dispatch_feature_action,
@@ -29,6 +30,7 @@ from agent_app.pack.adapter_dispatch import (
     dispatch_pre_session,
     dispatch_sidecar_lifecycle,
     dispatch_telemetry,
+    missing_declared_hooks,
 )
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
@@ -43,6 +45,8 @@ from agent_app.pack.adapter_types import (
     SessionSpec,
     SidecarStatus,
 )
+from agent_app.pack.manifest import DesiredFeature, DesiredPack, DesiredPlatform
+from agent_app.pack.runtime_types import AppiumInstallable
 
 # ---------------------------------------------------------------------------
 # Minimal context stubs
@@ -862,3 +866,85 @@ async def test_dispatch_telemetry_contract_error() -> None:
         await dispatch_telemetry(adapter, _TelemetryCtx())  # type: ignore[arg-type]
     assert exc_info.value.hook == "telemetry"
     assert "HardwareTelemetry" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Optional-hook capability probe + manifest-vs-hooks cross-check
+# ---------------------------------------------------------------------------
+
+
+class _MinimalAdapter:
+    """Implements only the required core: discover + normalize_device."""
+
+    pack_id = "vendor-minimal"
+    pack_release = "1.0.0"
+
+    async def discover(self, ctx: object) -> list[DiscoveryCandidate]:
+        return []
+
+    async def normalize_device(self, ctx: object) -> NormalizedDevice:
+        raise NotImplementedError
+
+
+def _installable() -> AppiumInstallable:
+    return AppiumInstallable(source="npm", package="appium", version="2.0.0", recommended=None, known_bad=[])
+
+
+def _pack_declaring_capabilities() -> DesiredPack:
+    return DesiredPack(
+        id="vendor-minimal",
+        release="1.0.0",
+        appium_server=_installable(),
+        appium_driver=_installable(),
+        platforms=[
+            DesiredPlatform(
+                id="p",
+                automation_name="a",
+                device_types=["real_device"],
+                connection_types=["usb"],
+                identity_scheme="s",
+                identity_scope="host",
+                stereotype={},
+                lifecycle_actions=[{"id": "reconnect"}],
+            )
+        ],
+        features=[DesiredFeature(id="tunnel", actions=[{"id": "restart"}], sidecar={"cmd": "run"})],
+    )
+
+
+def test_adapter_supports_probes_real_methods() -> None:
+    adapter = _MinimalAdapter()
+    assert adapter_supports(adapter, "discover") is True
+    assert adapter_supports(adapter, "normalize_device") is True
+    assert adapter_supports(adapter, "health_check") is False
+    assert adapter_supports(adapter, "lifecycle_action") is False
+
+
+def test_missing_declared_hooks_reports_unimplemented() -> None:
+    missing = missing_declared_hooks(_pack_declaring_capabilities(), _MinimalAdapter())
+    assert missing == ["lifecycle_action", "feature_action", "sidecar_lifecycle"]
+
+
+def test_missing_declared_hooks_empty_when_adapter_implements_them() -> None:
+    assert missing_declared_hooks(_pack_declaring_capabilities(), _GoodAdapter()) == []
+
+
+def test_missing_declared_hooks_empty_when_manifest_declares_nothing() -> None:
+    pack = DesiredPack(
+        id="core-only",
+        release="1.0.0",
+        appium_server=_installable(),
+        appium_driver=_installable(),
+        platforms=[
+            DesiredPlatform(
+                id="p",
+                automation_name="a",
+                device_types=["real_device"],
+                connection_types=["usb"],
+                identity_scheme="s",
+                identity_scope="host",
+                stereotype={},
+            )
+        ],
+    )
+    assert missing_declared_hooks(pack, _MinimalAdapter()) == []

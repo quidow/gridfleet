@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from agent_app.pack.adapter_dispatch import dispatch_doctor
+from agent_app.pack.adapter_dispatch import adapter_supports, dispatch_doctor, missing_declared_hooks
 from agent_app.pack.contexts import DoctorCtx
 from agent_app.pack.manifest import DesiredPack, parse_desired_payload
 from agent_app.pack.runtime_policy import resolve_runtime_spec
@@ -282,6 +282,25 @@ class PackStateLoop:
                         }
                     )
 
+            loaded_adapter = (
+                self.adapter_registry.get(pack.id, pack.release) if self.adapter_registry is not None else None
+            )
+            if loaded_adapter is not None:
+                missing = missing_declared_hooks(pack, loaded_adapter)
+                if missing:
+                    pack_entries.append(
+                        {
+                            "pack_id": pack.id,
+                            "pack_release": pack.release,
+                            "runtime_id": env.runtime_id,
+                            "status": "blocked",
+                            "blocked_reason": (
+                                "manifest declares capabilities the adapter does not implement: " + ", ".join(missing)
+                            ),
+                        }
+                    )
+                    continue
+
             doctor_entries.extend(await self._start_pack_sidecars(pack))
 
             pack_entries.append(
@@ -338,7 +357,7 @@ class PackStateLoop:
         entries: list[dict[str, Any]] = []
         if self.adapter_registry is not None:
             adapter = self.adapter_registry.get(pack.id, pack.release)
-            if adapter is not None:
+            if adapter is not None and adapter_supports(adapter, "doctor"):
                 try:
                     for result in await dispatch_doctor(adapter, DoctorCtx(host_id=host_id)):
                         entries.append(_adapter_doctor_entry(pack.id, result))

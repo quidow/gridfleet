@@ -53,6 +53,12 @@ class _FakeRuntimeMgr:
 class _FakeAdapter:
     pack_release = "2026.04.0"
 
+    # A pack declaring a sidecar feature must ship a sidecar-capable adapter,
+    # or the manifest-vs-hooks load cross-check blocks it. The supervisor mock
+    # is what actually runs start/stop here, so this hook is never invoked.
+    async def sidecar_lifecycle(self, feature_id: str, action: str) -> object:
+        raise NotImplementedError
+
 
 class _FakeAdapterRegistry:
     def has(self, pack_id: str, release: str) -> bool:
