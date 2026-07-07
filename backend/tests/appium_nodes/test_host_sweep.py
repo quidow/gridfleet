@@ -6,7 +6,7 @@ from app.appium_nodes.services import heartbeat as heartbeat_module
 from app.appium_nodes.services import reconciler as reconciler_module
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
-from app.appium_nodes.services.host_sweep import run_host_sweep_once
+from app.appium_nodes.services.host_sweep import run_host_sweep_once, stage_due
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.devices.models import DeviceOperationalState
 from tests.fakes import FakeSettingsReader
@@ -137,3 +137,16 @@ async def test_sweep_skips_convergence_for_dead_host(
     )
 
     reconcile_host.assert_not_awaited()
+
+
+def test_stage_due_divisor_rounding() -> None:
+    # 30s stage on a 15s base: every second cycle.
+    assert stage_due(0, base_interval=15.0, stage_interval=30.0) is True
+    assert stage_due(1, base_interval=15.0, stage_interval=30.0) is False
+    assert stage_due(2, base_interval=15.0, stage_interval=30.0) is True
+    # Stage interval at or below base: every cycle, never a zero divisor.
+    assert stage_due(7, base_interval=15.0, stage_interval=15.0) is True
+    assert stage_due(7, base_interval=15.0, stage_interval=1.0) is True
+    # 60s stage: every fourth cycle.
+    assert stage_due(4, base_interval=15.0, stage_interval=60.0) is True
+    assert stage_due(5, base_interval=15.0, stage_interval=60.0) is False

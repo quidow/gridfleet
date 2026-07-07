@@ -36,6 +36,12 @@ logger = get_logger(__name__)
 LOOP_NAME = "host_sweep"
 
 
+def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
+    """True when a stage with its own interval setting is due on this sweep cycle."""
+    divisor = max(1, round(stage_interval / base_interval))
+    return cycle_index % divisor == 0
+
+
 async def run_host_sweep_once(
     db: AsyncSession,
     *,
@@ -43,6 +49,7 @@ async def run_host_sweep_once(
     reconciler: ReconcilerProtocol,
     settings: SettingsReader,
     session_factory: SessionFactory,
+    cycle_index: int = 0,
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
     guard = heartbeat.begin_cycle()
@@ -94,6 +101,7 @@ class HostSweepLoop(BackgroundLoop):
 
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
+        self._cycle = 0
 
     @property
     def _session_factory(self) -> SessionFactory:
@@ -109,10 +117,12 @@ class HostSweepLoop(BackgroundLoop):
             reconciler=self._services.reconciler,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
+            cycle_index=self._cycle,
         )
 
     def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
         APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(elapsed_seconds)
+        self._cycle += 1
 
     def _on_cycle_error(self) -> None:
         APPIUM_RECONCILER_CYCLE_FAILURES.inc()
