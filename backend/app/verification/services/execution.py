@@ -517,19 +517,17 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
 async def _register_verification_node_intent(
     db: AsyncSession, device: Device, *, settings: SettingsReader, publisher: EventPublisher
 ) -> None:
-    """Register a standing ``node_process`` start intent that survives the
-    operator:start auto-retire precondition.
+    """Register a standing ``node_process`` start intent for the verification window.
 
     Initial verification targets unverified devices (``verified_at IS NULL``),
     which makes them ineligible for the ``baseline:idle`` standing intent
-    injected by ``reconcile_device``. Without this guard, the moment
-    ``observed_running`` flips to True the precondition sweep in
-    ``intent_evaluator.reconcile_unsatisfied_preconditions`` deletes the
-    ``operator:start:{device_id}`` intent registered by ``start_node`` —
-    leaving zero active node_process intents, so ``evaluate_node_process``
-    derives ``desired_state=stopped`` and the appium reconciler kills the
-    verification node mid session-probe. ``expires_at`` is a safety net for
-    crashed verifications; the normal path revokes the intent inside
+    injected by ``reconcile_device``. Without this guard, once the
+    ``operator:start:{device_id}`` intent registered by ``start_node`` expires
+    (it is TTL-bounded), the device is left with zero active node_process
+    intents, so ``evaluate_node_process`` derives ``desired_state=stopped`` and
+    the appium reconciler kills the verification node mid session-probe.
+    ``expires_at`` is a safety net for crashed verifications; the normal path
+    revokes the intent inside
     ``_finalize_success`` (after ``verified_at`` is set so the
     revoke-triggered reconcile injects ``baseline:idle``) or
     ``_finalize_failure``.

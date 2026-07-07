@@ -15,10 +15,9 @@ from app.devices.services.intent_evaluator import (
     evaluate_grid_routing,
     evaluate_node_process,
     evaluate_recovery,
-    evaluate_reservation,
     map_node_process_decision,
 )
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
 
 if TYPE_CHECKING:
     import pytest
@@ -229,36 +228,6 @@ def test_grid_routing_uses_intent_run_id_column() -> None:
 
     assert decision.run_id == run_id
     assert decision.accepting_new_sessions is True
-
-
-def test_reservation_returns_highest_run_id_excluded_until_and_cooldown_count() -> None:
-    now = datetime.now(UTC)
-    run_id = uuid.uuid4()
-    expires_at = now + timedelta(minutes=5)
-
-    decision = evaluate_reservation(
-        [
-            _intent(
-                source="cooldown:reservation:run",
-                axis=RESERVATION,
-                run_id=run_id,
-                expires_at=expires_at,
-                payload={
-                    "excluded": True,
-                    "priority": 70,
-                    "exclusion_reason": "Device in cooldown",
-                    "cooldown_count": 3,
-                },
-            )
-        ],
-        now,
-    )
-
-    assert decision.excluded is True
-    assert decision.run_id == run_id
-    assert decision.expires_at == expires_at
-    assert decision.exclusion_reason == "Device in cooldown"
-    assert decision.cooldown_count == 3
 
 
 def test_recovery_uses_highest_priority_intent() -> None:

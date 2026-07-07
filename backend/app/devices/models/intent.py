@@ -34,7 +34,6 @@ class DeviceIntent(Base):
         index=True,
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
-    precondition: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True, default=None)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -11,12 +11,8 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    GRID_ROUTING,
     NODE_PROCESS,
-    PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_HEALTH_FAILURE,
-    PRIORITY_RUN_ROUTING,
-    RESERVATION,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -135,10 +131,20 @@ class LifecyclePolicyActionsService:
                 severity="warning",
             )
 
+        if source == "connectivity":
+            # Connectivity loss is a fact, not a command: write device_checks_healthy=False
+            # and let the reconciler synthesize the connectivity: defer-stop (session-safe,
+            # priority 50) from it. Mirrors the no-node fact-write path below.
+            device.device_checks_healthy = False
+            device.device_checks_summary = reason
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await db.commit()
+            return
+
         if node is not None and node.observed_running:
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
-                intents=_crash_intents(device, source=source),
+                intents=_crash_intents(device),
                 publisher=self._publisher,
             )
             await db.commit()
@@ -146,7 +152,7 @@ class LifecyclePolicyActionsService:
             if node is not None:
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
-                    intents=_crash_intents(device, source=source),
+                    intents=_crash_intents(device),
                     publisher=self._publisher,
                 )
             else:
@@ -184,25 +190,10 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
-            await IntentService(db).register_intents_and_reconcile(
-                device_id=device.id,
-                intents=[
-                    IntentRegistration(
-                        source=f"health_failure:reservation:{device.id}",
-                        axis=RESERVATION,
-                        run_id=run.id,
-                        payload={
-                            "excluded": True,
-                            "priority": PRIORITY_HEALTH_FAILURE,
-                            "exclusion_reason": reason,
-                        },
-                    )
-                ],
-                publisher=self._publisher,
-            )
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id, sources=[f"run:{run.id}"], publisher=self._publisher
-            )
+            # exclude_device_from_run wrote the indefinite exclusion on the reservation
+            # row; the run: grid-routing intent derives from that row, so reconcile here
+            # to drop it (the health-failure exclusion has no stored intent twin anymore).
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
                 db,
@@ -239,23 +230,9 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.restore_device_to_run(db, device.id, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id,
-                sources=[f"health_failure:reservation:{device.id}"],
-                publisher=self._publisher,
-            )
-            await IntentService(db).register_intents_and_reconcile(
-                device_id=device.id,
-                intents=[
-                    IntentRegistration(
-                        source=f"run:{run.id}",
-                        axis=GRID_ROUTING,
-                        run_id=run.id,
-                        payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
-                    )
-                ],
-                publisher=self._publisher,
-            )
+            # restore_device_to_run un-excluded the reservation row above; reconcile so
+            # the run: grid-routing intent is re-derived.
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
             await self._incidents.record_lifecycle_incident(
                 db,
                 device,
@@ -471,15 +448,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-def _crash_intents(device: Device, *, source: str) -> list[IntentRegistration]:
-    if source == "connectivity":
-        return [
-            IntentRegistration(
-                source=f"connectivity:{device.id}",
-                axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
-            )
-        ]
+def _crash_intents(device: Device) -> list[IntentRegistration]:
     # Only the NODE_PROCESS stop intent is registered. The RECOVERY-axis
     # ``health_failure:recovery`` deny intent used to live here too, but it
     # had no expiry and gated the only code path that revoked it, deadlocking

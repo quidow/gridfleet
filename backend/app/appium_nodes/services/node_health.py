@@ -36,7 +36,6 @@ from app.devices.services.intent_types import (
     PRIORITY_AUTO_RECOVERY,
     RECOVERY,
     IntentRegistration,
-    NodeRunningPrecondition,
 )
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
@@ -201,11 +200,8 @@ class NodeHealthService:
             return
         window_sec = self._settings.get_int("appium_reconciler.restart_window_sec")
         deadline = now_utc() + timedelta(seconds=window_sec)
-        precondition: NodeRunningPrecondition = {
-            "kind": "node_running",
-            "device_id": str(device.id),
-            "expected": False,
-        }
+        # TTL (transition deadline) replaces the node_running precondition (semantic
+        # delta #1): the start row self-expires; baseline:idle sustains a running node.
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[
@@ -218,13 +214,13 @@ class NodeHealthService:
                         "transition_token": str(uuid.uuid4()),
                         "transition_deadline": deadline.isoformat(),
                     },
-                    precondition=precondition,
+                    expires_at=deadline,
                 ),
                 IntentRegistration(
                     source=f"auto_recovery:recovery:{device.id}",
                     axis=RECOVERY,
                     payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": "Node health restart"},
-                    precondition=precondition,
+                    expires_at=deadline,
                 ),
             ],
             publisher=self._publisher,

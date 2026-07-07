@@ -30,8 +30,8 @@ The same loop is the canonical orphan reaper. For each online host, it fetches
 processes that no DB row claims by `(connection_target, port)`. Reasons surfaced
 via metrics include `no_db_row`, `db_state_not_running`, and `port_mismatch`.
 
-> See [intents.md](./intents.md) for the device-intent lifecycle, precondition
-> contract, and predicate catalog.
+> See [intents.md](./intents.md) for the commands-plus-facts intent model, the
+> stored-vs-synthesized split, and the fact-synthesis table.
 
 Migration history: Phase 1 added the orphan reconciler scaffold; Phase 2 added
 desired-state schema; Phase 3 dual-wrote intent beside legacy inline RPC; Phase

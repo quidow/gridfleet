@@ -4,20 +4,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TypeGuard
-from uuid import UUID
 
-from sqlalchemy import select
-
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumDesiredState
 from app.core import metrics_recorders
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceEventType, DeviceIntent, DeviceReservation
-from app.devices.services.event import record_event
-from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.runs.models import TERMINAL_STATES, TestRun
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.devices.models import DeviceIntent
 
 logger = get_logger(__name__)
 
@@ -41,16 +34,6 @@ class NodeProcessDecision:
 class GridRoutingDecision:
     run_id: uuid.UUID | None
     accepting_new_sessions: bool
-    reason: str
-
-
-@dataclass(frozen=True)
-class ReservationDecision:
-    excluded: bool
-    run_id: uuid.UUID | None
-    exclusion_reason: str | None
-    cooldown_count: int | None
-    expires_at: datetime | None
     reason: str
 
 
@@ -141,27 +124,6 @@ def evaluate_grid_routing(intents: list[DeviceIntent], now: datetime) -> GridRou
     return GridRoutingDecision(
         run_id=winner.run_id,
         accepting_new_sessions=bool(winner.payload.get("accepting_new_sessions", True)),
-        reason=_intent_reason(winner),
-    )
-
-
-def evaluate_reservation(intents: list[DeviceIntent], now: datetime) -> ReservationDecision:
-    winner = _highest_active([intent for intent in intents if bool(intent.payload.get("excluded", True))], now)
-    if winner is None:
-        return ReservationDecision(
-            excluded=False,
-            run_id=None,
-            exclusion_reason=None,
-            cooldown_count=None,
-            expires_at=None,
-            reason="no active reservation exclusion intent",
-        )
-    return ReservationDecision(
-        excluded=True,
-        run_id=winner.run_id,
-        exclusion_reason=_optional_str(winner.payload.get("exclusion_reason")),
-        cooldown_count=_optional_int(winner.payload.get("cooldown_count")),
-        expires_at=winner.expires_at,
         reason=_intent_reason(winner),
     )
 
@@ -261,141 +223,3 @@ def _optional_datetime(value: object) -> datetime | None:
 
 def _intent_reason(intent: DeviceIntent) -> str:
     return f"{intent.source} intent (priority {_priority(intent)})"
-
-
-# --- intent preconditions (formerly intent_preconditions.py) ---
-
-
-async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
-    """Evaluate the precondition stored on ``intent``."""
-    precondition = intent.precondition
-    if precondition is None:
-        return True
-    kind = precondition.get("kind")
-    if kind == "run_active":
-        return await _eval_run_active(db, precondition)
-    if kind == "reservation_active":
-        return await _eval_reservation_active(db, precondition)
-    if kind == "node_running":
-        return await _eval_node_running(db, precondition)
-    if kind == "maintenance_active":
-        return await _eval_maintenance_active(db, precondition)
-    logger.warning("intent_precondition_unknown_kind", kind=kind, intent_id=str(intent.id))
-    return True
-
-
-async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> set[UUID]:
-    """Delete intents whose precondition no longer holds.
-
-    Returns the set of affected device IDs so the caller can re-reconcile
-    and deliver agent reconfigures. This avoids a cyclic import back into
-    ``intent_reconciler``.
-
-    The outer SELECT runs without ``FOR UPDATE``, so a concurrent producer
-    can upsert the same ``(device_id, source)`` row with a fresh
-    precondition between the snapshot read and the delete. Re-fetch each
-    candidate intent under ``SELECT … FOR UPDATE`` and re-evaluate
-    ``is_satisfied`` against the locked row before deleting; bail when
-    the locked snapshot now holds the precondition.
-    """
-    rows = (await db.execute(select(DeviceIntent).where(DeviceIntent.precondition.is_not(None)))).scalars().all()
-    affected: set[UUID] = set()
-    for intent in rows:
-        if await is_satisfied(db, intent):
-            continue
-        locked_stmt = (
-            select(DeviceIntent)
-            .where(DeviceIntent.id == intent.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        locked_intent = (await db.execute(locked_stmt)).scalar_one_or_none()
-        if locked_intent is None:
-            continue
-        if await is_satisfied(db, locked_intent):
-            continue
-        precondition_kind = (locked_intent.precondition or {}).get("kind") if locked_intent.precondition else None
-        await record_event(
-            db,
-            locked_intent.device_id,
-            DeviceEventType.desired_state_changed,
-            {
-                "field": "device_intent",
-                "old_value": {"source": locked_intent.source, "axis": locked_intent.axis},
-                "new_value": None,
-                "caller": "intent_reconciler",
-                "reason": "precondition_unsatisfied",
-                "intent_source": locked_intent.source,
-                "precondition_kind": precondition_kind,
-            },
-        )
-        affected.add(locked_intent.device_id)
-        await db.delete(locked_intent)
-    if affected:
-        await db.flush()
-    return affected
-
-
-async def _eval_run_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    raw_run_id = precondition.get("run_id")
-    if not isinstance(raw_run_id, str):
-        return False
-    try:
-        run_uuid = UUID(raw_run_id)
-    except ValueError:
-        return False
-    run = await db.get(TestRun, run_uuid)
-    if run is None:
-        return False
-    return run.state not in TERMINAL_STATES
-
-
-async def _eval_reservation_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    raw_run_id = precondition.get("run_id")
-    raw_device_id = precondition.get("device_id")
-    if not isinstance(raw_run_id, str) or not isinstance(raw_device_id, str):
-        return False
-    try:
-        run_uuid = UUID(raw_run_id)
-        device_uuid = UUID(raw_device_id)
-    except ValueError:
-        return False
-    row = (
-        await db.execute(
-            select(DeviceReservation.id).where(
-                DeviceReservation.run_id == run_uuid,
-                DeviceReservation.device_id == device_uuid,
-                DeviceReservation.released_at.is_(None),
-            )
-        )
-    ).scalar_one_or_none()
-    return row is not None
-
-
-async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    raw_device_id = precondition.get("device_id")
-    expected = precondition.get("expected")
-    if not isinstance(raw_device_id, str) or not isinstance(expected, bool):
-        return False
-    try:
-        device_uuid = UUID(raw_device_id)
-    except ValueError:
-        return False
-    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_uuid))).scalar_one_or_none()
-    if node is None:
-        return False
-    return node.observed_running == expected
-
-
-async def _eval_maintenance_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
-    raw_device_id = precondition.get("device_id")
-    if not isinstance(raw_device_id, str):
-        return False
-    try:
-        device_uuid = UUID(raw_device_id)
-    except ValueError:
-        return False
-    device = await db.get(Device, device_uuid)
-    if device is None:
-        return False
-    return in_maintenance(device)

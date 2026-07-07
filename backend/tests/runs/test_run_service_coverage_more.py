@@ -12,10 +12,9 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
-from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import GRID_ROUTING, RECOVERY, RESERVATION, IntentRegistration
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -38,7 +37,6 @@ from app.runs.service_query import RunQueryService
 from app.runs.service_reservation import (
     RunReservationService,
     get_device_reservation_with_entry,
-    run_release_intent_sources,
 )
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
@@ -357,7 +355,7 @@ async def test_cooldown_device_guard_paths(
         reservation=RunReservationService(review=build_review_service()),
         incidents=LifecycleIncidentService(),
     )
-    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "mark_dirty_and_reconcile", AsyncMock())
     failure_svc._incidents = AsyncMock()  # type: ignore[assignment]
 
     with pytest.raises(ValueError, match="ttl_seconds"):
@@ -836,13 +834,13 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     )
 
     reconciled: list[uuid.UUID] = []
-    orig_revoke = sessions_service.IntentService.revoke_intents_and_reconcile
+    orig_reconcile = sessions_service.IntentService.mark_dirty_and_reconcile
 
-    async def _spy_revoke(self: object, *, device_id: uuid.UUID, **kwargs: object) -> object:
+    async def _spy_reconcile(self: object, device_id: uuid.UUID, **kwargs: object) -> object:
         reconciled.append(device_id)
-        return await orig_revoke(self, device_id=device_id, **kwargs)  # type: ignore[arg-type]
+        return await orig_reconcile(self, device_id, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(sessions_service.IntentService, "revoke_intents_and_reconcile", _spy_revoke)
+    monkeypatch.setattr(sessions_service.IntentService, "mark_dirty_and_reconcile", _spy_reconcile)
 
     svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
     await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
@@ -1230,7 +1228,7 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="prep-release-run", devices=[device], state=RunState.active)
-    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "mark_dirty_and_reconcile", AsyncMock())
 
     maintenance = AsyncMock()
     lifecycle_actions = AsyncMock()
@@ -1358,43 +1356,14 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
         identity_value="run-release-full-001",
         operational_state=DeviceOperationalState.available,
     )
-    run = await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
-    # Seed all five intent sources that release_device_from_run must revoke.
-    await IntentService(db_session).register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"run:{run.id}",
-                axis=GRID_ROUTING,
-                run_id=run.id,
-                payload={"accepting_new_sessions": True, "priority": 10},
-            ),
-            IntentRegistration(
-                source=f"cooldown:grid:{run.id}",
-                axis=GRID_ROUTING,
-                run_id=run.id,
-                payload={"accepting_new_sessions": False, "priority": 50},
-            ),
-            IntentRegistration(
-                source=f"cooldown:reservation:{run.id}",
-                axis=RESERVATION,
-                run_id=run.id,
-                payload={"excluded": True, "priority": 50, "exclusion_reason": "flaky"},
-            ),
-            IntentRegistration(
-                source=f"cooldown:recovery:{run.id}",
-                axis=RECOVERY,
-                run_id=run.id,
-                payload={"allowed": False, "priority": 50, "reason": "flaky"},
-            ),
-            IntentRegistration(
-                source=f"health_failure:reservation:{device.id}",
-                axis=RESERVATION,
-                run_id=run.id,
-                payload={"excluded": True, "priority": 60, "exclusion_reason": "bad checks"},
-            ),
-        ],
-    )
+    await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
+    # Seed the reservation row as excluded so release must clear the flag.
+    entry = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    entry.excluded = True
+    entry.exclusion_reason = "flaky"
+    entry.excluded_until = None
     await db_session.commit()
 
     await RunReservationService(review=build_review_service()).release_device_from_run(
@@ -1408,15 +1377,6 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
     assert entry.released_at is not None
     assert entry.excluded is False
     assert entry.exclusion_reason == "CI preparation failed"
-    # #2/#7: the full intent set is gone (no cooldown:* or health_failure:reservation lingering).
-    remaining = (
-        (await db_session.execute(select(DeviceIntent.source).where(DeviceIntent.device_id == device.id)))
-        .scalars()
-        .all()
-    )
-    assert not any(
-        s.startswith("cooldown:") or s.startswith("health_failure:") or s.startswith("run:") for s in remaining
-    )
 
 
 @pytest.mark.db
@@ -1443,20 +1403,6 @@ async def test_reserved_device_info_exposes_released_at(
     assert info["released_at"] is not None  # released device is distinguishable
     assert info["excluded"] is False  # not a restorable exclusion (depends on Task 1)
     assert info["exclusion_reason"] == "CI preparation failed"
-
-
-def test_run_release_intent_sources_lists_the_full_set() -> None:
-    import uuid as _uuid
-
-    run_id = _uuid.UUID("11111111-1111-1111-1111-111111111111")
-    device_id = _uuid.UUID("22222222-2222-2222-2222-222222222222")
-    assert run_release_intent_sources(run_id, device_id) == [
-        f"run:{run_id}",
-        f"cooldown:grid:{run_id}",
-        f"cooldown:reservation:{run_id}",
-        f"cooldown:recovery:{run_id}",
-        f"health_failure:reservation:{device_id}",
-    ]
 
 
 @pytest.mark.db

@@ -1,17 +1,20 @@
-"""Connectivity loss registers a routing-blocking stop intent."""
+"""Connectivity loss parks the node (defer-stop synthesized from device_checks_healthy)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
+from app.core.timeutil import now_utc
+from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
+from app.devices.services.intent_synthesis import synthesize_fact_intents
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +24,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_stop_disconnected_node_registers_connectivity_intent(
+async def test_stop_disconnected_node_parks_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -35,13 +38,16 @@ async def test_stop_disconnected_node_registers_connectivity_intent(
             desired_port=4723,
             pid=77,
         )
+        device.device_checks_healthy = False
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
     from app.devices.services import connectivity as device_connectivity
 
-    await device_connectivity._stop_disconnected_node(db_session, device, health=AsyncMock(), publisher=Mock())
+    await device_connectivity._stop_disconnected_node(
+        db_session, device, health=DeviceHealthService(publisher=event_bus)
+    )
     await db_session.commit()
 
     events = (
@@ -64,13 +70,11 @@ async def test_stop_disconnected_node_registers_connectivity_intent(
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
     assert node.stop_pending is True
-    intent = (
-        await db_session.execute(
-            select(DeviceIntent).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"connectivity:{device.id}",
-            )
-        )
-    ).scalar_one()
+
+    # Connectivity defer-stop is no longer stored — it is synthesized from
+    # device_checks_healthy IS FALSE.
+    await db_session.refresh(device)
+    intents = await synthesize_fact_intents(db_session, device, None, [], now_utc())
+    intent = next(i for i in intents if i.source == f"connectivity:{device.id}")
     assert intent.axis == "node_process"
     assert intent.payload["stop_mode"] == "defer"

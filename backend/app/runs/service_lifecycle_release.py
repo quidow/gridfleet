@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -11,7 +12,6 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core import metrics_recorders
 from app.core.concurrency import per_key_semaphores
-from app.runs.service_reservation import run_release_intent_sources
 
 if TYPE_CHECKING:
     import uuid
@@ -119,6 +119,9 @@ class RunReleaseService:
             device = locked_devices.get(reservation.device_id)
             if device is None:
                 reservation.released_at = released_at
+                reservation.excluded = False
+                reservation.excluded_at = None
+                reservation.excluded_until = None
                 logger.warning(
                     "Reservation %s references missing device %s; skipping availability restore",
                     reservation.id,
@@ -129,6 +132,11 @@ class RunReleaseService:
             # device_is_reserved queries (which auto-flush) see the pre-release state.
             was_reserved = await device_is_reserved(db, device.id)
             reservation.released_at = released_at
+            # Released rows must not stay excluded (invariant: not (released_at and excluded)).
+            # The reconciler used to clear this via the reservation axis; it no longer does.
+            reservation.excluded = False
+            reservation.excluded_at = None
+            reservation.excluded_until = None
             if device.operational_state == DeviceOperationalState.maintenance:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
@@ -168,7 +176,6 @@ class RunReleaseService:
                 device = await device_locking.lock_device(db, reservation.device_id, load_sessions=False)
             except NoResultFound:
                 continue
-            sources = run_release_intent_sources(run.id, device.id)
             # Verify-then-stop (design P3): only hard-stop a device whose session
             # genuinely survived the W3C DELETE (or stayed indeterminate). A
             # cleanly-gone session leaves the node warm — no cold restart. When no
@@ -183,17 +190,19 @@ class RunReleaseService:
                             axis=NODE_PROCESS,
                             run_id=run.id,
                             payload={"action": "stop", "priority": PRIORITY_FORCED_RELEASE, "stop_mode": "hard"},
-                            precondition={"kind": "run_active", "run_id": str(run.id)},
+                            # TTL replaces the run_active precondition (semantic delta #2): a hard
+                            # stop within the short restart window; the run going terminal no longer
+                            # reaps it, but it self-expires.
+                            expires_at=now_utc()
+                            + timedelta(seconds=self._settings.get_int("appium_reconciler.restart_window_sec")),
                         )
                     ],
                     publisher=self._publisher,
                 )
                 metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL.inc()
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id,
-                sources=sources,
-                publisher=self._publisher,
-            )
+            # run: routing / cooldown denies derive from the reservation row; reconcile
+            # to tear them down as the run releases (no stored release intents now).
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
 
     async def complete_deferred_stops_post_commit(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> None:
         """Run ``complete_deferred_stop_if_session_ended`` for each device after

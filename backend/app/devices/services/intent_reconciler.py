@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import cast, delete, func, or_, select
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import NoResultFound
 
 from app.agent_comm.models import AgentReconfigureOutbox
@@ -26,23 +25,19 @@ from app.devices.models import (
     DeviceIntent,
     DeviceIntentDirty,
     DeviceOperationalState,
-    DeviceReservation,
 )
 from app.devices.services.event import record_event
 from app.devices.services.intent_evaluator import (
     RecoveryDecision,
-    ReservationDecision,
     evaluate_grid_routing,
     evaluate_node_process,
     evaluate_recovery,
-    evaluate_reservation,
     map_node_process_decision,
-    reconcile_unsatisfied_preconditions,
 )
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
+from app.devices.services.intent_synthesis import synthesize_fact_intents
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
-from app.runs.models import TERMINAL_STATES, TestRun
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
@@ -136,20 +131,7 @@ async def run_device_intent_reconciler_once(
     await _reconcile_expired_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
-    precondition_affected = await reconcile_unsatisfied_preconditions(db)
-    for affected_id in sorted(precondition_affected):
-        await _reconcile_commit_deliver(
-            db, affected_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
     if cycle % full_scan_every == 0:
-        try:
-            await _sweep_orphaned_intents(db)
-        except Exception:
-            await db.rollback()
-            logger.exception("stale_intent_sweep_failed")
-        await _reconcile_terminal_run_intents(
-            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
         await _reconcile_all_devices_once(
             db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
@@ -263,113 +245,20 @@ async def _reconcile_expired_intents(
         )
 
 
-async def _sweep_orphaned_intents(db: AsyncSession) -> None:
-    """Revoke orphaned ``DeviceIntent`` rows.
-
-    Defense in depth: producer modules own the primary revoke paths. This sweep
-    catches any branch that skips its revoke obligation. Counters increment per
-    revoked row, labeled by intent source family.
-    """
-    # 1. active_session:{sid} — Session.ended_at IS NOT NULL.
-    active_session_ids = (
+async def _load_intents_for_evaluation(
+    db: AsyncSession, device: Device, node: AppiumNode, now: datetime
+) -> list[DeviceIntent]:
+    """Stored intents merged with the fact-derived intents synthesized for this device."""
+    stored = (
         (
             await db.execute(
-                select(DeviceIntent.id)
-                .where(DeviceIntent.source.like("active_session:%"))
-                .join(
-                    Session,
-                    Session.session_id == func.substring(DeviceIntent.source, len("active_session:") + 1),
-                )
-                .where(Session.ended_at.is_not(None))
+                select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
             )
         )
         .scalars()
         .all()
     )
-    if active_session_ids:
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(active_session_ids)))
-        metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="active_session").inc(len(active_session_ids))
-
-    # 2. connectivity:{device_id} — device not offline AND device_checks_healthy IS NOT FALSE.
-    connectivity_ids = (
-        (
-            await db.execute(
-                select(DeviceIntent.id)
-                .where(DeviceIntent.source.like("connectivity:%"))
-                .join(Device, Device.id == DeviceIntent.device_id)
-                .where(
-                    Device.operational_state != DeviceOperationalState.offline,
-                    or_(Device.device_checks_healthy.is_(None), Device.device_checks_healthy.is_(True)),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if connectivity_ids:
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(connectivity_ids)))
-        metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="connectivity").inc(len(connectivity_ids))
-
-    # 3. cooldown:{axis}:{run_id} — DeviceReservation.released_at IS NOT NULL.
-    # Source format: "cooldown:<axis>:<run_uuid>". Split on ':' and cast last segment.
-    cooldown_rows = (
-        await db.execute(
-            select(DeviceIntent.id, DeviceIntent.source)
-            .where(DeviceIntent.source.like("cooldown:%"))
-            .join(
-                DeviceReservation,
-                # Postgres split_part is 1-indexed; segment 3 is the run_id.
-                DeviceReservation.run_id == cast(func.split_part(DeviceIntent.source, ":", 3), UUID(as_uuid=True)),
-            )
-            .where(DeviceReservation.released_at.is_not(None))
-        )
-    ).all()
-    if cooldown_rows:
-        ids = [row.id for row in cooldown_rows]
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(ids)))
-        for row in cooldown_rows:
-            axis = row.source.split(":")[1]
-            metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source=f"cooldown:{axis}").inc()
-
-    await db.flush()
-
-
-async def _reconcile_terminal_run_intents(
-    db: AsyncSession,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-    pool: AgentHttpPool | None = None,
-) -> None:
-    """Defense-in-depth sweep for intents tied to runs that are already terminal.
-
-    The release path (``_clear_desired_grid_run_id_for_run``) is the primary
-    cleanup for run-scoped intents. This sweep guards against any release path
-    skipping a source or crashing mid-release — a run-bound intent must never
-    outlive its owning run.
-    """
-    terminal_run_subq = select(TestRun.id).where(TestRun.state.in_(TERMINAL_STATES))
-    device_ids = (
-        (
-            await db.execute(
-                select(DeviceIntent.device_id)
-                .where(DeviceIntent.run_id.is_not(None))
-                .where(DeviceIntent.run_id.in_(terminal_run_subq))
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not device_ids:
-        return
-    await db.execute(
-        delete(DeviceIntent).where(DeviceIntent.run_id.is_not(None)).where(DeviceIntent.run_id.in_(terminal_run_subq))
-    )
-    for device_id in sorted(set(device_ids)):
-        await _reconcile_commit_deliver(
-            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
+    return [*stored, *(await synthesize_fact_intents(db, device, node, list(stored), now))]
 
 
 async def reconcile_device(
@@ -402,15 +291,7 @@ async def reconcile_device(
         return
 
     now = now_utc()
-    intents = (
-        (
-            await db.execute(
-                select(DeviceIntent).where(DeviceIntent.device_id == device_id).order_by(DeviceIntent.source)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    intents = await _load_intents_for_evaluation(db, device, node, now)
     active_node_intents = [
         intent
         for intent in intents
@@ -429,7 +310,6 @@ async def reconcile_device(
 
     node_decision = evaluate_node_process([intent for intent in intents if intent.axis == NODE_PROCESS], now)
     grid_decision = evaluate_grid_routing([intent for intent in intents if intent.axis == GRID_ROUTING], now)
-    reservation_decision = evaluate_reservation([intent for intent in intents if intent.axis == RESERVATION], now)
     recovery_decision = evaluate_recovery([intent for intent in intents if intent.axis == RECOVERY], now)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
     # Universal session-safety invariant: only an explicit hard stop
@@ -501,8 +381,6 @@ async def reconcile_device(
         node.stop_pending = stop_pending
 
     await _apply_recovery_decision(db, device, device_id, recovery_decision)
-
-    await _apply_reservation_decision(db, device_id, reservation_decision)
 
     metadata_changed = (
         old["accepting_new_sessions"] != node.accepting_new_sessions
@@ -576,100 +454,6 @@ async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UU
     # gets "session not created". Shared via live_session_predicate.
     count = await db.scalar(select(func.count()).select_from(Session).where(live_session_predicate(device_id)))
     return bool(count)
-
-
-async def _apply_reservation_decision(db: AsyncSession, device_id: uuid.UUID, decision: ReservationDecision) -> None:
-    reservation = (
-        await db.execute(
-            select(DeviceReservation)
-            .where(DeviceReservation.device_id == device_id, DeviceReservation.released_at.is_(None))
-            .order_by(DeviceReservation.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if reservation is None:
-        return
-    if decision.excluded:
-        await _update_reservation_exclusion(db, reservation, decision)
-    else:
-        await _clear_reservation_exclusion(db, reservation, decision.reason)
-
-
-def _exclusion_snapshot(
-    *, excluded: bool, exclusion_reason: str | None, excluded_until: datetime | None, cooldown_count: int
-) -> dict[str, object]:
-    return {
-        "excluded": excluded,
-        "exclusion_reason": exclusion_reason,
-        "excluded_until": excluded_until.isoformat() if excluded_until else None,
-        "cooldown_count": cooldown_count,
-    }
-
-
-async def _update_reservation_exclusion(
-    db: AsyncSession,
-    reservation: DeviceReservation,
-    decision: ReservationDecision,
-) -> None:
-    # The reservation row is the authority on cooldown_count; the intent
-    # payload only mirrors the value that was current when the intent was
-    # registered. Take the max so a stale or lower payload (e.g. a
-    # non-cooldown reservation intent like ``health_failure:reservation``)
-    # never walks the counter backwards.
-    next_cooldown_count = max(reservation.cooldown_count, decision.cooldown_count or 0)
-    changed = (
-        reservation.excluded is not True
-        or reservation.exclusion_reason != decision.exclusion_reason
-        or reservation.excluded_until != decision.expires_at
-        or reservation.cooldown_count != next_cooldown_count
-    )
-    if not changed:
-        return
-    old = _exclusion_snapshot(
-        excluded=reservation.excluded,
-        exclusion_reason=reservation.exclusion_reason,
-        excluded_until=reservation.excluded_until,
-        cooldown_count=reservation.cooldown_count,
-    )
-    reservation.excluded = True
-    reservation.exclusion_reason = decision.exclusion_reason
-    reservation.excluded_until = decision.expires_at
-    reservation.cooldown_count = next_cooldown_count
-    if reservation.excluded_at is None:
-        reservation.excluded_at = now_utc()
-    new = _exclusion_snapshot(
-        excluded=reservation.excluded,
-        exclusion_reason=reservation.exclusion_reason,
-        excluded_until=reservation.excluded_until,
-        cooldown_count=reservation.cooldown_count,
-    )
-    await _record_field_change(db, reservation.device_id, "reservation_exclusion", old, new, decision.reason)
-
-
-async def _clear_reservation_exclusion(db: AsyncSession, reservation: DeviceReservation, reason: str) -> None:
-    if not reservation.excluded and reservation.exclusion_reason is None and reservation.excluded_until is None:
-        return
-    old = _exclusion_snapshot(
-        excluded=reservation.excluded,
-        exclusion_reason=reservation.exclusion_reason,
-        excluded_until=reservation.excluded_until,
-        cooldown_count=reservation.cooldown_count,
-    )
-    reservation.excluded = False
-    reservation.exclusion_reason = None
-    reservation.excluded_until = None
-    # ``cooldown_count`` deliberately persists across exclusion clear/reset. It
-    # tracks "how many cooldowns has this reservation seen" for the duration
-    # of the reservation, so the escalation threshold is reachable even when
-    # the cooldown TTL keeps lapsing between flakes. The counter is zeroed
-    # only when the reservation is released or explicitly restored.
-    new = _exclusion_snapshot(
-        excluded=reservation.excluded,
-        exclusion_reason=reservation.exclusion_reason,
-        excluded_until=reservation.excluded_until,
-        cooldown_count=reservation.cooldown_count,
-    )
-    await _record_field_change(db, reservation.device_id, "reservation_exclusion", old, new, reason)
 
 
 async def _stage_agent_reconfigure(db: AsyncSession, node: AppiumNode) -> None:

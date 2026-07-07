@@ -20,11 +20,6 @@ from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import (
-    GRID_ROUTING,
-    PRIORITY_RUN_ROUTING,
-    IntentRegistration,
-)
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
 from app.packs.services.platform_resolver import assert_runnable
@@ -280,28 +275,6 @@ def _format_requirement_count(requirement: DeviceRequirement) -> str:
     return f"count={requirement.count}"
 
 
-async def _register_run_grid_intent(
-    db: AsyncSession, *, run: TestRun, device_id: uuid.UUID, publisher: EventPublisher
-) -> None:
-    await IntentService(db).register_intents_and_reconcile(
-        device_id=device_id,
-        intents=[
-            IntentRegistration(
-                source=f"run:{run.id}",
-                axis=GRID_ROUTING,
-                run_id=run.id,
-                payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
-                precondition={
-                    "kind": "reservation_active",
-                    "run_id": str(run.id),
-                    "device_id": str(device_id),
-                },
-            )
-        ],
-        publisher=publisher,
-    )
-
-
 class RunAllocatorService:
     def __init__(
         self,
@@ -491,7 +464,9 @@ class RunAllocatorService:
         db.add_all(reservations)
         await db.flush()
 
+        # Reconcile each allocated device so its node picks up the run: grid-routing
+        # intent now synthesized from the reservation row just written.
         for device in all_matched:
-            await _register_run_grid_intent(db, run=run, device_id=device.id, publisher=self._publisher)
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
 
         return run, device_infos
