@@ -590,7 +590,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=Mock()),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     await db_session.refresh(node)
     assert node.observed_running is True

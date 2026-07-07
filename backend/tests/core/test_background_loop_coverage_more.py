@@ -139,7 +139,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
-    ).check_nodes(db)
+    ).check_host_nodes(db, host_id=device.host_id)
 
     db.commit.assert_awaited_once()
 

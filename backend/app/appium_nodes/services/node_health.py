@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
@@ -20,7 +19,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.reconciler_agent import require_management_host
-from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.metrics_recorders import record_background_loop_phase
 from app.core.observability import get_logger
@@ -44,13 +42,14 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl
-    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.incidents import LifecycleIncidentService
 
 logger = get_logger(__name__)
+# Phase-metric label only: node health is now a host_sweep stage, not its own
+# background loop, but its probe/apply timings still report under this name so
+# existing dashboards survive the fold.
 LOOP_NAME = "node_health"
 
 
@@ -83,10 +82,12 @@ class NodeHealthService:
         self._health = health
         self._incidents = incidents
 
-    async def check_nodes(self, db: AsyncSession) -> None:
+    async def check_host_nodes(self, db: AsyncSession, *, host_id: uuid.UUID) -> None:
         stmt = (
             select(AppiumNode)
+            .join(Device, Device.id == AppiumNode.device_id)
             .where(
+                Device.host_id == host_id,
                 AppiumNode.pid.is_not(None),
                 AppiumNode.active_connection_target.is_not(None),
                 # Don't probe nodes we are intentionally stopping (I1); a refused
@@ -114,20 +115,10 @@ class NodeHealthService:
             )
             for node in nodes
         ]
-        probe_concurrency = self._settings.get_int("general.probe_concurrency_per_host")
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(probe_concurrency)
-        )
+        semaphore = asyncio.Semaphore(self._settings.get_int("general.probe_concurrency_per_host"))
         probe_started = perf_counter()
         results = await asyncio.gather(
-            *[
-                self._bounded_check_node_health(
-                    host_semaphores[request.device.host_id],
-                    request.node,
-                    request.device,
-                )
-                for request in requests
-            ]
+            *[self._bounded_check_node_health(semaphore, request.node, request.device) for request in requests]
         )
         record_background_loop_phase(LOOP_NAME, "probe", perf_counter() - probe_started)
 
@@ -263,7 +254,7 @@ class NodeHealthService:
             # auto-recovery restart that fights the stop. The reconciler owns
             # driving it to stopped. Re-checked here under the row lock because
             # desired_state can flip to stopped during the async probe gather,
-            # after check_nodes' (unlocked) SELECT filtered on it.
+            # after check_host_nodes' (unlocked) SELECT filtered on it.
             return
 
         if result.status == "indeterminate":
@@ -379,27 +370,3 @@ class NodeHealthService:
 
             logger.error("Node for device %s reached max failures, attempting restart", device.name)
             await self._attempt_node_restart(db, device=device)
-
-
-class NodeHealthLoop(BackgroundLoop):
-    """Background loop that checks Appium node health.
-
-    Polls Appium node health on the registry-configured interval, running
-    as a drift reconciler.
-    """
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Node health check failed"
-
-    def __init__(self, *, services: AppiumNodeServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.node_check_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.node_health.check_nodes(db)
