@@ -911,6 +911,13 @@ class ConnectivityService:
             )
             await self._record_disconnect_if_stable(db, device, held=False)
 
+    async def run_connectivity_pass(self, db: AsyncSession) -> None:
+        """One full connectivity pass: expired-cooldown cleanup, then the probe cycle."""
+        cooldowns_started = perf_counter()
+        await self.check_expired_cooldowns(db)
+        metrics.record_background_loop_phase(LOOP_NAME, "cooldowns", perf_counter() - cooldowns_started)
+        await self.check_connectivity(db)
+
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = self._settings.get_int("device_checks.ip_ping.consecutive_fail_threshold")
         ip_ping_timeout = self._settings.get_float("device_checks.ip_ping.timeout_sec")
@@ -1053,7 +1060,4 @@ class DeviceConnectivityLoop(BackgroundLoop):
         return self._services.settings.get_float("general.device_check_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
-        cooldowns_started = perf_counter()
-        await self._services.connectivity.check_expired_cooldowns(db)
-        metrics.record_background_loop_phase(LOOP_NAME, "cooldowns", perf_counter() - cooldowns_started)
-        await self._services.connectivity.check_connectivity(db)
+        await self._services.connectivity.run_connectivity_pass(db)
