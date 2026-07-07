@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -230,102 +230,6 @@ async def test_sweep_emits_desired_state_changed_event(db_session: AsyncSession,
         and detail.get("precondition_kind") == "run_active"
         for detail in details
     )
-
-
-@pytest.mark.db
-async def test_forced_release_registers_run_active_precondition(
-    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.runs.models import TestRun
-    from app.runs.service_lifecycle_release import RunReleaseService
-    from tests.fakes import FakeSettingsReader
-
-    captured: list[IntentRegistration] = []
-
-    async def fake_register(
-        _self: object,
-        *,
-        device_id: uuid.UUID,
-        intents: list[IntentRegistration],
-        publisher: object,
-    ) -> None:
-        captured.extend(intents)
-
-    async def fake_revoke(
-        _self: object,
-        *,
-        device_id: uuid.UUID,
-        sources: list[str],
-        publisher: object,
-    ) -> None:
-        return None
-
-    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", fake_register)
-    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", fake_revoke)
-
-    device = await create_device(db_session, host_id=db_host.id, name="forced-reg")
-    run = await create_reserved_run(db_session, name="forced-reg-run", devices=[device])
-    refreshed_run = await db_session.get(TestRun, run.id)
-    assert refreshed_run is not None
-
-    from unittest.mock import AsyncMock as _AsyncMock
-
-    _pub = _AsyncMock()
-    _release_svc = RunReleaseService(
-        publisher=_pub,
-        settings=FakeSettingsReader({}),
-        deferred_stop=_AsyncMock(),
-    )
-    await _release_svc.clear_desired_grid_run_id_for_run(
-        db_session,
-        run=refreshed_run,
-        caller="run_force_release",
-        reason="test",
-    )
-    forced = [intent for intent in captured if intent.source.startswith("forced_release:")]
-    assert len(forced) == 1
-    assert forced[0].precondition == {"kind": "run_active", "run_id": str(run.id)}
-
-
-@pytest.mark.db
-async def test_node_health_registers_node_running_precondition(
-    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    captured: list[IntentRegistration] = []
-
-    async def fake_register(
-        _self: object,
-        *,
-        device_id: uuid.UUID,
-        intents: list[IntentRegistration],
-        publisher: object,
-    ) -> None:
-        captured.extend(intents)
-
-    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", fake_register)
-
-    from unittest.mock import Mock
-
-    from app.appium_nodes.services.node_health import NodeHealthService
-
-    device = await create_device(db_session, host_id=db_host.id, name="autorec-prec")
-    await _seed_node(db_session, device.id)
-    svc = NodeHealthService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        recovery_control=AsyncMock(),
-        health=AsyncMock(),
-        incidents=AsyncMock(),
-    )
-    await svc._attempt_node_restart(db_session, device=device)
-
-    node_intent = next(intent for intent in captured if intent.source == f"auto_recovery:node:{device.id}")
-    recovery_intent = next(intent for intent in captured if intent.source == f"auto_recovery:recovery:{device.id}")
-    expected = {"kind": "node_running", "device_id": str(device.id), "expected": False}
-    assert node_intent.precondition == expected
-    assert recovery_intent.precondition == expected
 
 
 @pytest.mark.db

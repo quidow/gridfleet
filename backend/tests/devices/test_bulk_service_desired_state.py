@@ -90,14 +90,14 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     assert node.desired_state == AppiumDesiredState.running
 
 
-async def test_operator_start_intent_carries_node_running_precondition(
+async def test_operator_start_intent_is_ttl_bounded(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """_bulk_start_one must register operator:start with the node_running precondition.
+    """_bulk_start_one must register operator:start with a TTL and no precondition.
 
-    Without it the row persists until the next operator action overwrites it; with it
-    the precondition sweep retires it once the node is observed running.
+    The node_running precondition was replaced by an expires_at TTL: the row is a
+    no-op once the node runs (baseline:idle sustains it) and self-expires.
     """
     from sqlalchemy import select
 
@@ -124,18 +124,15 @@ async def test_operator_start_intent_carries_node_running_precondition(
             )
         )
     ).scalar_one()
-    assert row.precondition == {
-        "kind": "node_running",
-        "device_id": str(device.id),
-        "expected": False,
-    }
+    assert row.precondition is None
+    assert row.expires_at is not None
 
 
-async def test_operator_restart_intent_carries_node_running_precondition(
+async def test_operator_restart_intent_is_ttl_bounded(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """_bulk_restart_one (restart variant with transition_token) must also set the precondition."""
+    """_bulk_restart_one (restart variant with transition_token) must be TTL-bounded, no precondition."""
     from sqlalchemy import select
 
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -173,11 +170,8 @@ async def test_operator_restart_intent_carries_node_running_precondition(
             )
         )
     ).scalar_one()
-    assert row.precondition == {
-        "kind": "node_running",
-        "device_id": str(device.id),
-        "expected": False,
-    }
+    assert row.precondition is None
+    assert row.expires_at is not None
     # Restart-specific payload fields remain intact.
     assert row.payload.get("transition_token") is not None
     assert row.payload.get("transition_deadline") is not None

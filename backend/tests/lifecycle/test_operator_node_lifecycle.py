@@ -132,11 +132,11 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     assert intent.expires_at > datetime.now(UTC), "fresh expires_at must be in the future"
 
 
-def test_operator_restart_intent_sets_expires_at_and_preserves_precondition(
+def test_operator_restart_intent_sets_expires_at(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """operator_restart_intent must set expires_at = now + window_sec, embed the
-    same deadline in the payload, and preserve the PR #301 node_running precondition.
+    """operator_restart_intent must set expires_at = now + window_sec, embed the same
+    deadline in the payload, and carry no precondition (TTL replaces node_running).
     """
     from app.lifecycle.services import operator_node as mod
     from app.lifecycle.services.operator_node import operator_restart_intent
@@ -156,11 +156,7 @@ def test_operator_restart_intent_sets_expires_at_and_preserves_precondition(
     assert intent.expires_at is not None
     assert intent.expires_at == expected_deadline
     assert intent.payload["transition_deadline"] == expected_deadline.isoformat()
-    assert intent.precondition == {
-        "kind": "node_running",
-        "device_id": str(device_id),
-        "expected": False,
-    }
+    assert intent.precondition is None
 
 
 async def test_reconcile_expired_intents_deletes_expired_restart_intent(

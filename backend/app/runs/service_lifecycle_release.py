@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -189,7 +190,11 @@ class RunReleaseService:
                             axis=NODE_PROCESS,
                             run_id=run.id,
                             payload={"action": "stop", "priority": PRIORITY_FORCED_RELEASE, "stop_mode": "hard"},
-                            precondition={"kind": "run_active", "run_id": str(run.id)},
+                            # TTL replaces the run_active precondition (semantic delta #2): a hard
+                            # stop within the short restart window; the run going terminal no longer
+                            # reaps it, but it self-expires.
+                            expires_at=now_utc()
+                            + timedelta(seconds=self._settings.get_int("appium_reconciler.restart_window_sec")),
                         )
                     ],
                     publisher=self._publisher,

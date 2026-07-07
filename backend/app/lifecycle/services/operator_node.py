@@ -27,7 +27,6 @@ from app.devices.services.intent_types import (
     PRIORITY_OPERATOR_STOP,
     RECOVERY,
     IntentRegistration,
-    NodeRunningPrecondition,
     failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
@@ -77,27 +76,17 @@ async def operator_stop_active(db: AsyncSession, device_id: uuid.UUID) -> bool:
     return found is not None
 
 
-def operator_start_precondition(device_id: uuid.UUID) -> NodeRunningPrecondition:
-    """Precondition retiring an operator:start intent once the node is observed running.
-
-    ``expected: False`` means "satisfied while the node is NOT running". The
-    intent represents an operator's desire to start the node, so once the node
-    reaches ``observed_running == True`` the precondition flips and the
-    reconciler sweep deletes the row.
-    """
-    return {
-        "kind": "node_running",
-        "device_id": str(device_id),
-        "expected": False,
-    }
-
-
-def operator_start_intent(device: Device, desired_port: int) -> IntentRegistration:
+def operator_start_intent(device: Device, desired_port: int, *, settings: SettingsReader) -> IntentRegistration:
+    startup_timeout = settings.get_int("appium.startup_timeout_sec")
+    viability_timeout = settings.get_int("general.session_viability_timeout_sec")
+    # TTL replaces the node_running precondition (semantic delta #1): the row is a
+    # no-op once the node runs (baseline:idle sustains running) and self-expires.
+    expires_at = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
     return IntentRegistration(
         source=operator_start_source(device.id),
         axis=NODE_PROCESS,
         payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": desired_port},
-        precondition=operator_start_precondition(device.id),
+        expires_at=expires_at,
     )
 
 
@@ -114,7 +103,6 @@ def operator_restart_intent(device: Device, desired_port: int, *, settings: Sett
             "transition_token": str(uuid.uuid4()),
             "transition_deadline": deadline.isoformat(),
         },
-        precondition=operator_start_precondition(device.id),
         expires_at=deadline,
     )
 
@@ -196,7 +184,7 @@ class OperatorNodeLifecycleService:
         )
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
-            intents=[operator_start_intent(device, desired_port)],
+            intents=[operator_start_intent(device, desired_port, settings=self._settings)],
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
