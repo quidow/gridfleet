@@ -365,15 +365,9 @@ class ReconcilerService:
         health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
     ) -> None:
         semaphore = asyncio.Semaphore(self._settings.get_int("appium_reconciler.host_parallelism"))
-        now = now_utc()
         rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
-        active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
         for row in desired:
             rows_by_host.setdefault(row.host_id, []).append(row)
-            backoff_until = backoff_until_by_device.get(row.device_id)
-            if backoff_until is not None and backoff_until > now:
-                continue
-            active_rows_by_host.setdefault(row.host_id, []).append(row)
 
         async def _reconcile_host(host: dict[str, object]) -> None:
             host_id = host.get("id")
@@ -381,77 +375,97 @@ class ReconcilerService:
             agent_port = host.get("agent_port")
             if not isinstance(host_id, uuid.UUID) or not isinstance(host_ip, str) or not isinstance(agent_port, int):
                 return
-            rows = rows_by_host.get(host_id, [])
             async with semaphore:
-                cycle_start = time.monotonic()
-                try:
-                    payload = (health_by_host or {}).get(host_id)
-                    if payload is None:
-                        payload = (
-                            await agent_health(
-                                host_ip,
-                                agent_port,
-                                http_client_factory=httpx.AsyncClient,
-                                settings=self._settings,
-                                pool=self._pool,
-                                circuit_breaker=self._circuit_breaker,
-                            )
-                            or {}
+                payload = (health_by_host or {}).get(host_id)
+                if payload is None:
+                    payload = (
+                        await agent_health(
+                            host_ip,
+                            agent_port,
+                            http_client_factory=httpx.AsyncClient,
+                            settings=self._settings,
+                            pool=self._pool,
+                            circuit_breaker=self._circuit_breaker,
                         )
-                    appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
-                    if not isinstance(appium_processes, dict):
-                        return
-                    running = parse_running_nodes(appium_processes)
-                    observed = [
-                        ObservedEntry(
-                            port=entry.port,
-                            pid=entry.pid,
-                            connection_target=entry.connection_target,
-                        )
-                        for entry in running
-                    ]
-                    await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
-                    # Reap stray agent nodes (duplicates for one target, or nodes
-                    # for a device not on this host) before convergence. Keyed off
-                    # ALL host rows (rows), not the active subset, so a node for a
-                    # device in recovery backoff is never mistaken for an orphan.
-                    # Runs even when active_rows — or rows itself — is empty, so a
-                    # row-less process on a host with no devices is still reaped.
-                    await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
-                    # Clear leaked observed pids for devices excluded from active
-                    # convergence (in recovery backoff). The active loop below never
-                    # reaches them, so a node stopped during backoff keeps a stale
-                    # pid in the DB — which blocks an operator start ("node already
-                    # running"). DB-only clear; never starts/stops an agent node.
-                    backoff_rows = [
-                        row
-                        for row in rows
-                        if (bu := backoff_until_by_device.get(row.device_id)) is not None and bu > now
-                    ]
-                    stale_rows = rows_needing_stale_clear(backoff_rows, observed, now=now)
-                    if stale_rows:
-                        clear_observed = self._write_observed_factory()
-                        for row in stale_rows:
-                            await clear_observed(
-                                row=row, state="stopped", port=None, pid=None, active_connection_target=None
-                            )
-                    active_rows = active_rows_by_host.get(host_id, [])
-                    if not active_rows:
-                        return
-                    await self.converge_host_rows(
-                        None,
-                        active_rows,
-                        observed,
-                        host_id=host_id,
-                        host_ip=host_ip,
-                        agent_port=agent_port,
+                        or {}
                     )
-                finally:
-                    APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
-                        time.monotonic() - cycle_start
-                    )
+                await self.reconcile_host(
+                    host_id=host_id,
+                    host_ip=host_ip,
+                    agent_port=agent_port,
+                    rows=rows_by_host.get(host_id, []),
+                    backoff_until_by_device=backoff_until_by_device,
+                    payload=payload,
+                )
 
         await asyncio.gather(*(_reconcile_host(host) for host in hosts))
+
+    async def reconcile_host(
+        self,
+        *,
+        host_id: uuid.UUID,
+        host_ip: str,
+        agent_port: int,
+        rows: list[DesiredRow],
+        backoff_until_by_device: dict[uuid.UUID, datetime],
+        payload: dict[str, object],
+    ) -> None:
+        """Converge desired Appium nodes on one host from an agent health payload."""
+        now = now_utc()
+        cycle_start = time.monotonic()
+        try:
+            appium_processes = payload.get("appium_processes")
+            if not isinstance(appium_processes, dict):
+                return
+            running = parse_running_nodes(appium_processes)
+            observed = [
+                ObservedEntry(
+                    port=entry.port,
+                    pid=entry.pid,
+                    connection_target=entry.connection_target,
+                )
+                for entry in running
+            ]
+            await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
+            # Reap stray agent nodes (duplicates for one target, or nodes
+            # for a device not on this host) before convergence. Keyed off
+            # ALL host rows (rows), not the active subset, so a node for a
+            # device in recovery backoff is never mistaken for an orphan.
+            # Runs even when active_rows — or rows itself — is empty, so a
+            # row-less process on a host with no devices is still reaped.
+            await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
+            # Clear leaked observed pids for devices excluded from active
+            # convergence (in recovery backoff). The active loop below never
+            # reaches them, so a node stopped during backoff keeps a stale
+            # pid in the DB — which blocks an operator start ("node already
+            # running"). DB-only clear; never starts/stops an agent node.
+            backoff_rows = [
+                row
+                for row in rows
+                if (backoff_until := backoff_until_by_device.get(row.device_id)) is not None and backoff_until > now
+            ]
+            stale_rows = rows_needing_stale_clear(backoff_rows, observed, now=now)
+            if stale_rows:
+                clear_observed = self._write_observed_factory()
+                for row in stale_rows:
+                    await clear_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
+            active_rows = [
+                row
+                for row in rows
+                if (backoff_until := backoff_until_by_device.get(row.device_id)) is None or backoff_until <= now
+            ]
+            if not active_rows:
+                return
+            await self.converge_host_rows(
+                None,
+                active_rows,
+                observed,
+                host_id=host_id,
+                host_ip=host_ip,
+                agent_port=agent_port,
+            )
+        finally:
+            APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(time.monotonic() - cycle_start)
 
     async def converge_host_rows(
         self,
