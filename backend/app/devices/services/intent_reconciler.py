@@ -39,6 +39,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
     reconcile_unsatisfied_preconditions,
 )
+from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
@@ -372,6 +373,22 @@ async def _reconcile_terminal_run_intents(
         )
 
 
+async def _load_intents_for_evaluation(
+    db: AsyncSession, device: Device, node: AppiumNode, now: datetime
+) -> list[DeviceIntent]:
+    """Stored intents merged with the fact-derived intents synthesized for this device."""
+    stored = (
+        (
+            await db.execute(
+                select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [*stored, *(await synthesize_fact_intents(db, device, node, list(stored), now))]
+
+
 async def reconcile_device(
     db: AsyncSession,
     device_id: uuid.UUID,
@@ -402,15 +419,7 @@ async def reconcile_device(
         return
 
     now = now_utc()
-    intents = (
-        (
-            await db.execute(
-                select(DeviceIntent).where(DeviceIntent.device_id == device_id).order_by(DeviceIntent.source)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    intents = await _load_intents_for_evaluation(db, device, node, now)
     active_node_intents = [
         intent
         for intent in intents
