@@ -531,7 +531,6 @@ async def run_one_heartbeat_cycle(db: AsyncSession, heartbeat: object) -> None:
         heartbeat=heartbeat,  # type: ignore[arg-type]
         reconciler=Mock(reconcile_host=AsyncMock()),
         node_health=Mock(check_host_nodes=AsyncMock()),
-        connectivity=Mock(run_connectivity_pass=AsyncMock()),
         settings=heartbeat._settings,  # type: ignore[attr-defined]
         session_factory=heartbeat._session_factory,  # type: ignore[attr-defined]
     )
