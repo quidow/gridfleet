@@ -2,9 +2,9 @@
 
 Concerns run only for hosts this sweep pass proved alive: host liveness
 (heartbeat evaluation) and appium-node convergence from the same /agent/health
-payload, then node health as a cadence-gated stage. Later phases fold
-device_connectivity and telemetry in here with the same per-concern cadence
-gating (see stage_due).
+payload, then node health as a cadence-gated stage. Connectivity folds in as a
+cadence-gated global stage that runs after the per-host fan-out completes. Later
+phases fold telemetry in here with the same cadence gating (see stage_due).
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
+    from app.devices.services.connectivity import ConnectivityService
 
 logger = get_logger(__name__)
 
@@ -50,6 +51,7 @@ async def run_host_sweep_once(
     heartbeat: HeartbeatService,
     reconciler: ReconcilerProtocol,
     node_health: NodeHealthService,
+    connectivity: ConnectivityService,
     settings: SettingsReader,
     session_factory: SessionFactory,
     cycle_index: int = 0,
@@ -67,6 +69,11 @@ async def run_host_sweep_once(
         cycle_index,
         base_interval=settings.get_float("general.heartbeat_interval_sec"),
         stage_interval=settings.get_float("general.node_check_interval_sec"),
+    )
+    connectivity_due = stage_due(
+        cycle_index,
+        base_interval=settings.get_float("general.heartbeat_interval_sec"),
+        stage_interval=settings.get_float("general.device_check_interval_sec"),
     )
 
     async def _sweep_host(host_id: uuid.UUID) -> None:
@@ -107,6 +114,17 @@ async def run_host_sweep_once(
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
+    if connectivity_due:
+        # End the cycle-start read transaction before the long pass — no snapshot
+        # or lock may span the probe phase (repo contract). Host statuses read by
+        # check_connectivity are the ones this cycle's liveness stage just wrote.
+        await db.commit()
+        try:
+            await connectivity.run_connectivity_pass(db)
+        except Exception:
+            # Stage isolation: connectivity failure must not fail the sweep cycle.
+            logger.exception("host_sweep_connectivity_failed")
+
 
 class HostSweepLoop(BackgroundLoop):
     """Leader-owned shared host-observation loop."""
@@ -114,8 +132,9 @@ class HostSweepLoop(BackgroundLoop):
     loop_name = LOOP_NAME
     cycle_failed_message = "host_sweep_cycle_failed"
 
-    def __init__(self, *, services: AppiumNodeServices) -> None:
+    def __init__(self, *, services: AppiumNodeServices, connectivity: ConnectivityService) -> None:
         self._services = services
+        self._connectivity = connectivity
         self._cycle = 0
 
     @property
@@ -131,6 +150,7 @@ class HostSweepLoop(BackgroundLoop):
             heartbeat=self._services.heartbeat,
             reconciler=self._services.reconciler,
             node_health=self._services.node_health,
+            connectivity=self._connectivity,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
             cycle_index=self._cycle,

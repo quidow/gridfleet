@@ -49,7 +49,6 @@ LOOP_HEARTBEAT_STALE_GRACE_SEC = 10
 BACKGROUND_LOOP_NAMES = (
     "host_sweep",
     "session_sync",
-    "device_connectivity",
     "property_refresh",
     "hardware_telemetry",
     "host_resource_telemetry",

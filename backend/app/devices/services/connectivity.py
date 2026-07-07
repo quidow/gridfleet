@@ -13,7 +13,6 @@ from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_ac
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core import metrics_recorders as metrics
-from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
@@ -47,9 +46,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.devices.protocols import DeviceHealthProtocol, HealthFailureHandler
-    from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
     from app.packs.services.platform_resolver import ResolvedPackPlatform
 
@@ -89,6 +86,8 @@ IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 PROBE_FAILED_NAMESPACE = "device_checks.probe_failed"
 IP_PING_CHECK_ID = "ip_ping"
+# Phase-metric label for the connectivity pass, now a host-sweep stage rather than
+# its own loop. Kept for metric continuity (same convention as the node_health fold).
 LOOP_NAME = "device_connectivity"
 
 
@@ -1041,23 +1040,3 @@ class ConnectivityService:
             # Only ``restore_device_to_run`` (operator-driven) resets the counter.
             await reconcile_device(db, entry.device_id, publisher=self._publisher)
         await db.commit()
-
-
-class DeviceConnectivityLoop(BackgroundLoop):
-    """Background loop that checks device connectivity via host agents."""
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Device connectivity check failed"
-
-    def __init__(self, *, services: DeviceServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.device_check_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.connectivity.run_connectivity_pass(db)
