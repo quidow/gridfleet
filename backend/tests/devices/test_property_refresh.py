@@ -1,35 +1,14 @@
-import asyncio
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.devices.models import ConnectionType
-from app.devices.services.bulk import BulkOperationsService
-from app.devices.services.capability import DeviceCapabilityService
-from app.devices.services.connectivity import ConnectivityService
-from app.devices.services.data_cleanup import DataCleanupService
-from app.devices.services.fleet_capacity import FleetCapacityService
-from app.devices.services.groups import DeviceGroupsService
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.presenter import DevicePresenterService
-from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
-from app.devices.services.service import DeviceCrudService
-from app.devices.services.test_data import TestDataService
-from app.devices.services_container import DeviceServices
+from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus, OSType
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.packs.services.discovery import PackDiscoveryService
-from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
-from tests.helpers import test_event_bus as event_bus
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
 
 
 async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices(
@@ -139,77 +118,6 @@ async def test_property_refresh_continues_after_device_failure(
 
     refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
     assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
-
-
-async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
-    class _Observation:
-        @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[None]:
-            yield None
-
-    @asynccontextmanager
-    async def _fake_session() -> AsyncGenerator[object]:
-        # The real session_factory is a sync callable returning an async context
-        # manager; AsyncMock() here would make ``self._session_factory()`` a
-        # coroutine, failing the ``async with`` before _run_cycle ever runs (so
-        # the simulated RuntimeError would never be exercised).
-        yield MagicMock()
-
-    _pr_settings = FakeSettingsReader({"general.property_refresh_interval_sec": 1})
-    _pr_publisher = AsyncMock()
-
-    mock_property_refresh_svc = Mock()
-    mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
-
-    _pr_maintenance = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
-    _pr_crud = DeviceCrudService(settings=_pr_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
-    loop = PropertyRefreshLoop(
-        services=DeviceServices(
-            fleet_capacity=FleetCapacityService(),
-            data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
-            property_refresh=mock_property_refresh_svc,
-            groups=DeviceGroupsService(publisher=_pr_publisher, crud=_pr_crud),
-            maintenance=_pr_maintenance,
-            bulk=BulkOperationsService(
-                publisher=_pr_publisher,
-                settings=_pr_settings,
-                circuit_breaker=Mock(),
-                maintenance=_pr_maintenance,
-                crud=_pr_crud,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_pr_settings, publisher=event_bus
-                ),
-            ),
-            presenter=DevicePresenterService(settings=_pr_settings),
-            test_data=TestDataService(publisher=_pr_publisher),
-            crud=_pr_crud,
-            capability=DeviceCapabilityService(),
-            connectivity=ConnectivityService(
-                publisher=_pr_publisher,
-                settings=_pr_settings,
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=AsyncMock(),
-            ),
-            publisher=_pr_publisher,
-            settings=_pr_settings,
-            session_factory=_fake_session,
-            circuit_breaker=Mock(),
-            health=AsyncMock(),
-        )
-    )
-
-    with (
-        patch("app.core.background_loop.observe_background_loop", return_value=_Observation()),
-        patch("app.core.background_loop.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
-        patch("app.core.background_loop.logger.exception") as log_exception,
-        pytest.raises(asyncio.CancelledError),
-    ):
-        await loop.run()
-
-    log_exception.assert_called_once_with("Property refresh cycle failed")
 
 
 def _discovery_service(fetcher: AsyncMock | None = None) -> PackDiscoveryService:

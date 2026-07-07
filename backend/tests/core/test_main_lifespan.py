@@ -171,9 +171,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
     monkeypatch.setattr(main, "HostSweepLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
-    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
-    monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
-    monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
     monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
     monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
     monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
@@ -187,9 +184,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         expected_leader_loop_names = {
             "host_sweep_loop",
             "session_sync_loop",
-            "property_refresh_loop",
-            "hardware_telemetry_loop",
-            "host_resource_telemetry_loop",
             "durable_job_worker_loop",
             "run_reaper_loop",
             "data_cleanup_loop",
