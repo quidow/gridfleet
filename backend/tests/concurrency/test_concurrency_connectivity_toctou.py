@@ -1,6 +1,7 @@
 """Verify device_connectivity availability re-checks after row locks."""
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -12,6 +13,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.connectivity import ConnectivityService
 from app.hosts.models import Host, HostStatus
+from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -72,6 +74,7 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
+            session.add(Session(session_id="conn-race-became-live", device_id=device_id, status=SessionStatus.running))
             with state_write_guard.bypass():
                 locked.operational_state = DeviceOperationalState.busy
             await session.commit()
@@ -106,6 +109,8 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         verified=True,
     )
     device_id = device.id
+    db_session.add(Session(session_id="conn-race-was-live", device_id=device_id, status=SessionStatus.running))
+    await db_session.commit()
 
     lock_attempted = asyncio.Event()
     racer_done = asyncio.Event()
@@ -142,6 +147,9 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
+            live_session = (await session.execute(select(Session).where(Session.device_id == device_id))).scalar_one()
+            live_session.status = SessionStatus.passed
+            live_session.ended_at = datetime.now(UTC)
             with state_write_guard.bypass():
                 locked.operational_state = DeviceOperationalState.available
             await session.commit()

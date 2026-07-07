@@ -61,6 +61,11 @@ async def _setup_host_and_device(
             os_version="14",
             host_id=host.id,
             operational_state=device_operational_state,
+            lifecycle_policy_state=(
+                {"maintenance_reason": "test maintenance"}
+                if device_operational_state == DeviceOperationalState.maintenance
+                else {}
+            ),
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
@@ -770,6 +775,7 @@ async def test_connectivity_maintenance_disconnect_skipped_silently(
         host_id=db_host.id,
         name="maintenance-skip",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
         verified=True,
     )
     await db_session.commit()
@@ -926,6 +932,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
         host_id=db_host.id,
         name="maintenance-blip",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
         verified=True,
     )
     await db_session.commit()
@@ -1545,7 +1552,10 @@ async def test_ip_ping_skipped_for_held_device(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(
-        connection_type="usb", ip_address="10.0.0.7", operational_state=DeviceOperationalState.maintenance
+        connection_type="usb",
+        ip_address="10.0.0.7",
+        operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
     settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))

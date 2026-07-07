@@ -972,6 +972,7 @@ async def test_release_devices_unusual_restore_branches(
         name="Maintenance Release Device",
         identity_value="run-release-maint-001",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
     busy = await create_device(
         db_session,
@@ -1036,9 +1037,14 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
                 SimpleNamespace(
                     id=maintenance_id,
                     operational_state=DeviceOperationalState.maintenance,
+                    lifecycle_policy_state={"maintenance_reason": "test maintenance"},
                 ),
                 # not_reserved_id: device with no active reservation (was_reserved=False) and not busy
-                SimpleNamespace(id=not_reserved_id, operational_state=DeviceOperationalState.available),
+                SimpleNamespace(
+                    id=not_reserved_id,
+                    operational_state=DeviceOperationalState.available,
+                    lifecycle_policy_state={},
+                ),
             ]
         ),
     )
@@ -1145,6 +1151,7 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
         name="maint-no-hold",
         identity_value="run-release-maint-no-hold-001",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
     run = await create_reserved_run(
         db_session,
@@ -1160,6 +1167,42 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
     assert maintenance_device.id in pending
     # Operational state must not be overwritten — device stays in maintenance.
     assert maintenance_device.operational_state == DeviceOperationalState.maintenance
+
+
+@pytest.mark.db
+async def test_release_masked_maintenance_with_live_session_goes_directly_to_cleanup(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="masked-maintenance-live-session",
+        identity_value="run-release-masked-maintenance-001",
+        operational_state=DeviceOperationalState.busy,
+        lifecycle_policy_state={"maintenance_reason": "operator maintenance"},
+    )
+    run = await create_reserved_run(
+        db_session,
+        name="release-masked-maintenance-run",
+        devices=[device],
+        state=RunState.cancelled,
+    )
+    db_session.add(Session(session_id="masked-maintenance-live", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    await db_session.refresh(run, attribute_names=["device_reservations"])
+
+    legacy_session_query = AsyncMock(side_effect=AssertionError("maintenance must be checked from its fact first"))
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.session_service.device_has_running_session",
+        legacy_session_query,
+    )
+
+    pending = await _release_svc.release_devices(db_session, run, commit=False)
+
+    assert pending == [device.id]
+    legacy_session_query.assert_not_awaited()
 
 
 @pytest.mark.db

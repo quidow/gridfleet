@@ -18,11 +18,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import func, select
+
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
     import uuid
 
+    from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
 
 _LIVE_STATUSES = (SessionStatus.running, SessionStatus.pending)
@@ -39,3 +42,9 @@ def live_session_predicate(device_id: uuid.UUID | None = None) -> ColumnElement[
     if device_id is not None:
         predicate = (Session.device_id == device_id) & predicate
     return predicate
+
+
+async def device_has_live_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
+    """Return whether a running or mid-create session claims the device."""
+    count = await db.scalar(select(func.count()).select_from(Session).where(live_session_predicate(device_id)))
+    return bool(count)
