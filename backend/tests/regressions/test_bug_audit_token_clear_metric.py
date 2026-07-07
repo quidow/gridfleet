@@ -56,17 +56,15 @@ async def test_clear_expired_transition_token_does_not_emit_override_metric(
         verified=True,
     )
     expired_token = uuid.uuid4()
-    from app.devices.services import state_write_guard
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            transition_token=expired_token,
-            transition_deadline=datetime.now(UTC) - timedelta(seconds=30),
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        transition_token=expired_token,
+        transition_deadline=datetime.now(UTC) - timedelta(seconds=30),
+    )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(node)

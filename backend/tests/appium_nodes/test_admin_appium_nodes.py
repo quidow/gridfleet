@@ -11,7 +11,6 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType
-from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -30,17 +29,16 @@ async def test_admin_clear_transition_clears_token_and_records_event(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="adm-clear", verified=True)
     token = uuid.uuid4()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=0,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            transition_token=token,
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        transition_token=token,
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+    )
     db_session.add(node)
     await db_session.commit()
 

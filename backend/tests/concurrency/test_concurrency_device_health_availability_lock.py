@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from tests.helpers import create_device
 
@@ -77,17 +76,16 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         operational_state=DeviceOperationalState.offline,
         verified=True,
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
+    )
     device.device_checks_healthy = True
     device.session_viability_status = "passed"
     await db_session.commit()

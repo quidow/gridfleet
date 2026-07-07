@@ -13,7 +13,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificationCreate
 from app.devices.services import service as device_service
-from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.service import DeviceCrudService
@@ -134,15 +133,14 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
 
 
 async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=12345,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=12345,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
     db.add(node)
     await db.commit()
     await db.refresh(node)
@@ -571,10 +569,8 @@ async def test_list_devices_filter_status(
 
     from app.devices.models import DeviceOperationalState
 
-    with state_write_guard.bypass():
-        offline_device.operational_state = DeviceOperationalState.offline
-    with state_write_guard.bypass():
-        online_device.operational_state = DeviceOperationalState.available
+    offline_device.operational_state = DeviceOperationalState.offline
+    online_device.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     resp = await client.get("/api/devices", params={"status": "offline"})
@@ -616,12 +612,9 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
     from app.devices.models import DeviceOperationalState
     from tests.helpers import create_reservation
 
-    with state_write_guard.bypass():
-        busy_reserved.operational_state = DeviceOperationalState.busy
-    with state_write_guard.bypass():
-        plain_reserved.operational_state = DeviceOperationalState.available
-    with state_write_guard.bypass():
-        verifying_reserved.operational_state = DeviceOperationalState.verifying
+    busy_reserved.operational_state = DeviceOperationalState.busy
+    plain_reserved.operational_state = DeviceOperationalState.available
+    verifying_reserved.operational_state = DeviceOperationalState.verifying
     await create_reservation(db_session, device_id=busy_reserved.id)
     await create_reservation(db_session, device_id=plain_reserved.id)
     await create_reservation(db_session, device_id=verifying_reserved.id)
@@ -683,12 +676,9 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
     )
 
     # hold stays NULL for all rows; state is expressed via operational_state + reservation rows.
-    with state_write_guard.bypass():
-        reserved.operational_state = DeviceOperationalState.available
-    with state_write_guard.bypass():
-        maintenance.operational_state = DeviceOperationalState.maintenance
-    with state_write_guard.bypass():
-        available.operational_state = DeviceOperationalState.available
+    reserved.operational_state = DeviceOperationalState.available
+    maintenance.operational_state = DeviceOperationalState.maintenance
+    available.operational_state = DeviceOperationalState.available
     await create_reservation(db_session, device_id=reserved.id)
     await db_session.commit()
 
@@ -925,24 +915,23 @@ async def test_list_devices_filter_by_node_health(
         connection_target="node-health-ok",
         name="Node OK Device",
     )
-    with state_write_guard.bypass():
-        error_node = AppiumNode(
-            device_id=error_device.id,
-            port=4723,
-            pid=1,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            active_connection_target="t",
-            health_state="error",
-        )
-        ok_node = AppiumNode(
-            device_id=running_device.id,
-            port=4724,
-            pid=2,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4724,
-            active_connection_target="t",
-        )
+    error_node = AppiumNode(
+        device_id=error_device.id,
+        port=4723,
+        pid=1,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="t",
+        health_state="error",
+    )
+    ok_node = AppiumNode(
+        device_id=running_device.id,
+        port=4724,
+        pid=2,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4724,
+        active_connection_target="t",
+    )
     db_session.add_all([error_node, ok_node])
     await db_session.commit()
 
@@ -1210,18 +1199,17 @@ async def test_device_detail_surfaces_lifecycle_policy_summary(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {
-            "last_failure_reason": "ADB not responsive",
-            "last_action": "auto_stop_deferred",
-            "last_action_at": "2026-03-30T10:00:00+00:00",
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-03-30T10:00:00+00:00",
-            "recovery_suppressed_reason": None,
-            "backoff_until": None,
-            "recovery_backoff_attempts": 0,
-        }
+    device.lifecycle_policy_state = {
+        "last_failure_reason": "ADB not responsive",
+        "last_action": "auto_stop_deferred",
+        "last_action_at": "2026-03-30T10:00:00+00:00",
+        "stop_pending": True,
+        "stop_pending_reason": "ADB not responsive",
+        "stop_pending_since": "2026-03-30T10:00:00+00:00",
+        "recovery_suppressed_reason": None,
+        "backoff_until": None,
+        "recovery_backoff_attempts": 0,
+    }
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device_id}")
@@ -1240,27 +1228,25 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {
-            "last_failure_reason": "Node restart failed",
-            "last_action": "recovery_failed",
-            "last_action_at": "2026-03-30T10:00:00+00:00",
-            "stop_pending": False,
-            "stop_pending_reason": None,
-            "stop_pending_since": None,
-            "recovery_suppressed_reason": "Auto recovery suppressed",
-            "backoff_until": None,
-            "recovery_backoff_attempts": 0,
-        }
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-            )
+    device.lifecycle_policy_state = {
+        "last_failure_reason": "Node restart failed",
+        "last_action": "recovery_failed",
+        "last_action_at": "2026-03-30T10:00:00+00:00",
+        "stop_pending": False,
+        "stop_pending_reason": None,
+        "stop_pending_since": None,
+        "recovery_suppressed_reason": "Auto recovery suppressed",
+        "backoff_until": None,
+        "recovery_backoff_attempts": 0,
+    }
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
         )
+    )
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device_id}")
@@ -1424,10 +1410,8 @@ async def test_enter_device_maintenance_stops_running_node(
 
     node = await db_session.get(_AppiumNode, uuid.UUID(start_resp.json()["id"]))
     assert node is not None
-    with state_write_guard.bypass():
-        node.pid = 12345
-    with state_write_guard.bypass():
-        node.active_connection_target = "emulator-5554"
+    node.pid = 12345
+    node.active_connection_target = "emulator-5554"
     await db_session.commit()
 
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
@@ -2396,7 +2380,6 @@ async def test_not_accepting_available_device_reports_cooldown(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import state_write_guard
 
     device = await create_device_record(
         db_session,
@@ -2406,16 +2389,15 @@ async def test_not_accepting_available_device_reports_cooldown(
         name="Alloc Cooldown Device",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        # bypass only for the guarded node observation columns (pid/active_connection_target);
-        # accepting_new_sessions itself is not guarded.
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-        )
+    # bypass only for the guarded node observation columns (pid/active_connection_target);
+    # accepting_new_sessions itself is not guarded.
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+    )
     node.accepting_new_sessions = False
     db_session.add(node)
     await db_session.commit()
@@ -2433,7 +2415,6 @@ async def test_transitioning_available_device_reports_transitioning(
     import uuid
 
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import state_write_guard
 
     device = await create_device_record(
         db_session,
@@ -2443,18 +2424,17 @@ async def test_transitioning_available_device_reports_transitioning(
         name="Alloc Transitioning Device",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        # A restart is in flight: the process is still up (pid + target present, so the
-        # device stays ``available``) but ``transition_token`` is set, so the allocator's
-        # node-viability gate refuses it. Guarded node columns seeded under bypass().
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            transition_token=uuid.uuid4(),
-        )
+    # A restart is in flight: the process is still up (pid + target present, so the
+    # device stays ``available``) but ``transition_token`` is set, so the allocator's
+    # node-viability gate refuses it. Seed the node columns directly for this fixture.
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        transition_token=uuid.uuid4(),
+    )
     db_session.add(node)
     await db_session.commit()
 

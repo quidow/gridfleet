@@ -15,7 +15,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationUpdate
-from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
@@ -249,12 +248,9 @@ def _patch_running_node(
         del timeout_sec, poll_interval_sec
         node = await db.get(AppiumNode, node_id)
         assert node is not None
-        with state_write_guard.bypass():
-            node.port = port
-        with state_write_guard.bypass():
-            node.pid = pid
-        with state_write_guard.bypass():
-            node.active_connection_target = active_connection_target
+        node.port = port
+        node.pid = pid
+        node.active_connection_target = active_connection_target
         await db.flush()
         return node
 
@@ -867,22 +863,21 @@ async def test_existing_device_verification_marks_device_verified(
     default_host_id: str,
 ) -> None:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=f"discovered-{uuid.uuid4()}",
-            connection_target=f"discovered-{uuid.uuid4()}",
-            name="Discovered Pixel",
-            os_version="14",
-            operational_state=DeviceOperationalState.offline,
-            host_id=uuid.UUID(default_host_id),
-            verified_at=None,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"discovered-{uuid.uuid4()}",
+        connection_target=f"discovered-{uuid.uuid4()}",
+        name="Discovered Pixel",
+        os_version="14",
+        operational_state=DeviceOperationalState.offline,
+        host_id=uuid.UUID(default_host_id),
+        verified_at=None,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     await db_session.refresh(device)
@@ -926,17 +921,15 @@ async def test_existing_running_device_verification_can_enter_verifying(
         identity_scope="host",
         os_version="14",
     )
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.busy
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-        )
+    device.operational_state = DeviceOperationalState.busy
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -1146,24 +1139,23 @@ async def test_existing_device_verification_requires_missing_setup_fields(
     default_host_id: str,
 ) -> None:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-roku-dlenroc",
-            platform_id="roku_network",
-            identity_scheme="roku_serial",
-            identity_scope="global",
-            identity_value="roku-serial-1",
-            connection_target="192.168.1.60",
-            name="Roku Discovery",
-            os_version="unknown",
-            operational_state=DeviceOperationalState.offline,
-            device_type="real_device",
-            connection_type="network",
-            ip_address="192.168.1.60",
-            host_id=uuid.UUID(default_host_id),
-            verified_at=None,
-            device_config={},
-        )
+    device = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="roku-serial-1",
+        connection_target="192.168.1.60",
+        name="Roku Discovery",
+        os_version="unknown",
+        operational_state=DeviceOperationalState.offline,
+        device_type="real_device",
+        connection_type="network",
+        ip_address="192.168.1.60",
+        host_id=uuid.UUID(default_host_id),
+        verified_at=None,
+        device_config={},
+    )
     db_session.add(device)
     await db_session.commit()
     await db_session.refresh(device)
@@ -1185,23 +1177,22 @@ async def test_existing_device_verification_can_replace_device_config(
     default_host_id: str,
 ) -> None:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=f"config-verify-{uuid.uuid4()}",
-            connection_target="config-verify-target",
-            name="Config Verify Device",
-            os_version="14",
-            operational_state=DeviceOperationalState.offline,
-            device_config={"old": True},
-            host_id=uuid.UUID(default_host_id),
-            verified_at=None,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"config-verify-{uuid.uuid4()}",
+        connection_target="config-verify-target",
+        name="Config Verify Device",
+        os_version="14",
+        operational_state=DeviceOperationalState.offline,
+        device_config={"old": True},
+        host_id=uuid.UUID(default_host_id),
+        verified_at=None,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     await db_session.refresh(device)
@@ -1237,24 +1228,23 @@ async def test_existing_device_verification_config_replace_writes_verbatim(
     default_host_id: str,
 ) -> None:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-roku-dlenroc",
-            platform_id="roku_network",
-            identity_scheme="roku_serial",
-            identity_scope="global",
-            identity_value=f"roku-mask-{uuid.uuid4()}",
-            connection_target="192.168.1.55",
-            name="Masked Roku",
-            os_version="12.5",
-            operational_state=DeviceOperationalState.offline,
-            device_config={"roku_password": "super-secret", "label": "den"},
-            host_id=uuid.UUID(default_host_id),
-            verified_at=None,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            ip_address="192.168.1.55",
-        )
+    device = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value=f"roku-mask-{uuid.uuid4()}",
+        connection_target="192.168.1.55",
+        name="Masked Roku",
+        os_version="12.5",
+        operational_state=DeviceOperationalState.offline,
+        device_config={"roku_password": "super-secret", "label": "den"},
+        host_id=uuid.UUID(default_host_id),
+        verified_at=None,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.55",
+    )
     db_session.add(device)
     await db_session.commit()
     await db_session.refresh(device)
@@ -1292,36 +1282,34 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
     default_host_id: str,
 ) -> None:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=f"running-verify-{uuid.uuid4()}",
-            connection_target="running-verify-target",
-            name="Running Verify Device",
-            os_version="14",
-            operational_state=DeviceOperationalState.available,
-            device_config={"newCommandTimeout": 60},
-            host_id=uuid.UUID(default_host_id),
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"running-verify-{uuid.uuid4()}",
+        connection_target="running-verify-target",
+        name="Running Verify Device",
+        os_version="14",
+        operational_state=DeviceOperationalState.available,
+        device_config={"newCommandTimeout": 60},
+        host_id=uuid.UUID(default_host_id),
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                pid=12345,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=12345,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
         )
+    )
     await db_session.commit()
     await db_session.refresh(device)
 
@@ -1333,10 +1321,8 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         events.append(f"stop:{stopped_device.id}")
         assert stopped_device.id == device.id
         assert stopped_device.appium_node is not None
-        with state_write_guard.bypass():
-            stopped_device.appium_node.pid = None
-        with state_write_guard.bypass():
-            stopped_device.appium_node.active_connection_target = None
+        stopped_device.appium_node.pid = None
+        stopped_device.appium_node.active_connection_target = None
         return stopped_device.appium_node
 
     async def wait_for_updated_node(
@@ -1353,12 +1339,9 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         assert probe_device.device_config == {"newCommandTimeout": 120}
         node = await db.get(AppiumNode, node_id)
         assert node is not None
-        with state_write_guard.bypass():
-            node.port = 4724
-        with state_write_guard.bypass():
-            node.pid = 67890
-        with state_write_guard.bypass():
-            node.active_connection_target = probe_device.connection_target
+        node.port = 4724
+        node.pid = 67890
+        node.active_connection_target = probe_device.connection_target
         await db.flush()
         return node
 

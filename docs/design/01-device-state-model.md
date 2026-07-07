@@ -157,14 +157,15 @@ observed: pid · port · active_connection_target · health_running · health_st
 
 `backend/app/appium_nodes/models/node.py` defines `AppiumDesiredState` (with `CheckConstraint("desired_state IN ('running', 'stopped')")`). The effective state is derived in `app.devices.schemas.device` (`DesiredNodeState` / `EffectiveNodeState`). The Appium node is a **separate row** (one-to-one with `Device`, FK with cascade). This separation is deliberate: a device exists without a node, but a node cannot exist without a device.
 
-Sanctioned writers (defer to `app.devices.services.state_write_guard.ALLOWLIST` as the authoritative enumeration):
+Sanctioned writers (defer to `PROTECTED_COLUMN_WRITERS` in
+`backend/tests/contracts/test_no_direct_device_state_writes.py` for the authoritative enumeration):
 
 | Column(s) | Writers |
 | --- | --- |
 | `desired_state`, `desired_port` | only `app.appium_nodes.services.desired_state_writer.write_desired_state`, under the device row lock |
 | `transition_token`, `transition_deadline` | `desired_state_writer.write_desired_state`, plus direct clears in `app.appium_nodes.routers.admin` (under the device row lock) and `app.appium_nodes.services.reconciler_agent` |
 | `pid`, `port`, `active_connection_target` | reconciler writers (`app.appium_nodes.services.reconciler*`); active-target cache fill in `app.devices.services.capability` |
-| `health_running`, `health_state`, `last_health_checked_at` | `app.devices.services.health.apply_node_state_transition` (and the reconciler/heartbeat health writers per the ALLOWLIST) |
+| `health_running`, `health_state`, `last_health_checked_at` | `app.devices.services.health.apply_node_state_transition` and the reconciler/heartbeat health writers listed in `PROTECTED_COLUMN_WRITERS` |
 | `last_observed_at` | the reconciler's Core bulk update (`_touch_last_observed`) |
 
 The intent-vs-observation split mirrors the operational-state axis. Operator routes and lifecycle flows write **desired state only** (`mark_node_started` / `mark_node_stopped` / `restart_node` live in `app.appium_nodes.services.reconciler_agent`). `apply_node_state_transition` (`app.devices.services.health`) writes only `health_running` / `health_state` / `last_health_checked_at` and then delegates state derivation to `IntentService.mark_dirty_and_reconcile`; it does not write a node `state` enum. Observation loops live at `app.appium_nodes.services.node_health` (`_process_node_health`), `app.devices.services.connectivity` (`_stop_disconnected_node`), and `app.appium_nodes.services.heartbeat` (`_ingest_appium_restart_events`).
@@ -211,7 +212,7 @@ Any write to Device.operational_state or Device.lifecycle_policy_state
 MUST hold a row-level lock in the same transaction as the write.
 ```
 
-Prefer `app.devices.locking` (`backend/app/devices/locking.py`, `lock_device` / `lock_devices`) for that lock. The current run allocator is the exception: `_find_matching_devices` in `app.runs.service_allocator` locks allocatable rows with `SELECT ... FOR UPDATE SKIP LOCKED` (`with_for_update(of=Device, skip_locked=True)`) before reserving them. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
+Prefer `app.devices.locking` (`backend/app/devices/locking.py`, `lock_device` / `lock_devices`) for that lock. The current run allocator is the exception: `_find_matching_devices` in `app.runs.service_allocator` locks allocatable rows with `SELECT ... FOR UPDATE SKIP LOCKED` (`with_for_update(of=Device, skip_locked=True)`) before reserving them. API mutators run on every Uvicorn worker, while background loops run in the scheduler process. The advisory lock keeps the loop runner singleton; the device row lock keeps loops and API workers from racing on the same device.
 
 `AppiumNode` desired-state writes also hold the `app.appium_nodes.services.locking.lock_appium_node_for_device` row lock; `mark_node_started` and `mark_node_stopped` (in `app.appium_nodes.services.reconciler_agent`) acquire it after the device lock.
 

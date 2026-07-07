@@ -8,7 +8,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_reservation import RunReservationService
@@ -38,17 +37,16 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
         operational_state=DeviceOperationalState.busy,
         verified=True,
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                pid=12345,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=12345,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
         )
+    )
     await db_session.commit()
     device_id = device.id
 

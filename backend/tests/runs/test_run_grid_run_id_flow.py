@@ -12,7 +12,6 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentUnreachableError
-from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
@@ -88,15 +87,14 @@ async def _seed_schedulable_node(
         os_version="14",
         operational_state="available",
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=port,
-                pid=1000 + port,
-                active_connection_target=identity_value,
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=port,
+            pid=1000 + port,
+            active_connection_target=identity_value,
         )
+    )
     await db_session.commit()
     return device.id
 

@@ -9,7 +9,6 @@ import pytest
 
 from app.appium_nodes.models import AppiumNodeResourceClaim
 from app.appium_nodes.services import resource_service as svc
-from app.devices.services import state_write_guard
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -219,33 +218,31 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         )
         db_session.add(host)
         await db_session.flush()
-    with state_write_guard.bypass():
-        device = Device(
-            host_id=host_id,
-            pack_id="appium-uiautomator2",
-            platform_id="android",
-            identity_scheme="adb",
-            identity_scope="host",
-            identity_value=f"id-{uuidlib.uuid4().hex[:8]}",
-            name="test",
-            os_version="14",
-            operational_state=DeviceOperationalState.offline,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            hardware_health_status=HardwareHealthStatus.unknown,
-            hardware_telemetry_support_status=HardwareTelemetrySupportStatus.unknown,
-        )
+    device = Device(
+        host_id=host_id,
+        pack_id="appium-uiautomator2",
+        platform_id="android",
+        identity_scheme="adb",
+        identity_scope="host",
+        identity_value=f"id-{uuidlib.uuid4().hex[:8]}",
+        name="test",
+        os_version="14",
+        operational_state=DeviceOperationalState.offline,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        hardware_health_status=HardwareHealthStatus.unknown,
+        hardware_telemetry_support_status=HardwareTelemetrySupportStatus.unknown,
+    )
     db_session.add(device)
     await db_session.flush()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.stopped,
-            desired_port=None,
-            pid=None,
-            active_connection_target=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.flush()
     return node.id

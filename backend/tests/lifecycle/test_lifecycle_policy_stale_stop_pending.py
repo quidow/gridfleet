@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -42,14 +41,11 @@ async def _mark_device_available(
     del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
+    device.operational_state = DeviceOperationalState.available
     node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
     if node is not None:
-        with state_write_guard.bypass():
-            node.pid = 12345
-        with state_write_guard.bypass():
-            node.active_connection_target = "127.0.0.1:4723"
+        node.pid = 12345
+        node.active_connection_target = "127.0.0.1:4723"
 
 
 async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
@@ -62,31 +58,30 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
     "Waiting for active client session to finish" and the device is
     permanently stuck offline.
     """
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="stale-stop-pending-1",
-            connection_target="stale-stop-pending-1",
-            name="Stale Stop Pending Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            lifecycle_policy_state={
-                "stop_pending": True,
-                "stop_pending_reason": "Health probe failed",
-                "stop_pending_since": "2026-05-09T12:00:00+00:00",
-                "last_action": "auto_stop_deferred",
-                "last_failure_source": "node_health",
-                "last_failure_reason": "Probe failed",
-                "recovery_suppressed_reason": None,
-            },
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="stale-stop-pending-1",
+        connection_target="stale-stop-pending-1",
+        name="Stale Stop Pending Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "Health probe failed",
+            "stop_pending_since": "2026-05-09T12:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "Probe failed",
+            "recovery_suppressed_reason": None,
+        },
+    )
     db_session.add(device)
     await db_session.commit()
 
@@ -153,31 +148,30 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     When a live Session row exists the stale-clear guard should be skipped and
     attempt_auto_recovery must return False with the stop_pending suppression reason.
     """
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="stale-stop-pending-2",
-            connection_target="stale-stop-pending-2",
-            name="Live Session Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            lifecycle_policy_state={
-                "stop_pending": True,
-                "stop_pending_reason": "Health probe failed",
-                "stop_pending_since": "2026-05-09T12:00:00+00:00",
-                "last_action": "auto_stop_deferred",
-                "last_failure_source": "node_health",
-                "last_failure_reason": "Probe failed",
-                "recovery_suppressed_reason": None,
-            },
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="stale-stop-pending-2",
+        connection_target="stale-stop-pending-2",
+        name="Live Session Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "Health probe failed",
+            "stop_pending_since": "2026-05-09T12:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "Probe failed",
+            "recovery_suppressed_reason": None,
+        },
+    )
     db_session.add(device)
     await db_session.flush()
 

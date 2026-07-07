@@ -12,7 +12,6 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,25 +20,23 @@ if TYPE_CHECKING:
 
 
 async def _seed_device_with_node(db_session: AsyncSession, host: Host) -> tuple[uuid.UUID, AppiumNode]:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="serial",
-            identity_scope="host",
-            identity_value=f"writer-{uuid.uuid4().hex[:8]}",
-            connection_target=f"writer-{uuid.uuid4().hex[:8]}",
-            name="Writer Device",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="serial",
+        identity_scope="host",
+        identity_value=f"writer-{uuid.uuid4().hex[:8]}",
+        connection_target=f"writer-{uuid.uuid4().hex[:8]}",
+        name="Writer Device",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723)
+    node = AppiumNode(device_id=device.id, port=4723)
     db_session.add(node)
     await db_session.commit()
     return device.id, node

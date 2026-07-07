@@ -13,7 +13,6 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
@@ -456,17 +455,16 @@ async def test_mark_running_sessions_released_success_path(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-session-run", devices=[device], state=RunState.cancelled)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(session_id="release-success", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
@@ -536,17 +534,16 @@ async def test_mark_running_sessions_released_terminates_concurrently_across_hos
             identity_value=f"run-release-conc-{i:03d}",
             operational_state=DeviceOperationalState.busy,
         )
-        with state_write_guard.bypass():
-            db_session.add(
-                AppiumNode(
-                    device_id=device.id,
-                    port=4723 + i,
-                    desired_state=AppiumDesiredState.running,
-                    desired_port=4723 + i,
-                    pid=1,
-                    active_connection_target="",
-                )
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723 + i,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723 + i,
+                pid=1,
+                active_connection_target="",
             )
+        )
         devices.append(device)
     run = await create_reserved_run(db_session, name="release-conc-run", devices=devices, state=RunState.cancelled)
     sessions = [
@@ -594,17 +591,16 @@ async def test_mark_running_sessions_released_expires_claimed_ticket(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-ticket-run", devices=[device], state=RunState.cancelled)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(
         session_id="release-ticket-sess", device_id=device.id, run_id=run.id, status=SessionStatus.running
     )
@@ -645,17 +641,16 @@ async def test_mark_running_sessions_released_leaves_row_when_terminate_fails(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-termfail-run", devices=[device], state=RunState.cancelled)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(session_id="release-termfail", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
@@ -801,17 +796,16 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     run = await create_reserved_run(
         db_session, name="release-endedevent-run", devices=[device], state=RunState.cancelled
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(session_id="endedevent-sess", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
@@ -972,6 +966,7 @@ async def test_release_devices_unusual_restore_branches(
         name="Maintenance Release Device",
         identity_value="run-release-maint-001",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
     busy = await create_device(
         db_session,
@@ -1036,9 +1031,14 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
                 SimpleNamespace(
                     id=maintenance_id,
                     operational_state=DeviceOperationalState.maintenance,
+                    lifecycle_policy_state={"maintenance_reason": "test maintenance"},
                 ),
                 # not_reserved_id: device with no active reservation (was_reserved=False) and not busy
-                SimpleNamespace(id=not_reserved_id, operational_state=DeviceOperationalState.available),
+                SimpleNamespace(
+                    id=not_reserved_id,
+                    operational_state=DeviceOperationalState.available,
+                    lifecycle_policy_state={},
+                ),
             ]
         ),
     )
@@ -1145,6 +1145,7 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
         name="maint-no-hold",
         identity_value="run-release-maint-no-hold-001",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
     run = await create_reserved_run(
         db_session,
@@ -1160,6 +1161,42 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
     assert maintenance_device.id in pending
     # Operational state must not be overwritten — device stays in maintenance.
     assert maintenance_device.operational_state == DeviceOperationalState.maintenance
+
+
+@pytest.mark.db
+async def test_release_masked_maintenance_with_live_session_goes_directly_to_cleanup(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="masked-maintenance-live-session",
+        identity_value="run-release-masked-maintenance-001",
+        operational_state=DeviceOperationalState.busy,
+        lifecycle_policy_state={"maintenance_reason": "operator maintenance"},
+    )
+    run = await create_reserved_run(
+        db_session,
+        name="release-masked-maintenance-run",
+        devices=[device],
+        state=RunState.cancelled,
+    )
+    db_session.add(Session(session_id="masked-maintenance-live", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    await db_session.refresh(run, attribute_names=["device_reservations"])
+
+    legacy_session_query = AsyncMock(side_effect=AssertionError("maintenance must be checked from its fact first"))
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.session_service.device_has_running_session",
+        legacy_session_query,
+    )
+
+    pending = await _release_svc.release_devices(db_session, run, commit=False)
+
+    assert pending == [device.id]
+    legacy_session_query.assert_not_awaited()
 
 
 @pytest.mark.db

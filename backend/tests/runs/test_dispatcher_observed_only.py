@@ -8,7 +8,6 @@ import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.runs.schemas import DeviceRequirement
 from tests.helpers import create_device
 
@@ -25,18 +24,17 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="disp-fence", verified=True)
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.offline
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=0,
-                pid=None,
-                active_connection_target=None,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-            )
+    device.operational_state = DeviceOperationalState.offline
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=0,
+            pid=None,
+            active_connection_target=None,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
         )
+    )
     await db_session.commit()
 
     from app.runs.service_allocator import _find_matching_devices as _run_find_matching_devices
@@ -53,18 +51,17 @@ async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_st
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="disp-pid", verified=True)
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=12345,
-                active_connection_target=device.identity_value,
-            )
+    device.operational_state = DeviceOperationalState.available
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=12345,
+            active_connection_target=device.identity_value,
         )
+    )
     await db_session.commit()
 
     from app.runs.service_allocator import _find_matching_devices as _run_find_matching_devices
@@ -81,18 +78,17 @@ async def test_dispatcher_does_not_pick_device_when_pid_null(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="disp-no-pid", verified=True)
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=None,
-                active_connection_target=None,
-            )
+    device.operational_state = DeviceOperationalState.available
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=None,
+            active_connection_target=None,
         )
+    )
     await db_session.commit()
 
     from app.runs.service_allocator import _find_matching_devices as _run_find_matching_devices

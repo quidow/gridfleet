@@ -10,7 +10,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import bulk as bulk_service
-from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
@@ -73,15 +72,14 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             await db.commit()
             a_committed.set()
 
-        with state_write_guard.bypass():
-            node = AppiumNode(
-                device_id=dev.id,
-                port=4720 + (1 if dev.id == device_a_id else 2),
-                desired_state=AppiumDesiredState.running,
-                desired_port=4720,
-                pid=0,
-                active_connection_target="",
-            )
+        node = AppiumNode(
+            device_id=dev.id,
+            port=4720 + (1 if dev.id == device_a_id else 2),
+            desired_state=AppiumDesiredState.running,
+            desired_port=4720,
+            pid=0,
+            active_connection_target="",
+        )
         db.add(node)
         await db.flush()
         dev.appium_node = node
@@ -103,8 +101,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                 )
                 racer_acquired_b.set()
                 # Touch the row so the lock attempt is observable.
-                with state_write_guard.bypass():
-                    locked.operational_state = DeviceOperationalState.offline
+                locked.operational_state = DeviceOperationalState.offline
                 await racer_db.commit()
             except TimeoutError:
                 # Expected post-fix: per-task session holds B's lock during A's gate.

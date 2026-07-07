@@ -58,7 +58,6 @@ from app.devices.services import (
     intent_reconciler,
     property_refresh,
     readiness,
-    state_write_guard,
 )
 from app.devices.services import (
     health as device_health,
@@ -256,7 +255,6 @@ async def _scheduler_stall_watchdog() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    state_write_guard.register()
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
 

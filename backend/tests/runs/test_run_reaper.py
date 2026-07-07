@@ -191,19 +191,17 @@ async def test_expire_run_deletes_active_grid_session(
         state=RunState.active,
     )
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import state_write_guard
 
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     db_session.add(
         Session(
             session_id="grid-live-expire",

@@ -8,7 +8,6 @@ from sqlalchemy import select, update
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import connectivity as device_connectivity
-from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent_reconciler import reconcile_device as real_reconcile_device
 from tests.helpers import create_device
@@ -37,17 +36,16 @@ async def test_stop_disconnected_node_locks_device_and_node(
         operational_state=DeviceOperationalState.busy,
         verified=True,
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
+    )
     # The connectivity defer-stop (node.stop_pending=True) is synthesized from
     # device_checks_healthy IS FALSE, so the reconcile must observe this durable fact.
     device.device_checks_healthy = False

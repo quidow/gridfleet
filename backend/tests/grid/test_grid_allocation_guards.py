@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from app.packs.services.capability import StereotypeTemplate
 
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.grid.allocation import (
     AllocationService,
@@ -65,8 +64,7 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
-    with state_write_guard.bypass():
-        seeded_available_device.operational_state = DeviceOperationalState.maintenance
+    seeded_available_device.operational_state = DeviceOperationalState.maintenance
     result = await _service()._claim(
         db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
     )
@@ -178,8 +176,7 @@ async def test_claim_declines_when_node_not_viable_under_lock(
         .scalars()
         .one()
     )
-    with state_write_guard.bypass():
-        node.transition_token = uuid.uuid4()
+    node.transition_token = uuid.uuid4()
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
@@ -238,8 +235,7 @@ async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, se
     eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
     assert seeded_available_device.id in eligible_ids
 
-    with state_write_guard.bypass():
-        node.transition_token = uuid.uuid4()
+    node.transition_token = uuid.uuid4()
     await db_session.flush()
 
     eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
@@ -360,15 +356,14 @@ async def test_try_allocate_does_not_cross_route_platform_ids(db_session: AsyncS
         platform_id="android_tv",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        tv_node = AppiumNode(
-            device_id=tv_device.id,
-            port=4731,
-            pid=12346,
-            active_connection_target=tv_device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4731,
-        )
+    tv_node = AppiumNode(
+        device_id=tv_device.id,
+        port=4731,
+        pid=12346,
+        active_connection_target=tv_device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4731,
+    )
     db_session.add(tv_node)
     await db_session.commit()
 

@@ -8,7 +8,6 @@ import pytest
 
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_policy_state import write_state
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -49,23 +48,22 @@ def _build_lifecycle_policy_service() -> LifecyclePolicyService:
 async def _make_available_device(
     db_session: AsyncSession, db_host: Host, *, identity: str, recovery_allowed: bool = True
 ) -> Device:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=identity,
-            connection_target=identity,
-            name=f"Self-heal device {identity}",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            recovery_allowed=recovery_allowed,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name=f"Self-heal device {identity}",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        recovery_allowed=recovery_allowed,
+    )
     db_session.add(device)
     await db_session.flush()
     return device
@@ -190,22 +188,21 @@ async def test_connectivity_loss_keeps_device_in_run(
     db_host: Host,
 ) -> None:
     """note_connectivity_loss must NOT mark the reservation entry excluded."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="conn-loss-d1-1",
-            connection_target="conn-loss-d1-1",
-            name="Connectivity Loss D1 Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="conn-loss-d1-1",
+        connection_target="conn-loss-d1-1",
+        name="Connectivity Loss D1 Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 

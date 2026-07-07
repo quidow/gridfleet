@@ -8,7 +8,6 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceEventType
-from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
@@ -209,15 +208,14 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
         os_version="14",
         operational_state="available",
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1111,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1111,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
     db_session.add(node)
 
     now = datetime.now(UTC)

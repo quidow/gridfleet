@@ -9,7 +9,6 @@ from httpx2 import ASGITransport, AsyncClient
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
-from app.devices.services import state_write_guard
 from app.main import app
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
@@ -150,17 +149,16 @@ async def test_stop_node_node_manager_error_returns_400(
     """NodeManagerError from stop_node must map to HTTP 400."""
     device_id = await _make_device(db_session, host_id)
     # Add a running node so the stop guard passes
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=uuid.UUID(device_id),
-                port=4723,
-                pid=12345,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                active_connection_target=f"serial-{device_id[:8]}",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            pid=12345,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target=f"serial-{device_id[:8]}",
         )
+    )
     await db_session.commit()
 
     async def _raise(*args: object, **kwargs: object) -> None:

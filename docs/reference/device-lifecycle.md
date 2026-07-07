@@ -36,8 +36,8 @@ intents) and trigger an inline reconcile via `IntentService.mark_dirty_and_recon
 `register_intents_and_reconcile`, so the state is still written synchronously before
 commit, just via derivation. Device-creation paths still set the initial value at
 construction time (`app.devices.services.write`). The static test
-`tests/test_no_direct_device_state_writes.py` enforces both rules (the call-site scan
-and the attribute-assignment scan), alongside the runtime guard.
+`tests/contracts/test_no_direct_device_state_writes.py` enforces both rules with a
+call-site scan and a table-driven attribute-assignment scan.
 
 ### Derived axes at a glance
 
@@ -45,6 +45,19 @@ and the attribute-assignment scan), alongside the runtime guard.
 |------|-------------|
 | `operational_state` | Session row, verification intent, appium-node stop-in-flight, device readiness, `maintenance_reason` in `lifecycle_policy_state` |
 | `is_reserved` (computed) | Existence of an active `DeviceReservation` row — not a column on `Device` |
+
+### Reading `operational_state`
+
+Read `operational_state` for SQL filters, counts, sorting, presentation, allocation,
+and decisions that ask about the composed device state. For example, recovery code
+may need to know whether the device is derived down or up after all facts have been
+folded together.
+
+For a single-axis question, read the fact for that axis instead. Use
+`in_maintenance(device)` for maintenance, `device_has_live_session(...)` for a live
+session, and the reservation row for reservation. The enum uses the masking order
+`busy > verifying > maintenance > offline`; a higher state can hide a lower-axis
+fact. A busy device can therefore still be in maintenance.
 
 ### Key rules
 
@@ -56,18 +69,17 @@ and the attribute-assignment scan), alongside the runtime guard.
 - **Reservation** is derived from the existence of an active `DeviceReservation` row
   and exposed as the computed `is_reserved` field on read DTOs — there is no `hold`
   column.
-- **Direct attribute assignment** (`device.operational_state = ...`) is still
-  **forbidden** outside the sanctioned writers.  This rule is enforced at runtime
-  by the SQLAlchemy attribute-event guardrail in
-  `backend/app/devices/services/state_write_guard.py`.
+- **Direct attribute assignment** (`device.operational_state = ...`) is forbidden
+  outside the sanctioned writers. The static contract test scans production code
+  for assignments to every protected column.
 
 ### Sanctioned writers
 
-The `ALLOWLIST` dict in `state_write_guard.py` is the single source of truth for
-which production modules may write each protected column.  The table below
-summarizes the authoritative-state columns (operational/derived state and the
-appium-node desired/transition state); for the full enumeration — including the
-observation columns described further down — defer to `state_write_guard.py::ALLOWLIST`.
+`PROTECTED_COLUMN_WRITERS` in
+`tests/contracts/test_no_direct_device_state_writes.py` is the single source of
+truth for which production modules may write each protected column. The table below
+summarizes the operational and Appium-node desired/transition columns. Read the
+contract test for the full per-column enumeration.
 
 | Column | Sanctioned module |
 |--------|------------------|
@@ -82,17 +94,10 @@ the observed-state writers (the `app.appium_nodes.services.reconciler*` modules;
 `app.devices.services.capability`; verification teardown in
 `app.verification.services.execution`; and the node-creation paths for `port`):
 `pid`, `port`, `active_connection_target`, `health_running`, `health_state`,
-`last_health_checked_at`, `last_observed_at`.  Consult
-`state_write_guard.py::ALLOWLIST` for the exact per-column writer set rather than
-hand-copying it here.  Caveat: `last_observed_at` is written only by a SQLAlchemy
-Core bulk update in `app.appium_nodes.services.reconciler` (`_touch_last_observed`),
-which the attribute-event guard cannot intercept — Core updates never fire ORM
-`set` events — so its `ALLOWLIST` entry (which names `reconciler`) is documentary
-only, not enforced.
-
-Any new sanctioned writer must be added to `ALLOWLIST`; unlisted callers get
-`StateWriteOutsideSanctionedWriterError`.  Test fixtures seed state using
-`state_write_guard.bypass()` — production code must never call `bypass()`.
+`last_health_checked_at`, `last_observed_at`. Consult
+`PROTECTED_COLUMN_WRITERS` for the exact per-column writer set rather than copying
+it into another document. Add any new sanctioned writer to that table in the same
+change as the production write.
 
 ### Row locking
 
@@ -103,14 +108,8 @@ endpoints.  Background loops commit per device after the locked write window.  T
 scheduler's singleton advisory lock alone is NOT sufficient — API mutators run on every worker and
 bypass it.
 
-Exemption: `_touch_last_observed` (`app.appium_nodes.services.reconciler`) writes
-`appium_nodes.last_observed_at` **lockless** by design — a monotonic observability
-timestamp written by the single scheduler-serialized reconciler and read by no decision
-logic, so a lost update is harmless and self-heals next tick; revisit if any decision
-path ever reads it.
-
 Alembic schema/data migrations are an accepted out-of-band writer for protected
-columns; the runtime guard and row-lock contract apply to application code only.
+columns; the row-lock contract applies to application code only.
 
 ### Lifecycle JSON axis
 

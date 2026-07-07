@@ -7,7 +7,6 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
-from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -34,17 +33,16 @@ async def test_lock_appium_node_for_device_returns_locked_row(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="with-node", verified=True)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
+    )
     await db_session.commit()
 
     locked = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
@@ -59,15 +57,14 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
 ) -> None:
     """Verifies the helper actually emits SELECT … FOR UPDATE on the node row."""
     device = await create_device(db_session, host_id=db_host.id, name="lock-block", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -82,8 +79,7 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
             assert locked_node is not None
             stomper_started.set()
             await asyncio.sleep(0.2)
-            with state_write_guard.bypass():
-                locked_node.pid = 222
+            locked_node.pid = 222
             await session.commit()
             holder_done.set()
 
@@ -92,8 +88,7 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
         async with db_session_maker() as session:
             stmt = select(AppiumNode).where(AppiumNode.device_id == device_id)
             stomper_node = (await session.execute(stmt)).scalar_one()
-            with state_write_guard.bypass():
-                stomper_node.pid = 333
+            stomper_node.pid = 333
             await session.commit()
 
     await asyncio.gather(holder(), stomper())

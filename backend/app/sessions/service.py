@@ -13,7 +13,7 @@ from app.core.observability import get_logger
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor, keyset_newer, keyset_older
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.observation_reason import ObservationReason
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
@@ -459,12 +459,11 @@ class SessionCrudService:
                 # operational state (available or offline) from durable facts.
                 # The old state-machine branch (SESSION_ENDED / AUTO_STOP_EXECUTED)
                 # is replaced by reconciler-authoritative derivation.
-                if locked_device.operational_state == DeviceOperationalState.busy:
-                    await IntentService(db).mark_dirty_and_reconcile(
-                        locked_device.id,
-                        publisher=self._publisher,
-                        observed_reason=ObservationReason.session_ended,
-                    )
+                await IntentService(db).mark_dirty_and_reconcile(
+                    locked_device.id,
+                    publisher=self._publisher,
+                    observed_reason=ObservationReason.session_ended,
+                )
                 deferred_stop_target = locked_device
 
         if should_publish_ended:

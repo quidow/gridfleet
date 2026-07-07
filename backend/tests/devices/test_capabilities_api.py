@@ -6,7 +6,6 @@ import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
-from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -63,15 +62,14 @@ async def test_capabilities_endpoint_returns_live_android_allocations_for_runnin
         },
         operational_state="available",
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.flush()
     expected_caps = {
@@ -122,17 +120,16 @@ async def test_capabilities_endpoint_uses_active_target_for_running_avd(
         device_type="emulator",
         operational_state="available",
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                active_connection_target="emulator-5554",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            active_connection_target="emulator-5554",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
         )
+    )
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device.id}/capabilities")
@@ -166,15 +163,14 @@ async def test_capabilities_endpoint_returns_live_xcuitest_allocations_for_runni
             }
         },
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4725,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4725,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.flush()
     expected_caps = {

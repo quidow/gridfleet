@@ -25,6 +25,7 @@ from app.devices.services import link_repair
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
+from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
@@ -32,7 +33,7 @@ from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
-from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session
 from app.sessions.probe_inflight import is_probe_inflight
 from app.sessions.service import device_has_running_session
@@ -69,10 +70,11 @@ async def _resolve_platform_or_none(db: AsyncSession, device: Device) -> Resolve
 
 
 async def _is_held_or_reserved(db: AsyncSession, device: Device) -> bool:
-    return device.operational_state in (
-        DeviceOperationalState.busy,
-        DeviceOperationalState.maintenance,
-    ) or await device_is_reserved(db, device.id)
+    return (
+        in_maintenance(device)
+        or await device_has_live_session(db, device.id)
+        or await device_is_reserved(db, device.id)
+    )
 
 
 logger = get_logger(__name__)
@@ -388,7 +390,7 @@ class ConnectivityService:
         # the absent/disconnected-device shape — the device is unhealthy
         # regardless, and mutating the persisted counter and failure gauges
         # would skew ip_ping telemetry for devices that are simply gone.
-        if others_ok and ip_ping_entry is not None and device.operational_state != DeviceOperationalState.maintenance:
+        if others_ok and ip_ping_entry is not None and not in_maintenance(device):
             gated_ip_ping_ok = await _apply_failure_hysteresis(
                 db,
                 device,
@@ -412,7 +414,7 @@ class ConnectivityService:
         # Platform resolution runs only on the cold path (a probe actually failed), so the
         # healthy path stays a single counter reset.
         gated_others_ok = others_ok
-        if raw_checks_list and device.operational_state != DeviceOperationalState.maintenance:
+        if raw_checks_list and not in_maintenance(device):
             if others_ok:
                 await _apply_failure_hysteresis(
                     db, device, namespace=PROBE_FAILED_NAMESPACE, ok=True, threshold=probe_failed_threshold
@@ -879,7 +881,7 @@ class ConnectivityService:
             # Device disconnected.
             # Maintenance devices are placed there by operators; transient
             # disconnects are not actionable — skip silently.
-            if device.operational_state == DeviceOperationalState.maintenance:
+            if in_maintenance(device):
                 return
             # Transition gate: this disconnect was already recorded (health failed
             # and the node already stopped), so re-running the stop / health-write

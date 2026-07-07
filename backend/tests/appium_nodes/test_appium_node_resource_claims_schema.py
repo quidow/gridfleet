@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import inspect, select
 
-from app.devices.services import state_write_guard
-
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,15 +55,14 @@ async def test_managed_claim_cascades_when_node_deleted(db_session: AsyncSession
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="cascade-device")
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.flush()
 

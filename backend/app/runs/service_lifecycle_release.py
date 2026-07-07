@@ -27,18 +27,19 @@ if TYPE_CHECKING:
 
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_FORCED_RELEASE,
     IntentRegistration,
 )
+from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.reservation_query import device_is_reserved
 from app.grid import appium_direct
 from app.grid.allocation import resolve_router_target
 from app.sessions import service as session_service
-from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -137,16 +138,11 @@ class RunReleaseService:
             reservation.excluded = False
             reservation.excluded_at = None
             reservation.excluded_until = None
-            if device.operational_state == DeviceOperationalState.maintenance:
+            if in_maintenance(device):
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            if not was_reserved and device.operational_state != DeviceOperationalState.busy:
-                devices_pending_lifecycle_cleanup.append(device.id)
-                continue
-            if (
-                device.operational_state == DeviceOperationalState.busy
-                and await session_service.device_has_running_session(db, device.id)
-            ):
+            has_live_session = await device_has_live_session(db, device.id)
+            if has_live_session or not was_reserved:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
             await IntentService(db).mark_dirty_and_reconcile(

@@ -12,7 +12,6 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
-from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_active
 from tests.fakes import FakeSettingsReader, build_review_service
@@ -61,15 +60,14 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     operator action required.
     """
     device = await create_device(db_session, host_id=db_host.id, name="roku-flip-repro", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4725,
-            pid=27765,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4725,
+        pid=27765,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -209,15 +207,14 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     full payload on every restart.
     """
     device = await create_device(db_session, host_id=db_host.id, name="rr-refresh", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4725,
-            pid=27765,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4725,
+        pid=27765,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -290,15 +287,14 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
     (N13). An explicit operator start lifts the deny.
     """
     device = await create_device(db_session, host_id=db_host.id, name="op-stop-denies-recovery", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4725,
-            pid=27765,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4725,
+        pid=27765,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -326,15 +322,14 @@ async def test_operator_stop_active_tracks_sticky_stop(
     reviving an operator-stopped device (N13b): True only while the sticky stop holds,
     and lifted by an operator start."""
     device = await create_device(db_session, host_id=db_host.id, name="op-stop-active", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4726,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4726,
-            pid=27800,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4726,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4726,
+        pid=27800,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -366,12 +361,11 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, IntentRegistration
 
     device = await create_device(db_session, host_id=db_host.id, name="op-start-unblock", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.stopped,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.stopped,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -424,14 +418,13 @@ async def test_request_start_pins_existing_node_port(
     device = await create_device(db_session, host_id=db_host.id, name="pin-existing-port", verified=True)
     # Node sits on 4725 with pid NULL and desired_state=stopped, so candidate_ports
     # would offer 4723 first (lowest free in the default 4723..4823 range).
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.stopped,
-            desired_port=None,
-            pid=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -493,15 +486,14 @@ async def test_request_restart_moved_port_node_converges_without_oscillation(
     device = await create_device(db_session, host_id=db_host.id, name="restart-moved-port", verified=True)
     # Node is observed running on 4725 (agent respawned here after a kill -9 on
     # 4723). candidate_ports would still re-offer 4723 first.
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4725,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4725,
-            pid=27765,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4725,
+        pid=27765,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node

@@ -183,7 +183,6 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     uses ``self._viability.run_session_viability_probe``. The publisher is
     stored on the service and passed implicitly via the viability service."""
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import state_write_guard
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.policy import LifecyclePolicyService
@@ -191,15 +190,14 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="dw-publisher-forward", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_port=4723,
-            pid=12345,
-            active_connection_target="127.0.0.1:4723",
-            desired_state=AppiumDesiredState.running,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_port=4723,
+        pid=12345,
+        active_connection_target="127.0.0.1:4723",
+        desired_state=AppiumDesiredState.running,
+    )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device)
@@ -244,7 +242,6 @@ async def test_attempt_auto_recovery_suppressed_by_pending_session(db_session: A
     Before the shared live-session predicate, ``has_running_client_session`` filtered
     ``running`` only, so auto-recovery could restart the node mid-create."""
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import state_write_guard
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.policy import LifecyclePolicyService
@@ -253,15 +250,14 @@ async def test_attempt_auto_recovery_suppressed_by_pending_session(db_session: A
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="dw-pending-suppress", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_port=4723,
-            pid=12345,
-            active_connection_target="127.0.0.1:4723",
-            desired_state=AppiumDesiredState.running,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_port=4723,
+        pid=12345,
+        active_connection_target="127.0.0.1:4723",
+        desired_state=AppiumDesiredState.running,
+    )
     db_session.add(node)
     db_session.add(Session(session_id="alloc-pending", device_id=device.id, status=SessionStatus.pending))
     await db_session.commit()

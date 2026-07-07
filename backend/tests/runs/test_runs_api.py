@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.packs.models import DriverPack
 from app.runs import service as run_service
@@ -92,19 +91,18 @@ async def _create_run(client: AsyncClient, **overrides: object) -> dict[str, Any
 
 
 async def _seed_running_node(db_session: AsyncSession, device_id: uuid.UUID) -> None:
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device_id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="http://10.0.0.1:4723",
-                health_running=True,
-                health_state="ready",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device_id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="http://10.0.0.1:4723",
+            health_running=True,
+            health_state="ready",
         )
+    )
 
 
 async def test_create_run(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -777,8 +775,7 @@ async def test_force_release_restores_busy_run_devices(
     )
     device_row = await db_session.get(Device, device_id)
     assert device_row is not None
-    with state_write_guard.bypass():
-        device_row.operational_state = DeviceOperationalState.busy
+    device_row.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
     async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
@@ -1192,29 +1189,28 @@ async def test_create_run_excludes_device_mid_appium_restart(
         name="Ready Node",
         operational_state="available",
     )
-    with state_write_guard.bypass():
-        db_session.add_all(
-            [
-                AppiumNode(
-                    device_id=restarting.id,
-                    port=4723,
-                    desired_port=4723,
-                    pid=0,
-                    active_connection_target="",
-                    desired_state=AppiumDesiredState.running,
-                    transition_token=uuid.uuid4(),
-                    transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
-                ),
-                AppiumNode(
-                    device_id=available.id,
-                    port=4724,
-                    desired_port=4724,
-                    pid=0,
-                    active_connection_target="",
-                    desired_state=AppiumDesiredState.running,
-                ),
-            ]
-        )
+    db_session.add_all(
+        [
+            AppiumNode(
+                device_id=restarting.id,
+                port=4723,
+                desired_port=4723,
+                pid=0,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                transition_token=uuid.uuid4(),
+                transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+            ),
+            AppiumNode(
+                device_id=available.id,
+                port=4724,
+                desired_port=4724,
+                pid=0,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+            ),
+        ]
+    )
     await db_session.commit()
 
     data = await _create_run(client)

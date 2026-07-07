@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 import pytest_asyncio
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.services import state_write_guard
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
@@ -74,17 +73,16 @@ async def test_grid_status_with_running_node_and_session(
     """Grid status reflects running nodes and lists active session ids."""
     device = await _seed_device(db_session, default_host_id, operational_state="available")
 
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                pid=9999,
-                active_connection_target="emulator-5554",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=9999,
+            active_connection_target="emulator-5554",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
         )
+    )
     db_session.add(
         Session(
             session_id="sess-abc",
@@ -118,17 +116,16 @@ async def test_grid_status_counts_pending_allocation(
     device as free."""
     device = await _seed_device(db_session, default_host_id, operational_state="busy")
 
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                pid=9999,
-                active_connection_target="emulator-5554",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=9999,
+            active_connection_target="emulator-5554",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
         )
+    )
     db_session.add(
         Session(
             session_id="alloc-pending-placeholder",

@@ -12,7 +12,6 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.models.intent import DeviceIntent
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
-from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
@@ -46,21 +45,20 @@ def _job() -> dict[str, object]:
 
 
 def _device(host: Host | None = None) -> Device:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="verify-unit-001",
-            connection_target="verify-unit-001",
-            name="Verify Unit",
-            os_version="14",
-            host_id=host.id if host else None,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="verify-unit-001",
+        connection_target="verify-unit-001",
+        name="Verify Unit",
+        os_version="14",
+        host_id=host.id if host else None,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     if host is not None:
         device.host = host
     return device
@@ -180,8 +178,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         name="Verify Existing",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=existing.id, port=4723, pid=1, active_connection_target="live")
+    node = AppiumNode(device_id=existing.id, port=4723, pid=1, active_connection_target="live")
     existing.appium_node = node
     context = PreparedVerificationContext(
         mode="update",
@@ -231,8 +228,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     assert started is None
     assert error == "no node"
 
-    with state_write_guard.bypass():
-        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
+    fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
     nm_timeout = AsyncMock()
     nm_timeout.start_node = AsyncMock(return_value=fake_node)
     nm_timeout.wait_for_node_running = AsyncMock(return_value=None)
@@ -255,14 +251,13 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
 
-    with state_write_guard.bypass():
-        running_node = AppiumNode(
-            id=__import__("uuid").uuid4(),
-            device_id=existing.id,
-            port=4723,
-            pid=1,
-            active_connection_target="live",
-        )
+    running_node = AppiumNode(
+        id=__import__("uuid").uuid4(),
+        device_id=existing.id,
+        port=4723,
+        pid=1,
+        active_connection_target="live",
+    )
     nm_probe_fail = AsyncMock()
     nm_probe_fail.start_node = AsyncMock(return_value=running_node)
     nm_probe_fail.wait_for_node_running = AsyncMock(return_value=running_node)
@@ -336,8 +331,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         name="Verify Converge",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
+    fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
     nm_converge = AsyncMock()
     nm_converge.start_node = AsyncMock(return_value=fake_node)
     nm_converge.wait_for_node_running = AsyncMock(return_value=None)
@@ -426,8 +420,7 @@ async def test_run_probe_swallows_transient_converge_kick_failure(
         name="Verify Converge Transient",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
+    fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
     nm = AsyncMock()
     nm.start_node = AsyncMock(return_value=fake_node)
     nm.wait_for_node_running = AsyncMock(return_value=None)
@@ -476,14 +469,13 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         name="Verify Inflight",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        running_node = AppiumNode(
-            id=__import__("uuid").uuid4(),
-            device_id=existing.id,
-            port=4723,
-            pid=1,
-            active_connection_target="live",
-        )
+    running_node = AppiumNode(
+        id=__import__("uuid").uuid4(),
+        device_id=existing.id,
+        port=4723,
+        pid=1,
+        active_connection_target="live",
+    )
     nm_inflight = AsyncMock()
     nm_inflight.start_node = AsyncMock(return_value=running_node)
     nm_inflight.wait_for_node_running = AsyncMock(return_value=running_node)
@@ -541,14 +533,13 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         name="Verify Inflight Raises",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        running_node = AppiumNode(
-            id=__import__("uuid").uuid4(),
-            device_id=existing.id,
-            port=4723,
-            pid=1,
-            active_connection_target="live",
-        )
+    running_node = AppiumNode(
+        id=__import__("uuid").uuid4(),
+        device_id=existing.id,
+        port=4723,
+        pid=1,
+        active_connection_target="live",
+    )
     nm_raises = AsyncMock()
     nm_raises.start_node = AsyncMock(return_value=running_node)
     nm_raises.wait_for_node_running = AsyncMock(return_value=running_node)
@@ -596,8 +587,7 @@ async def test_stop_verification_node_cleanup_error_path(
         name="Verify Save",
     )
 
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723)
+    node = AppiumNode(device_id=device.id, port=4723)
     nm_stop_boom = AsyncMock()
     nm_stop_boom.stop_node = AsyncMock(side_effect=RuntimeError("boom"))
     cleanup_error = await execution._stop_verification_node_if_running(_job(), db_session, device, node, nm_stop_boom)
@@ -624,8 +614,7 @@ async def test_verification_execution_remaining_error_branches(
     with pytest.raises(NodeManagerError, match="No running node"):
         await execution._stop_managed_node_for_verification(db_session, device)
 
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
+    node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
     db_session.add(node)
     await db_session.commit()
     monkeypatch.setattr("app.verification.services.execution.write_desired_state", AsyncMock())
@@ -681,8 +670,7 @@ async def test_stop_managed_node_locks_device_before_desired_state_write(
         connection_target="verify-lock-001",
         name="Verify Lock",
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
+    node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, ["appium_node"])

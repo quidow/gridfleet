@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services import policy as lifecycle_policy_module
@@ -219,27 +218,25 @@ async def _mark_device_available(
 
     device = await db.get(_Device, device_id)  # type: ignore[attr-defined]
     assert device is not None
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
+    device.operational_state = DeviceOperationalState.available
 
 
 async def _make_offline_verified_device(db_session: AsyncSession, db_host: Host, name: str) -> Device:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=name,
-            connection_target=name,
-            name=name,
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=name,
+        connection_target=name,
+        name=name,
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     return device
@@ -292,8 +289,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         # change tracker — in-place mutation on a JSON column does not.
         state = dict(device.lifecycle_policy_state or {})
         state["backoff_until"] = None
-        with state_write_guard.bypass():
-            device.lifecycle_policy_state = state
+        device.lifecycle_policy_state = state
         await db_session.commit()
 
         # Attempt #2 — counter crosses threshold, device gets shelved.

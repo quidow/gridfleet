@@ -9,7 +9,6 @@ import pytest_asyncio
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.connectivity import (
     ConnectivityService,
     _fetch_lifecycle_state,
@@ -49,36 +48,39 @@ async def _setup_host_and_device(
     db_session.add(host)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=connection_target,
-            connection_target=connection_target,
-            name="Test Phone",
-            os_version="14",
-            host_id=host.id,
-            operational_state=device_operational_state,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=connection_target,
+        connection_target=connection_target,
+        name="Test Phone",
+        os_version="14",
+        host_id=host.id,
+        operational_state=device_operational_state,
+        lifecycle_policy_state=(
+            {"maintenance_reason": "test maintenance"}
+            if device_operational_state == DeviceOperationalState.maintenance
+            else {}
+        ),
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 
     node = None
     if with_node:
-        with state_write_guard.bypass():
-            node = AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-            )
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
         db_session.add(node)
 
     await db_session.commit()
@@ -302,23 +304,22 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
     failing.identity_value = "endpoint-failing"
     failing.connection_type = ConnectionType.network
     failing.ip_address = "192.168.1.51"
-    with state_write_guard.bypass():
-        ping_miss = Device(
-            pack_id="appium-roku-dlenroc",
-            platform_id="roku_network",
-            identity_scheme="roku_serial",
-            identity_scope="global",
-            identity_value="endpoint-ping-miss",
-            connection_target="192.168.1.52",
-            name="Endpoint Ping Miss",
-            os_version="14",
-            host_id=_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            ip_address="192.168.1.52",
-        )
+    ping_miss = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="endpoint-ping-miss",
+        connection_target="192.168.1.52",
+        name="Endpoint Ping Miss",
+        os_version="14",
+        host_id=_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.52",
+    )
     db_session.add(ping_miss)
     await db_session.commit()
 
@@ -360,40 +361,38 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
     not_ready.identity_value = "endpoint-not-ready"
     not_ready.connection_type = ConnectionType.network
     not_ready.ip_address = "192.168.1.53"
-    with state_write_guard.bypass():
-        manual = Device(
-            pack_id="appium-roku-dlenroc",
-            platform_id="roku_network",
-            identity_scheme="roku_serial",
-            identity_scope="global",
-            identity_value="endpoint-manual",
-            connection_target="192.168.1.54",
-            name="Endpoint Manual",
-            os_version="14",
-            host_id=_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            ip_address="192.168.1.54",
-        )
-    with state_write_guard.bypass():
-        failed_recovery = Device(
-            pack_id="appium-roku-dlenroc",
-            platform_id="roku_network",
-            identity_scheme="roku_serial",
-            identity_scope="global",
-            identity_value="endpoint-failed-recovery",
-            connection_target="192.168.1.55",
-            name="Endpoint Failed Recovery",
-            os_version="14",
-            host_id=_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            ip_address="192.168.1.55",
-        )
+    manual = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="endpoint-manual",
+        connection_target="192.168.1.54",
+        name="Endpoint Manual",
+        os_version="14",
+        host_id=_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.54",
+    )
+    failed_recovery = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="endpoint-failed-recovery",
+        connection_target="192.168.1.55",
+        name="Endpoint Failed Recovery",
+        os_version="14",
+        host_id=_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.55",
+    )
     db_session.add_all([manual, failed_recovery])
     await db_session.commit()
 
@@ -770,6 +769,7 @@ async def test_connectivity_maintenance_disconnect_skipped_silently(
         host_id=db_host.id,
         name="maintenance-skip",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
         verified=True,
     )
     await db_session.commit()
@@ -926,6 +926,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
         host_id=db_host.id,
         name="maintenance-blip",
         operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
         verified=True,
     )
     await db_session.commit()
@@ -1545,7 +1546,10 @@ async def test_ip_ping_skipped_for_held_device(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(
-        connection_type="usb", ip_address="10.0.0.7", operational_state=DeviceOperationalState.maintenance
+        connection_type="usb",
+        ip_address="10.0.0.7",
+        operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
     settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
@@ -1777,22 +1781,21 @@ async def test_unhealthy_probe_present_marks_health_failure(db_session: AsyncSes
 async def test_enumeration_fetched_once_per_host_for_multiple_misses(db_session: AsyncSession) -> None:
     """Two failing devices on one host share a single enumeration fetch."""
     host, _device, _ = await _setup_host_and_device(db_session)
-    with state_write_guard.bypass():
-        second = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="dc-002",
-            connection_target="dc-002",
-            name="Second Phone",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    second = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dc-002",
+        connection_target="dc-002",
+        name="Second Phone",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(second)
     await db_session.commit()
 
@@ -2212,8 +2215,7 @@ async def test_disconnected_already_recorded_device_skips_reconcile(
         device_operational_state=DeviceOperationalState.busy,
         with_node=False,
     )
-    with state_write_guard.bypass():
-        device.device_checks_healthy = False
+    device.device_checks_healthy = False
     await db_session.commit()
 
     from app.devices.services.intent import IntentService
@@ -2253,8 +2255,7 @@ async def test_disconnected_first_observation_still_reconciles(
         device_operational_state=DeviceOperationalState.busy,
         with_node=False,
     )
-    with state_write_guard.bypass():
-        device.device_checks_healthy = True  # was healthy → this cycle is the transition
+    device.device_checks_healthy = True  # was healthy → this cycle is the transition
     await db_session.commit()
 
     from app.devices.services.intent import IntentService

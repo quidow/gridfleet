@@ -7,7 +7,6 @@ import pytest
 
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent
-from app.devices.services import state_write_guard
 from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.devices.services.intent_types import NODE_PROCESS
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, set_maintenance_reason
@@ -56,8 +55,7 @@ async def test_indefinitely_excluded_reservation_synthesizes_nothing(db_session:
 @pytest.mark.db
 async def test_maintenance_reason_synthesizes_stop_and_recovery_deny(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="synth-maint")
-    with state_write_guard.bypass():
-        set_maintenance_reason(device, "Operator entered maintenance")
+    set_maintenance_reason(device, "Operator entered maintenance")
     await db_session.flush()
     intents = await synthesize_fact_intents(db_session, device, None, [], now_utc())
     by_source = {i.source: i for i in intents}

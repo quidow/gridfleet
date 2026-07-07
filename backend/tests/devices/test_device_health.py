@@ -16,7 +16,6 @@ from sqlalchemy.exc import NoResultFound
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import health as svc
-from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from tests.helpers import test_event_bus as event_bus
 
@@ -32,21 +31,20 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 @pytest_asyncio.fixture
 async def db_with_device(db_session: AsyncSession, db_host: Host) -> AsyncGenerator[tuple[AsyncSession, Device]]:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="health-service-device",
-            connection_target="health-service-device",
-            name="Health Service Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="health-service-device",
+        connection_target="health-service-device",
+        name="Health Service Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     await db_session.refresh(device, attribute_names=["appium_node"])
@@ -66,15 +64,14 @@ async def test_build_public_summary_healthy_when_all_signals_ok(
     db, device = db_with_device
     device.device_checks_healthy = True
     device.session_viability_status = "passed"
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -123,8 +120,7 @@ async def test_update_session_viability_persists_columns(db_with_device: tuple[A
 @pytest.mark.asyncio
 async def test_failed_health_signal_marks_offline(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
+    device.operational_state = DeviceOperationalState.available
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="lost")
     await db.commit()
@@ -143,8 +139,7 @@ async def test_healthy_signal_does_not_change_busy_device(
     The background reconciler will eventually correct it on the next cycle.
     """
     db, device = db_with_device
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.busy
+    device.operational_state = DeviceOperationalState.busy
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="ok")
     await db.commit()
@@ -222,16 +217,15 @@ async def test_per_verdict_checked_at_timestamps(
     device.device_checks_checked_at = datetime.now(UTC) - timedelta(minutes=10)
     device.session_viability_status = "passed"
     device.session_viability_checked_at = datetime.now(UTC) - timedelta(minutes=5)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-            last_health_checked_at=datetime.now(UTC),
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+        last_health_checked_at=datetime.now(UTC),
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -343,17 +337,15 @@ async def test_apply_node_state_transition_mark_offline_false_preserves_hysteres
     background reconciler.
     """
     db, device = db_with_device
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-        )
+    device.operational_state = DeviceOperationalState.available
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
 
@@ -385,15 +377,14 @@ async def test_apply_node_state_transition_emits_event_on_node_only_flip(
     event_bus_capture: list[tuple[str, dict[str, object]]],
 ) -> None:
     db, device = db_with_device
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
 
@@ -412,15 +403,14 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     db_with_device: tuple[AsyncSession, Device],
 ) -> None:
     db, device = db_with_device
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
 
@@ -498,17 +488,16 @@ async def test_apply_node_state_transition_steady_healthy_skips_mark_dirty(
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-            health_running=True,
-            health_state=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+        health_running=True,
+        health_state=None,
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -539,17 +528,16 @@ async def test_apply_node_state_transition_recovery_marks_dirty(
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-            health_running=False,
-            health_state="error",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+        health_running=False,
+        health_state="error",
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -581,17 +569,16 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-            health_running=True,
-            health_state=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+        health_running=True,
+        health_state=None,
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -621,17 +608,16 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="target",
-            health_running=True,
-            health_state=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+        health_running=True,
+        health_state=None,
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])

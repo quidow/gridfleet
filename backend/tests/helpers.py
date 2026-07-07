@@ -13,7 +13,6 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.models import ControlPlaneStateEntry
 from app.core.observability import BACKGROUND_LOOP_NAMES, LOOP_HEARTBEAT_NAMESPACE
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
-from app.devices.services import state_write_guard
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
@@ -148,21 +147,17 @@ async def create_device_record(
         device_config=device_config,
         test_data=resolved_test_data,
     )
-    with state_write_guard.bypass():
-        # Seed protected state columns for test fixture — bypass is valid here.
-        device.operational_state = (
-            operational_state
-            if isinstance(operational_state, DeviceOperationalState)
-            else DeviceOperationalState(operational_state)
-        )
+    device.operational_state = (
+        operational_state
+        if isinstance(operational_state, DeviceOperationalState)
+        else DeviceOperationalState(operational_state)
+    )
     if verified:
         device.verified_at = datetime.now(UTC)
 
     # Apply any remaining overrides directly on the Device instance.
-    # Bypass the guard because test overrides may include protected columns.
-    with state_write_guard.bypass():
-        for field, value in extra.items():
-            setattr(device, field, value)
+    for field, value in extra.items():
+        setattr(device, field, value)
 
     db_session.add(device)
     await db_session.commit()
@@ -311,16 +306,14 @@ async def seed_host_and_running_node(
 ) -> tuple[Host, Device, AppiumNode]:
     """Seed Host + Device + AppiumNode in running state. Used for crash/restart tests."""
     host, device = await seed_host_and_device(db_session, identity=identity)
-    with state_write_guard.bypass():
-        # Seed a running AppiumNode for test fixture — bypass is valid here.
-        node = AppiumNode(
-            device_id=device.id,
-            port=port,
-            pid=12345,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=port,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=port,
+        pid=12345,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=port,
+    )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(node)
