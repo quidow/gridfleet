@@ -9,8 +9,10 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, DeviceOperationalState
+from app.core.timeutil import now_utc
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
 from app.devices.services import state_write_guard
+from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
@@ -110,10 +112,10 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     assert device.recovery_allowed is False
     assert device.recovery_blocked_reason == MAINTENANCE_HOLD_SUPPRESSION_REASON
     assert node.observed_running
-    intents = (
-        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
-    )
-    assert {intent.source for intent in intents} == {
+    # maintenance:node + maintenance:recovery are now synthesized from maintenance_reason,
+    # not stored; assert they are derived rather than querying device_intents.
+    synthesized = await synthesize_fact_intents(db_session, device, node, [], now_utc())
+    assert {i.source for i in synthesized if i.source.startswith("maintenance:")} == {
         f"maintenance:node:{device.id}",
         f"maintenance:recovery:{device.id}",
     }

@@ -311,27 +311,6 @@ async def test_forced_release_registers_run_active_precondition(
 
 
 @pytest.mark.db
-async def test_maintenance_intents_carry_maintenance_active_precondition(
-    db_session: AsyncSession, db_host: Host
-) -> None:
-    from app.devices.services.maintenance import _maintenance_intents
-
-    device = await create_device(db_session, host_id=db_host.id, name="maint-prec")
-    intents = _maintenance_intents(device.id)
-    expected = {
-        "kind": "maintenance_active",
-        "device_id": str(device.id),
-    }
-    sources = {intent.source for intent in intents}
-    assert sources == {
-        f"maintenance:node:{device.id}",
-        f"maintenance:recovery:{device.id}",
-    }
-    for intent in intents:
-        assert intent.precondition == expected
-
-
-@pytest.mark.db
 async def test_node_health_registers_node_running_precondition(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:

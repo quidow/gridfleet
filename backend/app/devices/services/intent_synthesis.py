@@ -18,7 +18,14 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.devices.models import DeviceIntent, DeviceReservation
-from app.devices.services.intent_types import GRID_ROUTING, PRIORITY_RUN_ROUTING
+from app.devices.services.intent_types import (
+    GRID_ROUTING,
+    NODE_PROCESS,
+    PRIORITY_MAINTENANCE,
+    PRIORITY_RUN_ROUTING,
+    RECOVERY,
+)
+from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, in_maintenance
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -37,7 +44,9 @@ async def synthesize_fact_intents(
     now: datetime,
 ) -> list[DeviceIntent]:
     """Return in-memory intents derived from domain facts. Grows per family."""
-    return await _reservation_intents(db, device, now)
+    intents = await _reservation_intents(db, device, now)
+    intents += _maintenance_intents(device)
+    return intents
 
 
 async def _reservation_intents(db: AsyncSession, device: Device, now: datetime) -> list[DeviceIntent]:
@@ -64,4 +73,28 @@ async def _reservation_intents(db: AsyncSession, device: Device, now: datetime) 
             run_id=entry.run_id,
             payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
         )
+    ]
+
+
+def _maintenance_intents(device: Device) -> list[DeviceIntent]:
+    """Graceful stop + recovery deny derived from the maintenance_reason fact."""
+    if not in_maintenance(device):
+        return []
+    return [
+        DeviceIntent(
+            device_id=device.id,
+            source=f"maintenance:node:{device.id}",
+            axis=NODE_PROCESS,
+            payload={"action": "stop", "priority": PRIORITY_MAINTENANCE, "stop_mode": "graceful"},
+        ),
+        DeviceIntent(
+            device_id=device.id,
+            source=f"maintenance:recovery:{device.id}",
+            axis=RECOVERY,
+            # Reason must equal MAINTENANCE_HOLD_SUPPRESSION_REASON exactly:
+            # clear_maintenance_recovery_suppression (exit_maintenance) only clears the
+            # suppression when the stored value matches this constant. Any drift freezes
+            # the node effective_state at "blocked" after an operator exit.
+            payload={"allowed": False, "priority": PRIORITY_MAINTENANCE, "reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
+        ),
     ]

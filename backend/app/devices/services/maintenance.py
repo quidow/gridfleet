@@ -7,14 +7,10 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
-    PRIORITY_MAINTENANCE,
-    RECOVERY,
     IntentRegistration,
-    MaintenanceActivePrecondition,
     verification_intent_source,
 )
 from app.devices.services.lifecycle_policy_state import (
-    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_maintenance_reason,
     clear_maintenance_recovery_suppression,
     set_maintenance_reason,
@@ -33,52 +29,6 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
-
-
-def _maintenance_sources(device_id: uuid.UUID) -> list[str]:
-    return [
-        f"maintenance:node:{device_id}",
-        f"maintenance:grid:{device_id}",
-        f"maintenance:recovery:{device_id}",
-    ]
-
-
-def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
-    precondition: MaintenanceActivePrecondition = {
-        "kind": "maintenance_active",
-        "device_id": str(device_id),
-    }
-    # No GRID_ROUTING (maintenance:grid) intent: the maintenance:node graceful stop
-    # already forces accepting_new_sessions=False via the node_factor in
-    # intent_reconciler (a graceful/deferred stop sets node_factor=False ->
-    # accepting=False), so a separate accepting=False grid intent was redundant
-    # (design P5). _maintenance_sources still lists maintenance:grid so any row
-    # registered before this change is revoked on maintenance exit (the
-    # maintenance_active precondition is the primary cleanup).
-    return [
-        IntentRegistration(
-            source=f"maintenance:node:{device_id}",
-            axis=NODE_PROCESS,
-            payload={"action": "stop", "priority": PRIORITY_MAINTENANCE, "stop_mode": "graceful"},
-            precondition=precondition,
-        ),
-        IntentRegistration(
-            source=f"maintenance:recovery:{device_id}",
-            axis=RECOVERY,
-            # Reason must match ``MAINTENANCE_HOLD_SUPPRESSION_REASON`` exactly:
-            # ``clear_maintenance_recovery_suppression`` (called from
-            # ``exit_maintenance``) only clears
-            # ``lifecycle_policy_state.recovery_suppressed_reason`` when its
-            # value equals that constant. Any drift here freezes the device's
-            # node ``effective_state`` at "blocked" after an operator exit.
-            payload={
-                "allowed": False,
-                "priority": PRIORITY_MAINTENANCE,
-                "reason": MAINTENANCE_HOLD_SUPPRESSION_REASON,
-            },
-            precondition=precondition,
-        ),
-    ]
 
 
 class MaintenanceService:
@@ -103,11 +53,9 @@ class MaintenanceService:
 
         set_maintenance_reason(device, maintenance_reason)
 
-        await IntentService(db).register_intents_and_reconcile(
-            device_id=device.id,
-            intents=_maintenance_intents(device.id),
-            publisher=self._publisher,
-        )
+        # set_maintenance_reason is the fact write; the inline reconcile derives the
+        # maintenance:node graceful stop and maintenance:recovery deny from it.
+        await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
 
         if commit:
             await db.commit()
@@ -149,12 +97,8 @@ class MaintenanceService:
             ],
             publisher=self._publisher,
         )
-
-        await IntentService(db).revoke_intents_and_reconcile(
-            device_id=device.id,
-            sources=_maintenance_sources(device.id),
-            publisher=self._publisher,
-        )
+        # clear_maintenance_reason above is the fact write; the verification-intent
+        # reconcile just above re-derives with no maintenance intents (reason cleared).
 
         if commit:
             await db.commit()
