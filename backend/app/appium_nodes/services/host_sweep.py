@@ -1,9 +1,10 @@
 """One agent observation per host per tick, feeding every host-scoped concern.
 
-Phase 1 concerns: host liveness (heartbeat evaluation) and appium-node
-convergence, both from the same /agent/health payload. Later phases fold
-node_health, device_connectivity, and telemetry in here with per-concern
-cadence gating.
+Concerns run only for hosts this sweep pass proved alive: host liveness
+(heartbeat evaluation) and appium-node convergence from the same /agent/health
+payload, then node health as a cadence-gated stage. Later phases fold
+device_connectivity and telemetry in here with the same per-concern cadence
+gating (see stage_due).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
     from app.appium_nodes.protocols import ReconcilerProtocol
     from app.appium_nodes.services.heartbeat import HeartbeatService
+    from app.appium_nodes.services.node_health import NodeHealthService
     from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
@@ -36,13 +38,21 @@ logger = get_logger(__name__)
 LOOP_NAME = "host_sweep"
 
 
+def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
+    """True when a stage with its own interval setting is due on this sweep cycle."""
+    divisor = max(1, round(stage_interval / base_interval))
+    return cycle_index % divisor == 0
+
+
 async def run_host_sweep_once(
     db: AsyncSession,
     *,
     heartbeat: HeartbeatService,
     reconciler: ReconcilerProtocol,
+    node_health: NodeHealthService,
     settings: SettingsReader,
     session_factory: SessionFactory,
+    cycle_index: int = 0,
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
     guard = heartbeat.begin_cycle()
@@ -53,6 +63,11 @@ async def run_host_sweep_once(
     for row in desired:
         rows_by_host.setdefault(row.host_id, []).append(row)
     semaphore = asyncio.Semaphore(settings.get_int("appium_reconciler.host_parallelism"))
+    node_health_due = stage_due(
+        cycle_index,
+        base_interval=settings.get_float("general.heartbeat_interval_sec"),
+        stage_interval=settings.get_float("general.node_check_interval_sec"),
+    )
 
     async def _sweep_host(host_id: uuid.UUID) -> None:
         async with semaphore:
@@ -80,8 +95,15 @@ async def run_host_sweep_once(
                     payload=result.payload or {},
                 )
             except Exception:
-                # Convergence failure must not poison other hosts' sweep.
+                # Stage isolation: a convergence failure must not poison other
+                # hosts' sweep NOR this host's remaining stages.
                 logger.exception("host_sweep_convergence_failed", host_id=str(host_id))
+            if node_health_due:
+                try:
+                    async with session_factory() as nh_db:
+                        await node_health.check_host_nodes(nh_db, host_id=host_id)
+                except Exception:
+                    logger.exception("host_sweep_node_health_failed", host_id=str(host_id))
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
@@ -94,6 +116,7 @@ class HostSweepLoop(BackgroundLoop):
 
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
+        self._cycle = 0
 
     @property
     def _session_factory(self) -> SessionFactory:
@@ -107,12 +130,15 @@ class HostSweepLoop(BackgroundLoop):
             db,
             heartbeat=self._services.heartbeat,
             reconciler=self._services.reconciler,
+            node_health=self._services.node_health,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
+            cycle_index=self._cycle,
         )
 
     def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
         APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(elapsed_seconds)
+        self._cycle += 1
 
     def _on_cycle_error(self) -> None:
         APPIUM_RECONCILER_CYCLE_FAILURES.inc()

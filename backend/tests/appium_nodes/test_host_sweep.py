@@ -6,7 +6,7 @@ from app.appium_nodes.services import heartbeat as heartbeat_module
 from app.appium_nodes.services import reconciler as reconciler_module
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
-from app.appium_nodes.services.host_sweep import run_host_sweep_once
+from app.appium_nodes.services.host_sweep import run_host_sweep_once, stage_due
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.devices.models import DeviceOperationalState
 from tests.fakes import FakeSettingsReader
@@ -96,6 +96,7 @@ async def test_sweep_converges_from_ping_payload_without_second_fetch(
         db_session,
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
+        node_health=Mock(check_host_nodes=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -132,8 +133,146 @@ async def test_sweep_skips_convergence_for_dead_host(
         db_session,
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
+        node_health=Mock(check_host_nodes=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
 
     reconcile_host.assert_not_awaited()
+
+
+def test_stage_due_divisor_rounding() -> None:
+    # 30s stage on a 15s base: every second cycle.
+    assert stage_due(0, base_interval=15.0, stage_interval=30.0) is True
+    assert stage_due(1, base_interval=15.0, stage_interval=30.0) is False
+    assert stage_due(2, base_interval=15.0, stage_interval=30.0) is True
+    # Stage interval at or below base: every cycle, never a zero divisor.
+    assert stage_due(7, base_interval=15.0, stage_interval=15.0) is True
+    assert stage_due(7, base_interval=15.0, stage_interval=1.0) is True
+    # 60s stage: every fourth cycle.
+    assert stage_due(4, base_interval=15.0, stage_interval=60.0) is True
+    assert stage_due(5, base_interval=15.0, stage_interval=60.0) is False
+
+
+def _alive_ping() -> HeartbeatPingResult:
+    return HeartbeatPingResult(
+        outcome=HeartbeatOutcome.success,
+        payload={},
+        duration_ms=1,
+        client_mode=ClientMode.pooled,
+        http_status=200,
+        error_category=None,
+    )
+
+
+def _dead_ping() -> HeartbeatPingResult:
+    return HeartbeatPingResult(
+        outcome=HeartbeatOutcome.timeout,
+        payload=None,
+        duration_ms=1,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category="Timeout",
+    )
+
+
+async def _run_sweep_with_recorders(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    calls: list[str],
+    cycle_index: int,
+    alive: bool = True,
+    reconcile_raises: bool = False,
+) -> None:
+    """Drive one sweep with reconcile_host / check_host_nodes recorders."""
+    # Commit so the host is visible to the fresh sessions _sweep_host opens.
+    await db_session.commit()
+    settings = FakeSettingsReader()
+    monkeypatch.setattr(
+        heartbeat_module, "_ping_agent", AsyncMock(return_value=_alive_ping() if alive else _dead_ping())
+    )
+
+    async def _record_reconcile(**_kwargs: object) -> None:
+        calls.append("reconcile_host")
+        if reconcile_raises:
+            raise RuntimeError("convergence boom")
+
+    async def _record_health(_db: object, *, host_id: object) -> None:
+        _ = host_id
+        calls.append("check_host_nodes")
+
+    monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock(side_effect=_record_reconcile))
+    node_health = Mock()
+    node_health.check_host_nodes = AsyncMock(side_effect=_record_health)
+
+    await run_host_sweep_once(
+        db_session,
+        heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
+        reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
+        settings=settings,
+        session_factory=db_session_maker,
+        node_health=node_health,
+        cycle_index=cycle_index,
+    )
+
+
+async def test_node_health_stage_runs_on_due_cycle_after_convergence(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    await _run_sweep_with_recorders(
+        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=0
+    )
+    assert calls == ["reconcile_host", "check_host_nodes"]
+
+
+async def test_node_health_stage_skipped_on_off_cycle(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    # Default 30s/15s settings → divisor 2 → node health only on even cycles.
+    await _run_sweep_with_recorders(
+        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=1
+    )
+    assert "reconcile_host" in calls
+    assert "check_host_nodes" not in calls
+
+
+async def test_node_health_stage_skipped_for_dead_host(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    await _run_sweep_with_recorders(
+        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=0, alive=False
+    )
+    assert calls == []
+
+
+async def test_node_health_stage_runs_even_when_convergence_fails(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    # Stage isolation: a convergence failure must not skip node health on an alive host.
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        calls=calls,
+        cycle_index=0,
+        reconcile_raises=True,
+    )
+    assert calls == ["reconcile_host", "check_host_nodes"]

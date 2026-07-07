@@ -1,9 +1,8 @@
 import asyncio
 import uuid
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -12,8 +11,7 @@ from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health
-from app.appium_nodes.services.node_health import NodeHealthLoop, NodeHealthService
-from app.appium_nodes.services_container import AppiumNodeServices
+from app.appium_nodes.services.node_health import NodeHealthService
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
@@ -27,8 +25,6 @@ from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -114,7 +110,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
         )
-        await svc.check_nodes(db_session)
+        await svc.check_host_nodes(db_session, host_id=device.host_id)
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     await db_session.refresh(node)
@@ -173,7 +169,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
         )
-        await svc.check_nodes(db_session)
+        await svc.check_host_nodes(db_session, host_id=device.host_id)
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
     await db_session.refresh(node)
@@ -236,7 +232,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     await db_session.refresh(node)
     assert node.observed_running is True
@@ -299,7 +295,7 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     await db_session.refresh(node)
     assert node.observed_running is True
@@ -362,7 +358,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     await db_session.refresh(node)
     assert node.observed_running is True
@@ -424,7 +420,7 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     status_mock.assert_awaited_once()
 
@@ -480,7 +476,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     status_mock.assert_awaited_once()
 
@@ -536,7 +532,7 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     status_mock.assert_awaited_once()
 
@@ -592,7 +588,7 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     status_mock.assert_awaited_once()
 
@@ -681,7 +677,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                 recovery_control=AsyncMock(),
                 health=DeviceHealthService(publisher=event_bus),
                 incidents=AsyncMock(),
-            ).check_nodes(db_session)
+            ).check_host_nodes(db_session, host_id=db_host.id)
         )
         # Generous budgets: serial dispatch would block both waits forever (the second
         # check never starts, so both_started never sets), so a real regression still
@@ -951,7 +947,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     # Counter unchanged (still absent)
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -1032,7 +1028,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"
 
@@ -1105,7 +1101,7 @@ async def test_node_health_recovery_clears_pending_stop(
             recovery_control=_make_real_recovery_control(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=LifecycleIncidentService(),
-        ).check_nodes(db_session)
+        ).check_host_nodes(db_session, host_id=device.host_id)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -1198,49 +1194,3 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         device,
         result=ProbeResult(status="indeterminate"),
     )
-
-
-async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    class Observation:
-        @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[None]:
-            yield None
-
-    @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[AsyncMock]:
-        yield AsyncMock()
-
-    from tests.fakes import FakeSettingsReader
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", MagicMock(return_value=Observation()))
-    monkeypatch.setattr(NodeHealthService, "check_nodes", AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-    log_exception = MagicMock()
-    monkeypatch.setattr(background_loop.logger, "exception", log_exception)
-
-    settings = FakeSettingsReader({"general.node_check_interval_sec": 1})
-    node_health_svc = NodeHealthService(
-        publisher=MagicMock(),
-        settings=settings,
-        pool=MagicMock(),
-        circuit_breaker=MagicMock(),
-        recovery_control=AsyncMock(),
-        health=DeviceHealthService(publisher=event_bus),
-        incidents=AsyncMock(),
-    )
-    loop = NodeHealthLoop(
-        services=AppiumNodeServices(
-            settings=settings,
-            reconciler=MagicMock(),
-            reconciler_agent=MagicMock(),
-            node_health=node_health_svc,
-            heartbeat=MagicMock(),
-            session_factory=fake_session,
-        )
-    )
-    with pytest.raises(asyncio.CancelledError):
-        await loop.run()
-
-    log_exception.assert_called_once_with("Node health check failed")

@@ -17,6 +17,8 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
@@ -59,6 +61,7 @@ async def _seed_running_node_at_failure_threshold(
 async def _run_node_health_with_gate(
     db_session_maker: async_sessionmaker[AsyncSession],
     *,
+    host_id: uuid.UUID,
     probe_complete: asyncio.Event,
     allow_processing: asyncio.Event,
 ) -> None:
@@ -79,7 +82,7 @@ async def _run_node_health_with_gate(
                 recovery_control=AsyncMock(),
                 health=AsyncMock(),
                 incidents=AsyncMock(),
-            ).check_nodes(session)
+            ).check_host_nodes(session, host_id=host_id)
 
 
 async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(
@@ -108,6 +111,7 @@ async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(
     await asyncio.gather(
         _run_node_health_with_gate(
             db_session_maker,
+            host_id=db_host.id,
             probe_complete=probe_complete,
             allow_processing=allow_processing,
         ),
@@ -154,6 +158,7 @@ async def test_stale_unhealthy_probe_skips_when_node_restarted_before_lock(
     await asyncio.gather(
         _run_node_health_with_gate(
             db_session_maker,
+            host_id=db_host.id,
             probe_complete=probe_complete,
             allow_processing=allow_processing,
         ),

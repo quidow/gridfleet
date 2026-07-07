@@ -15,7 +15,6 @@ from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import routers as appium_node_routers
 from app.appium_nodes.services.host_sweep import HostSweepLoop
-from app.appium_nodes.services.node_health import NodeHealthLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
@@ -193,7 +192,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     property_refresh = PropertyRefreshLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(services=app_services.appium_nodes)
-    node_health = NodeHealthLoop(services=app_services.appium_nodes)
     session_sync = SessionSyncLoop(services=app_services.sessions)
     session_viability = SessionViabilityLoop(services=app_services.sessions)
     hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
@@ -208,7 +206,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     _leader_loops: list[tuple[Any, str]] = [
         (host_sweep.run(), "host_sweep_loop"),
         (session_sync.run(), "session_sync_loop"),
-        (node_health.run(), "node_health_loop"),
         (connectivity_loop.run(), "device_connectivity_loop"),
         (property_refresh.run(), "property_refresh_loop"),
         (hardware_telemetry.run(), "hardware_telemetry_loop"),
