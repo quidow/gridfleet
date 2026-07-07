@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation, HostRuntimeInstallation
+from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import HostPackStatusOut
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.service import PackCatalogService
@@ -99,16 +99,6 @@ async def test_drift_detected_when_installed_differs_from_desired(db_session: As
         )
     )
     db_session.add(
-        HostRuntimeInstallation(
-            host_id=host_id,
-            runtime_id="rt-abc",
-            appium_server_package="appium",
-            appium_server_version="2.11.5",
-            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.5.0"}],
-            status="installed",
-        )
-    )
-    db_session.add(
         HostPackInstallation(
             host_id=host_id,
             pack_id="test-pack",
@@ -116,6 +106,10 @@ async def test_drift_detected_when_installed_differs_from_desired(db_session: As
             runtime_id="rt-abc",
             status="installed",
             installed_at=datetime.now(UTC),
+            appium_server_package="appium",
+            appium_server_version="2.11.5",
+            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.5.0"}],
+            runtime_status="installed",
         )
     )
     await db_session.flush()
@@ -168,16 +162,6 @@ async def test_catalog_and_per_host_drift_agree_on_manifest_fallback(db_session:
             },
         )
     )
-    db_session.add(
-        HostRuntimeInstallation(
-            host_id=host_id,
-            runtime_id="rt-b1",
-            appium_server_package="appium",
-            appium_server_version="2.11.5",
-            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.5.0"}],
-            status="installed",
-        )
-    )
     # resolved_install_spec=None forces the manifest recommended fallback
     db_session.add(
         HostPackInstallation(
@@ -188,6 +172,10 @@ async def test_catalog_and_per_host_drift_agree_on_manifest_fallback(db_session:
             status="installed",
             resolved_install_spec=None,
             installed_at=datetime.now(UTC),
+            appium_server_package="appium",
+            appium_server_version="2.11.5",
+            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.5.0"}],
+            runtime_status="installed",
         )
     )
     await db_session.flush()

@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostRuntimeInstallation
+from app.packs.models import DriverPack, HostPackInstallation
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
@@ -38,19 +38,24 @@ async def test_host_driver_pack_status_includes_runtime_and_plugin_status(
         status=HostStatus.online,
     )
     db_session.add(host)
+    db_session.add(DriverPack(id="pack-a", display_name="Pack A"))
     await db_session.commit()
 
-    runtime = HostRuntimeInstallation(
-        host_id=host.id,
-        runtime_id="runtime-a",
-        appium_server_package="appium",
-        appium_server_version="2.11.5",
-        driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
-        appium_home="/tmp/runtime-a",
-        status="installed",
-        blocked_reason=None,
+    db_session.add(
+        HostPackInstallation(
+            host_id=host.id,
+            pack_id="pack-a",
+            pack_release="1.0.0",
+            runtime_id="runtime-a",
+            status="installed",
+            appium_server_package="appium",
+            appium_server_version="2.11.5",
+            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
+            appium_home="/tmp/runtime-a",
+            runtime_status="installed",
+            runtime_blocked_reason=None,
+        )
     )
-    db_session.add(runtime)
     await db_session.commit()
 
     body = await _status_svc.get_host_driver_pack_status(db_session, host.id)
@@ -79,27 +84,34 @@ async def test_blocked_runtime_does_not_contaminate_installed_runtime(
         status=HostStatus.online,
     )
     db_session.add(host)
+    db_session.add_all([DriverPack(id="pack-ok", display_name="OK"), DriverPack(id="pack-bad", display_name="Bad")])
     await db_session.commit()
 
-    installed = HostRuntimeInstallation(
+    installed = HostPackInstallation(
         host_id=host.id,
+        pack_id="pack-ok",
+        pack_release="1.0.0",
         runtime_id="runtime-ok",
+        status="installed",
         appium_server_package="appium",
         appium_server_version="2.19.0",
         driver_specs=[{"package": "appium-uiautomator2-driver", "version": "5.0.0"}],
         appium_home="/tmp/runtime-ok",
-        status="installed",
-        blocked_reason=None,
+        runtime_status="installed",
+        runtime_blocked_reason=None,
     )
-    blocked = HostRuntimeInstallation(
+    blocked = HostPackInstallation(
         host_id=host.id,
+        pack_id="pack-bad",
+        pack_release="1.0.0",
         runtime_id="runtime-bad",
+        status="blocked",
         appium_server_package="appium",
         appium_server_version="2.19.0",
         driver_specs=[{"package": "appium-xcuitest-driver", "version": "9.3.1"}],
         appium_home="/tmp/runtime-bad",
-        status="blocked",
-        blocked_reason="plugin_incompatible:images@1.0.0",
+        runtime_status="blocked",
+        runtime_blocked_reason="plugin_incompatible:images@1.0.0",
     )
     db_session.add_all([installed, blocked])
     await db_session.commit()

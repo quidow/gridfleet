@@ -163,16 +163,19 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
         pack_release="1.0.0",
         status="installed",
         resolved_install_spec={"appium_driver_version": "3.0.0"},
+        appium_server_version="2.0.0",
+        driver_specs=[{"version": "3.1.0"}],
     )
     blocked = SimpleNamespace(
         pack_id="local/pack",
         pack_release="1.0.0",
         status="blocked",
         resolved_install_spec={"appium_driver": {"uiautomator2": "4.0.0"}},
+        appium_server_version=None,
+        driver_specs=None,
     )
-    runtime = SimpleNamespace(appium_server_version="2.0.0", driver_specs=[{"version": "3.1.0"}])
     session = ExecuteSession(
-        SimpleNamespace(all=lambda: [(installed, runtime), (blocked, None)]),
+        ScalarRowsResult([installed, blocked]),
         ScalarRowsResult([]),  # release query returns no rows
     )
 
@@ -192,7 +195,7 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     pack = _pack(PackState.draining)
     session = ExecuteSession(
         ScalarRowsResult([pack]),
-        SimpleNamespace(all=lambda: []),  # HostPackInstallation rows
+        ScalarRowsResult([]),  # HostPackInstallation rows
         ScalarRowsResult([]),  # DriverPackRelease rows
     )
 
@@ -216,7 +219,7 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     )  # type: ignore[arg-type]
     assert missing is None
 
-    detail_session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []), ScalarRowsResult([]))
+    detail_session = ExecuteSession(ScalarRowsResult([pack]), ScalarRowsResult([]), ScalarRowsResult([]))
     detail = await PackCatalogService(lifecycle=PackLifecycleService()).get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
     assert detail is not None
     assert detail.id == "local/pack"
