@@ -26,7 +26,6 @@ from app.devices.services import link_repair
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
-from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
@@ -323,24 +322,14 @@ async def _apply_failure_hysteresis(
     return counter < threshold
 
 
-async def _stop_disconnected_node(
-    db: AsyncSession, device: Device, *, health: DeviceHealthProtocol, publisher: EventPublisher
-) -> None:
+async def _stop_disconnected_node(db: AsyncSession, device: Device, *, health: DeviceHealthProtocol) -> None:
     locked_device = await device_locking.lock_device(db, device.id)
     if locked_device.appium_node is None or not locked_device.appium_node.observed_running:
         return None
 
-    await IntentService(db).register_intents_and_reconcile(
-        device_id=locked_device.id,
-        intents=[
-            IntentRegistration(
-                source=f"connectivity:{locked_device.id}",
-                axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
-            )
-        ],
-        publisher=publisher,
-    )
+    # The connectivity defer-stop is derived from device_checks_healthy IS FALSE (already
+    # written by the caller's update_device_checks). apply_node_state_transition reconciles
+    # inline on mark_offline=True, so the synthesized connectivity: stop takes effect here.
     await health.apply_node_state_transition(db, locked_device, mark_offline=True)
     return None
 
@@ -903,7 +892,7 @@ class ConnectivityService:
             if device.device_checks_healthy is False and (node is None or not node.observed_running):
                 return
             await assert_current_leader(db, settings=self._settings)
-            await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
+            await _stop_disconnected_node(db, device, health=self._health)
             if device.operational_state == DeviceOperationalState.offline:
                 return
             if await _is_held_or_reserved(db, device):

@@ -12,7 +12,6 @@ from app.devices.services.event import build_device_crashed_payload, record_even
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_HEALTH_FAILURE,
     IntentRegistration,
 )
@@ -132,10 +131,20 @@ class LifecyclePolicyActionsService:
                 severity="warning",
             )
 
+        if source == "connectivity":
+            # Connectivity loss is a fact, not a command: write device_checks_healthy=False
+            # and let the reconciler synthesize the connectivity: defer-stop (session-safe,
+            # priority 50) from it. Mirrors the no-node fact-write path below.
+            device.device_checks_healthy = False
+            device.device_checks_summary = reason
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await db.commit()
+            return
+
         if node is not None and node.observed_running:
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
-                intents=_crash_intents(device, source=source),
+                intents=_crash_intents(device),
                 publisher=self._publisher,
             )
             await db.commit()
@@ -143,7 +152,7 @@ class LifecyclePolicyActionsService:
             if node is not None:
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
-                    intents=_crash_intents(device, source=source),
+                    intents=_crash_intents(device),
                     publisher=self._publisher,
                 )
             else:
@@ -439,15 +448,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-def _crash_intents(device: Device, *, source: str) -> list[IntentRegistration]:
-    if source == "connectivity":
-        return [
-            IntentRegistration(
-                source=f"connectivity:{device.id}",
-                axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
-            )
-        ]
+def _crash_intents(device: Device) -> list[IntentRegistration]:
     # Only the NODE_PROCESS stop intent is registered. The RECOVERY-axis
     # ``health_failure:recovery`` deny intent used to live here too, but it
     # had no expiry and gated the only code path that revoked it, deadlocking

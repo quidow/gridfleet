@@ -21,6 +21,7 @@ from app.devices.models import DeviceIntent, DeviceReservation
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
+    PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_COOLDOWN,
     PRIORITY_MAINTENANCE,
     PRIORITY_RUN_ROUTING,
@@ -51,6 +52,7 @@ async def synthesize_fact_intents(
     """
     intents = await _reservation_intents(db, device, now)
     intents += _maintenance_intents(device)
+    intents += _connectivity_intents(device, stored, now)
     return intents
 
 
@@ -125,4 +127,27 @@ def _maintenance_intents(device: Device) -> list[DeviceIntent]:
             # the node effective_state at "blocked" after an operator exit.
             payload={"allowed": False, "priority": PRIORITY_MAINTENANCE, "reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
         ),
+    ]
+
+
+def _connectivity_intents(device: Device, stored: list[DeviceIntent], now: datetime) -> list[DeviceIntent]:
+    """Defer-stop derived from device_checks_healthy IS FALSE (the orphan sweep's own condition)."""
+    if device.device_checks_healthy is not False:
+        return []
+    # An active stored start command (operator start/restart, verification lease,
+    # auto-recovery) overrides the connectivity park — this rule replaces the old
+    # scattered "revoke connectivity:* before starting" ritual (semantic delta #3).
+    has_start_command = any(
+        i.axis == NODE_PROCESS and i.payload.get("action") == "start" and (i.expires_at is None or i.expires_at > now)
+        for i in stored
+    )
+    if has_start_command:
+        return []
+    return [
+        DeviceIntent(
+            device_id=device.id,
+            source=f"connectivity:{device.id}",
+            axis=NODE_PROCESS,
+            payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
+        )
     ]

@@ -14,9 +14,9 @@ def test_lifecycle_policy_action_small_branch_helpers() -> None:
     assert actions.failure_event_type("connectivity") == DeviceEventType.connectivity_lost
 
     device = Device(id=__import__("uuid").uuid4())
-    intents = actions._crash_intents(device, source="connectivity")
-    assert intents[0].source == f"connectivity:{device.id}"
-    assert intents[0].payload["stop_mode"] == "defer"
+    intents = actions._crash_intents(device)
+    assert intents[0].source == f"health_failure:node:{device.id}"
+    assert intents[0].payload["stop_mode"] == "graceful"
 
 
 async def test_restore_run_if_needed_early_return_branches() -> None:

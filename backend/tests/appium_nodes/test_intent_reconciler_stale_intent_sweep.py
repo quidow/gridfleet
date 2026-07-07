@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.core import metrics_recorders
-from app.devices.models import DeviceIntent, DeviceOperationalState
-from app.devices.services import intent_reconciler, state_write_guard
+from app.devices.models import DeviceIntent
+from app.devices.services import intent_reconciler
 from app.devices.services.intent_reconciler import run_device_intent_reconciler_once
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS
 from app.sessions.models import Session, SessionStatus
@@ -96,83 +96,6 @@ async def test_sweep_preserves_active_session_intent_when_session_active(
     db_session.add(session)
 
     source = f"active_session:{session.session_id}"
-    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=NODE_PROCESS, payload={}))
-    await db_session.commit()
-
-    await intent_reconciler._sweep_orphaned_intents(db_session)
-    await db_session.commit()
-
-    assert await _intent_exists(db_session, device.id, source)
-
-
-# ---------------------------------------------------------------------------
-# connectivity:{device_id}
-# ---------------------------------------------------------------------------
-
-
-async def test_sweep_revokes_connectivity_intent_when_device_healthy(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Positive: device is available and device_checks_healthy=True → intent swept."""
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="sweep-connectivity-healthy",
-        operational_state=DeviceOperationalState.available,
-    )
-    with state_write_guard.bypass():
-        device.device_checks_healthy = True
-    await db_session.commit()
-
-    source = f"connectivity:{device.id}"
-    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=NODE_PROCESS, payload={}))
-    await db_session.commit()
-
-    await intent_reconciler._sweep_orphaned_intents(db_session)
-    await db_session.commit()
-
-    assert not await _intent_exists(db_session, device.id, source)
-
-
-async def test_sweep_preserves_connectivity_intent_when_device_offline(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Negative: offline device → connectivity intent must be preserved."""
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="sweep-connectivity-offline",
-        operational_state=DeviceOperationalState.offline,
-    )
-
-    source = f"connectivity:{device.id}"
-    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=NODE_PROCESS, payload={}))
-    await db_session.commit()
-
-    await intent_reconciler._sweep_orphaned_intents(db_session)
-    await db_session.commit()
-
-    assert await _intent_exists(db_session, device.id, source)
-
-
-async def test_sweep_preserves_connectivity_intent_when_device_unhealthy(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Negative: available device with device_checks_healthy=False → intent preserved."""
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="sweep-connectivity-unhealthy",
-        operational_state=DeviceOperationalState.available,
-    )
-    with state_write_guard.bypass():
-        device.device_checks_healthy = False
-    await db_session.commit()
-
-    source = f"connectivity:{device.id}"
     db_session.add(DeviceIntent(device_id=device.id, source=source, axis=NODE_PROCESS, payload={}))
     await db_session.commit()
 

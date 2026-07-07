@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import cast, delete, func, or_, select
+from sqlalchemy import cast, delete, func, select
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import NoResultFound
 
@@ -289,27 +289,7 @@ async def _sweep_orphaned_intents(db: AsyncSession) -> None:
         await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(active_session_ids)))
         metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="active_session").inc(len(active_session_ids))
 
-    # 2. connectivity:{device_id} — device not offline AND device_checks_healthy IS NOT FALSE.
-    connectivity_ids = (
-        (
-            await db.execute(
-                select(DeviceIntent.id)
-                .where(DeviceIntent.source.like("connectivity:%"))
-                .join(Device, Device.id == DeviceIntent.device_id)
-                .where(
-                    Device.operational_state != DeviceOperationalState.offline,
-                    or_(Device.device_checks_healthy.is_(None), Device.device_checks_healthy.is_(True)),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if connectivity_ids:
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(connectivity_ids)))
-        metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="connectivity").inc(len(connectivity_ids))
-
-    # 3. cooldown:{axis}:{run_id} — DeviceReservation.released_at IS NOT NULL.
+    # 2. cooldown:{axis}:{run_id} — DeviceReservation.released_at IS NOT NULL.
     # Source format: "cooldown:<axis>:<run_uuid>". Split on ':' and cast last segment.
     cooldown_rows = (
         await db.execute(

@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.core.timeutil import now_utc
+from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_synthesis import synthesize_fact_intents
+from app.devices.services.intent_types import NODE_PROCESS
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, set_maintenance_reason
 from tests.helpers import create_device, create_reserved_run
 
@@ -80,3 +82,28 @@ async def test_timed_exclusion_synthesizes_cooldown_denies(db_session: AsyncSess
     assert by_source[f"cooldown:grid:{run.id}"].payload == {"accepting_new_sessions": False, "priority": 70}
     assert by_source[f"cooldown:recovery:{run.id}"].payload["reason"] == "flaky boot"
     assert f"run:{run.id}" in by_source  # cooldown never revoked run routing
+
+
+@pytest.mark.db
+async def test_unhealthy_checks_synthesize_defer_stop(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="synth-conn")
+    device.device_checks_healthy = False
+    await db_session.flush()
+    intents = await synthesize_fact_intents(db_session, device, None, [], now_utc())
+    conn = next(i for i in intents if i.source == f"connectivity:{device.id}")
+    assert conn.payload == {"action": "stop", "priority": 50, "stop_mode": "defer"}
+
+
+@pytest.mark.db
+async def test_active_start_command_suppresses_connectivity_stop(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="synth-conn-sup")
+    device.device_checks_healthy = False
+    await db_session.flush()
+    start_cmd = DeviceIntent(
+        device_id=device.id,
+        source=f"operator:start:{device.id}",
+        axis=NODE_PROCESS,
+        payload={"action": "start", "priority": 20},
+    )
+    intents = await synthesize_fact_intents(db_session, device, None, [start_cmd], now_utc())
+    assert [i for i in intents if i.source.startswith("connectivity:")] == []
