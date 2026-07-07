@@ -22,6 +22,7 @@ from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from tests.fakes import FakeSettingsReader
+from tests.helpers import run_one_heartbeat_cycle
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -114,7 +115,9 @@ async def test_heartbeat_marks_online(db_session: AsyncSession) -> None:
             return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
         ),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -145,7 +148,9 @@ async def test_heartbeat_updates_missing_prerequisites(db_session: AsyncSession)
             }
         ),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(host)
     assert host.missing_prerequisites == []
@@ -175,9 +180,9 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
 
     svc = _hb_svc(db_session)
     with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await svc._check_hosts(db_session)  # failure 1
-        await svc._check_hosts(db_session)  # failure 2
-        await svc._check_hosts(db_session)  # failure 3
+        await run_one_heartbeat_cycle(db_session, svc)  # failure 1
+        await run_one_heartbeat_cycle(db_session, svc)  # failure 2
+        await run_one_heartbeat_cycle(db_session, svc)  # failure 3
 
     await db_session.refresh(host)
     await db_session.refresh(device)
@@ -226,9 +231,9 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
 
     svc = _hb_svc(db_session, publisher=_event_bus)
     with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await svc._check_hosts(db_session)
-        await svc._check_hosts(db_session)
-        await svc._check_hosts(db_session)
+        await run_one_heartbeat_cycle(db_session, svc)
+        await run_one_heartbeat_cycle(db_session, svc)
+        await run_one_heartbeat_cycle(db_session, svc)
 
     availability_events = [payload for name, payload in captured if name == "device.operational_state_changed"]
     cascade_events = [
@@ -261,7 +266,9 @@ async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
             return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
         ),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -348,8 +355,12 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     with (
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(node)
     assert node.pid == 2222
@@ -464,7 +475,9 @@ async def test_restart_succeeded_eager_fills_active_connection_target(db_session
     with (
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(node)
     assert node.pid == 2222
@@ -541,7 +554,9 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     with (
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(exhausted_payload)),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(node)
     await db_session.refresh(device)
@@ -666,7 +681,9 @@ async def test_unknown_process_restart_events_normalize_to_appium_and_restore_he
     with (
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(node)
     assert node.pid == 8888
@@ -778,7 +795,9 @@ async def test_restart_exhausted_sets_degraded_state(
     with (
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
     ):
-        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+        await run_one_heartbeat_cycle(
+            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        )
 
     await db_session.refresh(node)
     assert node.health_running is False

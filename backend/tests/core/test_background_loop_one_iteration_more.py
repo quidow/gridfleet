@@ -3,9 +3,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.appium_nodes.services import reconciler as appium_reconciler
-from app.appium_nodes.services.heartbeat import HeartbeatLoop
-from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
+from app.appium_nodes.services import host_sweep
+from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.devices.services import fleet_capacity
 from app.devices.services.bulk import BulkOperationsService
@@ -54,19 +53,17 @@ class _Session:
         return None
 
 
-async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_host_sweep_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(appium_reconciler, "async_session", _Session)
-    monkeypatch.setattr(appium_reconciler, "_fetch_online_hosts", AsyncMock(return_value=[{"id": "bad"}]))
-    monkeypatch.setattr(appium_reconciler, "_fetch_desired_rows", AsyncMock(return_value=[]))
-    monkeypatch.setattr(appium_reconciler, "_fetch_backoff_until", AsyncMock(return_value={}))
+    run_once = AsyncMock()
+    monkeypatch.setattr(host_sweep, "run_host_sweep_once", run_once)
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     services = AppiumNodeServices(
-        settings=FakeSettingsReader({}),
-        reconciler=Mock(run_cycle=AsyncMock()),
+        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 1}),
+        reconciler=Mock(reconcile_host=AsyncMock()),
         reconciler_agent=Mock(),
         node_health=Mock(),
         heartbeat=Mock(),
@@ -74,29 +71,9 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await AppiumReconcilerLoop(services=services).run()
+        await HostSweepLoop(services=services).run()
 
-
-async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-
-    heartbeat_mock = Mock(run_cycle=AsyncMock())
-    services = AppiumNodeServices(
-        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 1}),
-        reconciler=Mock(run_cycle=AsyncMock()),
-        reconciler_agent=Mock(),
-        node_health=Mock(check_nodes=AsyncMock()),
-        heartbeat=heartbeat_mock,
-        session_factory=_Session,
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        await HeartbeatLoop(services=services).run()
-
-    heartbeat_mock.run_cycle.assert_awaited_once()
+    run_once.assert_awaited_once()
 
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:

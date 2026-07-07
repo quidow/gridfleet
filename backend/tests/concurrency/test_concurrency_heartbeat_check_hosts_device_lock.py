@@ -14,7 +14,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device
+from tests.helpers import create_device, run_one_heartbeat_cycle
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
 
-async def test_check_hosts_locks_device_rows_before_offline_write(
+async def test_host_sweep_locks_device_rows_before_offline_write(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
@@ -65,8 +65,8 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             inside_offline_branch.set()
             await asyncio.wait_for(race_attempted_lock.wait(), timeout=2.0)
             # Pre-fix, the racing writer can acquire and commit during this
-            # gate because _check_hosts has not locked the Device row. Post-fix,
-            # the racing writer blocks on lock_device until _check_hosts commits;
+            # gate because the host sweep has not locked the Device row. Post-fix,
+            # the racing writer blocks on lock_device until the sweep commits;
             # the timeout lets the fixed path continue without deadlocking.
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(race_committed.wait(), timeout=0.5)
@@ -102,7 +102,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
                     session_factory=db_session_maker,
                 )
                 for _ in range(threshold):
-                    await svc._check_hosts(db)
+                    await run_one_heartbeat_cycle(db, svc)
 
     async def race_writer() -> None:
         await asyncio.wait_for(inside_offline_branch.wait(), timeout=2.0)
@@ -123,7 +123,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
 
     assert final.operational_state == DeviceOperationalState.offline
     assert final.model == "race-marker", (
-        f"Heartbeat _check_hosts did not lock device rows before the offline "
+        f"Host sweep did not lock device rows before the offline "
         f"write; final model={final.model} indicates the host-offline "
         f"write raced the concurrent writer instead of serializing "
         f"through device_locking.lock_devices"

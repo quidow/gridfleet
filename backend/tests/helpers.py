@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy import delete
 
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.core.type_defs import SessionFactory
 
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
@@ -521,25 +522,62 @@ async def delete_jobs_by_kind(db: AsyncSession, *, kind: str) -> None:
     await db.commit()
 
 
-async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -> None:
-    """Run a single appium reconciler cycle. Replacement for the removed
-    ``reconciler.run_one_cycle_for_test()`` — tests monkeypatch the private
-    functions so this just calls through the same code path.
-    """
-    from app.appium_nodes.services import reconciler as appium_reconciler
-    from app.appium_nodes.services.reconciler import ReconcilerService
+async def run_one_heartbeat_cycle(db: AsyncSession, heartbeat: object) -> None:
+    """Run one host sweep with convergence replaced by a no-op test double."""
+    from app.appium_nodes.services.host_sweep import run_host_sweep_once
 
-    resolved_settings = settings or FakeSettingsReader({})
-    svc = ReconcilerService(
-        publisher=test_event_bus,
-        settings=resolved_settings,
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        session_factory=appium_reconciler.async_session,
+    await run_host_sweep_once(
+        db,
+        heartbeat=heartbeat,  # type: ignore[arg-type]
+        reconciler=Mock(reconcile_host=AsyncMock()),
+        settings=heartbeat._settings,  # type: ignore[attr-defined]
+        session_factory=heartbeat._session_factory,  # type: ignore[attr-defined]
     )
 
+
+async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -> None:
+    """Drive per-host reconciliation with explicit payloads supplied by test mocks."""
+    import httpx2 as httpx
+    from sqlalchemy import select
+
+    from app.appium_nodes.services import reconciler as appium_reconciler
+    from app.appium_nodes.services.reconciler import ReconcilerService
+    from app.hosts.models import Host, HostStatus
+
+    resolved_settings = settings or FakeSettingsReader({})
+    pool = Mock()
+    circuit_breaker = Mock()
+    service = ReconcilerService(
+        publisher=test_event_bus,
+        settings=resolved_settings,
+        pool=pool,
+        circuit_breaker=circuit_breaker,
+        session_factory=appium_reconciler.async_session,
+    )
     async with appium_reconciler.async_session() as db:
-        hosts = await appium_reconciler._fetch_online_hosts(db)
-        desired = await appium_reconciler._fetch_desired_rows(db)
-        backoff = await appium_reconciler._fetch_backoff_until(db)
-    await svc._drive_convergence(hosts, desired, backoff)
+        hosts = list((await db.execute(select(Host).where(Host.status == HostStatus.online))).scalars().all())
+        desired = await appium_reconciler.fetch_desired_rows(db)
+        backoff = await appium_reconciler.fetch_backoff_until(db)
+    rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
+    for row in desired:
+        rows_by_host.setdefault(row.host_id, []).append(row)
+    for host in hosts:
+        payload = (
+            await appium_reconciler.agent_health(
+                host.ip,
+                host.agent_port,
+                http_client_factory=httpx.AsyncClient,
+                settings=resolved_settings,
+                pool=pool,
+                circuit_breaker=circuit_breaker,
+            )
+            or {}
+        )
+        await service.reconcile_host(
+            host_id=host.id,
+            host_ip=host.ip,
+            agent_port=host.agent_port,
+            rows=rows_by_host.get(host.id, []),
+            backoff_until_by_device=backoff,
+            payload=payload,
+        )

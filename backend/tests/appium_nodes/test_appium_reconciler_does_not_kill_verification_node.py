@@ -7,7 +7,7 @@ import pytest
 
 from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services.reconciler import _fetch_desired_rows
+from app.appium_nodes.services.reconciler import fetch_desired_rows
 from app.appium_nodes.services.reconciler_convergence import ObservedEntry, reap_orphan_nodes
 from app.devices.models import DeviceOperationalState
 from tests.helpers import create_device
@@ -62,7 +62,7 @@ async def test_reconciler_does_not_stop_node_during_verification(
     )
     stop_agent = AsyncMock()
 
-    reaped = await reap_orphan_nodes(observed, await _fetch_desired_rows(db_session), stop_agent=stop_agent)
+    reaped = await reap_orphan_nodes(observed, await fetch_desired_rows(db_session), stop_agent=stop_agent)
 
     assert reaped == []
     stop_agent.assert_not_awaited()
@@ -113,7 +113,7 @@ async def test_reconciler_does_not_stop_emulator_node_reporting_live_serial(
     )
     stop_agent = AsyncMock()
 
-    reaped = await reap_orphan_nodes(observed, await _fetch_desired_rows(db_session), stop_agent=stop_agent)
+    reaped = await reap_orphan_nodes(observed, await fetch_desired_rows(db_session), stop_agent=stop_agent)
 
     assert reaped == []
     stop_agent.assert_not_awaited()

@@ -10,7 +10,7 @@ import pytest
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_with_devices, settle_after_commit_tasks
+from tests.helpers import run_one_heartbeat_cycle, seed_host_with_devices, settle_after_commit_tasks
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -41,7 +41,7 @@ async def test_host_offline_cascade_queues_all_events(
 
     # The resume guard uses _last_cycle_monotonic to detect a paused
     # backend (>= max_missed * interval gap between cycles). On slow CI runners the
-    # gap between the last unrelated test that called _check_hosts and this one can
+    # gap between the last unrelated test that ran a host sweep and this one can
     # exceed the threshold, causing the guard to swallow the offline cascade we are
     # asserting. Reset to None so the guard treats this call as the first cycle.
     svc = HeartbeatService(
@@ -58,7 +58,7 @@ async def test_host_offline_cascade_queues_all_events(
     )
     svc._last_cycle_monotonic = None
 
-    await svc._check_hosts(db_session)
+    await run_one_heartbeat_cycle(db_session, svc)
     await settle_after_commit_tasks()
 
     types_in_order = [n for n, _ in event_bus_capture]

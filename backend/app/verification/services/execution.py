@@ -215,7 +215,7 @@ class VerificationExecutionService:
                 return None, detail
 
             # Drive an immediate convergence pass so verification does not have to wait up
-            # to appium_reconciler.interval_sec for the leader loop to start the node.
+            # to general.heartbeat_interval_sec for the host sweep to start the node.
             # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
             try:
                 await self._reconciler.converge_device_now(device.id, db=db)

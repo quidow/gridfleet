@@ -7,7 +7,7 @@ GridFleet uses a host-first orchestration model to manage Appium workflows. Its 
 The backend is a multi-worker stateless group of HTTP API servers. State is stored entirely in PostgreSQL. 
 
 ### The Scheduler Process and Background Loops
-Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts ~17 background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, grid_allocation_reaper, etc.) that:
+Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts ~16 background loops (`host_sweep`, `session_sync`, `node_health`, `device_connectivity`, `property_refresh`, `grid_allocation_reaper`, etc.) that:
 
 - Monitor missing Agent heartbeats.
 - Evaluate node health via direct-to-Appium probes.
@@ -19,16 +19,23 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 
 Operator routes and lifecycle paths commit intent to `AppiumNode.desired_state`
 plus optional `desired_port`, `transition_token`, and `transition_deadline`,
-then return in milliseconds. The scheduler's reconciler
-(`app/appium_nodes/services/reconciler*.py`) reads intent each cycle, drives the
-host agent's Appium processes (`appium_start` / `appium_stop`), and writes
+then return in milliseconds. The scheduler's `host_sweep` fetches
+`/agent/health` once per host at `general.heartbeat_interval_sec`, applies the
+host-liveness verdict first, and passes that same payload to the reconciler for
+freshly alive hosts. The reconciler (`app/appium_nodes/services/reconciler*.py`)
+reads intent, drives the host agent's Appium processes (`appium_start` /
+`appium_stop`), and writes
 observed columns (`pid`, `active_connection_target`, health fields). The
 reconciler is the primary writer of observed Appium-node process state.
 
-The same loop is the canonical orphan reaper. For each online host, it fetches
-`/agent/health`, parses `appium_processes.running_nodes`, and stops agent-side
+The same convergence pass is the canonical orphan reaper. It parses
+`appium_processes.running_nodes` from the shared sweep payload and stops agent-side
 processes that no DB row claims by `(connection_target, port)`. Reasons surfaced
 via metrics include `no_db_row`, `db_state_not_running`, and `port_mismatch`.
+
+Loop-level readiness and dashboard gauges now use `host_sweep`. The historical
+`heartbeat` and `appium_reconciler` loop-level gauge series end at this release;
+heartbeat ping metrics and `APPIUM_RECONCILER_*` concern metrics retain their names.
 
 > See [intents.md](./intents.md) for the commands-plus-facts intent model, the
 > stored-vs-synthesized split, and the fact-synthesis table.

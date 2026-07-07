@@ -14,10 +14,9 @@ from app.agent_comm.config import agent_settings
 from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes.services.heartbeat import HeartbeatLoop
+from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services.node_health import NodeHealthLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
-from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -193,9 +192,8 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     fleet_capacity = FleetCapacityLoop(services=app_services.devices)
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     property_refresh = PropertyRefreshLoop(services=app_services.devices)
-    heartbeat = HeartbeatLoop(services=app_services.appium_nodes)
+    host_sweep = HostSweepLoop(services=app_services.appium_nodes)
     node_health = NodeHealthLoop(services=app_services.appium_nodes)
-    appium_reconciler = AppiumReconcilerLoop(services=app_services.appium_nodes)
     session_sync = SessionSyncLoop(services=app_services.sessions)
     session_viability = SessionViabilityLoop(services=app_services.sessions)
     hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
@@ -208,7 +206,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     background_loop_flush = app_services.background_loop_flush
 
     _leader_loops: list[tuple[Any, str]] = [
-        (heartbeat.run(), "heartbeat_loop"),
+        (host_sweep.run(), "host_sweep_loop"),
         (session_sync.run(), "session_sync_loop"),
         (node_health.run(), "node_health_loop"),
         (connectivity_loop.run(), "device_connectivity_loop"),
@@ -222,7 +220,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
         (session_viability.run(), "session_viability_loop"),
         (fleet_capacity.run(), "fleet_capacity_collector_loop"),
         (pack_drain.run(), "pack_drain_loop"),
-        (appium_reconciler.run(), "appium_reconciler_loop"),
         (intent_reconciler.run(), "device_intent_reconciler_loop"),
         (background_loop_flush.run(), "background_loop_flush_loop"),
     ]
