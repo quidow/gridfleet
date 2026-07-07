@@ -7,7 +7,7 @@ GridFleet uses a host-first orchestration model to manage Appium workflows. Its 
 The backend is a multi-worker stateless group of HTTP API servers. State is stored entirely in PostgreSQL. 
 
 ### The Scheduler Process and Background Loops
-Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts ~15 background loops (`host_sweep`, `session_sync`, `device_connectivity`, `property_refresh`, `grid_allocation_reaper`, etc.) that:
+Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts ~14 background loops (`host_sweep`, `session_sync`, `property_refresh`, `grid_allocation_reaper`, etc.) that:
 
 - Monitor missing Agent heartbeats.
 - Evaluate node health via direct-to-Appium probes.
@@ -27,6 +27,11 @@ reads intent, drives the host agent's Appium processes (`appium_start` /
 `appium_stop`), and writes
 observed columns (`pid`, `active_connection_target`, health fields). The
 reconciler is the primary writer of observed Appium-node process state.
+
+After the per-host fan-out, `host_sweep` runs two cadence-gated stages
+(`stage_due`): node health per alive host (`general.node_check_interval_sec`),
+then device connectivity as a single global pass (`general.device_check_interval_sec`)
+against the host statuses this same sweep cycle just wrote.
 
 The same convergence pass is the canonical orphan reaper. It parses
 `appium_processes.running_nodes` from the shared sweep payload and stops agent-side

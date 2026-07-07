@@ -46,7 +46,7 @@ Scheduler-owned loops are listed in `_build_leader_loop_tasks` in `backend/app/m
 | --- | --- | --- | --- | --- |
 | `host_sweep_loop` | 15 s (`general.heartbeat_interval_sec`) | One Agent `/agent/health` payload per host, plus `AppiumNode` desired state | Applies host liveness and snapshot/restart-event ingest first; for freshly alive hosts the same payload drives orphan reaping, node start/stop convergence, and `AppiumNode.pid`/`port`/`active_connection_target` observations. The host-offline cascade calls `IntentService.mark_dirty_and_reconcile` per device (does not write `operational_state` directly). | `Host.status` (offline/online), Appium-node observed-state reconciliation |
 | `host_sweep` node-health stage | 30 s stage (`general.node_check_interval_sec`, rounded to a multiple of the 15 s sweep via `stage_due`); runs only for hosts the same pass proved alive | Agent `/agent/appium/{port}/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON; on max failures registers auto-recovery intents via `IntentService.register_intents_and_reconcile` (does not write `operational_state` directly) | node-health counter, auto-restart trigger |
-| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices/{connection_target}/health` (direct per-device probe, tried first); `/agent/pack/devices` host enumeration only on miss, at most once per host per cycle | `Device.device_checks_*`, `Device.emulator_state`, lifecycle JSON; calls `IntentService.mark_dirty_and_reconcile` / `register_intents_and_reconcile` (does not write `operational_state` directly) | `Device.device_checks_*` |
+| `host_sweep` connectivity stage | 60 s stage (`general.device_check_interval_sec`, rounded to a multiple of the 15 s sweep via `stage_due`); a global pass that runs once after the per-host fan-out completes, against the host statuses the same sweep just wrote | Agent `/agent/pack/devices/{connection_target}/health` (direct per-device probe, tried first); `/agent/pack/devices` host enumeration only on miss, at most once per host per cycle | `Device.device_checks_*`, `Device.emulator_state`, lifecycle JSON; calls `IntentService.mark_dirty_and_reconcile` / `register_intents_and_reconcile` (does not write `operational_state` directly) | `Device.device_checks_*` |
 | `session_sync_loop` | 30 s (`grid.session_poll_interval_sec`): the 30 s tick is the drift-reconciler timeout | Per-node Appium session lists (`appium_direct.list_sessions`) | `Session` rows; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Session.state`, run-claim transitions |
 | `device_intent_reconciler_loop` | `general.intent_reconcile_interval_sec` | device intents + durable facts | `Device.operational_state` via `apply_derived_state` → `set_operational_state` | derived `Device.operational_state` (sole runtime writer) |
 | `session_viability_loop` | 60 s wake / per-device 3600 s | Direct-to-Appium WebDriver probe session | `Device.session_viability_*`; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Device.session_viability_*` |
@@ -61,9 +61,11 @@ Scheduler-owned loops are listed in `_build_leader_loop_tasks` in `backend/app/m
 | `fleet_capacity_collector_loop` | 60 s | aggregate device, host, session, and queue-ticket counts | `analytics_capacity_snapshots` (model `AnalyticsCapacitySnapshot`) | capacity snapshot rows |
 | `background_loop_flush_loop` | `general.background_loop_flush_interval_sec` | in-memory background-loop heartbeat/observability snapshots | persists those snapshots to the control-plane state table | durable background-loop heartbeat snapshots |
 
-The lifecycle-critical loops are `host_sweep` (which runs the node-health stage), `device_connectivity`, and `session_sync`. The remaining loops handle reconciliation, telemetry, queues, and housekeeping.
+The lifecycle-critical loops are `host_sweep` (which runs the node-health and connectivity stages) and `session_sync`. The remaining loops handle reconciliation, telemetry, queues, and housekeeping.
 
 Node health folded into `host_sweep` (it is no longer a standalone loop). Its probe/apply phase metrics still report under the `node_health` label via `record_background_loop_phase`, but they are now recorded per swept host rather than once per global cycle, so a dashboard sums them across hosts to get a per-tick total.
+
+Device connectivity folded into `host_sweep` too (it is no longer a standalone loop). Unlike node health, it runs as a single **global stage after the per-host fan-out completes** — its three-phase pipeline (DB prepass → cross-host probe gather → serial apply) is preserved byte-for-byte, and the host statuses it reads are the ones this same sweep cycle just wrote. Its cooldown/probe phase metrics still report under the `device_connectivity` label. On a due cycle the sweep's cycle duration grows by the connectivity pass (a timeout-bounded probe phase), so `BackgroundLoop` cadence self-corrects and host-liveness pings may stretch toward the cycle duration on due cycles. Soak criterion: `background_loop_overrun_total{loop="host_sweep"}` stays near zero; if it climbs, raise probe concurrency or the base interval rather than un-folding.
 
 ## The tri-state probe pattern
 
@@ -101,9 +103,9 @@ Loops can run multiple times against the same device without ill effect, provide
 
 Every public health fact has exactly one durable home:
 
-- `Device.device_checks_*`: owned by `device_connectivity_loop` and the liveness concern in `host_sweep_loop`
+- `Device.device_checks_*`: owned by the `host_sweep` connectivity stage and the liveness concern in `host_sweep_loop`
 - `Device.session_viability_*`: owned by `session_viability_loop`
-- `Device.emulator_state`: owned by `device_connectivity_loop`
+- `Device.emulator_state`: owned by the `host_sweep` connectivity stage
 - `AppiumNode.desired_state` (running/stopped intent): written via `app.appium_nodes.services.desired_state_writer.write_desired_state`
 - `AppiumNode.health_running` / `AppiumNode.health_state` (e.g. `health_state="error"`): observed node-health detail, written via `apply_node_state_transition`
 - `AppiumNode.consecutive_health_failures`: owned by the `host_sweep` node-health stage
@@ -117,7 +119,7 @@ Every public health fact has exactly one durable home:
 | `heartbeat.failure_count` | `host_sweep_loop` | missed-heartbeat counter before marking a host offline |
 | `heartbeat.appium_processes` | `host_sweep_loop` / host diagnostics | latest agent-reported Appium process snapshot |
 | `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
-| `connectivity.previously_offline` | `device_connectivity_loop` | remembers why a reconnect is treated as recovery rather than first startup |
+| `connectivity.previously_offline` | `host_sweep` connectivity stage | remembers why a reconnect is treated as recovery rather than first startup |
 | `hardware_telemetry.state` | `hardware_telemetry_loop` | stale/fresh telemetry bookkeeping |
 | `session_viability.state` / `session_viability.running` | `session_viability_loop` | cadence and in-progress guard for deeper session probes |
 
@@ -129,7 +131,7 @@ Loops are independent in the steady state but must not contradict each other whe
 
 - **`session_sync_loop` and the node-health stage.** A device that is in a live session has `operational_state = busy`. `node_health` checks the Appium `/status` endpoint on every running node regardless of operational state (it is a process-liveness probe, not a session check), so a busy device is still polled. `session_sync` reconciles `Session` rows and run-claim transitions, then calls `IntentService.mark_dirty_and_reconcile`; the `device_intent_reconciler` derives `Device.operational_state` (available/offline) from those facts. (Reservation is computed from the `device_reservations` table; there is no hold column.)
 
-- **`device_connectivity_loop` and the node-health stage.** If the agent is unreachable, both see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its typed column; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
+- **The connectivity and node-health stages.** If the agent is unreachable, both see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its typed column; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
 
 - **`session_viability_loop` and the node-health stage.** Two-tier probing. `node_health` is the fast per-node liveness check (default 30 s stage cadence) against agent `/status`; it feeds `AppiumNode.health_running` / `AppiumNode.health_state` and drives auto-restart on `general.node_max_failures` consecutive refusals. `session_viability` is the deep per-device end-to-end probe on a long cadence (default 1h) that creates a real WebDriver session directly against the device's Appium node; it feeds `Device.session_viability_*`. The cheap probe runs often so 30 s cadence stays sustainable; the expensive probe runs rarely so it does not flood the nodes.
 
@@ -160,11 +162,11 @@ flowchart TD
 - **Background loops are disabled.** A process with `GRIDFLEET_RUN_BACKGROUND_LOOPS=false` does not try to acquire the singleton lock or start scheduler tasks.
 - **Another process holds the lock.** If `pg_try_advisory_lock(6001)` returns false, the process logs `background_loops_skipped_lock_held` and does not start maintenance loops. It does not watch or preempt the lock holder.
 - **`node_health` skip cases.** The stage runs only for hosts the same sweep pass proved alive, and on those hosts polls every `AppiumNode` row whose `pid` and `active_connection_target` are populated; nodes that have been stopped (pid cleared) or never started are skipped, and on an off cadence cycle (per `stage_due`) the whole stage is skipped. There are no per-platform exclusions: the `/status` probe is platform-agnostic.
-- **`device_connectivity` skip cases.** The loop probes every device directly via `/agent/pack/devices/{ct}/health` first (direct-first, sweep-on-miss); the host-wide `/agent/pack/devices` enumeration only runs, at most once per host per cycle, when a device's direct probe does not confirm health. If that enumeration is indeterminate, the loop skips the device (and every other device on that host, which hits the cached `None` and skips too); heartbeat handles host status instead. For disconnected devices, it suppresses lifecycle action when the device is in maintenance.
+- **`device_connectivity` skip cases.** The stage probes every device directly via `/agent/pack/devices/{ct}/health` first (direct-first, sweep-on-miss); the host-wide `/agent/pack/devices` enumeration only runs, at most once per host per cycle, when a device's direct probe does not confirm health. If that enumeration is indeterminate, the stage skips the device (and every other device on that host, which hits the cached `None` and skips too); heartbeat handles host status instead. For disconnected devices, it suppresses lifecycle action when the device is in maintenance.
 
 ## What a new loop must implement
 
-When adding a new periodic task, copy the `device_connectivity_loop` shape:
+When adding a new periodic task, copy the `property_refresh_loop` shape:
 
 1. Add a `BackgroundLoop` subclass (`app/core/background_loop.py`) under the owning domain's `services/` package (e.g. `app/devices/services/<name>.py`, `app/appium_nodes/services/<name>.py`), implementing `_session_factory`, `_interval`, and `_run_cycle` and setting the `loop_name` and `cycle_failed_message` class vars. The base class wraps each cycle in `observe_background_loop(loop_name, interval).cycle()` for metrics.
 2. Add it to `_build_leader_loop_tasks` in `app/main.py`. Do not spawn an independent periodic `asyncio.create_task` from another service.
