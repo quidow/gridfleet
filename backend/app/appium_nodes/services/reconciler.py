@@ -279,7 +279,6 @@ async def _record_start_failure(
     row: DesiredRow,
     *,
     reason: str,
-    require_leader: bool = True,
     session_scope: SessionScope | None = None,
     settings: SettingsReader,
 ) -> None:
@@ -307,7 +306,6 @@ async def _record_start_failure(
 async def _reset_start_failure(
     row: DesiredRow,
     *,
-    require_leader: bool = True,
     session_scope: SessionScope | None = None,
     settings: SettingsReader,
 ) -> None:
@@ -365,7 +363,6 @@ class ReconcilerService:
         backoff_until_by_device: dict[uuid.UUID, datetime],
         *,
         health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
-        require_leader: bool = True,
     ) -> None:
         semaphore = asyncio.Semaphore(self._settings.get_int("appium_reconciler.host_parallelism"))
         now = now_utc()
@@ -433,7 +430,7 @@ class ReconcilerService:
                     ]
                     stale_rows = rows_needing_stale_clear(backoff_rows, observed, now=now)
                     if stale_rows:
-                        clear_observed = self._write_observed_factory(require_leader=require_leader)
+                        clear_observed = self._write_observed_factory()
                         for row in stale_rows:
                             await clear_observed(
                                 row=row, state="stopped", port=None, pid=None, active_connection_target=None
@@ -448,7 +445,6 @@ class ReconcilerService:
                         host_id=host_id,
                         host_ip=host_ip,
                         agent_port=agent_port,
-                        require_leader=require_leader,
                     )
                 finally:
                     APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
@@ -466,28 +462,15 @@ class ReconcilerService:
         host_id: uuid.UUID,
         host_ip: str,
         agent_port: int,
-        require_leader: bool = True,
         raise_errors: bool = False,
     ) -> None:
         """Drive convergence for one host."""
         session_scope = _session_scope(db)
-        start_agent = self._make_start_agent(
-            require_leader=require_leader,
-            session_scope=session_scope,
-        )
+        start_agent = self._make_start_agent(session_scope=session_scope)
         stop_agent = self._make_stop_agent(host_ip, agent_port)
-        write_observed = self._write_observed_factory(
-            require_leader=require_leader,
-            session_scope=session_scope,
-        )
-        clear_token = self._clear_token_factory(
-            require_leader=require_leader,
-            session_scope=session_scope,
-        )
-        reset_start_failure = self._make_reset_start_failure(
-            require_leader=require_leader,
-            session_scope=session_scope,
-        )
+        write_observed = self._write_observed_factory(session_scope=session_scope)
+        clear_token = self._clear_token_factory(session_scope=session_scope)
+        reset_start_failure = self._make_reset_start_failure(session_scope=session_scope)
         observed_by_target = {entry.connection_target: entry for entry in observed}
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
             obs = match_observed_entry(row, observed_by_target)
@@ -532,7 +515,6 @@ class ReconcilerService:
     def _make_start_agent(
         self,
         *,
-        require_leader: bool = True,
         session_scope: SessionScope | None = None,
     ) -> Callable[..., Awaitable[dict[str, Any]]]:
         resolved_session_scope = session_scope or self._session_factory
@@ -570,14 +552,12 @@ class ReconcilerService:
                     await _record_start_failure(
                         row,
                         reason=reason,
-                        require_leader=require_leader,
                         session_scope=resolved_session_scope,
                         settings=self._settings,
                     )
                     raise
                 await _reset_start_failure(
                     row,
-                    require_leader=require_leader,
                     session_scope=resolved_session_scope,
                     settings=self._settings,
                 )
@@ -624,7 +604,6 @@ class ReconcilerService:
     def _write_observed_factory(
         self,
         *,
-        require_leader: bool = True,
         session_scope: SessionScope | None = None,
     ) -> Callable[..., Awaitable[None]]:
         resolved_session_scope = session_scope or self._session_factory
@@ -686,7 +665,6 @@ class ReconcilerService:
     def _clear_token_factory(
         self,
         *,
-        require_leader: bool = True,
         session_scope: SessionScope | None = None,
     ) -> Callable[..., Awaitable[None]]:
         resolved_session_scope = session_scope or self._session_factory
@@ -700,13 +678,10 @@ class ReconcilerService:
     def _make_reset_start_failure(
         self,
         *,
-        require_leader: bool = True,
         session_scope: SessionScope | None = None,
     ) -> Callable[..., Awaitable[None]]:
         async def _reset(*, row: DesiredRow) -> None:
-            await _reset_start_failure(
-                row, require_leader=require_leader, session_scope=session_scope, settings=self._settings
-            )
+            await _reset_start_failure(row, session_scope=session_scope, settings=self._settings)
 
         return _reset
 
@@ -755,7 +730,6 @@ class ReconcilerService:
             host_id=host.id,
             host_ip=host.ip,
             agent_port=host.agent_port,
-            require_leader=False,
             raise_errors=True,
         )
         async with session_scope() as read_db:

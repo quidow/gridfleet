@@ -185,7 +185,7 @@ async def test_reconciler_start_agent_forwards_pool(monkeypatch: pytest.MonkeyPa
     start_mock = AsyncMock(side_effect=NodeAlreadyRunningError("already running for target"))
     monkeypatch.setattr(appium_reconciler, "_start_for_node", start_mock)
 
-    start = _reconciler_service(pool)._make_start_agent(require_leader=False, session_scope=scope)
+    start = _reconciler_service(pool)._make_start_agent(session_scope=scope)
     with pytest.raises(NodeAlreadyRunningError):
         await start(row=row, port=4723)
 

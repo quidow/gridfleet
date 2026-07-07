@@ -147,7 +147,6 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
         [active, backed_off],
         {backed_off.device_id: datetime.now(UTC) + timedelta(minutes=10)},
         health_by_host={host_id: observed_payload},
-        require_leader=False,
     )
 
     touch.assert_awaited_once()
@@ -207,7 +206,7 @@ async def test_start_agent_does_not_record_failure_on_already_running(monkeypatc
     svc = ReconcilerService(
         publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
     )
-    start = svc._make_start_agent(require_leader=False, session_scope=scope)
+    start = svc._make_start_agent(session_scope=scope)
     with pytest.raises(NodeAlreadyRunningError):
         await start(row=row, port=4723)
 
@@ -281,7 +280,7 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
     svc2 = ReconcilerService(
         publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
     )
-    start = svc2._make_start_agent(require_leader=False, session_scope=scope)
+    start = svc2._make_start_agent(session_scope=scope)
     with pytest.raises(RuntimeError, match="no longer exists"):
         await start(row=row, port=4723)
 
@@ -295,9 +294,7 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
         await start(row=row, port=4723)
 
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
-    await appium_reconciler._reset_start_failure(
-        row, require_leader=False, session_scope=scope, settings=FakeSettingsReader({})
-    )
+    await appium_reconciler._reset_start_failure(row, session_scope=scope, settings=FakeSettingsReader({}))
 
 
 async def test_record_and_reset_start_failure_state(
@@ -321,7 +318,6 @@ async def test_record_and_reset_start_failure_state(
     await appium_reconciler._record_start_failure(
         row,
         reason="timeout",
-        require_leader=False,
         session_scope=_scope,
         settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}),
     )
@@ -332,9 +328,7 @@ async def test_record_and_reset_start_failure_state(
     assert device.lifecycle_policy_state["last_failure_source"] == "appium_reconciler"
     assert device.lifecycle_policy_state["last_failure_reason"] == "timeout"
 
-    await appium_reconciler._reset_start_failure(
-        row, require_leader=False, session_scope=_scope, settings=FakeSettingsReader({})
-    )
+    await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("recovery_backoff_attempts") in (None, 0)
@@ -347,7 +341,6 @@ async def test_record_and_reset_start_failure_state(
     await appium_reconciler._record_start_failure(
         _desired_row(device_id=uuid.uuid4()),
         reason="timeout",
-        require_leader=False,
         session_scope=_scope,
         settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}),
     )
@@ -378,9 +371,7 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
     async def _scope() -> AsyncSession:
         yield db_session
 
-    await appium_reconciler._reset_start_failure(
-        row, require_leader=False, session_scope=_scope, settings=FakeSettingsReader({})
-    )
+    await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("last_failure_source") == "connectivity"
@@ -412,9 +403,7 @@ async def test_reset_start_failure_clears_orphaned_reason(
     async def _scope() -> AsyncSession:
         yield db_session
 
-    await appium_reconciler._reset_start_failure(
-        row, require_leader=False, session_scope=_scope, settings=FakeSettingsReader({})
-    )
+    await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("last_failure_source") is None
@@ -447,7 +436,7 @@ async def test_confirm_running_skips_lock_when_no_failure_residue(
         pool=None,
         circuit_breaker=Mock(),
         session_factory=_scope,
-    )._make_reset_start_failure(require_leader=False, session_scope=_scope)
+    )._make_reset_start_failure(session_scope=_scope)
 
     # Row with no failure residue in lifecycle_policy_state
     row = _desired_row(device_id=device.id, lifecycle_policy_state={})
@@ -498,7 +487,7 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
         pool=None,
         circuit_breaker=Mock(),
         session_factory=_scope,
-    )._make_reset_start_failure(require_leader=False, session_scope=_scope)
+    )._make_reset_start_failure(session_scope=_scope)
 
     # Row carries the same residue state lock-free
     row = _desired_row(

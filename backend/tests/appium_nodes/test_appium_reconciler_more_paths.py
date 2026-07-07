@@ -125,7 +125,7 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=Mock(),
-    )._write_observed_factory(require_leader=False, session_scope=lambda: db)
+    )._write_observed_factory(session_scope=lambda: db)
     await observed(
         row=row,
         state="running",
@@ -188,7 +188,7 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
         circuit_breaker=Mock(),
         session_factory=Mock(),
     )
-    observed = _reconciler_svc._write_observed_factory(require_leader=False, session_scope=lambda: db)
+    observed = _reconciler_svc._write_observed_factory(session_scope=lambda: db)
     await observed(row=row, state="running", port=4723, pid=1, active_connection_target="dev")
 
     device = SimpleNamespace(id=row.device_id, appium_node=None)
@@ -199,7 +199,7 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
     await observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None, clear_transition=True)
 
-    clear_token = _reconciler_svc._clear_token_factory(require_leader=False, session_scope=lambda: db)
+    clear_token = _reconciler_svc._clear_token_factory(session_scope=lambda: db)
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
     await clear_token(row=row)
     appium_reconciler._clear_transition_token.assert_awaited_once_with(db, row)
