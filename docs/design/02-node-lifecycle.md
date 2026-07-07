@@ -11,7 +11,7 @@ This doc captures every transition, who triggers it, and the acknowledgement rul
 | Component | Role |
 | --- | --- |
 | `node_service` → `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | "Single-module node lifecycle service": module-level `mark_node_started`/`mark_node_stopped`/`start_remote_node`/`stop_remote_node`/`_start_for_node`, plus the `ReconcilerAgentService` class (`start_node`/`stop_node`/`restart_node`/`wait_for_node_running`) |
-| `node_health_loop` (`backend/app/appium_nodes/services/node_health.py`) | Periodic health probe, owns auto-restart |
+| `host_sweep` node-health stage (`backend/app/appium_nodes/services/node_health.py`) | Per-host cadence-gated health probe, owns auto-restart |
 | `agent_operations` (`backend/app/agent_comm/operations.py`, imported aliased as `agent_operations`) | Typed wrapper around agent HTTP endpoints |
 | Host agent (`agent/agent_app/`) | Spawns Appium subprocesses (the WebDriver router reaches them directly; the agent runs no Grid relay) |
 
@@ -183,12 +183,12 @@ So the convergence path **must** see a confirmed stop (`stop_remote_node` return
 
 The constants `RESTART_BACKOFF_BASE = 2` and `RESTART_MAX_RETRIES = 3` exist in `reconciler_agent.py` (and its `__all__`) but are currently **dead**: they are referenced nowhere else in `app/` or `tests/`. There is no per-attempt backoff and no owner-allocation release after N failures in the restart path.
 
-## Flow D: Auto-restart from `node_health_loop`
+## Flow D: Auto-restart from the `host_sweep` node-health stage
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant L as node_health_loop
+    participant L as host_sweep node-health stage
     participant Probe as _check_node_health
     participant Agent as Host agent
     participant Process as _process_node_health
