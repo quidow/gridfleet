@@ -19,9 +19,8 @@ from app.devices.services.intent_evaluator import (
     evaluate_grid_routing,
     evaluate_node_process,
     evaluate_recovery,
-    evaluate_reservation,
 )
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
 from app.devices.services.serialization_types import DeviceSerializationContext
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -257,6 +256,9 @@ def _dataclass_to_dict(value: object) -> dict[str, Any]:
 
 async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str, Any]:
     now = now_utc()
+    # Stored intents only. This debug view does not merge the fact-derived (synthesized)
+    # intents, so its "derived" decisions reflect stored commands/leases, not the full
+    # reconcile input. ponytail: accurate-debug-view merge deferred; add if operators need it.
     intents = (
         (
             await db.execute(
@@ -270,7 +272,6 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
     )
     node_intents = [intent for intent in intents if intent.axis == NODE_PROCESS]
     grid_intents = [intent for intent in intents if intent.axis == GRID_ROUTING]
-    reservation_intents = [intent for intent in intents if intent.axis == RESERVATION]
     recovery_intents = [intent for intent in intents if intent.axis == RECOVERY]
     return {
         "intents": [
@@ -286,7 +287,6 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
         "derived": {
             "node_process": _dataclass_to_dict(evaluate_node_process(node_intents, now)),
             "grid_routing": _dataclass_to_dict(evaluate_grid_routing(grid_intents, now)),
-            "reservation": _dataclass_to_dict(evaluate_reservation(reservation_intents, now)),
             "recovery": _dataclass_to_dict(evaluate_recovery(recovery_intents, now)),
         },
     }

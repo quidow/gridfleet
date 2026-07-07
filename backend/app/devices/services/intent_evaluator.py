@@ -45,16 +45,6 @@ class GridRoutingDecision:
 
 
 @dataclass(frozen=True)
-class ReservationDecision:
-    excluded: bool
-    run_id: uuid.UUID | None
-    exclusion_reason: str | None
-    cooldown_count: int | None
-    expires_at: datetime | None
-    reason: str
-
-
-@dataclass(frozen=True)
 class RecoveryDecision:
     allowed: bool
     reason: str | None
@@ -141,27 +131,6 @@ def evaluate_grid_routing(intents: list[DeviceIntent], now: datetime) -> GridRou
     return GridRoutingDecision(
         run_id=winner.run_id,
         accepting_new_sessions=bool(winner.payload.get("accepting_new_sessions", True)),
-        reason=_intent_reason(winner),
-    )
-
-
-def evaluate_reservation(intents: list[DeviceIntent], now: datetime) -> ReservationDecision:
-    winner = _highest_active([intent for intent in intents if bool(intent.payload.get("excluded", True))], now)
-    if winner is None:
-        return ReservationDecision(
-            excluded=False,
-            run_id=None,
-            exclusion_reason=None,
-            cooldown_count=None,
-            expires_at=None,
-            reason="no active reservation exclusion intent",
-        )
-    return ReservationDecision(
-        excluded=True,
-        run_id=winner.run_id,
-        exclusion_reason=_optional_str(winner.payload.get("exclusion_reason")),
-        cooldown_count=_optional_int(winner.payload.get("cooldown_count")),
-        expires_at=winner.expires_at,
         reason=_intent_reason(winner),
     )
 

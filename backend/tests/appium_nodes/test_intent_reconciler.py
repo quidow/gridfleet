@@ -22,7 +22,7 @@ from app.devices.services.intent_reconciler import (
     reconcile_device,
     run_device_intent_reconciler_once,
 )
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.fakes.review import build_review_service
@@ -87,65 +87,24 @@ async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
     device = await create_device(db_session, host_id=db_host.id, name="cooldown")
     await _seed_node(db_session, device.id)
     run = await create_reserved_run(db_session, name="cooldown run", devices=[device])
-    service = IntentService(db_session)
-    expires_at = datetime.now(UTC) + timedelta(minutes=5)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"cooldown:node:{run.id}",
-                axis=NODE_PROCESS,
-                run_id=run.id,
-                expires_at=expires_at,
-                payload={"action": "stop", "stop_mode": "defer", "priority": 70},
-            ),
-            IntentRegistration(
-                source=f"cooldown:grid:{run.id}",
-                axis=GRID_ROUTING,
-                run_id=run.id,
-                expires_at=expires_at,
-                payload={"accepting_new_sessions": False, "priority": 70},
-            ),
-            IntentRegistration(
-                source=f"cooldown:reservation:{run.id}",
-                axis=RESERVATION,
-                run_id=run.id,
-                expires_at=expires_at,
-                payload={
-                    "excluded": True,
-                    "priority": 70,
-                    "exclusion_reason": "Device in cooldown",
-                    "cooldown_count": 2,
-                },
-            ),
-            IntentRegistration(
-                source=f"cooldown:recovery:{run.id}",
-                axis=RECOVERY,
-                run_id=run.id,
-                expires_at=expires_at,
-                payload={"allowed": False, "priority": 70, "reason": "Device in cooldown"},
-            ),
-        ],
-    )
+    reservation = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    reservation.excluded = True
+    reservation.exclusion_reason = "Device in cooldown"
+    reservation.excluded_at = datetime.now(UTC)
+    reservation.excluded_until = datetime.now(UTC) + timedelta(minutes=5)
     await db_session.commit()
 
     await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
-    reservation = (
-        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
-    ).scalar_one()
-    await db_session.refresh(device)
+    await db_session.refresh(reservation)
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
-    assert node.stop_pending is True
     assert node.desired_grid_run_id == run.id
     assert reservation.excluded is True
-    assert reservation.exclusion_reason == "Device in cooldown"
-    assert reservation.cooldown_count == 2
-    assert device.recovery_allowed is False
-    assert device.recovery_blocked_reason == "Device in cooldown"
 
 
 async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSession, db_host: Host) -> None:

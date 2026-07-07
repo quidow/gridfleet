@@ -268,31 +268,13 @@ class RunReservationService:
         except NoResultFound:
             device = None
         if device is not None:
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id,
-                sources=run_release_intent_sources(run.id, device.id),
-                publisher=publisher,
-            )
+            # released_at written above; run: routing and cooldown denies derive from the
+            # reservation row, so reconcile to tear them down (no stored release intents now).
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=publisher)
         if commit:
             await db.commit()
             run = await get_run(db, run.id)
         return run
-
-
-def run_release_intent_sources(run_id: uuid.UUID, device_id: uuid.UUID) -> list[str]:
-    """Every intent source a permanent run-release must revoke.
-
-    The run-scoped routing intents, any sub-threshold cooldown intents (whose
-    ``run_active`` precondition still holds after release because the *run* is still
-    active), and the device-keyed health-failure exclusion (dropped so the next run
-    to allocate this device does not inherit a stale exclusion verdict).
-    """
-    return [
-        f"cooldown:grid:{run_id}",
-        f"cooldown:reservation:{run_id}",
-        f"cooldown:recovery:{run_id}",
-        f"health_failure:reservation:{device_id}",
-    ]
 
 
 def reservation_entry_is_excluded(entry: DeviceReservation | None) -> bool:

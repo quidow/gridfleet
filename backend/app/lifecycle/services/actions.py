@@ -14,7 +14,6 @@ from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_HEALTH_FAILURE,
-    RESERVATION,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -182,25 +181,9 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
-            await IntentService(db).register_intents_and_reconcile(
-                device_id=device.id,
-                intents=[
-                    IntentRegistration(
-                        source=f"health_failure:reservation:{device.id}",
-                        axis=RESERVATION,
-                        run_id=run.id,
-                        payload={
-                            "excluded": True,
-                            "priority": PRIORITY_HEALTH_FAILURE,
-                            "exclusion_reason": reason,
-                        },
-                    )
-                ],
-                publisher=self._publisher,
-            )
-            # The run: grid-routing intent is now derived from the reservation row;
-            # the exclusion just written above makes the derivation drop it. Trigger
-            # an inline reconcile so that re-derivation happens at this site.
+            # exclude_device_from_run wrote the indefinite exclusion on the reservation
+            # row; the run: grid-routing intent derives from that row, so reconcile here
+            # to drop it (the health-failure exclusion has no stored intent twin anymore).
             await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
@@ -238,13 +221,9 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.restore_device_to_run(db, device.id, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
-            # Un-excluding the reservation row (above) re-derives the run: grid-routing
-            # intent on this inline reconcile — no explicit re-registration needed.
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id,
-                sources=[f"health_failure:reservation:{device.id}"],
-                publisher=self._publisher,
-            )
+            # restore_device_to_run un-excluded the reservation row above; reconcile so
+            # the run: grid-routing intent is re-derived.
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
             await self._incidents.record_lifecycle_incident(
                 db,
                 device,

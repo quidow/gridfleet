@@ -17,9 +17,11 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceIntent, DeviceOperationalState
+from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
+from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
@@ -202,8 +204,9 @@ async def test_cooldown_intent_payload_shape(
     )
     assert not escalated  # non-escalation path registers the intents we want
 
-    # --- cooldown:grid:{run_id} (the warm soft-gate lever) ---
-    grid_intent = await _get_intent(db_session, device.id, prefix=f"cooldown:grid:{run.id}")
+    # --- cooldown:grid:{run_id} (the warm soft-gate lever, now synthesized in-memory) ---
+    synthesized = await synthesize_fact_intents(db_session, device, None, [], now_utc())
+    grid_intent = next(i for i in synthesized if i.source == f"cooldown:grid:{run.id}")
     grid_payload = grid_intent.payload
 
     assert grid_payload.get("accepting_new_sessions") is False, (
@@ -211,19 +214,12 @@ async def test_cooldown_intent_payload_shape(
     )
     assert "priority" in grid_payload
 
-    # --- cooldown:reservation:{run_id} ---
-    res_intent = await _get_intent(db_session, device.id, prefix=f"cooldown:reservation:{run.id}")
-    res_payload = res_intent.payload
-
-    # Documented: cooldown_count (refresh-on-event) and exclusion_reason (intentional snapshot)
-    assert "cooldown_count" in res_payload, (
-        f"cooldown:reservation intent must carry cooldown_count; got {res_payload!r}"
-    )
-    assert res_payload["cooldown_count"] == count
-    assert "exclusion_reason" in res_payload, (
-        f"cooldown:reservation intent must carry exclusion_reason; got {res_payload!r}"
-    )
-    assert res_payload["exclusion_reason"] == cooldown_reason
+    # --- cooldown_count + exclusion_reason now live on the DeviceReservation row ---
+    reservation = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert reservation.cooldown_count == count
+    assert reservation.exclusion_reason == cooldown_reason
 
 
 # ---------------------------------------------------------------------------

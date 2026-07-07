@@ -125,7 +125,6 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
     intents = [
         DeviceIntent(device_id=uuid.uuid4(), source="node", axis="node_process", payload={"action": "start"}),
         DeviceIntent(device_id=uuid.uuid4(), source="grid", axis="grid_routing", payload={"enabled": True}),
-        DeviceIntent(device_id=uuid.uuid4(), source="reservation", axis="reservation", payload={"hold": True}),
         DeviceIntent(device_id=uuid.uuid4(), source="recovery", axis="recovery", payload={"allowed": True}),
     ]
 
@@ -145,11 +144,11 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
     assert [item["axis"] for item in payload["intents"]] == [
         "node_process",
         "grid_routing",
-        "reservation",
         "recovery",
     ]
     assert "node_process" in payload["derived"]
-    assert "reservation" in payload["derived"]
+    assert "grid_routing" in payload["derived"]
+    assert "recovery" in payload["derived"]
 
 
 async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: pytest.MonkeyPatch) -> None:

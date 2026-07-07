@@ -26,7 +26,6 @@ from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_HEALTH_FAILURE,
     RECOVERY,
-    RESERVATION,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_summary import (
@@ -2350,23 +2349,12 @@ async def _exclude_reservation(
     reason: str = "Failed checks: ping, ecp",
     excluded_until: object = None,
 ) -> None:
-    """Mark the reservation excluded and seed the permanent health-failure intent."""
+    """Mark the reservation excluded on the row (no intent axis anymore)."""
     res = await _reservation_row(db_session, device_id)
     res.excluded = True
     res.exclusion_reason = reason
     res.excluded_at = datetime.now(UTC)
     res.excluded_until = excluded_until
-    await IntentService(db_session).register_intents(
-        device_id=device_id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:reservation:{device_id}",
-                axis=RESERVATION,
-                run_id=run_id,
-                payload={"excluded": True, "priority": PRIORITY_HEALTH_FAILURE, "exclusion_reason": reason},
-            )
-        ],
-    )
     await db_session.commit()
 
 
@@ -2387,15 +2375,6 @@ async def test_restore_run_after_self_heal_clears_health_failure_exclusion(
     res = await _reservation_row(db_session, device.id)
     assert res.excluded is False
     assert res.exclusion_reason is None
-    leftover = (
-        await db_session.execute(
-            select(DeviceIntent.id).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"health_failure:reservation:{device.id}",
-            )
-        )
-    ).scalar_one_or_none()
-    assert leftover is None
 
 
 async def test_restore_run_after_self_heal_leaves_cooldown_exclusion(db_session: AsyncSession, db_host: Host) -> None:

@@ -12,9 +12,9 @@ from sqlalchemy import select
 
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
-from app.devices.services.intent_reconciler import _reconcile_expired_intents
+from app.devices.services.intent_reconciler import reconcile_device
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
@@ -560,20 +560,16 @@ async def test_cooldown_warm_expiry_restores_accepting(
     await db_session.refresh(node)
     assert node.accepting_new_sessions is False  # warm-parked
 
-    # Simulate the cooldown TTL lapsing: backdate every cooldown intent's expires_at,
-    # then run the reconciler's expired-intent sweep (which revokes them and reconciles).
-    past = datetime.now(UTC) - timedelta(seconds=1)
-    intents = (
-        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
-    )
-    for intent in intents:
-        if intent.source.startswith("cooldown:"):
-            intent.expires_at = past
+    # Simulate the cooldown TTL lapsing: backdate the reservation's exclusion window so
+    # the synthesized cooldown denies stop firing, then reconcile the device.
+    reservation = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    reservation.excluded_at = datetime.now(UTC) - timedelta(seconds=120)
+    reservation.excluded_until = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.commit()
 
-    await _reconcile_expired_intents(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     await db_session.refresh(node)

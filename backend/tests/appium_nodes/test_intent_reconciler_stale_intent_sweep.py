@@ -18,7 +18,7 @@ from app.core import metrics_recorders
 from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services import intent_reconciler, state_write_guard
 from app.devices.services.intent_reconciler import run_device_intent_reconciler_once
-from app.devices.services.intent_types import NODE_PROCESS, RESERVATION
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
@@ -206,7 +206,7 @@ async def test_sweep_revokes_cooldown_intent_when_reservation_released(
     )
 
     source = f"cooldown:{axis}:{run.id}"
-    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=RESERVATION, payload={}))
+    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=GRID_ROUTING, payload={}))
     await db_session.commit()
 
     await intent_reconciler._sweep_orphaned_intents(db_session)
@@ -232,7 +232,7 @@ async def test_sweep_preserves_cooldown_intent_when_reservation_active(
     )
 
     source = f"cooldown:node:{run.id}"
-    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=RESERVATION, payload={}))
+    db_session.add(DeviceIntent(device_id=device.id, source=source, axis=GRID_ROUTING, payload={}))
     await db_session.commit()
 
     await intent_reconciler._sweep_orphaned_intents(db_session)

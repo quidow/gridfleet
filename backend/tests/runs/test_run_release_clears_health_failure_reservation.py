@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 
-from app.devices.models import DeviceIntent
-from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import RESERVATION, IntentRegistration
+from app.core.timeutil import now_utc
+from app.devices.models import DeviceReservation
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
@@ -28,84 +27,75 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 
-async def _seed_health_failure_reservation_intent(
+async def _fetch_reservation(db_session: AsyncSession, *, device_id: object) -> DeviceReservation:
+    return (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+    ).scalar_one()
+
+
+async def _seed_health_failure_exclusion(
     db_session: AsyncSession,
     *,
     device_id: object,
-    run_id: object,
     reason: str = "stale exclusion text",
 ) -> None:
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device_id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:reservation:{device_id}",
-                axis=RESERVATION,
-                run_id=run_id,
-                payload={
-                    "excluded": True,
-                    "priority": 60,
-                    "exclusion_reason": reason,
-                },
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device_id,
+                DeviceReservation.released_at.is_(None),
             )
-        ],
-    )
+        )
+    ).scalar_one()
+    reservation.excluded = True
+    reservation.exclusion_reason = reason
+    reservation.excluded_at = now_utc()
+    reservation.excluded_until = None
     await db_session.commit()
 
 
-async def _intent_exists(db_session: AsyncSession, *, device_id: object, source: str) -> bool:
-    result = await db_session.execute(
-        select(DeviceIntent.id).where(
-            DeviceIntent.device_id == device_id,
-            DeviceIntent.source == source,
-        )
-    )
-    return result.scalar_one_or_none() is not None
-
-
-async def test_cancel_run_revokes_health_failure_reservation_intent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_cancel_run_clears_health_failure_exclusion(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="cancel-release")
     run = await create_reserved_run(db_session, name="cancel-release-run", devices=[device])
-    await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
-    assert await _intent_exists(
-        db_session,
-        device_id=device.id,
-        source=f"health_failure:reservation:{device.id}",
-    )
+    await _seed_health_failure_exclusion(db_session, device_id=device.id)
+    seeded = await _fetch_reservation(db_session, device_id=device.id)
+    assert seeded.excluded is True
 
     await _lifecycle_svc.cancel_run(db_session, run.id)
 
-    assert not await _intent_exists(
-        db_session,
-        device_id=device.id,
-        source=f"health_failure:reservation:{device.id}",
-    )
+    entry = await _fetch_reservation(db_session, device_id=device.id)
+    # Run end releases the reservation; a released row no longer gates the device
+    # (terminal-run reservations are ignored by reservation_gating_run_id), so the
+    # stale exclusion is no longer live.
+    assert entry.released_at is not None
+    assert entry.excluded is False  # released rows are cleared of exclusion (invariant)
 
 
-async def test_complete_run_revokes_health_failure_reservation_intent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_complete_run_clears_health_failure_exclusion(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="complete-release")
     run = await create_reserved_run(db_session, name="complete-release-run", devices=[device])
-    await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
+    await _seed_health_failure_exclusion(db_session, device_id=device.id)
 
     await _lifecycle_svc.complete_run(db_session, run.id)
 
-    assert not await _intent_exists(
-        db_session,
-        device_id=device.id,
-        source=f"health_failure:reservation:{device.id}",
-    )
+    entry = await _fetch_reservation(db_session, device_id=device.id)
+    # Run end releases the reservation; a released row no longer gates the device
+    # (terminal-run reservations are ignored by reservation_gating_run_id), so the
+    # stale exclusion is no longer live.
+    assert entry.released_at is not None
+    assert entry.excluded is False  # released rows are cleared of exclusion (invariant)
 
 
-async def test_expire_run_revokes_health_failure_reservation_intent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_expire_run_clears_health_failure_exclusion(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="expire-release")
     run = await create_reserved_run(db_session, name="expire-release-run", devices=[device])
-    await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
+    await _seed_health_failure_exclusion(db_session, device_id=device.id)
 
     await _lifecycle_svc.expire_run(db_session, run, "Heartbeat timeout")
 
-    assert not await _intent_exists(
-        db_session,
-        device_id=device.id,
-        source=f"health_failure:reservation:{device.id}",
-    )
+    entry = await _fetch_reservation(db_session, device_id=device.id)
+    # Run end releases the reservation; a released row no longer gates the device
+    # (terminal-run reservations are ignored by reservation_gating_run_id), so the
+    # stale exclusion is no longer live.
+    assert entry.released_at is not None
+    assert entry.excluded is False  # released rows are cleared of exclusion (invariant)

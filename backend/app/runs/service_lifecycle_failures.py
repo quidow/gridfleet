@@ -13,14 +13,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import (
-    GRID_ROUTING,
-    PRIORITY_COOLDOWN,
-    RECOVERY,
-    RESERVATION,
-    IntentRegistration,
-    RunActivePrecondition,
-)
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs.models import TERMINAL_STATES, TestRun
 from app.runs.service_reservation import get_reservation_entry_for_device, get_run
@@ -40,51 +32,6 @@ if TYPE_CHECKING:
         MaintenanceWriter,
     )
     from app.runs.service_reservation import RunReservationService
-
-
-def _cooldown_intents(
-    *,
-    run_id: uuid.UUID,
-    reason: str,
-    count: int,
-    expires_at: datetime,
-) -> list[IntentRegistration]:
-    precondition: RunActivePrecondition = {"kind": "run_active", "run_id": str(run_id)}
-    return [
-        # No NODE_PROCESS (cooldown:node) intent: cooldown is a warm soft-gate park
-        # (design P2). The node stays running (baseline:idle keeps it warm); the
-        # cooldown:grid intent below sets accepting_new_sessions=False, which the
-        # grid allocator now honors (P1). Reservation exclusion still gates the run.
-        IntentRegistration(
-            source=f"cooldown:grid:{run_id}",
-            axis=GRID_ROUTING,
-            run_id=run_id,
-            expires_at=expires_at,
-            payload={"accepting_new_sessions": False, "priority": PRIORITY_COOLDOWN},
-            precondition=precondition,
-        ),
-        IntentRegistration(
-            source=f"cooldown:reservation:{run_id}",
-            axis=RESERVATION,
-            run_id=run_id,
-            expires_at=expires_at,
-            payload={
-                "excluded": True,
-                "priority": PRIORITY_COOLDOWN,
-                "exclusion_reason": reason,
-                "cooldown_count": count,
-            },
-            precondition=precondition,
-        ),
-        IntentRegistration(
-            source=f"cooldown:recovery:{run_id}",
-            axis=RECOVERY,
-            run_id=run_id,
-            expires_at=expires_at,
-            payload={"allowed": False, "priority": PRIORITY_COOLDOWN, "reason": reason},
-            precondition=precondition,
-        ),
-    ]
 
 
 _COOLDOWN_ESCALATION_REASON_PREFIX = "Exceeded cooldown threshold "
@@ -287,16 +234,9 @@ class RunFailureService:
             ),
         )
 
-        await IntentService(db).register_intents_and_reconcile(
-            device_id=device.id,
-            intents=_cooldown_intents(
-                run_id=run.id,
-                reason=clean_reason,
-                count=cooldown_count_after,
-                expires_at=excluded_until,
-            ),
-            publisher=self._publisher,
-        )
+        # Cooldown denies (cooldown:grid, cooldown:recovery) are derived from the
+        # excluded_until row window written above; reconcile so they take effect inline.
+        await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
 
         await db.commit()
         await deliver_agent_reconfigures(

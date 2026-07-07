@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -63,3 +64,19 @@ async def test_maintenance_reason_synthesizes_stop_and_recovery_deny(db_session:
     recovery = by_source[f"maintenance:recovery:{device.id}"]
     assert recovery.payload["allowed"] is False
     assert recovery.payload["reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
+
+
+@pytest.mark.db
+async def test_timed_exclusion_synthesizes_cooldown_denies(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="synth-cd")
+    run = await create_reserved_run(db_session, name="synth-cd-r", devices=[device])
+    entry = run.device_reservations[0]
+    entry.excluded = True
+    entry.exclusion_reason = "flaky boot"
+    entry.excluded_until = now_utc() + timedelta(seconds=300)
+    await db_session.flush()
+    intents = await synthesize_fact_intents(db_session, device, None, [], now_utc())
+    by_source = {i.source: i for i in intents}
+    assert by_source[f"cooldown:grid:{run.id}"].payload == {"accepting_new_sessions": False, "priority": 70}
+    assert by_source[f"cooldown:recovery:{run.id}"].payload["reason"] == "flaky boot"
+    assert f"run:{run.id}" in by_source  # cooldown never revoked run routing

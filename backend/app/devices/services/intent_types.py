@@ -28,11 +28,10 @@ def failure_stop_sources(device_id: UUID) -> list[str]:
     ]
 
 
-IntentAxis = Literal["node_process", "grid_routing", "reservation", "recovery"]
+IntentAxis = Literal["node_process", "grid_routing", "recovery"]
 
 NODE_PROCESS: IntentAxis = "node_process"
 GRID_ROUTING: IntentAxis = "grid_routing"
-RESERVATION: IntentAxis = "reservation"
 RECOVERY: IntentAxis = "recovery"
 
 PRIORITY_OPERATOR_STOP = 100

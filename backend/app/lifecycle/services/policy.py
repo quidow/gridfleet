@@ -20,9 +20,7 @@ from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
-    PRIORITY_HEALTH_FAILURE,
     RECOVERY,
-    RESERVATION,
     IntentRegistration,
     failure_stop_sources,
 )
@@ -328,24 +326,8 @@ class LifecyclePolicyService:
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[
-                *(
-                    [
-                        IntentRegistration(
-                            source=f"health_failure:reservation:{device.id}",
-                            axis=RESERVATION,
-                            run_id=run.id,
-                            payload={
-                                "excluded": True,
-                                "priority": PRIORITY_HEALTH_FAILURE,
-                                "exclusion_reason": entry.exclusion_reason,
-                            },
-                        )
-                    ]
-                    if run is not None
-                    and entry is not None
-                    and run_reservation_service.reservation_entry_is_excluded(entry)
-                    else []
-                ),
+                # The health-failure reservation exclusion is written directly on the
+                # reservation row; run: routing derives from it. No stored twin needed.
                 IntentRegistration(
                     source=f"auto_recovery:node:{device.id}",
                     axis=NODE_PROCESS,
