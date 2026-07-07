@@ -6,7 +6,6 @@ import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.runs.models import RunState, TestRun
 
@@ -21,24 +20,23 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 async def test_availability_enough_devices(client: AsyncClient, db_session: AsyncSession, db_host: Host) -> None:
     for i in range(3):
-        with state_write_guard.bypass():
-            db_session.add(
-                Device(
-                    pack_id="appium-uiautomator2",
-                    platform_id="android_mobile",
-                    identity_scheme="android_serial",
-                    identity_scope="host",
-                    identity_value=f"avail-{i}",
-                    connection_target=f"avail-{i}",
-                    name=f"Phone {i}",
-                    os_version="14",
-                    host_id=db_host.id,
-                    operational_state=DeviceOperationalState.available,
-                    verified_at=datetime.now(UTC),
-                    device_type=DeviceType.real_device,
-                    connection_type=ConnectionType.usb,
-                )
+        db_session.add(
+            Device(
+                pack_id="appium-uiautomator2",
+                platform_id="android_mobile",
+                identity_scheme="android_serial",
+                identity_scope="host",
+                identity_value=f"avail-{i}",
+                connection_target=f"avail-{i}",
+                name=f"Phone {i}",
+                os_version="14",
+                host_id=db_host.id,
+                operational_state=DeviceOperationalState.available,
+                verified_at=datetime.now(UTC),
+                device_type=DeviceType.real_device,
+                connection_type=ConnectionType.usb,
             )
+        )
     await db_session.commit()
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 2})
@@ -55,41 +53,39 @@ async def test_availability_not_enough_devices(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        db_session.add(
-            Device(
-                pack_id="appium-uiautomator2",
-                platform_id="android_mobile",
-                identity_scheme="android_serial",
-                identity_scope="host",
-                identity_value="avail-solo",
-                connection_target="avail-solo",
-                name="Solo Phone",
-                os_version="14",
-                host_id=db_host.id,
-                operational_state=DeviceOperationalState.available,
-                verified_at=datetime.now(UTC),
-                device_type=DeviceType.real_device,
-                connection_type=ConnectionType.usb,
-            )
+    db_session.add(
+        Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avail-solo",
+            connection_target="avail-solo",
+            name="Solo Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
         )
-    with state_write_guard.bypass():
-        db_session.add(
-            Device(
-                pack_id="appium-uiautomator2",
-                platform_id="android_mobile",
-                identity_scheme="android_serial",
-                identity_scope="host",
-                identity_value="avail-busy",
-                connection_target="avail-busy",
-                name="Busy Phone",
-                os_version="14",
-                host_id=db_host.id,
-                operational_state=DeviceOperationalState.busy,
-                device_type=DeviceType.real_device,
-                connection_type=ConnectionType.usb,
-            )
+    )
+    db_session.add(
+        Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avail-busy",
+            connection_target="avail-busy",
+            name="Busy Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
         )
+    )
     await db_session.commit()
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 2})
@@ -105,22 +101,21 @@ async def test_availability_excludes_unhealthy_devices(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        unhealthy = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="avail-unhealthy",
-            connection_target="avail-unhealthy",
-            name="Unhealthy Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    unhealthy = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="avail-unhealthy",
+        connection_target="avail-unhealthy",
+        name="Unhealthy Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(unhealthy)
     await db_session.commit()
     await db_session.refresh(unhealthy)
@@ -151,35 +146,33 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="avail-recovered",
-            connection_target="avail-recovered",
-            name="Recovered Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="avail-recovered",
+        connection_target="avail-recovered",
+        name="Recovered Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
+    )
     await db_session.commit()
     await db_session.refresh(device, ["appium_node"])
 
@@ -224,22 +217,21 @@ async def test_availability_excludes_reserved_devices(
     still reads ``available`` — but the run allocator will never match it.
     The capacity this endpoint reports must be capacity the allocator can
     actually use."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="avail-reserved",
-            connection_target="avail-reserved",
-            name="Reserved Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="avail-reserved",
+        connection_target="avail-reserved",
+        name="Reserved Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(name="holder-run", state=RunState.active, requirements=[])
@@ -273,36 +265,34 @@ async def test_availability_excludes_devices_with_nonviable_node(
     """A node mid-transition (or with no live pid/connection target) is
     rejected by the allocators' node-viability gate; the endpoint must not
     count it as capacity."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="avail-nonviable-node",
-            connection_target="avail-nonviable-node",
-            name="Transitioning Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="avail-nonviable-node",
+        connection_target="avail-nonviable-node",
+        name="Transitioning Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=None,
-                active_connection_target=None,
-                health_running=True,
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=None,
+            active_connection_target=None,
+            health_running=True,
         )
+    )
     await db_session.commit()
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 1})
@@ -313,24 +303,23 @@ async def test_availability_excludes_devices_with_nonviable_node(
 
 
 async def test_availability_wrong_platform(client: AsyncClient, db_session: AsyncSession, db_host: Host) -> None:
-    with state_write_guard.bypass():
-        db_session.add(
-            Device(
-                pack_id="appium-xcuitest",
-                platform_id="ios",
-                identity_scheme="apple_udid",
-                identity_scope="global",
-                identity_value="avail-ios",
-                connection_target="avail-ios",
-                name="iPhone",
-                os_version="17",
-                host_id=db_host.id,
-                operational_state=DeviceOperationalState.available,
-                verified_at=datetime.now(UTC),
-                device_type=DeviceType.real_device,
-                connection_type=ConnectionType.usb,
-            )
+    db_session.add(
+        Device(
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+            identity_scheme="apple_udid",
+            identity_scope="global",
+            identity_value="avail-ios",
+            connection_target="avail-ios",
+            name="iPhone",
+            os_version="17",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
         )
+    )
     await db_session.commit()
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 1})
@@ -346,21 +335,20 @@ async def test_availability_requires_platform(client: AsyncClient) -> None:
 
 
 async def test_device_logs_no_node(client: AsyncClient, db_session: AsyncSession, db_host: Host) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="logs-001",
-            connection_target="logs-001",
-            name="Log Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="logs-001",
+        connection_target="logs-001",
+        name="Log Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
 
@@ -376,42 +364,40 @@ async def test_availability_excludes_unverified_devices(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        db_session.add(
-            Device(
-                pack_id="appium-uiautomator2",
-                platform_id="android_mobile",
-                identity_scheme="android_serial",
-                identity_scope="host",
-                identity_value="avail-verified",
-                connection_target="avail-verified",
-                name="Verified Phone",
-                os_version="14",
-                host_id=db_host.id,
-                operational_state=DeviceOperationalState.available,
-                verified_at=datetime.now(UTC),
-                device_type=DeviceType.real_device,
-                connection_type=ConnectionType.usb,
-            )
+    db_session.add(
+        Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avail-verified",
+            connection_target="avail-verified",
+            name="Verified Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
         )
-    with state_write_guard.bypass():
-        db_session.add(
-            Device(
-                pack_id="appium-uiautomator2",
-                platform_id="android_mobile",
-                identity_scheme="android_serial",
-                identity_scope="host",
-                identity_value="avail-unverified",
-                connection_target="avail-unverified",
-                name="Unverified Phone",
-                os_version="14",
-                host_id=db_host.id,
-                operational_state=DeviceOperationalState.available,
-                verified_at=None,
-                device_type=DeviceType.real_device,
-                connection_type=ConnectionType.usb,
-            )
+    )
+    db_session.add(
+        Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avail-unverified",
+            connection_target="avail-unverified",
+            name="Unverified Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=None,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
         )
+    )
     await db_session.commit()
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 2})

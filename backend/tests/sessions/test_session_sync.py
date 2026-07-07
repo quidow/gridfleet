@@ -21,7 +21,6 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -75,33 +74,31 @@ async def _seed_device_with_node(
     desired_state: AppiumDesiredState = AppiumDesiredState.running,
 ) -> Device:
     """Seed a Device + AppiumNode so ``node_target`` resolves to host.ip:port."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=identity_value,
-            connection_target=identity_value,
-            name=f"Device {identity_value}",
-            os_version="14",
-            host_id=host.id,
-            operational_state=operational_state,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity_value,
+        connection_target=identity_value,
+        name=f"Device {identity_value}",
+        os_version="14",
+        host_id=host.id,
+        operational_state=operational_state,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db.add(device)
     await db.flush()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=port,
-            desired_state=desired_state,
-            desired_port=port if desired_state is AppiumDesiredState.running else None,
-            pid=42,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=port,
+        desired_state=desired_state,
+        desired_port=port if desired_state is AppiumDesiredState.running else None,
+        pid=42,
+        active_connection_target=device.connection_target,
+    )
     db.add(node)
     await db.flush()
     return device
@@ -601,22 +598,21 @@ async def test_idle_session_no_node_target_defers(
     possibly-still-live Appium session and let the device be re-allocated while the
     session keeps holding it. The row stays running for a later tick when a target
     resolves."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="idle-nonode",
-            connection_target="idle-nonode",
-            name="Idle No Node",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="idle-nonode",
+        connection_target="idle-nonode",
+        name="Idle No Node",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     session = Session(
@@ -643,22 +639,21 @@ async def test_idle_session_port_resolves_via_stored_router_target(
     but which has a router_target stored at allocation is terminated via that stored
     target and the DB row is closed — the reap now uses resolve_router_target's fallback,
     matching every other consumer."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="idle-stored-target",
-            connection_target="idle-stored-target",
-            name="Idle Stored Target",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="idle-stored-target",
+        connection_target="idle-stored-target",
+        name="Idle Stored Target",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     stored_target = f"http://{db_host.ip}:4799"
@@ -685,22 +680,21 @@ async def test_non_idle_session_without_node_target_left_alone(
 ) -> None:
     """A fresh (non-idle) running session on a device with no node target has nothing to
     probe; it is left running, not closed."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="fresh-nonode",
-            connection_target="fresh-nonode",
-            name="Fresh No Node",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="fresh-nonode",
+        connection_target="fresh-nonode",
+        name="Fresh No Node",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     session = Session(
@@ -948,21 +942,20 @@ async def test_sweep_never_inserts_sessions(
 async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     db_session: AsyncSession, db_host: Host
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-stuck-stop-sweep",
-            connection_target="policy-stuck-stop-sweep",
-            name="Stuck Deferred Stop Sweep Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-sweep",
+        connection_target="policy-stuck-stop-sweep",
+        name="Stuck Deferred Stop Sweep Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     session = Session(session_id="sess-stuck-stop-sweep", device_id=device.id, status=SessionStatus.running)

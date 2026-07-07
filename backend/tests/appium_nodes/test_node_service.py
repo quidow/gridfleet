@@ -17,7 +17,6 @@ from app.appium_nodes.services.reconciler_agent import (
     start_remote_node,
 )
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
@@ -112,23 +111,22 @@ async def test_remote_start_node_attaches_node_to_device_instance(
     db_session.add(host)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="remote-dev-attach",
-            connection_target="remote-dev-attach",
-            name="Remote Android",
-            os_version="14",
-            host_id=host.id,
-            host=host,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="remote-dev-attach",
+        connection_target="remote-dev-attach",
+        name="Remote Android",
+        os_version="14",
+        host_id=host.id,
+        host=host,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     loaded_device = await _crud.get_device(db_session, device.id)
@@ -199,33 +197,31 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
     db_session.add(host)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="remote-dev-001",
-            connection_target="remote-dev-001",
-            name="Remote Android",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="remote-dev-001",
+        connection_target="remote-dev-001",
+        name="Remote Android",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=9876,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=9876,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -263,22 +259,21 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
     )
     db_session.add(host)
     await db_session.flush()
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="lock-mark-started",
-            connection_target="lock-mark-started",
-            name="Lock Started",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lock-mark-started",
+        connection_target="lock-mark-started",
+        name="Lock Started",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     loaded = await _crud.get_device(db_session, device.id)
@@ -311,22 +306,21 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
     )
     db_session.add(host)
     await db_session.flush()
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="lock-deleted-mid-flight",
-            connection_target="lock-deleted-mid-flight",
-            name="Deleted Mid Flight",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lock-deleted-mid-flight",
+        connection_target="lock-deleted-mid-flight",
+        name="Deleted Mid Flight",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     loaded = await _crud.get_device(db_session, device.id)
@@ -363,32 +357,30 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     )
     db_session.add(host)
     await db_session.flush()
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="lock-mark-stopped",
-            connection_target="lock-mark-stopped",
-            name="Lock Stopped",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lock-mark-stopped",
+        connection_target="lock-mark-stopped",
+        name="Lock Stopped",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=9876,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=9876,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
     db_session.add(node)
     device.appium_node = node
     await db_session.commit()
@@ -406,22 +398,21 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
 
 async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None:
     """Legacy hostless devices should not silently fall back to local management."""
-    with state_write_guard.bypass():
-        device = Device(
-            id=uuid.uuid4(),
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="local-dev-001",
-            connection_target="local-dev-001",
-            name="Local Android",
-            os_version="14",
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="local-dev-001",
+        connection_target="local-dev-001",
+        name="Local Android",
+        os_version="14",
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
 
     with pytest.raises(NodeManagerError, match="has no host assigned"):
         await agent_url(device)

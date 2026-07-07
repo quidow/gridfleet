@@ -39,7 +39,6 @@ from app.devices.services import (
 )
 from app.devices.services import (
     data_cleanup,
-    state_write_guard,
 )
 from app.devices.services import (
     groups as device_group_service,
@@ -230,8 +229,7 @@ async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.
     )
     assert await device_locking.lock_devices(db, []) == []
 
-    with state_write_guard.bypass():
-        device = Device(id=uuid.uuid4(), name="d", operational_state=DeviceOperationalState.maintenance)
+    device = Device(id=uuid.uuid4(), name="d", operational_state=DeviceOperationalState.maintenance)
     monkeypatch.setattr(device_state, "_persistent_session", lambda _device: object())
     assert (
         await device_state.set_operational_state(

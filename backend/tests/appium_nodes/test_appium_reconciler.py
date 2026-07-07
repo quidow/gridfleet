@@ -3,7 +3,6 @@ import uuid
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
-from app.devices.services import state_write_guard
 
 
 def test_build_agent_start_payload_includes_orchestration_metadata() -> None:
@@ -22,14 +21,13 @@ def test_build_agent_start_payload_includes_orchestration_metadata() -> None:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    with state_write_guard.bypass():
-        device.appium_node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            accepting_new_sessions=False,
-            stop_pending=True,
-            desired_grid_run_id=run_id,
-        )
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        accepting_new_sessions=False,
+        stop_pending=True,
+        desired_grid_run_id=run_id,
+    )
     from tests.fakes import FakeSettingsReader
 
     payload = build_agent_start_payload(

@@ -130,15 +130,13 @@ async def test_gather_facts_skip_reload_matches_reload_path(
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
     from app.devices import locking as device_locking
     from app.devices.models import Device
-    from app.devices.services import state_write_guard
 
     await seed_test_packs(db_session)
     host = await create_host(client)
     device = await create_device_record(
         db_session, host_id=host["id"], identity_value="reload-eq", name="reload-eq", verified=True
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, desired_state=AppiumDesiredState.stopped, generation=0)
+    node = AppiumNode(device_id=device.id, port=4723, desired_state=AppiumDesiredState.stopped, generation=0)
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

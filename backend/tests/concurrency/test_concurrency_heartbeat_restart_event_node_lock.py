@@ -7,7 +7,6 @@ from sqlalchemy import select, update
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import heartbeat
-from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -28,15 +27,14 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
     AppiumNode row must be locked.
     """
     device = await create_device(db_session, host_id=db_host.id, name="hb-rs-lock", verified=True)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                health_running=False,
-                health_state="error",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            health_running=False,
+            health_state="error",
         )
+    )
     await db_session.commit()
     device_id = device.id
 

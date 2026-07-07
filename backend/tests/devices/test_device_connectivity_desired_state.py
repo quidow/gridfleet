@@ -10,7 +10,6 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceEvent, DeviceEventType
-from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent_synthesis import synthesize_fact_intents
 from tests.helpers import create_device
@@ -29,16 +28,15 @@ async def test_stop_disconnected_node_parks_node(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-conn", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=77,
-        )
-        device.device_checks_healthy = False
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=77,
+    )
+    device.device_checks_healthy = False
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])

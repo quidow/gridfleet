@@ -19,7 +19,6 @@ from sqlalchemy import select
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_lifecycle_failures import RunFailureService
@@ -58,12 +57,11 @@ def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _seed_node(db_session: AsyncSession, device_id: object) -> AppiumNode:
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device_id,
-            port=4723,
-            desired_state=AppiumDesiredState.stopped,
-        )
+    node = AppiumNode(
+        device_id=device_id,
+        port=4723,
+        desired_state=AppiumDesiredState.stopped,
+    )
     db_session.add(node)
     await db_session.commit()
     return node

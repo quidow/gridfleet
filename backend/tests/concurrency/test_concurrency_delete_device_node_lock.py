@@ -9,7 +9,6 @@ from sqlalchemy.exc import NoResultFound
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
@@ -54,15 +53,14 @@ async def test_delete_device_does_not_wait_for_running_node_to_stop(
         name="del-running",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4724,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4724,
-            pid=12345,
-            active_connection_target="host:5555",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4724,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4724,
+        pid=12345,
+        active_connection_target="host:5555",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -96,15 +94,14 @@ async def test_delete_device_concurrent_with_node_start_is_consistent(
         name="del-concurrent-start",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4726,
-            desired_state=AppiumDesiredState.stopped,
-            desired_port=None,
-            pid=None,
-            active_connection_target=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4726,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -120,10 +117,8 @@ async def test_delete_device_concurrent_with_node_start_is_consistent(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked.appium_node is not None
-            with state_write_guard.bypass():
-                locked.appium_node.pid = 999
-            with state_write_guard.bypass():
-                locked.appium_node.active_connection_target = "host:5555"
+            locked.appium_node.pid = 999
+            locked.appium_node.active_connection_target = "host:5555"
             await db.commit()
             return "started"
 

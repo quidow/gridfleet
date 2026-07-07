@@ -13,7 +13,6 @@ from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.routers import control as devices_control
-from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
@@ -85,15 +84,14 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         session_viability_status="failed",
         session_viability_error="Appium node is not running",
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=123,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=123,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.flush()
     service = IntentService(db_session)

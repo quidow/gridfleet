@@ -7,7 +7,6 @@ from sqlalchemy import select, update
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.lifecycle.services import actions as lifecycle_policy_actions
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -38,15 +37,14 @@ async def test_handle_node_crash_locks_appium_node(
         operational_state=DeviceOperationalState.busy,
         verified=True,
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

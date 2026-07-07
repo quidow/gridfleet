@@ -13,7 +13,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.core import metrics_recorders
 from app.devices.models import DeviceEvent, DeviceEventType
-from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -29,15 +28,14 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-1", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.stopped,
-            desired_port=None,
-            pid=None,
-            active_connection_target=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.flush()
 
@@ -78,17 +76,16 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-2", verified=True)
     token = uuid.uuid4()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=0,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            transition_token=token,
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        transition_token=token,
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+    )
     db_session.add(node)
     await db_session.flush()
 
@@ -112,15 +109,14 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-3", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=0,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
     db_session.add(node)
     await db_session.flush()
 
@@ -154,17 +150,16 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-4", verified=True)
     existing_token = uuid.uuid4()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=0,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            transition_token=existing_token,
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        transition_token=existing_token,
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+    )
     db_session.add(node)
     await db_session.flush()
     db_session.add(

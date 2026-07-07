@@ -11,7 +11,6 @@ from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentUnreachableError
 from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
     _reconcile_all_devices_once,
@@ -35,13 +34,12 @@ if TYPE_CHECKING:
 
 
 async def _seed_node(db_session: AsyncSession, device_id: object, *, generation: int = 0) -> AppiumNode:
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device_id,
-            port=4723,
-            desired_state=AppiumDesiredState.stopped,
-            generation=generation,
-        )
+    node = AppiumNode(
+        device_id=device_id,
+        port=4723,
+        desired_state=AppiumDesiredState.stopped,
+        generation=generation,
+    )
     db_session.add(node)
     await db_session.commit()
     return node
@@ -142,16 +140,11 @@ async def test_expired_running_metadata_change_is_delivered(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="expired-delivery")
     node = await _seed_node(db_session, device.id, generation=4)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     node.accepting_new_sessions = False
     await db_session.commit()
     service = IntentService(db_session)
@@ -200,12 +193,11 @@ async def test_reconciler_once_forwards_agent_auth_pool(
     pool = Mock()
     device = await create_device(db_session, host_id=db_host.id, name="reconciler-pool")
     node = await _seed_node(db_session, device.id, generation=4)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-        node.desired_port = 4723
-        node.port = 4723
-        node.pid = 1234
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     db_session.add(
         AgentReconfigureOutbox(
             device_id=device.id,
@@ -239,16 +231,11 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="expired-retry")
     node = await _seed_node(db_session, device.id, generation=4)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     node.accepting_new_sessions = False
     await db_session.commit()
     service = IntentService(db_session)
@@ -302,16 +289,11 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="graceful")
     node = await _seed_node(db_session, device.id, generation=2)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     await db_session.commit()
     service = IntentService(db_session)
     await service.register_intents(
@@ -355,16 +337,11 @@ async def test_hard_stop_on_idle_device_stages_agent_drain(
     """
     device = await create_device(db_session, host_id=db_host.id, name="hard-stop")
     node = await _seed_node(db_session, device.id, generation=2)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     await db_session.commit()
     service = IntentService(db_session)
     await service.register_intents(
@@ -406,16 +383,11 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     """
     device = await create_device(db_session, host_id=db_host.id, name="graceful-session")
     node = await _seed_node(db_session, device.id, generation=2)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     db_session.add(Session(session_id="active-sess-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
     service = IntentService(db_session)
@@ -450,16 +422,11 @@ async def test_graceful_stop_holds_node_running_while_session_pending(
     """
     device = await create_device(db_session, host_id=db_host.id, name="graceful-pending")
     node = await _seed_node(db_session, device.id, generation=2)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     db_session.add(Session(session_id="alloc-pending-1", device_id=device.id, status=SessionStatus.pending))
     await db_session.commit()
     service = IntentService(db_session)
@@ -493,16 +460,11 @@ async def test_graceful_stop_applies_once_session_ends(
     """
     device = await create_device(db_session, host_id=db_host.id, name="graceful-end")
     node = await _seed_node(db_session, device.id, generation=2)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
-    with state_write_guard.bypass():
-        node.port = 4723
-    with state_write_guard.bypass():
-        node.pid = 1234
-    with state_write_guard.bypass():
-        node.active_connection_target = device.connection_target
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
     session = Session(session_id="ending-sess-1", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
@@ -539,10 +501,8 @@ async def test_graceful_stop_applies_once_session_ends(
 async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="metadata")
     node = await _seed_node(db_session, device.id, generation=7)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
-    with state_write_guard.bypass():
-        node.desired_port = 4723
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
     await db_session.commit()
     service = IntentService(db_session)
     await service.register_intents(
@@ -571,8 +531,7 @@ async def test_stage_agent_reconfigure_dedupes_identical_undelivered_generation(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="stage-dedupe")
     node = await _seed_node(db_session, device.id, generation=3)
-    with state_write_guard.bypass():
-        node.port = 4723
+    node.port = 4723
     node.accepting_new_sessions = False
     node.stop_pending = True
     await db_session.commit()
@@ -663,9 +622,8 @@ async def test_full_scan_recovers_non_available_device_without_intents(
     """
     orphan = await create_device(db_session, host_id=db_host.id, name="orphan-verifying")
     idle = await create_device(db_session, host_id=db_host.id, name="idle-available")
-    with state_write_guard.bypass():
-        orphan.operational_state = DeviceOperationalState.verifying
-        idle.operational_state = DeviceOperationalState.available
+    orphan.operational_state = DeviceOperationalState.verifying
+    idle.operational_state = DeviceOperationalState.available
     await db_session.commit()
     # Neither device has any intents — the pre-fix scan would skip both.
     assert not (await db_session.execute(select(DeviceIntent))).first()
@@ -733,8 +691,7 @@ async def test_withdrawn_device_never_gets_baseline_node(
         device.verified_at = None
     device.review_required = review
     if maintenance:
-        with state_write_guard.bypass():
-            device.lifecycle_policy_state = {**(device.lifecycle_policy_state or {}), "maintenance_reason": "operator"}
+        device.lifecycle_policy_state = {**(device.lifecycle_policy_state or {}), "maintenance_reason": "operator"}
     await db_session.commit()
     node = await _seed_node(db_session, device.id)
 
@@ -773,8 +730,7 @@ async def test_no_intent_stop_holds_node_running_while_session_active(db_session
     device.review_required = True
     await db_session.commit()
     node = await _seed_node(db_session, device.id)
-    with state_write_guard.bypass():
-        node.desired_state = AppiumDesiredState.running
+    node.desired_state = AppiumDesiredState.running
     db_session.add(Session(session_id="s-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
 
@@ -797,8 +753,7 @@ async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
     truth — the applier must pin live node.port, not the payload snapshot."""
     device = await create_device(db_session, host_id=db_host.id, name="port-pin", verified=True)
     node = await _seed_node(db_session, device.id)
-    with state_write_guard.bypass():
-        node.port = 4725  # fallback start moved the node here; payload below predates the move
+    node.port = 4725  # fallback start moved the node here; payload below predates the move
     await db_session.commit()
     await IntentService(db_session).register_intents(
         device_id=device.id,
@@ -834,12 +789,11 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     # Make the node observed-running and the device-checks healthy so the reconciler
     # derives a non-offline state.
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
-    with state_write_guard.bypass():
-        node.pid = 1
-        node.active_connection_target = "target"
-        node.health_running = True
-        device.device_checks_healthy = True
-        device.operational_state = DeviceOperationalState.offline  # the drift
+    node.pid = 1
+    node.active_connection_target = "target"
+    node.health_running = True
+    device.device_checks_healthy = True
+    device.operational_state = DeviceOperationalState.offline  # the drift
     await db_session.commit()
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", AsyncMock())

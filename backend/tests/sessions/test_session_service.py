@@ -15,7 +15,6 @@ from app.devices.models import (
     DeviceReservation,
     DeviceType,
 )
-from app.devices.services import state_write_guard
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -162,21 +161,20 @@ async def test_update_session_status_clears_stop_pending(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-stuck-stop-1",
-            connection_target="policy-stuck-stop-1",
-            name="Stuck Deferred Stop Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-1",
+        connection_target="policy-stuck-stop-1",
+        name="Stuck Deferred Stop Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     session = Session(
@@ -221,21 +219,20 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     session-end. The previous gate on ``availability == busy`` skipped this
     case (see audit P1 / CodeAnt comment on PR 64).
     """
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-stuck-stop-non-busy",
-            connection_target="policy-stuck-stop-non-busy",
-            name="Stuck Stop Non-Busy",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-non-busy",
+        connection_target="policy-stuck-stop-non-busy",
+        name="Stuck Stop Non-Busy",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
     session = Session(
@@ -254,8 +251,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     # Simulate an operator (or another loop) flipping the device into
     # maintenance while the session row is still ``running``.
     await db_session.refresh(device)
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.maintenance
+    device.operational_state = DeviceOperationalState.maintenance
     await db_session.commit()
 
     crud = SessionCrudService(publisher=Mock(), lifecycle=_make_real_lifecycle())
@@ -293,17 +289,16 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
         operational_state="busy",
     )
     device.verified_at = datetime.now(UTC)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4730,
-            pid=12345,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4730,
-            health_running=False,
-            health_state="error",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4730,
+        pid=12345,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4730,
+        health_running=False,
+        health_state="error",
+    )
     db_session.add(node)
     db_session.add(Session(session_id="flap-sess", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
@@ -365,16 +360,15 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
         operational_state="busy",
     )
     device.verified_at = datetime.now(UTC)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4731,
-            pid=23456,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4731,
-            stop_pending=True,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4731,
+        pid=23456,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4731,
+        stop_pending=True,
+    )
     db_session.add(node)
     db_session.add(Session(session_id="stop-inflight-sess", device_id=device.id, status=SessionStatus.running))
     # Realistic shape: a graceful-stop intent registered by

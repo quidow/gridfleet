@@ -14,7 +14,6 @@ from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry
 from app.devices.models import DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -72,18 +71,17 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
     )
     token = uuid.uuid4()
     deadline = datetime.now(UTC) + timedelta(seconds=30)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4724,
-            transition_token=token,
-            transition_deadline=deadline,
-            pid=123,
-            active_connection_target="reconciler-target",
-            stop_pending=True,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4724,
+        transition_token=token,
+        transition_deadline=deadline,
+        pid=123,
+        active_connection_target="reconciler-target",
+        stop_pending=True,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -100,8 +98,7 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
     assert missing is None
     assert device.id in backoff
 
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {"backoff_until": "not-a-date"}
+    device.lifecycle_policy_state = {"backoff_until": "not-a-date"}
     await db_session.commit()
     assert await appium_reconciler._fetch_backoff_until(db_session) == {}
 
@@ -358,11 +355,10 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
         identity_value="non-reconciler-001",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {
-            "last_failure_source": "connectivity",
-            "last_failure_reason": "ping_timeout",
-        }
+    device.lifecycle_policy_state = {
+        "last_failure_source": "connectivity",
+        "last_failure_reason": "ping_timeout",
+    }
     await db_session.commit()
 
     row = _desired_row(device_id=device.id)
@@ -390,11 +386,10 @@ async def test_reset_start_failure_clears_orphaned_reason(
         identity_value="orphaned-reason-001",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {
-            "last_failure_source": None,
-            "last_failure_reason": "ghost_error",
-        }
+    device.lifecycle_policy_state = {
+        "last_failure_source": None,
+        "last_failure_reason": "ghost_error",
+    }
     await db_session.commit()
 
     row = _desired_row(device_id=device.id)
@@ -468,13 +463,12 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
         identity_value="confirm-running-residue-001",
         operational_state=DeviceOperationalState.available,
     )
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {
-            "recovery_backoff_attempts": 2,
-            "backoff_until": None,
-            "last_failure_source": "appium_reconciler",
-            "last_failure_reason": "timeout",
-        }
+    device.lifecycle_policy_state = {
+        "recovery_backoff_attempts": 2,
+        "backoff_until": None,
+        "last_failure_source": "appium_reconciler",
+        "last_failure_reason": "timeout",
+    }
     await db_session.commit()
 
     @asynccontextmanager
@@ -541,15 +535,14 @@ async def test_clear_transition_token_and_touch_noop(
         operational_state=DeviceOperationalState.available,
     )
     token = uuid.uuid4()
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            transition_token=token,
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=30),
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        transition_token=token,
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=30),
+    )
     db_session.add(node)
     await db_session.commit()
 

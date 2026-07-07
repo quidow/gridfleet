@@ -27,7 +27,6 @@ from app.core.database import Base, get_db
 from app.core.leader import models as _leader_models  # noqa: F401  # Ensure leader ORM models are registered.
 from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
-from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
@@ -120,8 +119,6 @@ def _test_database_url(base_database_url: str, worker_id: str | None = None) -> 
         database_name = f"{database_name}_{safe_worker_id}"
     return base_database_url.rsplit("/", 1)[0] + f"/{database_name}"
 
-
-state_write_guard.register()
 
 TEST_DATABASE_URL = _test_database_url(settings.database_url, os.getenv("PYTEST_XDIST_WORKER"))
 

@@ -11,7 +11,6 @@ from sqlalchemy import select
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
-from app.devices.services import state_write_guard
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -30,16 +29,15 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-health", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=88,
-            consecutive_health_failures=999,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=88,
+        consecutive_health_failures=999,
+    )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
@@ -105,15 +103,14 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
     # is expected teardown, not a health failure — node_health must NOT count it
     # or escalate an auto-recovery restart that fights the stop.
     device = await create_device(db_session, host_id=db_host.id, name="dw-stopping", verified=True)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            active_connection_target="live",
-            desired_state=AppiumDesiredState.stopped,
-            pid=88,
-            consecutive_health_failures=999,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        active_connection_target="live",
+        desired_state=AppiumDesiredState.stopped,
+        pid=88,
+        consecutive_health_failures=999,
+    )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])

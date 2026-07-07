@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import parse_iso
 from app.devices.models import DeviceEvent, DeviceEventType
-from app.devices.services import state_write_guard
 from app.hosts import service_diagnostics as host_diagnostics
 from tests.conftest import test_circuit_breaker
 from tests.helpers import seed_host_and_device
@@ -49,15 +48,14 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
     db_session: AsyncSession,
 ) -> None:
     host, device = await seed_host_and_device(db_session, identity="diagnostics-match")
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4731,
-            pid=777,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4731,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4731,
+        pid=777,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4731,
+    )
     db_session.add(node)
     await db_session.commit()
 

@@ -3,7 +3,6 @@
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import write_state
 
 
@@ -20,10 +19,8 @@ def _transient_device() -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {}
+    device.operational_state = DeviceOperationalState.available
+    device.lifecycle_policy_state = {}
     return device
 
 

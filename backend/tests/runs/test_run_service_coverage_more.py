@@ -13,7 +13,6 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.events.event_bus import EventBus
@@ -456,17 +455,16 @@ async def test_mark_running_sessions_released_success_path(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-session-run", devices=[device], state=RunState.cancelled)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(session_id="release-success", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
@@ -536,17 +534,16 @@ async def test_mark_running_sessions_released_terminates_concurrently_across_hos
             identity_value=f"run-release-conc-{i:03d}",
             operational_state=DeviceOperationalState.busy,
         )
-        with state_write_guard.bypass():
-            db_session.add(
-                AppiumNode(
-                    device_id=device.id,
-                    port=4723 + i,
-                    desired_state=AppiumDesiredState.running,
-                    desired_port=4723 + i,
-                    pid=1,
-                    active_connection_target="",
-                )
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723 + i,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723 + i,
+                pid=1,
+                active_connection_target="",
             )
+        )
         devices.append(device)
     run = await create_reserved_run(db_session, name="release-conc-run", devices=devices, state=RunState.cancelled)
     sessions = [
@@ -594,17 +591,16 @@ async def test_mark_running_sessions_released_expires_claimed_ticket(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-ticket-run", devices=[device], state=RunState.cancelled)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(
         session_id="release-ticket-sess", device_id=device.id, run_id=run.id, status=SessionStatus.running
     )
@@ -645,17 +641,16 @@ async def test_mark_running_sessions_released_leaves_row_when_terminate_fails(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-termfail-run", devices=[device], state=RunState.cancelled)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(session_id="release-termfail", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
@@ -801,17 +796,16 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     run = await create_reserved_run(
         db_session, name="release-endedevent-run", devices=[device], state=RunState.cancelled
     )
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="",
         )
+    )
     session = Session(session_id="endedevent-sess", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()

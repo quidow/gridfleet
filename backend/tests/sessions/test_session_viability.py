@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability as session_viability
 from app.sessions.models import Session, SessionStatus
@@ -110,35 +109,33 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-config-001",
-            connection_target="probe-config-001",
-            name="Config Cleanup Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_config={"session_viability": {"status": "failed"}},
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-config-001",
+        connection_target="probe-config-001",
+        name="Config Cleanup Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_config={"session_viability": {"status": "failed"}},
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4729,
-            desired_state=AppiumDesiredState.stopped,
-            desired_port=None,
-            pid=None,
-            active_connection_target=None,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4729,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -156,34 +153,32 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
 
 
 async def test_run_session_viability_probe_records_success(db_session: AsyncSession, db_host: Host) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-001",
-            connection_target="probe-001",
-            name="Probe Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-001",
+        connection_target="probe-001",
+        name="Probe Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -228,34 +223,32 @@ async def test_recovery_session_viability_probe_allows_offline_device(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-recovery-001",
-            connection_target="probe-recovery-001",
-            name="Recovery Probe Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-recovery-001",
+        connection_target="probe-recovery-001",
+        name="Recovery Probe Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4733,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4733,
-            pid=0,
-            active_connection_target="",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4733,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4733,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -289,34 +282,32 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="manager_generated",
-            identity_scope="host",
-            identity_value="avd:Pixel_6_API_35",
-            connection_target="Pixel_6_API_35",
-            name="Pixel 6 AVD",
-            os_version="15",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.emulator,
-            connection_type=ConnectionType.usb,
-            verified_at=datetime.now(UTC),
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="manager_generated",
+        identity_scope="host",
+        identity_value="avd:Pixel_6_API_35",
+        connection_target="Pixel_6_API_35",
+        name="Pixel 6 AVD",
+        os_version="15",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.emulator,
+        connection_type=ConnectionType.usb,
+        verified_at=datetime.now(UTC),
+    )
     db_session.add(device)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            active_connection_target="emulator-5554",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        active_connection_target="emulator-5554",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -348,31 +339,29 @@ async def test_run_session_viability_probe_writes_probe_row_on_ack(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-row-ack",
-            connection_target="probe-row-ack",
-            name="Probe Row Ack",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            verified_at=datetime.now(UTC),
-        )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=None,
-            port=4723,
-            active_connection_target="probe-row-ack",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1234,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-row-ack",
+        connection_target="probe-row-ack",
+        name="Probe Row Ack",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        verified_at=datetime.now(UTC),
+    )
+    node = AppiumNode(
+        device_id=None,
+        port=4723,
+        active_connection_target="probe-row-ack",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+    )
     device.appium_node = node
     db_session.add_all([device, node])
     await db_session.commit()
@@ -410,31 +399,29 @@ async def test_run_session_viability_probe_writes_probe_row_on_refusal(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-row-refuse",
-            connection_target="probe-row-refuse",
-            name="Probe Row Refuse",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            verified_at=datetime.now(UTC),
-        )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=None,
-            port=4723,
-            active_connection_target="probe-row-refuse",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1234,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-row-refuse",
+        connection_target="probe-row-refuse",
+        name="Probe Row Refuse",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        verified_at=datetime.now(UTC),
+    )
+    node = AppiumNode(
+        device_id=None,
+        port=4723,
+        active_connection_target="probe-row-refuse",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+    )
     device.appium_node = node
     db_session.add_all([device, node])
     await db_session.commit()
@@ -467,21 +454,20 @@ async def test_run_session_viability_probe_rejects_non_available_device(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-002",
-            connection_target="probe-002",
-            name="Busy Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-002",
+        connection_target="probe-002",
+        name="Busy Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
 
@@ -496,38 +482,36 @@ async def test_run_session_viability_probe_rejects_non_available_device(
 async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_host: Host) -> None:
     settings_service._cache["general.session_viability_interval_sec"] = 86400
 
-    with state_write_guard.bypass():
-        due = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-003",
-            connection_target="probe-003",
-            name="Due Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    with state_write_guard.bypass():
-        recent = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-004",
-            connection_target="probe-004",
-            name="Recent Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    due = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-003",
+        connection_target="probe-003",
+        name="Due Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    recent = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-004",
+        connection_target="probe-004",
+        name="Recent Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add_all([due, recent])
     await db_session.commit()
     await set_session_viability_control_plane_entry(
@@ -559,22 +543,21 @@ async def test_check_due_devices_excludes_reserved_device(db_session: AsyncSessi
     """A device with hold=NULL but an active reservation must not be probed."""
     settings_service._cache["general.session_viability_interval_sec"] = 86400
 
-    with state_write_guard.bypass():
-        reserved = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-reserved",
-            connection_target="probe-reserved",
-            name="Reserved Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    reserved = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-reserved",
+        connection_target="probe-reserved",
+        name="Reserved Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(reserved)
     await db_session.commit()
     await create_reservation(db_session, device_id=reserved.id)
@@ -656,23 +639,22 @@ async def test_record_session_viability_result_preserves_previous_success_and_cl
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-record-001",
-            connection_target="probe-record-001",
-            name="Probe Record Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_config={"session_viability": {"status": "legacy"}},
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-record-001",
+        connection_target="probe-record-001",
+        name="Probe Record Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_config={"session_viability": {"status": "legacy"}},
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
 
@@ -696,31 +678,28 @@ async def test_should_run_scheduled_probe_covers_skip_and_due_paths(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-schedule-001",
-            connection_target="probe-schedule-001",
-            name="Probe Schedule Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-schedule-001",
+        connection_target="probe-schedule-001",
+        name="Probe Schedule Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
 
     assert await _should_run_scheduled_probe(db_session, device, 0) is False
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.busy
+    device.operational_state = DeviceOperationalState.busy
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
+    device.operational_state = DeviceOperationalState.available
 
     monkeypatch.setattr("app.sessions.service_viability.is_ready_for_use_async", AsyncMock(return_value=False))
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
@@ -786,22 +765,21 @@ async def test_run_session_viability_probe_rejects_missing_running_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-no-node",
-            connection_target="probe-no-node",
-            name="No Node Probe Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-no-node",
+        connection_target="probe-no-node",
+        name="No Node Probe Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
 
@@ -820,22 +798,21 @@ async def test_run_session_viability_probe_rejects_duplicate_and_not_ready(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-guard-001",
-            connection_target="probe-guard-001",
-            name="Probe Guard Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-guard-001",
+        connection_target="probe-guard-001",
+        name="Probe Guard Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
 
@@ -868,32 +845,30 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-handler-001",
-            connection_target="probe-handler-001",
-            name="Probe Handler Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_config={"session_viability": {"status": "failed"}},
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4780,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4780,
-            pid=1234,
-            active_connection_target="probe-handler-001",
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-handler-001",
+        connection_target="probe-handler-001",
+        name="Probe Handler Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_config={"session_viability": {"status": "failed"}},
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4780,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4780,
+        pid=1234,
+        active_connection_target="probe-handler-001",
+    )
     device.appium_node = node
     db_session.add_all([device, node])
     await db_session.commit()
@@ -951,31 +926,29 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-exception-001",
-            connection_target="probe-exception-001",
-            name="Probe Exception Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4781,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4781,
-            pid=1234,
-            active_connection_target="probe-exception-001",
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-exception-001",
+        connection_target="probe-exception-001",
+        name="Probe Exception Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4781,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4781,
+        pid=1234,
+        active_connection_target="probe-exception-001",
+    )
     device.appium_node = node
     db_session.add_all([device, node])
     await db_session.commit()
@@ -1120,31 +1093,29 @@ async def _run_failing_probe(
 
 
 def _make_viability_device(db_host: Host, suffix: str) -> tuple[Device, AppiumNode]:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=f"viab-strike-{suffix}",
-            connection_target=f"viab-strike-{suffix}",
-            name=f"Viability Strike {suffix}",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4799,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4799,
-            pid=999,
-            active_connection_target=f"viab-strike-{suffix}",
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"viab-strike-{suffix}",
+        connection_target=f"viab-strike-{suffix}",
+        name=f"Viability Strike {suffix}",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4799,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4799,
+        pid=999,
+        active_connection_target=f"viab-strike-{suffix}",
+    )
     device.appium_node = node
     return device, node
 
@@ -1185,8 +1156,7 @@ async def test_viability_escalates_after_threshold_consecutive_failures(
         for _ in range(3):
             # Each probe leaves the device offline; the recovery branch is what
             # lets the next iteration re-enter the probe path.
-            with state_write_guard.bypass():
-                device.operational_state = DeviceOperationalState.available
+            device.operational_state = DeviceOperationalState.available
             await _run_failing_probe(db_session, device, monkeypatch, error="grid hiccup", threshold=3, handler=handler)
     finally:
         _svc.configure_health_failure_handler(None)
@@ -1219,8 +1189,7 @@ async def test_passing_probe_resets_viability_failure_counter(
         # Two consecutive failures get to count=2.
         monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, "transient")))
         for _ in range(2):
-            with state_write_guard.bypass():
-                device.operational_state = DeviceOperationalState.available
+            device.operational_state = DeviceOperationalState.available
             await run_session_viability_probe(
                 db_session,
                 device,
@@ -1237,8 +1206,7 @@ async def test_passing_probe_resets_viability_failure_counter(
 
         # A passing probe must reset the counter back to 0.
         monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
-        with state_write_guard.bypass():
-            device.operational_state = DeviceOperationalState.available
+        device.operational_state = DeviceOperationalState.available
         await run_session_viability_probe(
             db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
         )
@@ -1247,8 +1215,7 @@ async def test_passing_probe_resets_viability_failure_counter(
 
         # One more failure must start the count over, not jump straight to threshold.
         monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, "transient again")))
-        with state_write_guard.bypass():
-            device.operational_state = DeviceOperationalState.available
+        device.operational_state = DeviceOperationalState.available
         await run_session_viability_probe(
             db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
         )
@@ -1305,8 +1272,7 @@ async def test_write_session_viability_persists_error_category(
     # A passing probe must clear ``error_category`` so a recovered device does
     # not keep an old infra tag attached.
     monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
+    device.operational_state = DeviceOperationalState.available
     await run_session_viability_probe(
         db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
     )
@@ -1340,35 +1306,33 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
     node_health, which fire on their own schedules with their own
     reasons.
     """
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-stop-pending-repro",
-            connection_target="probe-stop-pending-repro",
-            name="Probe Stop Pending Repro",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-stop-pending-repro",
+        connection_target="probe-stop-pending-repro",
+        name="Probe Stop Pending Repro",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=12345,
-            active_connection_target="probe-stop-pending-repro",
-            stop_pending=True,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=12345,
+        active_connection_target="probe-stop-pending-repro",
+        stop_pending=True,
+    )
     db_session.add(node)
     await db_session.commit()
 

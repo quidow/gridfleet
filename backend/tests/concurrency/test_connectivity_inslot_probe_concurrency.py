@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state_write_guard
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus
@@ -30,22 +29,21 @@ async def _seed_one_device(db_session: AsyncSession) -> str:
     db_session.add(host)
     await db_session.flush()
     target = "inslot-dev"
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=target,
-            connection_target=target,
-            name="In-slot Phone",
-            os_version="14",
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=target,
+        connection_target=target,
+        name="In-slot Phone",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     await db_session.commit()
     return target

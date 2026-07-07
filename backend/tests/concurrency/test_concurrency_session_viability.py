@@ -14,7 +14,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability as session_viability
 from app.sessions.service_viability import SessionViabilityService
@@ -75,15 +74,14 @@ async def test_run_session_viability_probe_reclaims_stale_lock(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    with state_write_guard.bypass():
-        appium_node = AppiumNode(
-            device_id=device.id,
-            port=9999,
-            desired_state=AppiumDesiredState.running,
-            desired_port=9999,
-            pid=1234,
-            active_connection_target="probe-target",
-        )
+    appium_node = AppiumNode(
+        device_id=device.id,
+        port=9999,
+        desired_state=AppiumDesiredState.running,
+        desired_port=9999,
+        pid=1234,
+        active_connection_target="probe-target",
+    )
     db_session.add(appium_node)
     # A week-old leaked lock — far older than any probe could legitimately run.
     await control_plane_state_store.set_value(
@@ -198,15 +196,14 @@ async def test_session_viability_restore_handles_external_reservation(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    with state_write_guard.bypass():
-        appium_node = AppiumNode(
-            device_id=device.id,
-            port=9999,
-            desired_state=AppiumDesiredState.running,
-            desired_port=9999,
-            pid=0,
-            active_connection_target="",
-        )
+    appium_node = AppiumNode(
+        device_id=device.id,
+        port=9999,
+        desired_state=AppiumDesiredState.running,
+        desired_port=9999,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(appium_node)
     await db_session.commit()
     device_id = device.id

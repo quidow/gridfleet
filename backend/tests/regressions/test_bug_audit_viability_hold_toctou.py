@@ -20,7 +20,6 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions.service_viability import SessionViabilityService
 from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -50,17 +49,16 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=12345,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            health_state="up",
-            health_running=True,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=12345,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        health_state="up",
+        health_running=True,
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

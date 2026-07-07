@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.services import state_write_guard
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
@@ -35,18 +34,17 @@ async def _seed_device(db: AsyncSession, host_id: str, identity: str, name: str,
 async def _add_running_node(
     db: AsyncSession, device_id: object, port: int, *, accepting_new_sessions: bool = True
 ) -> None:
-    with state_write_guard.bypass():
-        db.add(
-            AppiumNode(
-                device_id=device_id,
-                port=port,
-                pid=9999,
-                active_connection_target="emulator-5554",
-                desired_state=AppiumDesiredState.running,
-                desired_port=port,
-                accepting_new_sessions=accepting_new_sessions,
-            )
+    db.add(
+        AppiumNode(
+            device_id=device_id,
+            port=port,
+            pid=9999,
+            active_connection_target="emulator-5554",
+            desired_state=AppiumDesiredState.running,
+            desired_port=port,
+            accepting_new_sessions=accepting_new_sessions,
         )
+    )
 
 
 async def test_grid_router_shape_and_counts(

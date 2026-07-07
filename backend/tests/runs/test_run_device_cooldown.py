@@ -13,7 +13,6 @@ from sqlalchemy import select
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import reconcile_device
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
@@ -123,18 +122,17 @@ async def test_cooldown_device_returns_503_when_inline_delivery_fails(
     # Seed an AppiumNode so ``reconcile_device`` stages a real reconfigure
     # outbox row — without a node the intent reconciler returns early and
     # no agent call is attempted, so the failure path stays unexercised.
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=12345,
-                active_connection_target=device.connection_target,
-                generation=1,
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=12345,
+            active_connection_target=device.connection_target,
+            generation=1,
         )
+    )
     await db_session.commit()
     run = await _create_run(client)
     run_id = run["id"]
@@ -295,14 +293,13 @@ async def test_cooldown_preserves_desired_grid_run_id(
     run_id = uuid.UUID(run["id"])
 
     # Set up an AppiumNode with the run's desired_grid_run_id
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_grid_run_id=run_id,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_grid_run_id=run_id,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -339,13 +336,12 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=4321,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=4321,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -384,13 +380,12 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=4321,
-            active_connection_target=device.connection_target,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=4321,
+        active_connection_target=device.connection_target,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -496,14 +491,13 @@ async def test_cooldown_keeps_device_warm_and_reports_cooldown(
     device = await _create_available_device(db_session, default_host_id, "cooldown-warm")
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -541,14 +535,13 @@ async def test_cooldown_warm_expiry_restores_accepting(
     device = await _create_available_device(db_session, default_host_id, "cooldown-expiry")
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.running,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -584,15 +577,14 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_grid_run_id=run_id,
-            desired_state=AppiumDesiredState.running,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_grid_run_id=run_id,
+        desired_state=AppiumDesiredState.running,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -629,14 +621,13 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
     db_session.add(run)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.stopped,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.stopped,
+    )
     db_session.add(node)
 
     reservation = DeviceReservation(
@@ -771,14 +762,13 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
     db_session.add(run)
     await db_session.flush()
 
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_state=AppiumDesiredState.stopped,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.stopped,
+    )
     db_session.add(node)
 
     reservation = DeviceReservation(
@@ -798,9 +788,8 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
     db_session.add(reservation)
 
     # Operator puts device in maintenance after cooldown began
-    with state_write_guard.bypass():
-        device.lifecycle_policy_state = {"maintenance_reason": "manual"}
-        device.operational_state = DeviceOperationalState.maintenance
+    device.lifecycle_policy_state = {"maintenance_reason": "manual"}
+    device.operational_state = DeviceOperationalState.maintenance
     await db_session.commit()
 
     await ConnectivityService(

@@ -20,7 +20,6 @@ from app.appium_nodes.models import AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceReservation
-from app.devices.services import state_write_guard
 from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -86,8 +85,7 @@ async def test_health_failure_intent_payload_shape(
         verified=True,
     )
     # Attach a stopped node so the crash path can acquire the appium node lock.
-    with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723)
+    node = AppiumNode(device_id=device.id, port=4723)
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node

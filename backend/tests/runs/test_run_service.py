@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
-from app.devices.services import state_write_guard
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -31,21 +30,20 @@ async def test_force_release_clears_stop_pending(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-stuck-stop-3",
-            connection_target="policy-stuck-stop-3",
-            name="Stuck Deferred Stop Device 3",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-3",
+        connection_target="policy-stuck-stop-3",
+        name="Stuck Deferred Stop Device 3",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     run = TestRun(
         id=uuid4(),
@@ -68,17 +66,16 @@ async def test_force_release_clears_stop_pending(
         os_version=device.os_version,
     )
     db_session.add(reservation)
-    with state_write_guard.bypass():
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1,
-                active_connection_target="http://10.0.0.1:4723",
-            )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="http://10.0.0.1:4723",
         )
+    )
     session = Session(
         session_id="sess-stuck-stop-3",
         device_id=device.id,
@@ -143,21 +140,20 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     ``handle_node_crash``). Audit P1 — collect device IDs during
     ``_release_devices`` and run cleanup only after the run-state commit.
     """
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-release-commit-boundary",
-            connection_target="policy-release-commit-boundary",
-            name="Release Commit Boundary",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-release-commit-boundary",
+        connection_target="policy-release-commit-boundary",
+        name="Release Commit Boundary",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     run = TestRun(
         id=uuid4(),
@@ -228,35 +224,34 @@ async def test_terminate_and_probe_survivors_classifies_alive_vs_gone(
     """The probe pass returns ONLY the device whose session is still alive after
     the DELETE. A 404/gone session (session_alive -> False) is not a survivor."""
     survivor_dev, gone_dev = None, None
-    with state_write_guard.bypass():
-        survivor_dev = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-survivor",
-            connection_target="probe-survivor",
-            name="Probe Survivor",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-        gone_dev = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-gone",
-            connection_target="probe-gone",
-            name="Probe Gone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    survivor_dev = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-survivor",
+        connection_target="probe-survivor",
+        name="Probe Survivor",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    gone_dev = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-gone",
+        connection_target="probe-gone",
+        name="Probe Gone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add_all([survivor_dev, gone_dev])
     run = TestRun(
         id=uuid4(),
@@ -281,17 +276,16 @@ async def test_terminate_and_probe_survivors_classifies_alive_vs_gone(
                 os_version=dev.os_version,
             )
         )
-        with state_write_guard.bypass():
-            db_session.add(
-                AppiumNode(
-                    device_id=dev.id,
-                    port=4723,
-                    desired_state=AppiumDesiredState.running,
-                    desired_port=4723,
-                    pid=1,
-                    active_connection_target="http://10.0.0.1:4723",
-                )
+        db_session.add(
+            AppiumNode(
+                device_id=dev.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="http://10.0.0.1:4723",
             )
+        )
         db_session.add(
             Session(
                 session_id=f"sess-{dev.identity_value}",
@@ -329,21 +323,20 @@ async def test_terminate_and_probe_survivors_keeps_unresolvable_target_session(
     (no live node target AND no stored router_target) can be neither DELETEd nor probed,
     so it MUST be kept as a survivor — otherwise force-release would skip its hard-stop
     and the live session would leak. The probe/DELETE must not be invoked for it."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="probe-notarget",
-            connection_target="probe-notarget",
-            name="Probe No Target",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-notarget",
+        connection_target="probe-notarget",
+        name="Probe No Target",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
     db_session.add(device)
     run = TestRun(
         id=uuid4(),
@@ -400,27 +393,26 @@ async def test_terminate_and_probe_survivors_keeps_unresolvable_target_session(
 
 
 async def _seed_force_release_fixture(db_session: AsyncSession, host_id: object, suffix: str) -> tuple:  # type: ignore[type-arg]
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=f"fr-{suffix}",
-            connection_target=f"fr-{suffix}",
-            name=f"Force Release {suffix}",
-            os_version="14",
-            host_id=host_id,
-            operational_state=DeviceOperationalState.busy,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            # verified_at required so device_in_service() is True, which causes the
-            # reconciler to synthesize a baseline:idle (priority 10) node-start intent
-            # after run intents are revoked — this is the P3 warm-park benefit. Without
-            # it, no baseline:idle is synthesized and the node stops via the no-intent
-            # path, masking the warm path entirely.
-            verified_at=datetime.now(UTC),
-        )
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"fr-{suffix}",
+        connection_target=f"fr-{suffix}",
+        name=f"Force Release {suffix}",
+        os_version="14",
+        host_id=host_id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        # verified_at required so device_in_service() is True, which causes the
+        # reconciler to synthesize a baseline:idle (priority 10) node-start intent
+        # after run intents are revoked — this is the P3 warm-park benefit. Without
+        # it, no baseline:idle is synthesized and the node stops via the no-intent
+        # path, masking the warm path entirely.
+        verified_at=datetime.now(UTC),
+    )
     db_session.add(device)
     run = TestRun(
         id=uuid4(),
@@ -444,15 +436,14 @@ async def _seed_force_release_fixture(db_session: AsyncSession, host_id: object,
             os_version=device.os_version,
         )
     )
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=1,
-            active_connection_target="http://10.0.0.1:4723",
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="http://10.0.0.1:4723",
+    )
     db_session.add(node)
     db_session.add(
         Session(session_id=f"sess-fr-{suffix}", device_id=device.id, run_id=run.id, status=SessionStatus.running)

@@ -8,7 +8,6 @@ import pytest
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
-from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
@@ -75,13 +74,12 @@ async def test_appium_node_stop_in_flight_returns_false_when_unloaded(
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await _persisted_device(db_session, default_host_id)
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.stopped,
-            stop_pending=True,
-        )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.stopped,
+        stop_pending=True,
+    )
     db_session.add(node)
     await db_session.commit()
     db_session.expire(device, ["appium_node"])
@@ -109,29 +107,26 @@ def test_appium_node_stop_in_flight_predicate() -> None:
     device.appium_node = None
     assert device_state.appium_node_stop_in_flight(device) is False
 
-    with state_write_guard.bypass():
-        device.appium_node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            stop_pending=False,
-        )
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        stop_pending=False,
+    )
     assert device_state.appium_node_stop_in_flight(device) is False
 
-    with state_write_guard.bypass():
-        device.appium_node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            stop_pending=True,
-        )
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        stop_pending=True,
+    )
     assert device_state.appium_node_stop_in_flight(device) is True
 
-    with state_write_guard.bypass():
-        device.appium_node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.stopped,
-            stop_pending=False,
-        )
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.stopped,
+        stop_pending=False,
+    )
     assert device_state.appium_node_stop_in_flight(device) is True

@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.devices.services import state_write_guard
 from tests.fakes import build_review_service
 
 if TYPE_CHECKING:
@@ -52,23 +51,22 @@ def _device(
         agent_port=5100,
         status=HostStatus.online,
     )
-    with state_write_guard.bypass():
-        device = Device(
-            id=uuid4(),
-            host_id=host.id,
-            pack_id=pack_id,
-            platform_id=platform_id,
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="demo",
-            connection_target="demo",
-            name="Demo",
-            os_version="14",
-            operational_state=DeviceOperationalState.available,
-            device_type=device_type,
-            connection_type=ConnectionType.usb,
-            host=host,
-        )
+    device = Device(
+        id=uuid4(),
+        host_id=host.id,
+        pack_id=pack_id,
+        platform_id=platform_id,
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="demo",
+        connection_target="demo",
+        name="Demo",
+        os_version="14",
+        operational_state=DeviceOperationalState.available,
+        device_type=device_type,
+        connection_type=ConnectionType.usb,
+        host=host,
+    )
     return device
 
 
@@ -201,8 +199,7 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         name="Not Ready",
         verified=False,
     )
-    with state_write_guard.bypass():
-        not_ready.operational_state = DeviceOperationalState.offline
+    not_ready.operational_state = DeviceOperationalState.offline
     await db_session.commit()
 
     with (
@@ -252,8 +249,7 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         device_type=DeviceType.emulator.value,
         connection_type=ConnectionType.virtual.value,
     )
-    with state_write_guard.bypass():
-        emulator.operational_state = DeviceOperationalState.available
+    emulator.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     update_emulator_state = AsyncMock()
@@ -368,8 +364,7 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         connection_target="already-offline-conn-1",
         name="Already Offline Device",
     )
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.offline
+    device.operational_state = DeviceOperationalState.offline
     await db_session.commit()
 
     handle_health_failure_called = False
