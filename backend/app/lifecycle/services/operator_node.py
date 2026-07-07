@@ -49,7 +49,6 @@ def operator_start_source(device_id: uuid.UUID) -> str:
 def operator_stop_sources(device_id: uuid.UUID) -> list[str]:
     return [
         f"operator:stop:node:{device_id}",
-        f"operator:stop:grid:{device_id}",
         f"operator:stop:recovery:{device_id}",
     ]
 

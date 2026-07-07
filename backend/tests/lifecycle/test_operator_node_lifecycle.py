@@ -87,7 +87,6 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
             "transition_token": str(stale_token),
             "transition_deadline": stale_deadline.isoformat(),
         },
-        precondition=None,  # pre-#301 row shape
         expires_at=None,
         created_at=stale_deadline - timedelta(minutes=2),
         updated_at=stale_deadline - timedelta(minutes=2),
@@ -156,7 +155,6 @@ def test_operator_restart_intent_sets_expires_at(
     assert intent.expires_at is not None
     assert intent.expires_at == expected_deadline
     assert intent.payload["transition_deadline"] == expected_deadline.isoformat()
-    assert intent.precondition is None
 
 
 async def test_reconcile_expired_intents_deletes_expired_restart_intent(

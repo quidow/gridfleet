@@ -834,13 +834,13 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     )
 
     reconciled: list[uuid.UUID] = []
-    orig_revoke = sessions_service.IntentService.revoke_intents_and_reconcile
+    orig_reconcile = sessions_service.IntentService.mark_dirty_and_reconcile
 
-    async def _spy_revoke(self: object, *, device_id: uuid.UUID, **kwargs: object) -> object:
+    async def _spy_reconcile(self: object, device_id: uuid.UUID, **kwargs: object) -> object:
         reconciled.append(device_id)
-        return await orig_revoke(self, device_id=device_id, **kwargs)  # type: ignore[arg-type]
+        return await orig_reconcile(self, device_id, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(sessions_service.IntentService, "revoke_intents_and_reconcile", _spy_revoke)
+    monkeypatch.setattr(sessions_service.IntentService, "mark_dirty_and_reconcile", _spy_reconcile)
 
     svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
     await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)

@@ -306,21 +306,12 @@ class LifecyclePolicyService:
             publisher=self._publisher,
         )
 
-        # Recovery start intents are bounded by a DEADLINE, never the
-        # node_running precondition. That precondition keys off
-        # ``observed_running``, and the precondition sweep reaps the intents
-        # the instant the node is first observed running — which happens well
-        # before the device finishes verifying to ``available``. Reaping then
-        # drops desired_state back to ``stopped`` and the appium_reconciler
-        # tears the just-started node down as a ``db_state_not_running`` orphan,
-        # pinning a reachable device offline (recovery suppressed on a reachable
-        # device: 2026-06-11 gate roku-04/S14, ftv-12/S24; the stale-offline
-        # window already used a deadline for the same reason). A TTL'd intent
-        # self-expires and the sweep cannot reap it early; mirrors
+        # Recovery start intents are bounded by a DEADLINE (TTL) so the row self-expires:
+        # a just-started node must not be torn down before the device finishes verifying
+        # to ``available`` (recovery-suppressed-on-a-reachable-device regression). Mirrors
         # ``exit_maintenance``.
         startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
         viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
-        recovery_intent_precondition = None
         recovery_intent_expiry = now() + timedelta(seconds=startup_timeout + viability_timeout + 60)
 
         await IntentService(db).register_intents_and_reconcile(
@@ -335,14 +326,12 @@ class LifecyclePolicyService:
                         "action": "start",
                         "priority": PRIORITY_AUTO_RECOVERY,
                     },
-                    precondition=recovery_intent_precondition,
                     expires_at=recovery_intent_expiry,
                 ),
                 IntentRegistration(
                     source=f"auto_recovery:recovery:{device.id}",
                     axis=RECOVERY,
                     payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": reason},
-                    precondition=recovery_intent_precondition,
                     expires_at=recovery_intent_expiry,
                 ),
             ],

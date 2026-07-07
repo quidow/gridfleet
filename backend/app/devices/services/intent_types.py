@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -46,33 +46,6 @@ PRIORITY_AUTO_RECOVERY = 20
 PRIORITY_IDLE = 10
 
 
-class RunActivePrecondition(TypedDict):
-    kind: Literal["run_active"]
-    run_id: str
-
-
-class ReservationActivePrecondition(TypedDict):
-    kind: Literal["reservation_active"]
-    run_id: str
-    device_id: str
-
-
-class NodeRunningPrecondition(TypedDict):
-    kind: Literal["node_running"]
-    device_id: str
-    expected: bool
-
-
-class MaintenanceActivePrecondition(TypedDict):
-    kind: Literal["maintenance_active"]
-    device_id: str
-
-
-Precondition = (
-    RunActivePrecondition | ReservationActivePrecondition | NodeRunningPrecondition | MaintenanceActivePrecondition
-)
-
-
 @dataclass(frozen=True)
 class IntentRegistration:
     source: str
@@ -80,4 +53,3 @@ class IntentRegistration:
     payload: dict[str, Any]
     run_id: UUID | None = None
     expires_at: datetime | None = None
-    precondition: Precondition | None = None

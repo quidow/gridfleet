@@ -172,7 +172,6 @@ async def close_running_session(
     """
     from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
 
-    sid = session.session_id
     # Lock order (deadlock avoidance): take the device row lock BEFORE the
     # session row is dirtied below. Otherwise the autoflush invoked by the
     # ``select(TestRun ...)`` read stamps the session row first — session →
@@ -222,11 +221,9 @@ async def close_running_session(
     await expire_tickets_for_session(db, session.id)
     await db.flush()
     if session.device_id is not None:
-        await IntentService(db).revoke_intents_and_reconcile(
-            device_id=session.device_id,
-            sources=[f"active_session:{sid}"],
-            publisher=publisher,
-        )
+        # active_session intents no longer exist; reconcile so the device's node reflects
+        # the post-session intent set (baseline/derived).
+        await IntentService(db).mark_dirty_and_reconcile(session.device_id, publisher=publisher)
 
 
 async def _has_session_rows(
@@ -438,17 +435,11 @@ class SessionCrudService:
             from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
 
             await expire_tickets_for_session(db, session.id)
-            # Revoke the active_session intent for this specific session before
-            # locking the device. Mirrors the session_sync revoke site — without
-            # this, testkit-driven terminal status calls leak an
-            # ``active_session:{sid}`` intent per session served, and the intent
-            # table accumulates a NODE_PROCESS row per session-the-device-ever-ran.
-            # ``reconcile_device`` runs inside the helper so ``node.stop_pending``
-            # and ``node.desired_state`` reflect the post-session intent set when
-            # the row lock is taken below.
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=session.device_id,
-                sources=[f"active_session:{session_id}"],
+            # Reconcile the device after the session ends. ``reconcile_device`` runs inside
+            # the helper so ``node.stop_pending`` and ``node.desired_state`` reflect the
+            # post-session intent set when the row lock is taken below.
+            await IntentService(db).mark_dirty_and_reconcile(
+                session.device_id,
                 publisher=self._publisher,
                 observed_reason=ObservationReason.session_ended,
             )

@@ -124,7 +124,6 @@ async def test_operator_start_intent_is_ttl_bounded(
             )
         )
     ).scalar_one()
-    assert row.precondition is None
     assert row.expires_at is not None
 
 
@@ -170,7 +169,6 @@ async def test_operator_restart_intent_is_ttl_bounded(
             )
         )
     ).scalar_one()
-    assert row.precondition is None
     assert row.expires_at is not None
     # Restart-specific payload fields remain intact.
     assert row.payload.get("transition_token") is not None

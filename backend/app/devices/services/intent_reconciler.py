@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import cast, delete, func, select
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import NoResultFound
 
 from app.agent_comm.models import AgentReconfigureOutbox
@@ -26,7 +25,6 @@ from app.devices.models import (
     DeviceIntent,
     DeviceIntentDirty,
     DeviceOperationalState,
-    DeviceReservation,
 )
 from app.devices.services.event import record_event
 from app.devices.services.intent_evaluator import (
@@ -35,13 +33,11 @@ from app.devices.services.intent_evaluator import (
     evaluate_node_process,
     evaluate_recovery,
     map_node_process_decision,
-    reconcile_unsatisfied_preconditions,
 )
 from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
-from app.runs.models import TERMINAL_STATES, TestRun
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
@@ -135,20 +131,7 @@ async def run_device_intent_reconciler_once(
     await _reconcile_expired_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
-    precondition_affected = await reconcile_unsatisfied_preconditions(db)
-    for affected_id in sorted(precondition_affected):
-        await _reconcile_commit_deliver(
-            db, affected_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
     if cycle % full_scan_every == 0:
-        try:
-            await _sweep_orphaned_intents(db)
-        except Exception:
-            await db.rollback()
-            logger.exception("stale_intent_sweep_failed")
-        await _reconcile_terminal_run_intents(
-            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
         await _reconcile_all_devices_once(
             db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
@@ -256,95 +239,6 @@ async def _reconcile_expired_intents(
     if not device_ids:
         return
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
-    for device_id in sorted(set(device_ids)):
-        await _reconcile_commit_deliver(
-            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
-
-
-async def _sweep_orphaned_intents(db: AsyncSession) -> None:
-    """Revoke orphaned ``DeviceIntent`` rows.
-
-    Defense in depth: producer modules own the primary revoke paths. This sweep
-    catches any branch that skips its revoke obligation. Counters increment per
-    revoked row, labeled by intent source family.
-    """
-    # 1. active_session:{sid} — Session.ended_at IS NOT NULL.
-    active_session_ids = (
-        (
-            await db.execute(
-                select(DeviceIntent.id)
-                .where(DeviceIntent.source.like("active_session:%"))
-                .join(
-                    Session,
-                    Session.session_id == func.substring(DeviceIntent.source, len("active_session:") + 1),
-                )
-                .where(Session.ended_at.is_not(None))
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if active_session_ids:
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(active_session_ids)))
-        metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="active_session").inc(len(active_session_ids))
-
-    # 2. cooldown:{axis}:{run_id} — DeviceReservation.released_at IS NOT NULL.
-    # Source format: "cooldown:<axis>:<run_uuid>". Split on ':' and cast last segment.
-    cooldown_rows = (
-        await db.execute(
-            select(DeviceIntent.id, DeviceIntent.source)
-            .where(DeviceIntent.source.like("cooldown:%"))
-            .join(
-                DeviceReservation,
-                # Postgres split_part is 1-indexed; segment 3 is the run_id.
-                DeviceReservation.run_id == cast(func.split_part(DeviceIntent.source, ":", 3), UUID(as_uuid=True)),
-            )
-            .where(DeviceReservation.released_at.is_not(None))
-        )
-    ).all()
-    if cooldown_rows:
-        ids = [row.id for row in cooldown_rows]
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(ids)))
-        for row in cooldown_rows:
-            axis = row.source.split(":")[1]
-            metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source=f"cooldown:{axis}").inc()
-
-    await db.flush()
-
-
-async def _reconcile_terminal_run_intents(
-    db: AsyncSession,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-    pool: AgentHttpPool | None = None,
-) -> None:
-    """Defense-in-depth sweep for intents tied to runs that are already terminal.
-
-    The release path (``_clear_desired_grid_run_id_for_run``) is the primary
-    cleanup for run-scoped intents. This sweep guards against any release path
-    skipping a source or crashing mid-release — a run-bound intent must never
-    outlive its owning run.
-    """
-    terminal_run_subq = select(TestRun.id).where(TestRun.state.in_(TERMINAL_STATES))
-    device_ids = (
-        (
-            await db.execute(
-                select(DeviceIntent.device_id)
-                .where(DeviceIntent.run_id.is_not(None))
-                .where(DeviceIntent.run_id.in_(terminal_run_subq))
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not device_ids:
-        return
-    await db.execute(
-        delete(DeviceIntent).where(DeviceIntent.run_id.is_not(None)).where(DeviceIntent.run_id.in_(terminal_run_subq))
-    )
     for device_id in sorted(set(device_ids)):
         await _reconcile_commit_deliver(
             db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
