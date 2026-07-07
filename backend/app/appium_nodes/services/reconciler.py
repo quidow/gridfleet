@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -45,12 +44,9 @@ from app.appium_nodes.services.reconciler_convergence import (
     reap_orphan_nodes,
     rows_needing_stale_clear,
 )
-from app.core.background_loop import BackgroundLoop
 from app.core.database import async_session
 from app.core.metrics_recorders import (
-    APPIUM_RECONCILER_CYCLE_FAILURES,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
-    APPIUM_RECONCILER_LAST_CYCLE_SECONDS,
     APPIUM_RECONCILER_START_FAILURES,
     APPIUM_RECONCILER_STOP_FAILURES,
 )
@@ -66,15 +62,14 @@ from app.lifecycle.services.actions import (
 )
 
 if TYPE_CHECKING:
+    import uuid
     from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -83,43 +78,6 @@ if TYPE_CHECKING:
     SessionScope = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 else:
     SessionScope = Callable[[], object]
-
-
-LOOP_NAME = "appium_reconciler"
-
-
-class AppiumReconcilerLoop(BackgroundLoop):
-    """Leader-owned periodic loop."""
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "appium_reconciler_cycle_failed"
-
-    def __init__(self, *, services: AppiumNodeServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _leadership_lost_event(self) -> str:
-        return "appium_reconciler_leadership_lost"  # historical name: no "_loop" segment
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("appium_reconciler.interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.reconciler.run_cycle(db)
-
-    def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
-        APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(elapsed_seconds)
-
-    def _on_cycle_error(self) -> None:
-        APPIUM_RECONCILER_CYCLE_FAILURES.inc()
-
-
-async def _fetch_online_hosts(db: AsyncSession) -> list[dict[str, object]]:
-    result = await db.execute(select(Host.id, Host.ip, Host.agent_port).where(Host.status == HostStatus.online))
-    return [{"id": row.id, "ip": row.ip, "agent_port": row.agent_port} for row in result.all()]
 
 
 def _desired_select() -> Select[Any]:
@@ -159,7 +117,7 @@ def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
     )
 
 
-async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
+async def fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
     stmt = _desired_select().join(Host, Host.id == Device.host_id).where(Host.status == HostStatus.online)
     rows = (await db.execute(stmt)).all()
     return [_row_to_desired(row) for row in rows]
@@ -171,7 +129,7 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
     return _row_to_desired(row) if row is not None else None
 
 
-async def _fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
+async def fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
     rows = (await db.execute(select(Device.id, Device.lifecycle_policy_state))).all()
     backoff: dict[uuid.UUID, datetime] = {}
     for device_id, state_json in rows:
@@ -322,13 +280,7 @@ async def _reset_start_failure(
 
 
 class ReconcilerService:
-    """Injectable service wrapping the Appium reconciler loop body.
-
-    Satisfies :class:`~app.appium_nodes.protocols.ReconcilerProtocol`.
-    The caller opens the initial DB session and passes it to :meth:`run_cycle`;
-    agent IO and convergence passes open their own sessions via the stored
-    session factory.
-    """
+    """Injectable service wrapping Appium desired-state convergence."""
 
     def __init__(
         self,
@@ -344,61 +296,6 @@ class ReconcilerService:
         self._pool = pool
         self._circuit_breaker = circuit_breaker
         self._session_factory = session_factory
-
-    async def run_cycle(self, db: AsyncSession) -> None:
-        """Execute one reconciler cycle using the provided DB session for reads.
-
-        Agent IO and convergence passes open their own sessions internally.
-        """
-        hosts = await _fetch_online_hosts(db)
-        desired = await _fetch_desired_rows(db)
-        backoff = await _fetch_backoff_until(db)
-        # Agent IO and stops happen outside the DB session — no point holding it open.
-        await self._drive_convergence(hosts, desired, backoff)
-
-    async def _drive_convergence(
-        self,
-        hosts: list[dict[str, object]],
-        desired: list[DesiredRow],
-        backoff_until_by_device: dict[uuid.UUID, datetime],
-        *,
-        health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
-    ) -> None:
-        semaphore = asyncio.Semaphore(self._settings.get_int("appium_reconciler.host_parallelism"))
-        rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
-        for row in desired:
-            rows_by_host.setdefault(row.host_id, []).append(row)
-
-        async def _reconcile_host(host: dict[str, object]) -> None:
-            host_id = host.get("id")
-            host_ip = host.get("ip")
-            agent_port = host.get("agent_port")
-            if not isinstance(host_id, uuid.UUID) or not isinstance(host_ip, str) or not isinstance(agent_port, int):
-                return
-            async with semaphore:
-                payload = (health_by_host or {}).get(host_id)
-                if payload is None:
-                    payload = (
-                        await agent_health(
-                            host_ip,
-                            agent_port,
-                            http_client_factory=httpx.AsyncClient,
-                            settings=self._settings,
-                            pool=self._pool,
-                            circuit_breaker=self._circuit_breaker,
-                        )
-                        or {}
-                    )
-                await self.reconcile_host(
-                    host_id=host_id,
-                    host_ip=host_ip,
-                    agent_port=agent_port,
-                    rows=rows_by_host.get(host_id, []),
-                    backoff_until_by_device=backoff_until_by_device,
-                    payload=payload,
-                )
-
-        await asyncio.gather(*(_reconcile_host(host) for host in hosts))
 
     async def reconcile_host(
         self,

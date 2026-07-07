@@ -6,17 +6,29 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.core.sentinels import UnsetType
     from app.devices.models import Device
 
 
 class ReconcilerProtocol(Protocol):
-    async def run_cycle(self, db: AsyncSession) -> None: ...
+    async def reconcile_host(
+        self,
+        *,
+        host_id: uuid.UUID,
+        host_ip: str,
+        agent_port: int,
+        rows: list[DesiredRow],
+        backoff_until_by_device: dict[uuid.UUID, datetime],
+        payload: dict[str, object],
+    ) -> None: ...
+
     async def converge_device_now(
         self, device_id: uuid.UUID, *, db: AsyncSession | None = ...
     ) -> AppiumNode | None: ...

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -18,7 +17,6 @@ from app.appium_nodes.services.heartbeat_outcomes import (
     HeartbeatOutcome,
     HeartbeatPingResult,
 )
-from app.core.background_loop import BackgroundLoop
 from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
@@ -42,9 +40,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -52,7 +48,6 @@ logger = get_logger(__name__)
 
 HEARTBEAT_NAMESPACE = "heartbeat.failure_count"
 APPIUM_RESTART_SEQUENCE_NAMESPACE = "heartbeat.appium_restart_sequence"
-LOOP_NAME = "heartbeat"
 APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "restart_exhausted"})
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium"})
 
@@ -685,7 +680,6 @@ class HeartbeatService:
         self._session_factory = session_factory
         self._loop_iteration = 0
         self._last_cycle_monotonic: float | None = None
-        self._parallelism = 8
 
     def _next_loop_iteration(self) -> int:
         self._loop_iteration += 1
@@ -741,53 +735,3 @@ class HeartbeatService:
             settings=self._settings,
         )
         return ping_result
-
-    async def _check_hosts(self, db: AsyncSession) -> None:
-        """Ping all non-pending hosts in parallel.
-
-        ``db`` is used only to fetch the host id list; per-host work runs in fresh
-        sessions opened via ``self._session_factory`` and commits independently.
-        """
-        resume_guard = self.begin_cycle()
-
-        stmt = select(Host.id).where(Host.status != HostStatus.pending)
-        host_ids = list((await db.execute(stmt)).scalars().all())
-
-        semaphore = asyncio.Semaphore(self._parallelism)
-
-        async def guarded(host_id: uuid.UUID) -> None:
-            async with semaphore:
-                try:
-                    async with self._session_factory() as host_db:
-                        host = await host_db.get(Host, host_id)
-                        if host is None:
-                            return
-                        await self.process_host(host_db, host, guard=resume_guard)
-                        await host_db.commit()
-                except Exception:
-                    logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
-
-        await asyncio.gather(*(guarded(hid) for hid in host_ids))
-
-    async def run_cycle(self, db: AsyncSession) -> None:
-        await self._check_hosts(db)
-
-
-class HeartbeatLoop(BackgroundLoop):
-    """Background loop that pings all host agents."""
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Heartbeat check failed"
-
-    def __init__(self, *, services: AppiumNodeServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.heartbeat_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.heartbeat.run_cycle(db)
