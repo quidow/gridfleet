@@ -97,6 +97,7 @@ async def test_sweep_converges_from_ping_payload_without_second_fetch(
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
         node_health=Mock(check_host_nodes=AsyncMock()),
+        connectivity=Mock(run_connectivity_pass=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -134,6 +135,7 @@ async def test_sweep_skips_convergence_for_dead_host(
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
         node_health=Mock(check_host_nodes=AsyncMock()),
+        connectivity=Mock(run_connectivity_pass=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -185,8 +187,9 @@ async def _run_sweep_with_recorders(
     cycle_index: int,
     alive: bool = True,
     reconcile_raises: bool = False,
+    connectivity_raises: bool = False,
 ) -> None:
-    """Drive one sweep with reconcile_host / check_host_nodes recorders."""
+    """Drive one sweep with reconcile_host / check_host_nodes / connectivity recorders."""
     # Commit so the host is visible to the fresh sessions _sweep_host opens.
     await db_session.commit()
     settings = FakeSettingsReader()
@@ -203,9 +206,16 @@ async def _run_sweep_with_recorders(
         _ = host_id
         calls.append("check_host_nodes")
 
+    async def _record_connectivity(_db: object) -> None:
+        calls.append("run_connectivity_pass")
+        if connectivity_raises:
+            raise RuntimeError("connectivity boom")
+
     monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock(side_effect=_record_reconcile))
     node_health = Mock()
     node_health.check_host_nodes = AsyncMock(side_effect=_record_health)
+    connectivity = Mock()
+    connectivity.run_connectivity_pass = AsyncMock(side_effect=_record_connectivity)
 
     await run_host_sweep_once(
         db_session,
@@ -214,6 +224,7 @@ async def _run_sweep_with_recorders(
         settings=settings,
         session_factory=db_session_maker,
         node_health=node_health,
+        connectivity=connectivity,
         cycle_index=cycle_index,
     )
 
@@ -225,8 +236,9 @@ async def test_node_health_stage_runs_on_due_cycle_after_convergence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    # Cycle 2: node health due (divisor 2), connectivity not (divisor 4) — isolates node health.
     await _run_sweep_with_recorders(
-        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=0
+        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=2
     )
     assert calls == ["reconcile_host", "check_host_nodes"]
 
@@ -253,8 +265,9 @@ async def test_node_health_stage_skipped_for_dead_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    # Cycle 2: connectivity not due (divisor 4), so a dead host leaves calls empty.
     await _run_sweep_with_recorders(
-        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=0, alive=False
+        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=2, alive=False
     )
     assert calls == []
 
@@ -267,12 +280,61 @@ async def test_node_health_stage_runs_even_when_convergence_fails(
 ) -> None:
     calls: list[str] = []
     # Stage isolation: a convergence failure must not skip node health on an alive host.
+    # Cycle 2: node health due, connectivity not — isolates the node-health path.
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        calls=calls,
+        cycle_index=2,
+        reconcile_raises=True,
+    )
+    assert calls == ["reconcile_host", "check_host_nodes"]
+
+
+async def test_connectivity_stage_runs_after_fanout_on_due_cycle(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    await _run_sweep_with_recorders(
+        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=0
+    )
+    # Global stage runs strictly after every per-host stage.
+    assert calls[-1] == "run_connectivity_pass"
+
+
+async def test_connectivity_stage_skipped_on_off_cycles(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default 60s/15s settings → divisor 4 → connectivity only on cycles 0 and 4.
+    for cycle_index, expected in ((1, False), (2, False), (3, False), (4, True)):
+        calls: list[str] = []
+        await _run_sweep_with_recorders(
+            monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=cycle_index
+        )
+        assert ("run_connectivity_pass" in calls) is expected
+
+
+async def test_connectivity_stage_failure_does_not_fail_the_cycle(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    # Stage isolation: a connectivity failure must not raise out of the sweep cycle.
     await _run_sweep_with_recorders(
         monkeypatch,
         db_session=db_session,
         db_session_maker=db_session_maker,
         calls=calls,
         cycle_index=0,
-        reconcile_raises=True,
+        connectivity_raises=True,
     )
-    assert calls == ["reconcile_host", "check_host_nodes"]
+    assert "run_connectivity_pass" in calls

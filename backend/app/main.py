@@ -50,7 +50,6 @@ from app.devices.dependencies import (
 )
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import (
-    connectivity,
     data_cleanup,
     fleet_capacity,
     intent_reconciler,
@@ -100,7 +99,6 @@ logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
 DataCleanupLoop = data_cleanup.DataCleanupLoop
-DeviceConnectivityLoop = connectivity.DeviceConnectivityLoop
 DeviceIntentReconcilerLoop = intent_reconciler.DeviceIntentReconcilerLoop
 FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
 assess_devices_async = readiness.assess_devices_async
@@ -186,12 +184,11 @@ async def _build_and_start_app_services(
 
 
 def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[None]]:
-    connectivity_loop = DeviceConnectivityLoop(services=app_services.devices)
     data_cleanup = DataCleanupLoop(services=app_services.devices)
     fleet_capacity = FleetCapacityLoop(services=app_services.devices)
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     property_refresh = PropertyRefreshLoop(services=app_services.devices)
-    host_sweep = HostSweepLoop(services=app_services.appium_nodes)
+    host_sweep = HostSweepLoop(services=app_services.appium_nodes, connectivity=app_services.devices.connectivity)
     session_sync = SessionSyncLoop(services=app_services.sessions)
     session_viability = SessionViabilityLoop(services=app_services.sessions)
     hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
@@ -206,7 +203,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     _leader_loops: list[tuple[Any, str]] = [
         (host_sweep.run(), "host_sweep_loop"),
         (session_sync.run(), "session_sync_loop"),
-        (connectivity_loop.run(), "device_connectivity_loop"),
         (property_refresh.run(), "property_refresh_loop"),
         (hardware_telemetry.run(), "hardware_telemetry_loop"),
         (host_resource_telemetry.run(), "host_resource_telemetry_loop"),

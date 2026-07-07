@@ -71,7 +71,7 @@ async def test_host_sweep_loop_one_successful_iteration(monkeypatch: pytest.Monk
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await HostSweepLoop(services=services).run()
+        await HostSweepLoop(services=services, connectivity=Mock()).run()
 
     run_once.assert_awaited_once()
 

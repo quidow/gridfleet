@@ -120,7 +120,7 @@ manage that column directly under the same row lock.
 
 ### Adapter-recommended link repair
 
-The `device_connectivity` loop dispatches manifest-declared lifecycle actions when
+The `host_sweep` connectivity stage dispatches manifest-declared lifecycle actions when
 a health check returns a `recommended_action` (driver-agnostic: the adapter decides
 whether and which action remediates; core only validates, bounds, and dispatches).
 The canonical case is the android pack's `reconnect` (I10): adb transport down but

@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
-
-import pytest
-
-from tests.fakes import build_review_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,21 +11,8 @@ if TYPE_CHECKING:
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
-from app.devices.services.bulk import BulkOperationsService
-from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
-from app.devices.services.data_cleanup import DataCleanupService
-from app.devices.services.fleet_capacity import FleetCapacityService
-from app.devices.services.groups import DeviceGroupsService
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.presenter import DevicePresenterService
-from app.devices.services.property_refresh import PropertyRefreshService
-from app.devices.services.service import DeviceCrudService
-from app.devices.services.test_data import TestDataService
-from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -270,76 +251,6 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         ).check_connectivity(db_session)
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
-
-
-async def test_device_connectivity_loop_logs_and_retries() -> None:
-    class _Observation:
-        @asynccontextmanager
-        async def cycle(self) -> AsyncMock:
-            yield AsyncMock()
-
-    @asynccontextmanager
-    async def fake_session() -> AsyncMock:
-        yield AsyncMock()
-
-    _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
-    _fake_publisher = AsyncMock()
-    _fake_maintenance = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
-    _fake_crud = DeviceCrudService(
-        settings=_fake_settings, identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
-    loop = device_connectivity.DeviceConnectivityLoop(
-        services=DeviceServices(
-            fleet_capacity=FleetCapacityService(),
-            data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
-            property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_fake_publisher, crud=_fake_crud),
-            maintenance=_fake_maintenance,
-            bulk=BulkOperationsService(
-                publisher=_fake_publisher,
-                settings=_fake_settings,
-                circuit_breaker=Mock(),
-                maintenance=_fake_maintenance,
-                crud=_fake_crud,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_fake_settings, publisher=event_bus
-                ),
-            ),
-            presenter=DevicePresenterService(settings=_fake_settings),
-            test_data=TestDataService(publisher=_fake_publisher),
-            crud=_fake_crud,
-            capability=DeviceCapabilityService(),
-            connectivity=ConnectivityService(
-                publisher=_fake_publisher,
-                settings=_fake_settings,
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=AsyncMock(),
-            ),
-            publisher=_fake_publisher,
-            settings=_fake_settings,
-            session_factory=fake_session,
-            circuit_breaker=Mock(),
-            health=AsyncMock(),
-        )
-    )
-
-    with (
-        patch("app.core.background_loop.observe_background_loop", return_value=_Observation()),
-        patch.object(
-            ConnectivityService,
-            "check_connectivity",
-            new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
-        ),
-        patch.object(ConnectivityService, "check_expired_cooldowns", new=AsyncMock(return_value=None)),
-        patch("app.core.background_loop.asyncio.sleep", new=AsyncMock()) as sleep,
-        pytest.raises(asyncio.CancelledError),
-    ):
-        await loop.run()
-
-    sleep.assert_awaited()
 
 
 async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
