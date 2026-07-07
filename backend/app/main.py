@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 import signal
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any
@@ -40,9 +41,11 @@ from app.core.observability import (
     configure_logging,
     flush_background_loop_snapshots,
     get_logger,
+    stalled_background_loop_names,
 )
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
+from app.core.timeutil import now_utc
 from app.devices import routers as device_routers
 from app.devices.dependencies import (
     DeviceServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
@@ -244,6 +247,30 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     return [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
 
 
+SCHEDULER_STALL_GRACE_SEC = 600.0
+SCHEDULER_WATCHDOG_INTERVAL_SEC = 60.0
+
+
+async def _scheduler_stall_watchdog() -> None:
+    """Exit the scheduler when its loops wedge, so compose restart recovers them.
+
+    Restart-based failover: this replaces the old cross-process watcher preempt
+    for the realistic stall modes (a loop stuck on a dead await, silent task
+    death). A fully wedged event loop starves this task too — that case is
+    covered by the Prometheus loop-staleness alerts, not automation.
+    """
+    while True:
+        await asyncio.sleep(SCHEDULER_WATCHDOG_INTERVAL_SEC)
+        stalled = stalled_background_loop_names(now=now_utc(), extra_grace_seconds=SCHEDULER_STALL_GRACE_SEC)
+        if stalled:
+            logger.error(
+                "scheduler_loops_stalled",
+                stalled=sorted(stalled),
+                action="exiting_process_for_supervisor_restart",
+            )
+            os._exit(70)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state_write_guard.register()
@@ -272,6 +299,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if process_settings.run_background_loops:
         if await control_plane_leader.try_acquire(engine):
             tasks = _build_leader_loop_tasks(app_services)
+            tasks.append(asyncio.create_task(_scheduler_stall_watchdog(), name="scheduler_stall_watchdog"))
         else:
             logger.warning(
                 "background_loops_skipped_lock_held",

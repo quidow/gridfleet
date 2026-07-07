@@ -13,7 +13,9 @@ from app.core.observability import BACKGROUND_LOOP_NAMES
 
 # Loops started in main.py's lifespan that are intentionally NOT readiness-gated.
 # Adding a loop here is a deliberate decision — document why in the PR that does so.
-_NOT_READINESS_GATED = frozenset({"background_loop_flush"})
+# scheduler_stall_watchdog is not a heartbeat loop: it runs no observability
+# cycle and emits no snapshot, so readiness must not expect one for it.
+_NOT_READINESS_GATED = frozenset({"background_loop_flush", "scheduler_stall_watchdog"})
 
 
 def _normalize(name: str) -> str:
