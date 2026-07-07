@@ -691,15 +691,9 @@ class HeartbeatService:
         self._loop_iteration += 1
         return self._loop_iteration
 
-    async def _check_hosts(self, db: AsyncSession) -> None:
-        """Ping all non-pending hosts in parallel.
-
-        ``db`` is used only to fetch the host id list; per-host work runs in fresh
-        sessions opened via ``self._session_factory`` and commits independently.
-        """
-        iteration = self._next_loop_iteration()
-        leader_id = str(control_plane_leader.holder_id)
-
+    def begin_cycle(self) -> _ResumeGuard:
+        """Start one heartbeat cycle and compute its suspend/resume guard."""
+        self._next_loop_iteration()
         interval = self._settings.get_float("general.heartbeat_interval_sec")
         max_missed = self._settings.get_int("general.max_missed_heartbeats")
         now_mono = time.monotonic()
@@ -713,7 +707,48 @@ class HeartbeatService:
         self._last_cycle_monotonic = now_mono
         guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
         guard_threshold_sec = interval * max_missed
-        resume_guard = _ResumeGuard(active=guard_active, gap_sec=guard_gap_sec, threshold_sec=guard_threshold_sec)
+        return _ResumeGuard(active=guard_active, gap_sec=guard_gap_sec, threshold_sec=guard_threshold_sec)
+
+    async def process_host(self, db: AsyncSession, host: Host, *, guard: _ResumeGuard) -> HeartbeatPingResult:
+        """Ping and evaluate one host; the caller owns the transaction commit."""
+        ping_result = await _ping_agent(
+            host.ip,
+            host.agent_port,
+            settings=self._settings,
+            pool=self._pool,
+            circuit_breaker=self._circuit_breaker,
+        )
+        _emit_heartbeat_log(
+            host_id=str(host.id),
+            host_ip=host.ip,
+            agent_port=host.agent_port,
+            result=ping_result,
+            leader_id=str(control_plane_leader.holder_id),
+            loop_iteration=self._loop_iteration,
+        )
+        record_heartbeat_ping(
+            host_id=str(host.id),
+            outcome=ping_result.outcome.value,
+            client_mode=ping_result.client_mode.value,
+            duration_seconds=ping_result.duration_ms / 1000.0,
+        )
+        await _apply_host_ping_result(
+            db,
+            host,
+            ping_result,
+            guard=guard,
+            publisher=self._publisher,
+            settings=self._settings,
+        )
+        return ping_result
+
+    async def _check_hosts(self, db: AsyncSession) -> None:
+        """Ping all non-pending hosts in parallel.
+
+        ``db`` is used only to fetch the host id list; per-host work runs in fresh
+        sessions opened via ``self._session_factory`` and commits independently.
+        """
+        resume_guard = self.begin_cycle()
 
         stmt = select(Host.id).where(Host.status != HostStatus.pending)
         host_ids = list((await db.execute(stmt)).scalars().all())
@@ -727,35 +762,7 @@ class HeartbeatService:
                         host = await host_db.get(Host, host_id)
                         if host is None:
                             return
-                        ping_result = await _ping_agent(
-                            host.ip,
-                            host.agent_port,
-                            settings=self._settings,
-                            pool=self._pool,
-                            circuit_breaker=self._circuit_breaker,
-                        )
-                        _emit_heartbeat_log(
-                            host_id=str(host.id),
-                            host_ip=host.ip,
-                            agent_port=host.agent_port,
-                            result=ping_result,
-                            leader_id=leader_id,
-                            loop_iteration=iteration,
-                        )
-                        record_heartbeat_ping(
-                            host_id=str(host.id),
-                            outcome=ping_result.outcome.value,
-                            client_mode=ping_result.client_mode.value,
-                            duration_seconds=ping_result.duration_ms / 1000.0,
-                        )
-                        await _apply_host_ping_result(
-                            host_db,
-                            host,
-                            ping_result,
-                            guard=resume_guard,
-                            publisher=self._publisher,
-                            settings=self._settings,
-                        )
+                        await self.process_host(host_db, host, guard=resume_guard)
                         await host_db.commit()
                 except Exception:
                     logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
