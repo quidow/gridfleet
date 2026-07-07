@@ -18,7 +18,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 
 | Key | Category | Type | Default | Env var | Validation | Operational meaning |
 | --- | --- | --- | --- | --- | --- | --- |
-| `general.heartbeat_interval_sec` | `general` | `int` | `15` | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `5..300` | How often the manager pings agents |
+| `general.heartbeat_interval_sec` | `general` | `int` | `15` | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `5..300` | Host-sweep cadence: one agent health fetch per host feeds liveness and Appium-node convergence |
 | `general.max_missed_heartbeats` | `general` | `int` | `3` | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `1..20` | Missed agent pings before a host is marked offline |
 | `general.intent_reconcile_interval_sec` | `general` | `int` | `5` | none | `1..300` | Seconds between intent reconciler dirty-queue polls |
 | `general.intent_reconcile_full_scan_every_cycles` | `general` | `int` | `720` | none | `1..17280` | Run a full device scan after this many intent reconciler cycles |
@@ -57,10 +57,9 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `appium.port_range_start` | `grid` | `int` | `4723` | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `1024..65535` | Start of the managed Appium node port range |
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
-| `appium_reconciler.interval_sec` | `grid` | `int` | `30` | none | `5..600` | How often the Appium reconciler reaps orphan agent Appium processes |
 | `appium_reconciler.restart_window_sec` | `grid` | `int` | `120` | none | `30..600` | Wall-clock window the Phase 3 restart-node writer uses to populate `transition_deadline`; the reconciler clears the lease past this deadline |
 | `appium_reconciler.start_failure_threshold` | `grid` | `int` | `5` | none | `1..100` | Consecutive desired-state convergence failures before lifecycle policy treats the device as backoff-suppressed; suppression lasts `appium.startup_timeout_sec * 4` seconds |
-| `appium_reconciler.host_parallelism` | `grid` | `int` | `8` | none | `1..32` | Max number of hosts the Appium reconciler converges in parallel per cycle |
+| `appium_reconciler.host_parallelism` | `grid` | `int` | `8` | none | `1..32` | Maximum number of hosts processed concurrently by the host sweep |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
 | `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hardware_health_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
 | `notifications.toast_auto_dismiss_sec` | `notifications` | `int` | `5` | none | `0..60` | Auto-dismiss delay for success toasts; `0` means manual dismissal |

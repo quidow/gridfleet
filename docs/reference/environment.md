@@ -48,7 +48,7 @@ These are not the authoritative settings store. They only provide the initial se
 
 | Variable | Registry key | Default | Notes |
 | --- | --- | --- | --- |
-| `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Agent heartbeat loop cadence |
+| `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Host-sweep cadence for shared agent health observation and convergence |
 | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `general.max_missed_heartbeats` | `3` | Missed heartbeats before host becomes offline |
 | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
 | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |

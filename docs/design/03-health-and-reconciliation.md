@@ -44,11 +44,10 @@ Scheduler-owned loops are listed in `_build_leader_loop_tasks` in `backend/app/m
 
 | Loop | Default cadence | Reads | Writes | Sole writer of |
 | --- | --- | --- | --- | --- |
-| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`; on host-offline cascade calls `IntentService.mark_dirty_and_reconcile` per device (does not write `operational_state` directly) | `Host.status` (offline/online) |
+| `host_sweep_loop` | 15 s (`general.heartbeat_interval_sec`) | One Agent `/agent/health` payload per host, plus `AppiumNode` desired state | Applies host liveness and snapshot/restart-event ingest first; for freshly alive hosts the same payload drives orphan reaping, node start/stop convergence, and `AppiumNode.pid`/`port`/`active_connection_target` observations. The host-offline cascade calls `IntentService.mark_dirty_and_reconcile` per device (does not write `operational_state` directly). | `Host.status` (offline/online), Appium-node observed-state reconciliation |
 | `node_health_loop` | 30 s | Agent `/agent/appium/{port}/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON; on max failures registers auto-recovery intents via `IntentService.register_intents_and_reconcile` (does not write `operational_state` directly) | node-health counter, auto-restart trigger |
 | `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices/{connection_target}/health` (direct per-device probe, tried first); `/agent/pack/devices` host enumeration only on miss, at most once per host per cycle | `Device.device_checks_*`, `Device.emulator_state`, lifecycle JSON; calls `IntentService.mark_dirty_and_reconcile` / `register_intents_and_reconcile` (does not write `operational_state` directly) | `Device.device_checks_*` |
 | `session_sync_loop` | 30 s (`grid.session_poll_interval_sec`): the 30 s tick is the drift-reconciler timeout | Per-node Appium session lists (`appium_direct.list_sessions`) | `Session` rows; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Session.state`, run-claim transitions |
-| `appium_reconciler_loop` | `appium_reconciler.interval_sec` | `AppiumNode` desired vs observed state | node start/stop transition execution, `AppiumNode.pid`/`port`/`active_connection_target` observation columns | `AppiumNode` observed-state reconciliation |
 | `device_intent_reconciler_loop` | `general.intent_reconcile_interval_sec` | device intents + durable facts | `Device.operational_state` via `apply_derived_state` → `set_operational_state` | derived `Device.operational_state` (sole runtime writer) |
 | `session_viability_loop` | 60 s wake / per-device 3600 s | Direct-to-Appium WebDriver probe session | `Device.session_viability_*`; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Device.session_viability_*` |
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
@@ -62,7 +61,7 @@ Scheduler-owned loops are listed in `_build_leader_loop_tasks` in `backend/app/m
 | `fleet_capacity_collector_loop` | 60 s | aggregate device, host, session, and queue-ticket counts | `analytics_capacity_snapshots` (model `AnalyticsCapacitySnapshot`) | capacity snapshot rows |
 | `background_loop_flush_loop` | `general.background_loop_flush_interval_sec` | in-memory background-loop heartbeat/observability snapshots | persists those snapshots to the control-plane state table | durable background-loop heartbeat snapshots |
 
-The lifecycle-critical loops are `heartbeat`, `node_health`, `device_connectivity`, and `session_sync`. The remaining loops handle reconciliation, telemetry, queues, and housekeeping.
+The lifecycle-critical loops are `host_sweep`, `node_health`, `device_connectivity`, and `session_sync`. The remaining loops handle reconciliation, telemetry, queues, and housekeeping.
 
 ## The tri-state probe pattern
 
@@ -100,7 +99,7 @@ Loops can run multiple times against the same device without ill effect, provide
 
 Every public health fact has exactly one durable home:
 
-- `Device.device_checks_*`: owned by `device_connectivity_loop` and `heartbeat_loop`
+- `Device.device_checks_*`: owned by `device_connectivity_loop` and the liveness concern in `host_sweep_loop`
 - `Device.session_viability_*`: owned by `session_viability_loop`
 - `Device.emulator_state`: owned by `device_connectivity_loop`
 - `AppiumNode.desired_state` (running/stopped intent): written via `app.appium_nodes.services.desired_state_writer.write_desired_state`
@@ -113,9 +112,9 @@ Every public health fact has exactly one durable home:
 
 | Namespace | Owner | Purpose |
 | --- | --- | --- |
-| `heartbeat.failure_count` | `heartbeat_loop` | missed-heartbeat counter before marking a host offline |
-| `heartbeat.appium_processes` | `heartbeat_loop` / host diagnostics | latest agent-reported Appium process snapshot |
-| `heartbeat.appium_restart_sequence` | `heartbeat_loop` | last ingested local restart event sequence per host |
+| `heartbeat.failure_count` | `host_sweep_loop` | missed-heartbeat counter before marking a host offline |
+| `heartbeat.appium_processes` | `host_sweep_loop` / host diagnostics | latest agent-reported Appium process snapshot |
+| `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
 | `connectivity.previously_offline` | `device_connectivity_loop` | remembers why a reconnect is treated as recovery rather than first startup |
 | `hardware_telemetry.state` | `hardware_telemetry_loop` | stale/fresh telemetry bookkeeping |
 | `session_viability.state` / `session_viability.running` | `session_viability_loop` | cadence and in-progress guard for deeper session probes |

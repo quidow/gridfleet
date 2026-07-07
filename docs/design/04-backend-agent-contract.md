@@ -50,7 +50,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 
 | Method | Path | Caller (backend) | Purpose | Ack semantics |
 | --- | --- | --- | --- | --- |
-| GET | `/agent/health` | `heartbeat_loop` | liveness + version + missing prerequisites | 200 → ok; non-200 → `None` (treated as missed heartbeat) |
+| GET | `/agent/health` | `host_sweep_loop` | liveness, version, missing prerequisites, and Appium convergence snapshot | 200 → ok; non-200 → `None` (treated as missed heartbeat) |
 | GET | `/agent/host/telemetry` | `host_resource_telemetry_loop` | CPU/memory/disk numbers | 200 → snapshot; non-200 → `None` |
 | GET | `/agent/pack/devices` | `device_connectivity_loop`, intake/discovery | currently-visible devices per pack | 2xx required (raises on non-2xx) |
 | GET | `/agent/pack/devices/{ct}/properties` | `property_refresh_loop` | per-device props (OS version, model, etc.) | 200 → dict, 404 → `None`, other → raise |
