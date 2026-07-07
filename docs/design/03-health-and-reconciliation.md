@@ -1,73 +1,55 @@
 # Doc 3: Health & Reconciliation Loops
 
-> Reference for every leader-owned background loop that mutates device or node state. Covers cadence, read set, write set, idempotency, the leader-election contract, and the tri-state probe pattern.
+> Reference for every scheduler-owned background loop that mutates device or node state. Covers cadence, read set, write set, idempotency, the scheduler launch guard, and the tri-state probe pattern.
 
-GridFleet runs a multi-worker FastAPI process. Workers are stateless: every API mutator can run on any worker, but only **one** worker per cluster runs maintenance loops. That worker is elected via a PostgreSQL advisory lock. Every non-frozen worker also runs a lightweight leader watcher so a stale lock holder can be preempted without waiting for kernel TCP keepalive expiry. This doc is the contract for how loops cooperate with API mutators without racing each other.
+GridFleet's API workers are stateless, and API mutations can run on any worker. Background maintenance loops run in one scheduler process. Production uses the `backend-scheduler` Compose service with one worker; local and single-container runs can use the API process because `GRIDFLEET_RUN_BACKGROUND_LOOPS` defaults to `true`.
 
-## The leader contract
+## Scheduler process and launch guard
 
-```text
-loop ⇄ pg_try_advisory_lock(6001)
-       held for the lifetime of the leader process
-       released on shutdown via pg_advisory_unlock
-```
-
-`backend/app/core/leader/advisory.py` (singleton `control_plane_leader`, class `ControlPlaneLeader`, lock id `CONTROL_PLANE_LEADER_LOCK_ID = 6001`); the contract is split across `app/core/leader/{advisory,keepalive,watcher}.py`. The lock is **process-wide**, held on a dedicated `AsyncConnection` for the whole leader lifetime, and not re-entrant. If `try_acquire` returns `False`, the worker becomes a non-leader: it serves the API and runs only the watcher loop.
+The scheduler tries to acquire PostgreSQL advisory lock `6001` during lifespan startup. `backend/app/core/leader/advisory.py` holds the lock on a dedicated `AsyncConnection` for the process lifetime. This is a singleton launch guard against an accidental second loop runner, not a leader election. There is no heartbeat row, watcher, write fence, or cross-process preemption.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant W1 as Worker 1
-    participant W2 as Worker 2
-    participant Pg as Postgres advisory lock 6001
+    participant S as Scheduler process
+    participant A as Accidental second runner
+    participant Pg as PostgreSQL advisory lock 6001
 
-    W1->>Pg: pg_try_advisory_lock(6001)
-    Pg-->>W1: TRUE
-    Note over W1: leader. Spawns leader-owned loops and watcher
-    W2->>Pg: pg_try_advisory_lock(6001)
-    Pg-->>W2: FALSE
-    Note over W2: non-leader. Serves API and watcher only
-    W1->>W1: process exits / SIGTERM
-    W1->>Pg: pg_advisory_unlock(6001)
-    W2->>Pg: pg_try_advisory_lock(6001)
-    Pg-->>W2: TRUE
-    Note over W2: becomes leader on next try (process restart)
+    S->>Pg: pg_try_advisory_lock(6001)
+    Pg-->>S: TRUE
+    Note over S: Starts background loops and stall watchdog
+    A->>Pg: pg_try_advisory_lock(6001)
+    Pg-->>A: FALSE
+    Note over A: Skips background loops
+    S->>S: process exits or receives SIGTERM
+    S->>Pg: connection closes and releases lock
+    S->>S: supervisor restarts process
+    S->>Pg: pg_try_advisory_lock(6001)
+    Pg-->>S: TRUE
 ```
 
-Two consequences worth remembering:
+Failover is restart based. The supervisor restarts a dead scheduler, which acquires the lock during the next lifespan startup. The lock does not migrate between live processes. On clean shutdown, GridFleet calls `pg_advisory_unlock(6001)` and closes the dedicated connection; PostgreSQL also releases the lock if the connection dies.
 
-- **The leader survives one process; it does not migrate live.** When the leader dies, the lock is released only after the connection is closed. Loops resume in the next process to acquire, i.e. the next start. Compose/k8s `restart: unless-stopped` is what makes this acceptable.
+The advisory lock does not serialize loop writes against API writes. API mutators bypass it entirely. The device row lock from Doc 1 protects each device's write window across the scheduler and API workers.
 
-The leader lock alone is **not** sufficient to prevent races. API mutators run on all workers and bypass the lock entirely. The device row lock from Doc 1 is what serialises a loop's write against an API write on the same device.
+## Stall detection and restart
 
-## Leader keepalive and failover latency
+Each `BackgroundLoop` records cycle observations through `observe_background_loop`. The `background_loop_flush_loop` persists snapshots for operator visibility. A watchdog checks for stale loops every 60 seconds and allows an additional 600-second grace period. If a loop remains stale, the watchdog calls `os._exit(70)` so the supervisor restarts the scheduler.
 
-> **Scope:** This section describes a latency improvement for leader failover plus the write fence used by lifecycle-critical loops.
-
-The advisory lock (`pg_try_advisory_lock(6001)`) is the only fact of leadership. On top:
-
-- The leader writes a heartbeat row in `control_plane_leader_heartbeats` every `general.leader_keepalive_interval_sec` (default 5 s). The write is `UPDATE ... WHERE id = 1 AND holder_id = :self RETURNING last_heartbeat_at`. If `RETURNING` is empty, another backend has taken the lock; the leader process exits via `os._exit(70)`. The supervisor restarts it.
-- Every non-frozen backend runs the watcher loop. The watcher is a no-op for the elected leader. Non-leaders that observe a heartbeat older than `general.leader_stale_threshold_sec` (default 30 s) read the recorded `lock_backend_pid` from the row, transactionally re-check that the row is still stale and still names the same `(holder_id, pid)`, then call `pg_terminate_backend(pid)`. On success they retry `pg_try_advisory_lock`. If they win, they immediately call `os._exit(70)` without manually releasing the lock. Postgres releases the session-level advisory lock when the process's DB sockets close on exit. The supervisor restarts the process; the restarted process runs normal lifespan startup, acquires the lock, and spawns the leader-only loops. The watcher itself never holds leadership steady-state.
-- Recovery latency is bounded by `leader_stale_threshold_sec` plus one watcher cycle plus supervisor restart time. With defaults, that is approximately 45 s. Without this feature, recovery waits for the kernel TCP keepalive on the previous leader's connection, which is commonly 7200 s on Linux unless tuned via `tcp_keepalives_idle`.
-- Privilege model: `pg_terminate_backend` is allowed when the calling role is a member of the target backend's role, when the calling role has `pg_signal_backend`, or when the caller is a superuser. Same-role replicas, the default in `docker-compose.yml`, can terminate each other without a separate grant. In restricted deployments lacking those privileges, preemption degrades to a no-op and failover falls back to TCP keepalive; this is logged once via `control_plane_leader_preempt_no_op`.
-- Kill switch: `general.leader_keepalive_enabled = false` disables both the keepalive write fail-fast and the watcher's preemption path. While disabled, the watcher short-circuits before reading the heartbeat row. To re-enable after the toggle has been off longer than `general.leader_stale_threshold_sec`, restart the current leader replica first so it rewrites a fresh row, then flip the toggle back on, then bring the rest of the fleet online.
-
-**Fencing on leader-owned writes:** the module function `assert_current_leader(db, settings=...)` (from `app.core.leader.advisory`, not a method on `control_plane_leader`) is the implemented lease-token fence; `settings` is required and each loop passes its own `SettingsReader` (e.g. `self._settings`). It reads `control_plane_leader_heartbeats.id = 1` and raises `LeadershipLost` unless the row's `holder_id` still matches this process's `control_plane_leader.holder_id` and `lock_backend_pid` is present. Lifecycle-critical loops call it after slow external awaits and before durable writes: `heartbeat`, `node_health`, `device_connectivity`, `session_sync`, `run_reaper`, `appium_reconciler`, and `device_intent_reconciler`. If fencing fails, the process exits via `os._exit(70)` so the supervisor restarts it. When `general.leader_keepalive_enabled=false`, the fence no-ops and failover falls back to the older advisory-lock/TCP-keepalive behavior.
+A fully wedged event loop can also starve the watchdog. Prometheus loop-staleness alerts cover that case; recovery still depends on the process supervisor or an operator restart.
 
 ## Loop registry
 
-Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. The watcher is spawned after the startup `try_acquire` decision, outside the leader-only list, so non-leaders can preempt stale holders without a startup self-preempt race. The table below captures the invariant data; cadences are the registry defaults from the `_DEFINITIONS` list of `SettingDefinition` in `backend/app/settings/registry.py` (DB-tunable at runtime via the Settings UI).
+Scheduler-owned loops are listed in `_build_leader_loop_tasks` in `backend/app/main.py` and start only after the process acquires the singleton lock. The table below captures the invariant data. Cadences are registry defaults from the `_DEFINITIONS` list of `SettingDefinition` in `backend/app/settings/registry.py` and can be changed through the Settings UI unless noted otherwise.
 
 | Loop | Default cadence | Reads | Writes | Sole writer of |
 | --- | --- | --- | --- | --- |
 | `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`; on host-offline cascade calls `IntentService.mark_dirty_and_reconcile` per device (does not write `operational_state` directly) | `Host.status` (offline/online) |
-| `control_plane_leader_keepalive` | 5 s | `control_plane_leader_heartbeats` | `control_plane_leader_heartbeats.last_heartbeat_at` | leader liveness row |
-| `control_plane_leader_watcher` | 5 s | `control_plane_leader_heartbeats` | terminates stale lock-holder backend only | stale-leader preemption |
 | `node_health_loop` | 30 s | Agent `/agent/appium/{port}/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON; on max failures registers auto-recovery intents via `IntentService.register_intents_and_reconcile` (does not write `operational_state` directly) | node-health counter, auto-restart trigger |
 | `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices/{connection_target}/health` (direct per-device probe, tried first); `/agent/pack/devices` host enumeration only on miss, at most once per host per cycle | `Device.device_checks_*`, `Device.emulator_state`, lifecycle JSON; calls `IntentService.mark_dirty_and_reconcile` / `register_intents_and_reconcile` (does not write `operational_state` directly) | `Device.device_checks_*` |
 | `session_sync_loop` | 30 s (`grid.session_poll_interval_sec`): the 30 s tick is the drift-reconciler timeout | Per-node Appium session lists (`appium_direct.list_sessions`) | `Session` rows; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Session.state`, run-claim transitions |
-| `appium_reconciler_loop` | `appium_reconciler.interval_sec` | `AppiumNode` desired vs observed state | node start/stop transition execution, `AppiumNode.pid`/`port`/`active_connection_target` observation columns (calls `assert_current_leader` before durable writes) | `AppiumNode` observed-state reconciliation |
-| `device_intent_reconciler_loop` | `general.intent_reconcile_interval_sec` | device intents + durable facts | `Device.operational_state` via `apply_derived_state` → `set_operational_state` (calls `assert_current_leader`) | derived `Device.operational_state` (sole runtime writer) |
+| `appium_reconciler_loop` | `appium_reconciler.interval_sec` | `AppiumNode` desired vs observed state | node start/stop transition execution, `AppiumNode.pid`/`port`/`active_connection_target` observation columns | `AppiumNode` observed-state reconciliation |
+| `device_intent_reconciler_loop` | `general.intent_reconcile_interval_sec` | device intents + durable facts | `Device.operational_state` via `apply_derived_state` → `set_operational_state` | derived `Device.operational_state` (sole runtime writer) |
 | `session_viability_loop` | 60 s wake / per-device 3600 s | Direct-to-Appium WebDriver probe session | `Device.session_viability_*`; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Device.session_viability_*` |
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
@@ -80,7 +62,7 @@ Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. T
 | `fleet_capacity_collector_loop` | 60 s | aggregate device, host, session, and queue-ticket counts | `analytics_capacity_snapshots` (model `AnalyticsCapacitySnapshot`) | capacity snapshot rows |
 | `background_loop_flush_loop` | `general.background_loop_flush_interval_sec` | in-memory background-loop heartbeat/observability snapshots | persists those snapshots to the control-plane state table | durable background-loop heartbeat snapshots |
 
-The lifecycle-critical loops are `heartbeat`, `node_health`, `device_connectivity`, and `session_sync`. `control_plane_leader_keepalive` and `control_plane_leader_watcher` own leadership liveness; the remaining loops are telemetry, queue workers, and housekeeping.
+The lifecycle-critical loops are `heartbeat`, `node_health`, `device_connectivity`, and `session_sync`. The remaining loops handle reconciliation, telemetry, queues, and housekeeping.
 
 ## The tri-state probe pattern
 
@@ -110,7 +92,7 @@ Loops can run multiple times against the same device without ill effect, provide
 
 2. **Facts have one home.** Device checks, session viability, emulator state, node lifecycle, transient node health detail, and node failure counts live in typed columns. Readers compose them on demand.
 
-3. **Counters live on the node row, not in memory.** `node_health` keeps consecutive-failure counts in `AppiumNode.consecutive_health_failures` so a leader handoff does not lose history or double-count.
+3. **Counters live on the node row, not in memory.** `node_health` keeps consecutive-failure counts in `AppiumNode.consecutive_health_failures` so a scheduler restart does not lose history or double-count.
 
 4. **Stale-result detection.** `_process_node_health` records the observed `port`/`pid`/`active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
 
@@ -174,7 +156,8 @@ flowchart TD
 
 ## When loops do NOT run
 
-- **Non-leader workers.** Workers that lose the advisory lock race never spawn leader-owned loops. They only run the watcher. Only one process runs maintenance work even with N replicas.
+- **Background loops are disabled.** A process with `GRIDFLEET_RUN_BACKGROUND_LOOPS=false` does not try to acquire the singleton lock or start scheduler tasks.
+- **Another process holds the lock.** If `pg_try_advisory_lock(6001)` returns false, the process logs `background_loops_skipped_lock_held` and does not start maintenance loops. It does not watch or preempt the lock holder.
 - **`node_health` skip cases.** The loop polls every `AppiumNode` row whose `pid` and `active_connection_target` are populated; nodes that have been stopped (pid cleared) or never started are skipped. There are no per-platform exclusions: the `/status` probe is platform-agnostic.
 - **`device_connectivity` skip cases.** The loop probes every device directly via `/agent/pack/devices/{ct}/health` first (direct-first, sweep-on-miss); the host-wide `/agent/pack/devices` enumeration only runs, at most once per host per cycle, when a device's direct probe does not confirm health. If that enumeration is indeterminate, the loop skips the device (and every other device on that host, which hits the cached `None` and skips too); heartbeat handles host status instead. For disconnected devices, it suppresses lifecycle action when the device is in maintenance.
 
@@ -182,15 +165,14 @@ flowchart TD
 
 When adding a new periodic task, copy the `node_health_loop` shape:
 
-1. Add a `BackgroundLoop` subclass (`app/core/background_loop.py`) under the owning domain's `services/` package (e.g. `app/devices/services/<name>.py`, `app/appium_nodes/services/<name>.py`), implementing `_session_factory`, `_interval`, and `_run_cycle` and setting the `loop_name`, `exit_on_leadership_lost`, and `cycle_failed_message` class vars. The base class wraps each cycle in `observe_background_loop(loop_name, interval).cycle()` for metrics.
-2. Spawn it in `app/main.py` lifespan **inside the `try_acquire` branch** so non-leaders never run it. Never spawn a bare `asyncio.create_task`.
+1. Add a `BackgroundLoop` subclass (`app/core/background_loop.py`) under the owning domain's `services/` package (e.g. `app/devices/services/<name>.py`, `app/appium_nodes/services/<name>.py`), implementing `_session_factory`, `_interval`, and `_run_cycle` and setting the `loop_name` and `cycle_failed_message` class vars. The base class wraps each cycle in `observe_background_loop(loop_name, interval).cycle()` for metrics.
+2. Add it to `_build_leader_loop_tasks` in `app/main.py`. Do not spawn an independent periodic `asyncio.create_task` from another service.
 3. Read settings via `settings_service.get(...)`. Add the setting to the `_DEFINITIONS` list in `app/settings/registry.py` if it is operator-tunable.
 4. Acquire device row locks via `device_locking.lock_device` for any device-state mutation.
 5. Use the tri-state probe pattern for any agent or Appium-node call.
 6. Route health and node-health writes through `app.devices.services.health` (class `DeviceHealthService`) so locks, cross-links, and `device.health_changed` events stay centralized.
 7. Add a Prometheus gauge or counter via the metrics module so the loop is visible on the dashboards.
-8. Call `assert_current_leader(db, settings=...)` after slow external awaits and before durable writes when the loop can outlive a leader handoff. `settings` is required; pass the loop's own `SettingsReader` (e.g. `self._settings`).
-9. Defer `event_bus.publish` to after-commit when the published change must coincide with a durable transition (use `_maybe_emit_health_changed` as the model: it compares the public summary's status snapshot and calls `publisher.queue_for_session(...)` to emit `device.health_changed` on change).
+8. Defer `event_bus.publish` to after-commit when the published change must coincide with a durable transition (use `_maybe_emit_health_changed` as the model: it compares the public summary's status snapshot and calls `publisher.queue_for_session(...)` to emit `device.health_changed` on change).
 
 ## What this doc does NOT cover
 
