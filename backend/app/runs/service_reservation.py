@@ -288,7 +288,6 @@ def run_release_intent_sources(run_id: uuid.UUID, device_id: uuid.UUID) -> list[
     to allocate this device does not inherit a stale exclusion verdict).
     """
     return [
-        f"run:{run_id}",
         f"cooldown:grid:{run_id}",
         f"cooldown:reservation:{run_id}",
         f"cooldown:recovery:{run_id}",

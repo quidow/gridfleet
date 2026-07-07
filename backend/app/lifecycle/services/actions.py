@@ -11,11 +11,9 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    GRID_ROUTING,
     NODE_PROCESS,
     PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_HEALTH_FAILURE,
-    PRIORITY_RUN_ROUTING,
     RESERVATION,
     IntentRegistration,
 )
@@ -200,9 +198,10 @@ class LifecyclePolicyActionsService:
                 ],
                 publisher=self._publisher,
             )
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id, sources=[f"run:{run.id}"], publisher=self._publisher
-            )
+            # The run: grid-routing intent is now derived from the reservation row;
+            # the exclusion just written above makes the derivation drop it. Trigger
+            # an inline reconcile so that re-derivation happens at this site.
+            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
                 db,
@@ -239,21 +238,11 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.restore_device_to_run(db, device.id, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
+            # Un-excluding the reservation row (above) re-derives the run: grid-routing
+            # intent on this inline reconcile — no explicit re-registration needed.
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=[f"health_failure:reservation:{device.id}"],
-                publisher=self._publisher,
-            )
-            await IntentService(db).register_intents_and_reconcile(
-                device_id=device.id,
-                intents=[
-                    IntentRegistration(
-                        source=f"run:{run.id}",
-                        axis=GRID_ROUTING,
-                        run_id=run.id,
-                        payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
-                    )
-                ],
                 publisher=self._publisher,
             )
             await self._incidents.record_lifecycle_incident(

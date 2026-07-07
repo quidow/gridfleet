@@ -1359,16 +1359,11 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="release-full-run", devices=[device], state=RunState.active)
-    # Seed all five intent sources that release_device_from_run must revoke.
+    # Seed the four stored intent sources that release_device_from_run must revoke.
+    # (run: routing is derived from the reservation row now, not a stored source.)
     await IntentService(db_session).register_intents(
         device_id=device.id,
         intents=[
-            IntentRegistration(
-                source=f"run:{run.id}",
-                axis=GRID_ROUTING,
-                run_id=run.id,
-                payload={"accepting_new_sessions": True, "priority": 10},
-            ),
             IntentRegistration(
                 source=f"cooldown:grid:{run.id}",
                 axis=GRID_ROUTING,
@@ -1451,7 +1446,6 @@ def test_run_release_intent_sources_lists_the_full_set() -> None:
     run_id = _uuid.UUID("11111111-1111-1111-1111-111111111111")
     device_id = _uuid.UUID("22222222-2222-2222-2222-222222222222")
     assert run_release_intent_sources(run_id, device_id) == [
-        f"run:{run_id}",
         f"cooldown:grid:{run_id}",
         f"cooldown:reservation:{run_id}",
         f"cooldown:recovery:{run_id}",

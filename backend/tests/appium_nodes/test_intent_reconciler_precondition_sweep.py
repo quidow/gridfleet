@@ -125,7 +125,9 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
 
     device = await create_device(db_session, host_id=db_host.id, name="sweep-orthogonal")
     await _seed_node(db_session, device.id)
-    run = await create_reserved_run(db_session, name="sweep-orthogonal-run", devices=[device])
+    # Reservation released so no run: routing is synthesized (this test only exercises the
+    # expiry sweep); run stays active so the cooldown:node run_active precondition still holds.
+    run = await create_reserved_run(db_session, name="sweep-orthogonal-run", devices=[device], mark_released=True)
     run.state = RunState.active
     await IntentService(db_session).register_intents(
         device_id=device.id,
@@ -306,40 +308,6 @@ async def test_forced_release_registers_run_active_precondition(
     forced = [intent for intent in captured if intent.source.startswith("forced_release:")]
     assert len(forced) == 1
     assert forced[0].precondition == {"kind": "run_active", "run_id": str(run.id)}
-
-
-@pytest.mark.db
-async def test_allocator_registers_reservation_active_precondition(
-    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.runs import service_allocator
-
-    captured: list[IntentRegistration] = []
-
-    async def fake_register(
-        _self: object,
-        *,
-        device_id: uuid.UUID,
-        intents: list[IntentRegistration],
-        publisher: object,
-    ) -> None:
-        captured.extend(intents)
-
-    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", fake_register)
-
-    device = await create_device(db_session, host_id=db_host.id, name="alloc-reg")
-    run = await create_reserved_run(db_session, name="alloc-reg-run", devices=[device])
-    await db_session.commit()
-
-    await service_allocator._register_run_grid_intent(db_session, run=run, device_id=device.id, publisher=event_bus)
-
-    run_routing = [intent for intent in captured if intent.source == f"run:{run.id}"]
-    assert len(run_routing) == 1
-    assert run_routing[0].precondition == {
-        "kind": "reservation_active",
-        "run_id": str(run.id),
-        "device_id": str(device.id),
-    }
 
 
 @pytest.mark.db

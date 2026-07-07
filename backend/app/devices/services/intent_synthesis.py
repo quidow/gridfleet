@@ -15,13 +15,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
+from app.devices.models import DeviceIntent, DeviceReservation
+from app.devices.services.intent_types import GRID_ROUTING, PRIORITY_RUN_ROUTING
+
 if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.models import AppiumNode
-    from app.devices.models import Device, DeviceIntent
+    from app.devices.models import Device
 
 
 async def synthesize_fact_intents(
@@ -32,5 +37,31 @@ async def synthesize_fact_intents(
     now: datetime,
 ) -> list[DeviceIntent]:
     """Return in-memory intents derived from domain facts. Grows per family."""
-    del db, device, node, stored, now  # populated family-by-family in follow-up commits
-    return []
+    return await _reservation_intents(db, device, now)
+
+
+async def _reservation_intents(db: AsyncSession, device: Device, now: datetime) -> list[DeviceIntent]:
+    """Grid routing (and, from Task 4, cooldown denies) derived from the active reservation row."""
+    entry = (
+        await db.execute(
+            select(DeviceReservation)
+            .where(DeviceReservation.device_id == device.id, DeviceReservation.released_at.is_(None))
+            .order_by(DeviceReservation.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        return []
+    if entry.excluded and entry.excluded_until is None:
+        # Indefinite (health-failure) exclusion: the stored run: twin was revoked
+        # by exclude_run_if_needed; reproduce its absence.
+        return []
+    return [
+        DeviceIntent(
+            device_id=device.id,
+            source=f"run:{entry.run_id}",
+            axis=GRID_ROUTING,
+            run_id=entry.run_id,
+            payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
+        )
+    ]
