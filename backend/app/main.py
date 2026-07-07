@@ -53,7 +53,6 @@ from app.devices.services import (
     data_cleanup,
     fleet_capacity,
     intent_reconciler,
-    property_refresh,
     readiness,
 )
 from app.devices.services import (
@@ -68,8 +67,6 @@ from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.hosts import router as hosts
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
-from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
-from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
 from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
 from app.packs.services.drain import PackDrainLoop
@@ -103,7 +100,6 @@ DeviceIntentReconcilerLoop = intent_reconciler.DeviceIntentReconcilerLoop
 FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
 assess_devices_async = readiness.assess_devices_async
 is_ready_for_use_async = readiness.is_ready_for_use_async
-PropertyRefreshLoop = property_refresh.PropertyRefreshLoop
 
 
 async def _validate_online_agent_contracts(db: AsyncSession) -> None:
@@ -187,7 +183,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     data_cleanup = DataCleanupLoop(services=app_services.devices)
     fleet_capacity = FleetCapacityLoop(services=app_services.devices)
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
-    property_refresh = PropertyRefreshLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(
         services=app_services.appium_nodes,
         global_stages=(
@@ -196,12 +191,25 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
                 "general.device_check_interval_sec",
                 app_services.devices.connectivity.run_connectivity_pass,
             ),
+            SweepStage(
+                "host_resource_telemetry",
+                "general.host_resource_telemetry_interval_sec",
+                app_services.hosts.resource_telemetry.poll_once,
+            ),
+            SweepStage(
+                "hardware_telemetry",
+                "general.hardware_telemetry_interval_sec",
+                app_services.hosts.hardware_telemetry.poll_once,
+            ),
+            SweepStage(
+                "property_refresh",
+                "general.property_refresh_interval_sec",
+                app_services.devices.property_refresh.refresh_all_properties,
+            ),
         ),
     )
     session_sync = SessionSyncLoop(services=app_services.sessions)
     session_viability = SessionViabilityLoop(services=app_services.sessions)
-    hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
-    host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
 
     run_reaper = RunReaperLoop(services=app_services.runs)
     allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
@@ -212,9 +220,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     _leader_loops: list[tuple[Any, str]] = [
         (host_sweep.run(), "host_sweep_loop"),
         (session_sync.run(), "session_sync_loop"),
-        (property_refresh.run(), "property_refresh_loop"),
-        (hardware_telemetry.run(), "hardware_telemetry_loop"),
-        (host_resource_telemetry.run(), "host_resource_telemetry_loop"),
         (job_worker.run(), "durable_job_worker_loop"),
         (run_reaper.run(), "run_reaper_loop"),
         (allocation_reaper.run(), "grid_allocation_reaper_loop"),

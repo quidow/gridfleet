@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm import operations as agent_operations
-from app.core.background_loop import BackgroundLoop
 from app.core.coerce import coerce_float as _coerce_float
 from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError
@@ -34,14 +33,11 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.hosts.services_container import HostServices
 
 logger = get_logger(__name__)
 
-LOOP_NAME = "hardware_telemetry"
 HARDWARE_TELEMETRY_STATE_NAMESPACE = "hardware_telemetry.state"
 WARNING_OR_WORSE = {HardwareHealthStatus.warning, HardwareHealthStatus.critical}
 
@@ -307,21 +303,3 @@ class HardwareTelemetryService:
             except Exception:
                 await db.rollback()
                 logger.exception("Failed to poll hardware telemetry for device %s", device.identity_value)
-
-
-class HardwareTelemetryLoop(BackgroundLoop):
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Hardware telemetry loop failed"
-
-    def __init__(self, *, services: HostServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.hardware_telemetry_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.hardware_telemetry.poll_once(db)

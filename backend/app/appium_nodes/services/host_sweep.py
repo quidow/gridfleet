@@ -2,9 +2,10 @@
 
 Concerns run only for hosts this sweep pass proved alive: host liveness
 (heartbeat evaluation) and appium-node convergence from the same /agent/health
-payload, then node health as a cadence-gated stage. Connectivity folds in as a
-cadence-gated global stage that runs after the per-host fan-out completes. Later
-phases fold telemetry in here with the same cadence gating (see stage_due).
+payload, then node health as a cadence-gated per-host stage. Cross-host passes
+(connectivity, telemetry, property refresh) run as cadence-gated global stages
+after the per-host fan-out completes — one SweepStage entry each, gated by its
+own interval setting (see stage_due).
 """
 
 from __future__ import annotations
