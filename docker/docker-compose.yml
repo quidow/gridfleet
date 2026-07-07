@@ -35,9 +35,10 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@postgres:5432/gridfleet
-      # API-serving worker processes; background loops stay singleton (leader
-      # advisory lock). Each worker opens its own DB pool, so keep WORKERS x
-      # (DB pool 10 + overflow 20) under Postgres max_connections (100).
+      # API-serving worker processes; background loops run in-process here (dev
+      # keeps GRIDFLEET_RUN_BACKGROUND_LOOPS at its true default). Each worker
+      # opens its own DB pool, so keep WORKERS x (DB pool 10 + overflow 20) under
+      # Postgres max_connections (100).
       GRIDFLEET_UVICORN_WORKERS: ${GRIDFLEET_UVICORN_WORKERS:-1}
     ports:
       - "8000:8000"

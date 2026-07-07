@@ -1,3 +1,50 @@
+x-backend-base: &backend-base
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  restart: unless-stopped
+  volumes:
+    - driver-pack-storage-prod:/var/lib/gridfleet/driver-packs
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  networks:
+    - internal
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+x-backend-environment: &backend-environment
+  GRIDFLEET_DATABASE_URL: ${GRIDFLEET_DATABASE_URL:?set GRIDFLEET_DATABASE_URL in docker/.env}
+  GRIDFLEET_DB_POOL_SIZE: ${GRIDFLEET_DB_POOL_SIZE:-10}
+  GRIDFLEET_DB_MAX_OVERFLOW: ${GRIDFLEET_DB_MAX_OVERFLOW:-20}
+  GRIDFLEET_REQUEST_TIMEOUT_SEC: ${GRIDFLEET_REQUEST_TIMEOUT_SEC:-30}
+  GRIDFLEET_ENVIRONMENT: ${GRIDFLEET_ENVIRONMENT:-prod}
+  GRIDFLEET_ENV: ${GRIDFLEET_ENV:-production}
+  GRIDFLEET_AUTH_ENABLED: ${GRIDFLEET_AUTH_ENABLED:-true}
+  GRIDFLEET_AUTH_USERNAME: ${GRIDFLEET_AUTH_USERNAME:-}
+  GRIDFLEET_AUTH_PASSWORD: ${GRIDFLEET_AUTH_PASSWORD:-}
+  GRIDFLEET_AUTH_SESSION_SECRET: ${GRIDFLEET_AUTH_SESSION_SECRET:-}
+  GRIDFLEET_AUTH_SESSION_TTL_SEC: ${GRIDFLEET_AUTH_SESSION_TTL_SEC:-28800}
+  GRIDFLEET_AUTH_COOKIE_SECURE: ${GRIDFLEET_AUTH_COOKIE_SECURE:-true}
+  GRIDFLEET_MACHINE_AUTH_USERNAME: ${GRIDFLEET_MACHINE_AUTH_USERNAME:-}
+  GRIDFLEET_MACHINE_AUTH_PASSWORD: ${GRIDFLEET_MACHINE_AUTH_PASSWORD:-}
+  GRIDFLEET_AGENT_AUTH_USERNAME: ${GRIDFLEET_AGENT_AUTH_USERNAME:-}
+  GRIDFLEET_AGENT_AUTH_PASSWORD: ${GRIDFLEET_AGENT_AUTH_PASSWORD:-}
+  GRIDFLEET_HEARTBEAT_INTERVAL_SEC: ${GRIDFLEET_HEARTBEAT_INTERVAL_SEC:-15}
+  GRIDFLEET_MAX_MISSED_HEARTBEATS: ${GRIDFLEET_MAX_MISSED_HEARTBEATS:-3}
+  GRIDFLEET_NODE_CHECK_INTERVAL_SEC: ${GRIDFLEET_NODE_CHECK_INTERVAL_SEC:-30}
+  GRIDFLEET_NODE_MAX_FAILURES: ${GRIDFLEET_NODE_MAX_FAILURES:-3}
+  GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC: ${GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC:-60}
+  GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC: ${GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC:-300}
+  GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC: ${GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC:-600}
+  GRIDFLEET_APPIUM_PORT_RANGE_START: ${GRIDFLEET_APPIUM_PORT_RANGE_START:-4723}
+  GRIDFLEET_APPIUM_PORT_RANGE_END: ${GRIDFLEET_APPIUM_PORT_RANGE_END:-4823}
+  GRIDFLEET_MIN_AGENT_VERSION: ${GRIDFLEET_MIN_AGENT_VERSION:-0.1.0}
+  GRIDFLEET_HOST_AUTO_ACCEPT: ${GRIDFLEET_HOST_AUTO_ACCEPT:-false}
+  GRIDFLEET_RUN_REAPER_INTERVAL_SEC: ${GRIDFLEET_RUN_REAPER_INTERVAL_SEC:-15}
+
 services:
   postgres:
     image: postgres:18-bookworm
@@ -67,56 +114,23 @@ services:
         max-file: "3"
 
   backend:
-    build:
-      context: ..
-      dockerfile: backend/Dockerfile
-    restart: unless-stopped
+    <<: *backend-base
     environment:
-      GRIDFLEET_DATABASE_URL: ${GRIDFLEET_DATABASE_URL:?set GRIDFLEET_DATABASE_URL in docker/.env}
-      GRIDFLEET_DB_POOL_SIZE: ${GRIDFLEET_DB_POOL_SIZE:-10}
-      GRIDFLEET_DB_MAX_OVERFLOW: ${GRIDFLEET_DB_MAX_OVERFLOW:-20}
-      # Uvicorn worker processes. Background loops stay singleton (leader advisory
-      # lock); extra workers only add API-serving capacity. Each worker opens its
-      # own DB pool, so keep WORKERS x (DB_POOL_SIZE + DB_MAX_OVERFLOW) under
+      <<: *backend-environment
+      # API-serving only; the backend-scheduler service runs the background loops.
+      GRIDFLEET_RUN_BACKGROUND_LOOPS: "false"
+      # Uvicorn worker processes add API-serving capacity only. Each worker opens
+      # its own DB pool, so keep WORKERS x (DB_POOL_SIZE + DB_MAX_OVERFLOW) under
       # Postgres max_connections (default 100). e.g. 3 workers x (10+20) = 90.
       GRIDFLEET_UVICORN_WORKERS: ${GRIDFLEET_UVICORN_WORKERS:-1}
-      GRIDFLEET_REQUEST_TIMEOUT_SEC: ${GRIDFLEET_REQUEST_TIMEOUT_SEC:-30}
-      GRIDFLEET_ENVIRONMENT: ${GRIDFLEET_ENVIRONMENT:-prod}
-      GRIDFLEET_ENV: ${GRIDFLEET_ENV:-production}
-      GRIDFLEET_AUTH_ENABLED: ${GRIDFLEET_AUTH_ENABLED:-true}
-      GRIDFLEET_AUTH_USERNAME: ${GRIDFLEET_AUTH_USERNAME:-}
-      GRIDFLEET_AUTH_PASSWORD: ${GRIDFLEET_AUTH_PASSWORD:-}
-      GRIDFLEET_AUTH_SESSION_SECRET: ${GRIDFLEET_AUTH_SESSION_SECRET:-}
-      GRIDFLEET_AUTH_SESSION_TTL_SEC: ${GRIDFLEET_AUTH_SESSION_TTL_SEC:-28800}
-      GRIDFLEET_AUTH_COOKIE_SECURE: ${GRIDFLEET_AUTH_COOKIE_SECURE:-true}
-      GRIDFLEET_MACHINE_AUTH_USERNAME: ${GRIDFLEET_MACHINE_AUTH_USERNAME:-}
-      GRIDFLEET_MACHINE_AUTH_PASSWORD: ${GRIDFLEET_MACHINE_AUTH_PASSWORD:-}
-      GRIDFLEET_AGENT_AUTH_USERNAME: ${GRIDFLEET_AGENT_AUTH_USERNAME:-}
-      GRIDFLEET_AGENT_AUTH_PASSWORD: ${GRIDFLEET_AGENT_AUTH_PASSWORD:-}
-      GRIDFLEET_HEARTBEAT_INTERVAL_SEC: ${GRIDFLEET_HEARTBEAT_INTERVAL_SEC:-15}
-      GRIDFLEET_MAX_MISSED_HEARTBEATS: ${GRIDFLEET_MAX_MISSED_HEARTBEATS:-3}
-      GRIDFLEET_NODE_CHECK_INTERVAL_SEC: ${GRIDFLEET_NODE_CHECK_INTERVAL_SEC:-30}
-      GRIDFLEET_NODE_MAX_FAILURES: ${GRIDFLEET_NODE_MAX_FAILURES:-3}
-      GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC: ${GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC:-60}
-      GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC: ${GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC:-300}
-      GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC: ${GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC:-600}
-      GRIDFLEET_APPIUM_PORT_RANGE_START: ${GRIDFLEET_APPIUM_PORT_RANGE_START:-4723}
-      GRIDFLEET_APPIUM_PORT_RANGE_END: ${GRIDFLEET_APPIUM_PORT_RANGE_END:-4823}
-      GRIDFLEET_MIN_AGENT_VERSION: ${GRIDFLEET_MIN_AGENT_VERSION:-0.1.0}
-      GRIDFLEET_HOST_AUTO_ACCEPT: ${GRIDFLEET_HOST_AUTO_ACCEPT:-false}
-      GRIDFLEET_RUN_REAPER_INTERVAL_SEC: ${GRIDFLEET_RUN_REAPER_INTERVAL_SEC:-15}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - driver-pack-storage-prod:/var/lib/gridfleet/driver-packs
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
       - internal
       - public
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -129,11 +143,32 @@ services:
       start_period: 45s
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     cpus: ${BACKEND_CPUS:-1.0}
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: "5"
+
+  backend-scheduler:
+    <<: *backend-base
+    environment:
+      <<: *backend-environment
+      GRIDFLEET_RUN_BACKGROUND_LOOPS: "true"
+      # The API service owns alembic; never race two upgrades at boot.
+      GRIDFLEET_RUN_MIGRATIONS_ON_START: "false"
+      # Deliberately no GRIDFLEET_UVICORN_WORKERS: loops live in one process.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5).status == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    mem_limit: ${SCHEDULER_MEM_LIMIT:-1g}
+    cpus: ${SCHEDULER_CPUS:-1.0}
 
   frontend:
     build:
