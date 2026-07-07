@@ -269,12 +269,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     watcher_task: asyncio.Task[None] | None = None
 
-    if await control_plane_leader.try_acquire(engine):
-        tasks = _build_leader_loop_tasks(app_services)
-    watcher_task = asyncio.create_task(
-        app_services.leader_watcher.run(),
-        name="control_plane_leader_watcher",
-    )
+    if process_settings.run_background_loops:
+        if await control_plane_leader.try_acquire(engine):
+            tasks = _build_leader_loop_tasks(app_services)
+        else:
+            logger.warning(
+                "background_loops_skipped_lock_held",
+                detail="GRIDFLEET_RUN_BACKGROUND_LOOPS is true but another process holds the singleton lock",
+            )
+        watcher_task = asyncio.create_task(
+            app_services.leader_watcher.run(),
+            name="control_plane_leader_watcher",
+        )
     gc_tuning.tune_after_startup()
     try:
         yield
@@ -353,13 +359,17 @@ async def live_health() -> dict[str, str]:
 
 @app.get("/health/ready", response_model=HealthStatusRead)
 async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.service)
+    payload, status_code = await check_readiness(
+        db, settings=settings_services.service, fail_on_stalled_loops=process_settings.run_background_loops
+    )
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
 async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.service)
+    payload, status_code = await check_readiness(
+        db, settings=settings_services.service, fail_on_stalled_loops=process_settings.run_background_loops
+    )
     return JSONResponse(content=payload, status_code=status_code)
 
 

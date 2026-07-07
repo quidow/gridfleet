@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
     request_timeout_sec: float = 30.0
     environment: str = "local"
+    # False on API-only workers; the dedicated scheduler service runs with true.
+    run_background_loops: bool = True
 
     model_config = SettingsConfigDict(env_prefix="GRIDFLEET_", extra="ignore")
 
