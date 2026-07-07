@@ -7,13 +7,16 @@ Appium process running.
 `appium_reconciler.interval_sec`). The reconciler reaps orphans and converges
 divergence automatically. If it does not:
 
-1. Verify leader election is live: `SELECT last_heartbeat_at, NOW() -
-   last_heartbeat_at AS age FROM control_plane_leader_heartbeats WHERE id = 1;`
-   (single-row table keyed on `id = 1`). The heartbeat should be only a few
-   seconds old — a healthy leader renews it every
-   `general.leader_keepalive_interval_sec` (default 5s); a heartbeat older than
-   `general.leader_stale_threshold_sec` (default 30s) is considered stale and
-   triggers non-leader preemption.
+1. Verify the scheduler is running its loops. Loops run in one dedicated
+   scheduler process (the prod `backend-scheduler` service, or the in-process
+   default in dev). Check `/api/health` `checks.background_loops`: every loop
+   should report `healthy: true` with a recent `last_succeeded_at`; a stalled
+   `appium_reconciler` means the scheduler wedged. Confirm exactly one process
+   holds the singleton loop-runner lock with
+   `SELECT pid, granted FROM pg_locks WHERE locktype = 'advisory' AND objid = 6001;`.
+   If the scheduler is wedged, restart it (`docker compose restart
+   backend-scheduler`) — compose restart re-acquires the advisory lock and
+   resumes the loops.
 2. Verify the agent is reachable from the backend: call `GET /agent/health` on
    the host's `ip:agent_port` directly.
 3. Check `/metrics` for `appium_reconciler_cycle_failures_total`. If it is

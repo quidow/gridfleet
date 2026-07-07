@@ -15,7 +15,7 @@ Use `docs/runbooks/` when the system is already misbehaving and the operator nee
 - `backend-deploy-restart-rollback.md`
   - Manual production restart, deploy, verification, and rollback procedure for the single-stack compose deployment.
 - `appium-node-desync.md`
-  - Recovery when a node's derived `effective_state` (e.g. `stopped`) diverges from the host agent's actual running Appium process — orphaned/stuck process or stuck `transition_token`, converged by the leader `appium_reconciler` loop.
+  - Recovery when a node's derived `effective_state` (e.g. `stopped`) diverges from the host agent's actual running Appium process — orphaned/stuck process or stuck `transition_token`, converged by the scheduler's `appium_reconciler` loop.
 - `device-export-import.md`
   - Bulk device export and re-import workflow.
 - `device-ip-ping-recovery.md`

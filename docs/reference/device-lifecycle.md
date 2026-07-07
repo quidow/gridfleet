@@ -100,12 +100,12 @@ Any code that writes `Device.operational_state` or `Device.lifecycle_policy_stat
 MUST acquire the row lock first via `app.devices.locking.lock_device` (or
 `lock_devices` for batch) inside the same transaction.  Routers should use `get_device_for_update_or_404` for state-mutating
 endpoints.  Background loops commit per device after the locked write window.  The
-leader advisory lock alone is NOT sufficient — API mutators run on every worker and
+scheduler's singleton advisory lock alone is NOT sufficient — API mutators run on every worker and
 bypass it.
 
 Exemption: `_touch_last_observed` (`app.appium_nodes.services.reconciler`) writes
 `appium_nodes.last_observed_at` **lockless** by design — a monotonic observability
-timestamp written by the single leader-serialized reconciler and read by no decision
+timestamp written by the single scheduler-serialized reconciler and read by no decision
 logic, so a lost update is harmless and self-heals next tick; revisit if any decision
 path ever reads it.
 

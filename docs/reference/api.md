@@ -12,7 +12,7 @@ Unless noted otherwise, path parameters are UUIDs where the route name implies a
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/health/live` | Liveness probe for the backend process | none | `{"status":"ok"}` |
-| `GET` | `/health/ready` | Cluster-aware readiness probe (DB + shared control-plane leader loop heartbeats) | none | object with readiness status and checks |
+| `GET` | `/health/ready` | Cluster-aware readiness probe (DB + shared control-plane background-loop heartbeats) | none | object with readiness status and checks |
 | `GET` | `/api/health` | Readiness alias for `/health/ready` | none | object with readiness status and checks |
 | `GET` | `/metrics` | Prometheus scrape endpoint | none | Prometheus text payload |
 | `GET` | `/api/availability` | Check whether enough ready devices exist for a platform | `platform_id`, `count` | object with `available`, `requested`, `matched`, `platform_id` |

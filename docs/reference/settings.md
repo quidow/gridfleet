@@ -20,9 +20,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | --- | --- | --- | --- | --- | --- | --- |
 | `general.heartbeat_interval_sec` | `general` | `int` | `15` | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `5..300` | How often the manager pings agents |
 | `general.max_missed_heartbeats` | `general` | `int` | `3` | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `1..20` | Missed agent pings before a host is marked offline |
-| `general.leader_keepalive_enabled` | `general` | `bool` | `true` | none | boolean | When true, the elected leader writes a heartbeat row every keepalive interval and non-leaders preempt on staleness; disable to fall back to kernel-TCP-keepalive-driven failover |
-| `general.leader_keepalive_interval_sec` | `general` | `int` | `5` | none | `1..60` | How often the elected leader writes a heartbeat row |
-| `general.leader_stale_threshold_sec` | `general` | `int` | `30` | none | `10..600` | Heartbeat older than this many seconds allows non-leader preemption |
 | `general.intent_reconcile_interval_sec` | `general` | `int` | `5` | none | `1..300` | Seconds between intent reconciler dirty-queue polls |
 | `general.intent_reconcile_full_scan_every_cycles` | `general` | `int` | `720` | none | `1..17280` | Run a full device scan after this many intent reconciler cycles |
 | `general.node_check_interval_sec` | `general` | `int` | `30` | `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `10..600` | Interval for managed Appium node health checks |
@@ -44,7 +41,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.session_viability_timeout_sec` | `general` | `int` | `120` | none | `10..600` | Timeout for a session-viability probe |
 | `general.session_viability_failure_threshold` | `general` | `int` | `3` | none | `1..20` | Consecutive session-viability failures required before the manager parks the device; tolerates transient Appium hiccups |
 | `general.fleet_capacity_snapshot_interval_sec` | `general` | `int` | `60` | none | `10..3600` | How often fleet capacity snapshots are recorded |
-| `general.background_loop_flush_interval_sec` | `general` | `int` | `15` | none | `1..300` | How often the leader flushes in-memory background-loop heartbeat snapshots to the control-plane state table |
+| `general.background_loop_flush_interval_sec` | `general` | `int` | `15` | none | `1..300` | How often the scheduler flushes in-memory background-loop heartbeat snapshots to the control-plane state table |
 | `general.lifecycle_recovery_backoff_base_sec` | `general` | `int` | `60` | none | `1..3600` | Base delay for lifecycle automatic recovery backoff |
 | `general.lifecycle_recovery_backoff_max_sec` | `general` | `int` | `900` | none | `1..86400` | Maximum delay for lifecycle automatic recovery backoff |
 | `general.lifecycle_recovery_review_threshold` | `general` | `int` | `5` | none | `1..100` | Consecutive automatic recovery failures before the device is shelved into `review_required`; automated recovery loops skip it until an operator action clears the flag |
