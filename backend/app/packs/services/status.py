@@ -14,7 +14,7 @@ from app.packs.models import (
     HostPackDoctorResult,
     HostPackFeatureStatus,
     HostPackInstallation,
-    HostRuntimeInstallation,
+    InstallStatus,
     PackState,
 )
 from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
@@ -60,35 +60,7 @@ class PackStatusService:
     async def apply_status(self, db: AsyncSession, payload: dict[str, Any]) -> None:
         host_id = uuid.UUID(payload["host_id"])
 
-        for rt in payload.get("runtimes", []):
-            existing = (
-                await db.execute(
-                    select(HostRuntimeInstallation).where(
-                        HostRuntimeInstallation.host_id == host_id,
-                        HostRuntimeInstallation.runtime_id == rt["runtime_id"],
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing is None:
-                db.add(
-                    HostRuntimeInstallation(
-                        host_id=host_id,
-                        runtime_id=rt["runtime_id"],
-                        appium_server_package=rt["appium_server"]["package"],
-                        appium_server_version=rt["appium_server"]["version"],
-                        driver_specs=rt.get("appium_driver", []),
-                        appium_home=rt.get("appium_home"),
-                        status=rt.get("status", "pending"),
-                        blocked_reason=rt.get("blocked_reason"),
-                    )
-                )
-            else:
-                existing.appium_server_package = rt["appium_server"]["package"]
-                existing.appium_server_version = rt["appium_server"]["version"]
-                existing.driver_specs = rt.get("appium_driver", [])
-                existing.appium_home = rt.get("appium_home")
-                existing.status = rt.get("status", existing.status)
-                existing.blocked_reason = rt.get("blocked_reason")
+        runtimes_by_id = {rt["runtime_id"]: rt for rt in payload.get("runtimes", [])}
 
         for pack in payload.get("packs", []):
             existing_pack = (
@@ -99,30 +71,41 @@ class PackStatusService:
                     )
                 )
             ).scalar_one_or_none()
+
+            runtime_id = pack.get("runtime_id")
+            runtime_columns = _runtime_columns(runtimes_by_id.get(runtime_id) if runtime_id is not None else None)
+            status_value, status_reason = _coerce_status(
+                pack.get("status"), existing=existing_pack.status if existing_pack is not None else None
+            )
+            blocked_reason = status_reason or pack.get("blocked_reason")
+
             if existing_pack is None:
                 db.add(
                     HostPackInstallation(
                         host_id=host_id,
                         pack_id=pack["pack_id"],
                         pack_release=pack["pack_release"],
-                        runtime_id=pack.get("runtime_id"),
-                        status=pack.get("status", "pending"),
+                        runtime_id=runtime_id,
+                        status=status_value,
                         resolved_install_spec=pack.get("resolved_install_spec"),
                         installer_log_excerpt=pack.get("installer_log_excerpt"),
                         resolver_version=pack.get("resolver_version"),
-                        blocked_reason=pack.get("blocked_reason"),
-                        installed_at=now_utc() if pack.get("status") == "installed" else None,
+                        blocked_reason=blocked_reason,
+                        installed_at=now_utc() if status_value == InstallStatus.installed else None,
+                        **runtime_columns,
                     )
                 )
             else:
                 existing_pack.pack_release = pack["pack_release"]
-                existing_pack.runtime_id = pack.get("runtime_id")
-                existing_pack.status = pack.get("status", existing_pack.status)
+                existing_pack.runtime_id = runtime_id
+                existing_pack.status = status_value
                 existing_pack.resolved_install_spec = pack.get("resolved_install_spec")
                 existing_pack.installer_log_excerpt = pack.get("installer_log_excerpt")
                 existing_pack.resolver_version = pack.get("resolver_version")
-                existing_pack.blocked_reason = pack.get("blocked_reason")
-                if pack.get("status") == "installed":
+                existing_pack.blocked_reason = blocked_reason
+                for column, value in runtime_columns.items():
+                    setattr(existing_pack, column, value)
+                if status_value == InstallStatus.installed:
                     existing_pack.installed_at = now_utc()
 
         doctor_scope_pack_ids = {p["pack_id"] for p in payload.get("packs", []) if p.get("status") == "installed"}
@@ -145,7 +128,7 @@ class PackStatusService:
 
     async def get_host_driver_pack_status(self, db: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
         host = await db.get(Host, host_id)
-        packs = (
+        all_pack_rows = (
             (
                 await db.execute(
                     select(HostPackInstallation)
@@ -156,31 +139,26 @@ class PackStatusService:
             .scalars()
             .all()
         )
-        reported_pack_ids = {row.pack_id for row in packs}
+        reported_pack_ids = {row.pack_id for row in all_pack_rows}
         pack_release_map: dict[tuple[str, str], DriverPackRelease] = {}
-        if packs:
-            pack_ids = {row.pack_id for row in packs}
+        if all_pack_rows:
+            pack_ids = {row.pack_id for row in all_pack_rows}
             releases = (
                 (await db.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id.in_(pack_ids))))
                 .scalars()
                 .all()
             )
             pack_release_map = {(release.pack_id, release.release): release for release in releases}
+        packs = list(all_pack_rows)
         if host is not None:
-            packs = [row for row in packs if _pack_row_supports_host(row, host, pack_release_map)]
+            packs = [row for row in all_pack_rows if _pack_row_supports_host(row, host, pack_release_map)]
         compatible_pack_ids = {row.pack_id for row in packs}
-        runtimes = (
-            (
-                await db.execute(
-                    select(HostRuntimeInstallation)
-                    .where(HostRuntimeInstallation.host_id == host_id)
-                    .order_by(HostRuntimeInstallation.runtime_id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        runtime_map = {runtime.runtime_id: runtime for runtime in runtimes}
+        # Rebuild the reported-runtime projection from the merged pack rows (one entry per
+        # runtime_id that carried a runtime report). Preserves the served `runtimes` shape.
+        runtime_by_id: dict[str, HostPackInstallation] = {}
+        for row in all_pack_rows:
+            if row.runtime_id and row.appium_server_package is not None and row.runtime_id not in runtime_by_id:
+                runtime_by_id[row.runtime_id] = row
         doctor = (
             (
                 await db.execute(
@@ -229,13 +207,10 @@ class PackStatusService:
                     "desired_appium_driver_version": desired_driver_version(
                         row, pack_release_map.get((row.pack_id, row.pack_release))
                     ),
-                    "installed_appium_driver_version": installed_driver_version(
-                        runtime_map.get(row.runtime_id) if row.runtime_id else None
-                    ),
+                    "installed_appium_driver_version": installed_driver_version(row),
                     "appium_driver_drift": has_driver_drift(
                         row,
                         pack_release_map.get((row.pack_id, row.pack_release)),
-                        runtime_map.get(row.runtime_id) if row.runtime_id else None,
                     ),
                 }
                 for row in packs
@@ -247,10 +222,10 @@ class PackStatusService:
                     "appium_server_version": row.appium_server_version,
                     "driver_specs": row.driver_specs or [],
                     "appium_home": row.appium_home,
-                    "status": row.status,
-                    "blocked_reason": row.blocked_reason,
+                    "status": row.runtime_status,
+                    "blocked_reason": row.runtime_blocked_reason,
                 }
-                for row in runtimes
+                for row in sorted(runtime_by_id.values(), key=lambda r: r.runtime_id or "")
             ],
             "doctor": [
                 {
@@ -290,24 +265,6 @@ class PackStatusService:
         pack_rows = [row[0] for row in compatible_rows]
         host_by_id = {row[1].id: row[1] for row in compatible_rows}
 
-        runtime_ids = {row.runtime_id for row in pack_rows if row.runtime_id}
-        host_ids = {row.host_id for row in pack_rows}
-        runtime_map: dict[tuple[uuid.UUID, str], HostRuntimeInstallation] = {}
-        if runtime_ids:
-            runtimes = (
-                (
-                    await db.execute(
-                        select(HostRuntimeInstallation).where(
-                            HostRuntimeInstallation.host_id.in_(host_ids),
-                            HostRuntimeInstallation.runtime_id.in_(runtime_ids),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            runtime_map = {(runtime.host_id, runtime.runtime_id): runtime for runtime in runtimes}
-
         doctor_rows = (
             (
                 await db.execute(
@@ -330,9 +287,6 @@ class PackStatusService:
         hosts: list[dict[str, Any]] = []
         for pack_row in pack_rows:
             host = host_by_id[pack_row.host_id]
-            runtime = (
-                runtime_map.get((pack_row.host_id, pack_row.runtime_id)) if pack_row.runtime_id is not None else None
-            )
             hosts.append(
                 {
                     "host_id": str(pack_row.host_id),
@@ -349,14 +303,14 @@ class PackStatusService:
                     "desired_appium_driver_version": desired_driver_version(
                         pack_row, pack_release_map.get((pack_row.pack_id, pack_row.pack_release))
                     ),
-                    "installed_appium_driver_version": installed_driver_version(runtime),
+                    "installed_appium_driver_version": installed_driver_version(pack_row),
                     "appium_driver_drift": has_driver_drift(
-                        pack_row, pack_release_map.get((pack_row.pack_id, pack_row.pack_release)), runtime
+                        pack_row, pack_release_map.get((pack_row.pack_id, pack_row.pack_release))
                     ),
-                    "appium_home": runtime.appium_home if runtime is not None else None,
-                    "runtime_status": runtime.status if runtime is not None else None,
-                    "runtime_blocked_reason": runtime.blocked_reason if runtime is not None else None,
-                    "appium_server_version": runtime.appium_server_version if runtime is not None else None,
+                    "appium_home": pack_row.appium_home,
+                    "runtime_status": pack_row.runtime_status,
+                    "runtime_blocked_reason": pack_row.runtime_blocked_reason,
+                    "appium_server_version": pack_row.appium_server_version,
                     "doctor": doctor_by_host.get(pack_row.host_id, []),
                 }
             )
@@ -417,3 +371,33 @@ def _pack_row_supports_host(
     if release is None:
         return True
     return manifest_supports_host_os(release.manifest_json, str(host.os_type))
+
+
+def _coerce_status(raw: object, *, existing: str | None = None) -> tuple[str, str | None]:
+    """Normalize an agent-reported status string, coercing unknown vocabulary to blocked."""
+    value = raw if raw is not None else (existing or InstallStatus.pending)
+    if str(value) in InstallStatus:
+        return str(value), None
+    return InstallStatus.blocked, f"unknown status {value!r} reported by agent"
+
+
+def _runtime_columns(rt: dict[str, Any] | None) -> dict[str, Any]:
+    """Merged runtime-install columns for a pack row, from its reported runtime (if any)."""
+    if rt is None:
+        return {
+            "runtime_status": None,
+            "runtime_blocked_reason": None,
+            "appium_server_package": None,
+            "appium_server_version": None,
+            "driver_specs": None,
+            "appium_home": None,
+        }
+    runtime_status, runtime_reason = _coerce_status(rt.get("status"))
+    return {
+        "runtime_status": runtime_status,
+        "runtime_blocked_reason": runtime_reason or rt.get("blocked_reason"),
+        "appium_server_package": rt["appium_server"]["package"],
+        "appium_server_version": rt["appium_server"]["version"],
+        "driver_specs": rt.get("appium_driver", []),
+        "appium_home": rt.get("appium_home"),
+    }

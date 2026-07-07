@@ -1,15 +1,21 @@
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
+from app.packs.models import HostPackDoctorResult, HostPackInstallation, InstallStatus
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
+from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 
 def _make_payload(host_id: str) -> dict:
@@ -64,10 +70,9 @@ async def test_status_upsert_creates_runtime_and_installation(client: AsyncClien
     assert len(installs) == 1
     assert installs[0].status == "installed"
     assert installs[0].runtime_id == "abc123"
-
-    runtimes = (await db_session.execute(select(HostRuntimeInstallation))).scalars().all()
-    assert len(runtimes) == 1
-    assert runtimes[0].runtime_id == "abc123"
+    # Runtime report is folded onto the pack row keyed by runtime_id.
+    assert installs[0].runtime_status == "installed"
+    assert installs[0].appium_server_version == "2.11.5"
 
     doctor = (await db_session.execute(select(HostPackDoctorResult))).scalars().all()
     assert len(doctor) == 1
@@ -129,11 +134,69 @@ async def test_status_upsert_is_idempotent(client: AsyncClient, db_session: Asyn
     # Exactly 1 row each — upsert, not append
     installs = (await db_session.execute(select(HostPackInstallation))).scalars().all()
     assert len(installs) == 1
-
-    runtimes = (await db_session.execute(select(HostRuntimeInstallation))).scalars().all()
-    assert len(runtimes) == 1
+    assert installs[0].appium_server_version == "2.11.5"
 
     # Doctor rows: cleared + reinserted each time → still exactly 1
     doctor = (await db_session.execute(select(HostPackDoctorResult))).scalars().all()
     assert len(doctor) == 1
     assert doctor[0].ok is True
+
+
+@pytest.mark.asyncio
+async def test_apply_status_maps_runtime_onto_pack_row(db_session: AsyncSession, db_host: Host) -> None:
+    await seed_test_packs(db_session)
+    payload = {
+        "host_id": str(db_host.id),
+        "runtimes": [
+            {
+                "runtime_id": "rt-1",
+                "appium_server": {"package": "appium", "version": "3.0.0"},
+                "appium_driver": [{"package": "appium-uiautomator2-driver", "version": "3.6.0"}],
+                "appium_home": "/tmp/rt-1",
+                "status": "installed",
+                "blocked_reason": None,
+            }
+        ],
+        "packs": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "pack_release": "2026.04.0",
+                "runtime_id": "rt-1",
+                "status": "installed",
+            }
+        ],
+        "doctor": [],
+    }
+
+    await _status_svc.apply_status(db_session, payload)
+
+    row = (await db_session.execute(select(HostPackInstallation))).scalar_one()
+    assert row.runtime_status == InstallStatus.installed
+    assert row.appium_server_package == "appium"
+    assert row.appium_server_version == "3.0.0"
+    assert (row.driver_specs or [])[0]["version"] == "3.6.0"
+    assert row.appium_home == "/tmp/rt-1"
+
+
+@pytest.mark.asyncio
+async def test_apply_status_coerces_unknown_status_to_blocked(db_session: AsyncSession, db_host: Host) -> None:
+    await seed_test_packs(db_session)
+    payload = {
+        "host_id": str(db_host.id),
+        "runtimes": [],
+        "packs": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "pack_release": "2026.04.0",
+                "runtime_id": None,
+                "status": "exploded",
+            }
+        ],
+        "doctor": [],
+    }
+
+    await _status_svc.apply_status(db_session, payload)
+
+    row = (await db_session.execute(select(HostPackInstallation))).scalar_one()
+    assert row.status == InstallStatus.blocked
+    assert "unknown status" in (row.blocked_reason or "")
