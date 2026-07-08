@@ -21,7 +21,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "config",
         "error_codes",
         "http_pool",
-        "models",
         "node_poke",
         "operations",
         "probe_result",
