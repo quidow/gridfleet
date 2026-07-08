@@ -10,10 +10,11 @@ This doc captures every transition, who triggers it, and the acknowledgement rul
 
 | Component | Role |
 | --- | --- |
-| `node_service` → `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | "Single-module node lifecycle service": module-level `mark_node_started`/`mark_node_stopped`/`start_remote_node`/`stop_remote_node`/`_start_for_node`, plus the `ReconcilerAgentService` class (`start_node`/`stop_node`/`restart_node`/`wait_for_node_running`) |
-| `host_sweep` node-health stage (`backend/app/appium_nodes/services/node_health.py`) | Per-host cadence-gated health probe, owns auto-restart |
-| `agent_operations` (`backend/app/agent_comm/operations.py`, imported aliased as `agent_operations`) | Typed wrapper around agent HTTP endpoints |
-| Host agent (`agent/agent_app/`) | Spawns Appium subprocesses (the WebDriver router reaches them directly; the agent runs no Grid relay) |
+| `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | Module-level `mark_node_started`/`mark_node_stopped` (observed-state writers), plus the `ReconcilerAgentService` class (`start_node`/`stop_node`/`restart_node`/`wait_for_node_running`) — these register desired-state intents only; none of them call the agent |
+| Observe-only reconciler (`backend/app/appium_nodes/services/reconciler.py`) | Per-host convergence: matches the agent's `/agent/health` report against desired rows and writes DB-only observed facts; issues no start/stop/restart to the agent |
+| `host_sweep` node-health stage (`backend/app/appium_nodes/services/node_health.py`) | Per-host cadence-gated health probe; on failure threshold registers an auto-recovery intent, never calls the agent directly |
+| `poke_node_refresh` (`backend/app/agent_comm/node_poke.py`) | Fire-and-forget wake hint (`POST /agent/appium-nodes/refresh`) sent after every desired-state write — the only backend→agent node signal |
+| Host agent `NodeStateLoop` (`agent/agent_app/appium/node_state.py`) | Pulls `GET /agent/appium-nodes/desired`, diffs against local Appium processes, and owns start/stop/reconfigure/orphan-reap for its host |
 
 ## The DB↔agent contract in one sentence
 
@@ -21,13 +22,13 @@ This doc captures every transition, who triggers it, and the acknowledgement rul
 
 Translating that into rules:
 
-1. Lifecycle code must project every state-changing agent call into a definitive ack before mutating DB state: success/2xx means acknowledged; transport failures, open circuits, and failed HTTP statuses mean not acknowledged. Probe endpoints use the `ack | refused | indeterminate` projection from Doc 3.
-2. A missing or failed ack MUST NOT promote to success. The DB stays where it was; the caller raises or retries.
-3. `mark_node_started` / `mark_node_stopped` only run after a definitive ack from the agent.
+1. The backend never starts or stops an Appium process itself. It writes `desired_state`/`desired_port` (row-locked, via `write_desired_state`) and sends a best-effort wake poke (`POST /agent/appium-nodes/refresh`); the agent's `NodeStateLoop` pulls `GET /agent/appium-nodes/desired`, diffs it against its own running processes, and applies the change locally.
+2. Observed-state writes are gated on the agent's own self-report, not a synchronous call/response: `mark_node_started`/`mark_node_stopped` only run once the observe-only convergence pass (`reconciler.py`) matches a running/absent entry in the agent's `/agent/health.appium_processes.running_nodes` payload against the desired row. A missing or stale report changes nothing — the DB stays where it was until a later sweep sees a confirming report. Health-probe endpoints (Doc 3) still use the `ack | refused | indeterminate` projection.
+3. `mark_node_started` / `mark_node_stopped` only run from that observed-fact match, inside the observe-only convergence pass — never speculatively.
 4. `DeviceHealthService.apply_node_state_transition` (`app/devices/services/health.py`, invoked as `DeviceHealthService(publisher=...).apply_node_state_transition(...)`) records node health detail and emits `device.health_changed` inside the same transaction as the DB state flip.
-5. Resource claims (ports + per-host capabilities) are keyed by `node_id` and are never released on stop, confirmed or not: they live for the lifetime of the `AppiumNode` row (cascade-deleted with it, or rolled back on start failure), so a stopped node's ports can never be handed to a different node.
+5. Resource claims (ports + per-host capabilities) are keyed by `node_id` and are never released on stop, confirmed or not: they live for the lifetime of the `AppiumNode` row (cascade-deleted with it), so a stopped node's ports can never be handed to a different node.
 
-These five rules are what made the recent split-brain fixes possible. They are also why `stop_remote_node` returns `bool` and `_check_node_health` returns `ProbeResult`: the contract is encoded in the return types.
+These five rules are what made the recent split-brain fixes possible, and why the observe-only convergence path treats the agent's self-report as the only source of truth for process state: `mark_node_started`/`mark_node_stopped` are pure DB writes driven by that report, and `_check_node_health` returns a `ProbeResult` for the health-probe path — the contract is encoded in the return types.
 
 ## Node state machine
 
@@ -38,27 +39,28 @@ stateDiagram-v2
     direction LR
     [*] --> stopped: AppiumNode row created (verification probe)
 
-    stopped --> running: desired_state=running → reconciler converges → mark_node_started
-    running --> stopped: desired_state=stopped → reconciler converges → mark_node_stopped (after confirmed agent ack)
+    stopped --> running: desired_state=running (row-locked write) → poke → agent pulls + starts locally → mark_node_started (backend ingests the agent's next health report)
+    running --> stopped: desired_state=stopped → poke → agent pulls + stops locally → mark_node_stopped (backend ingests the agent's next health report)
     running --> running: auto-recovery rebinds (port may change)
     note right of running
         On node_health max_failures the DEVICE is
         marked offline (apply_node_state_transition
         mark_offline) and _attempt_node_restart
-        registers a NODE_PROCESS start + RECOVERY intent.
+        registers a NODE_PROCESS start + RECOVERY intent;
+        the agent applies it on its next pull.
     end note
     stopped --> [*]: operator deletes device
 ```
 
 Important non-transitions:
 
-- `running → stopped` (observed) **never** happens without agent ack. If the agent does not acknowledge, the reconciler raises/short-circuits and leaves `pid`/`active_connection_target` set. A future health-loop pass will reconcile when the agent answers.
-- Operator action only writes the **desired** axis. Operator-initiated stop sets `desired_state=stopped`; the observed flip to stopped happens later in the reconciler convergence pass once the agent acks.
-- Health failure does not run an agent stop; it increments `consecutive_health_failures`, and at `general.node_max_failures` it marks the *device* offline (`apply_node_state_transition(mark_offline=…)`) and registers an auto-recovery intent (see Flow D), which the reconciler converges by rebinding the node process.
+- `running → stopped` (observed) **never** happens until the agent's own health report confirms the process is gone. If the agent hasn't caught up yet, the convergence pass leaves `pid`/`active_connection_target` set. A later sweep reconciles once the agent's report shows the process absent.
+- Operator action only writes the **desired** axis. Operator-initiated stop sets `desired_state=stopped` and pokes; the observed flip to stopped happens later, once the agent has pulled, stopped locally, and reported it gone.
+- Health failure does not stop anything; it increments `consecutive_health_failures`, and at `general.node_max_failures` it marks the *device* offline (`apply_node_state_transition(mark_offline=…)`) and registers an auto-recovery intent (see Flow D), which the agent picks up on its next pull and applies by rebinding the node process.
 
 ## Flow A: Operator start (`ReconcilerAgentService.start_node`)
 
-The operator path is **asynchronous** with respect to the actual process start. `ReconcilerAgentService.start_node` does not call the agent; it registers an operator:start intent and returns. A separate reconciler convergence pass performs the agent dispatch and the ack-gated `mark_node_started`.
+The operator path is **fully asynchronous** with respect to the actual process start. `ReconcilerAgentService.start_node` never calls the agent; it registers an operator:start intent and returns. The desired-state write, the wake poke, and the agent's own pull-and-start are what actually bring the process up.
 
 ```mermaid
 sequenceDiagram
@@ -67,23 +69,26 @@ sequenceDiagram
     participant NM as ReconcilerAgentService.start_node
     participant Op as operator_node.request_start
     participant Intent as IntentService
-    participant Rec as reconciler convergence (reconciler.py)
-    participant Alloc as resource_service
-    participant Agent as Host agent
+    participant DSW as write_desired_state
+    participant Poke as converge_device_now / poke_node_refresh
+    participant Agent as Host agent NodeStateLoop
+    participant Rec as Observe-only reconciler (reconciler.py)
     participant Pg as Postgres
 
     API->>NM: start_node(device)
     NM->>NM: is_ready_for_use_async (readiness gate)
     NM->>Op: request_start(device)
-    Op->>Intent: register_intents_and_reconcile (operator:start) → write_desired_state(running)
+    Op->>Intent: register_intents_and_reconcile (operator:start)
+    Intent->>DSW: write_desired_state(running, desired_port=candidate_ports()[0])
     NM-->>API: AppiumNode row (desired_state=running); returns, process not yet started
-    Note over Rec: Later convergence pass (reconciler.py)
-    Rec->>Alloc: reserve(node_id, capability_key), pack-declared Appium-side ports/caps
-    Rec->>Rec: candidate_ports excludes ports of observed-running OR desired_state=running nodes
-    loop _start_for_node: until success or all candidates fail
-        Rec->>Agent: start_remote_node → POST /agent/appium/start (port, payload)
-        Agent-->>Rec: 2xx {pid, connection_target}
-    end
+    API->>Poke: converge_device_now(device_id) → best-effort POST /agent/appium-nodes/refresh
+    Note over Agent: NodeStateLoop wakes (or its next 5s poll fires anyway)
+    Agent->>Agent: GET /agent/appium-nodes/desired → sees desired_state=running, launch payload
+    Agent->>Agent: AppiumManager.start(...) in-process — spawns the Appium subprocess locally
+    Note over Rec: Next host_sweep cycle
+    Rec->>Agent: GET /agent/health (the regular per-host fetch, unrelated to the poke)
+    Agent-->>Rec: appium_processes.running_nodes includes this device's (port, pid, connection_target)
+    Rec->>Rec: decide_convergence_action → db_mark_running
     Rec->>Pg: lock_device and lock_appium_node
     Rec->>Rec: mark_node_started(port, pid, connection_target)
     Rec->>Pg: write AppiumNode.pid / active_connection_target (observed_running becomes true)
@@ -94,24 +99,23 @@ sequenceDiagram
 Call-outs:
 
 - **Readiness gate** in `ReconcilerAgentService.start_node` (`reconciler_agent.py`) refuses if `is_ready_for_use_async` says no, before any intent is registered.
-- **Parallel-resource allocation first, main Appium port second.** The typed allocator (`resource_service`) owns pack-declared per-node resources such as `mjpegServerPort`, `chromedriverPort`, and non-port live capabilities, keyed by `node_id` + `capability_key`. The main Appium port is still selected by `candidate_ports` and persisted on `AppiumNode.port` only after the agent confirms the process is running. On failure during start, the reserved port is released by the try/except in `_start_for_node` (`reconciler_agent.py`) via `resource_service.release_managed`.
-- **Port conflict retry.** If the agent rejects with "already in use" (an external listener on the port), the convergence loop continues to the next candidate port (the `candidate_ports` loop in `_start_for_node`, `reconciler_agent.py`). A per-target "already running" rejection is a different case (see Port-conflict semantics below) and is not retried.
-- **Readiness confirmation.** There is no in-flow agent status poll in the start helper. Observed-running is confirmed by reconciler convergence plus `ReconcilerAgentService.wait_for_node_running` (`reconciler_agent.py`), which polls `AppiumNode.observed_running` (`pid` + `active_connection_target`). The agent-side start timeout is governed by `appium.startup_timeout_sec` (via `_agent_start_timeout`).
-- **DB write last.** `mark_node_started` only runs after the agent says the process is running. Order is: agent OK → resource-claim promotion + node health transition → commit.
+- **Port selection happens at desired-write time, not at process-start time.** `app/lifecycle/services/operator_node.py` calls `candidate_ports(db, host_id=...)` to pick `desired_port` when there is no existing node row; `write_desired_state` persists it. There is no separate agent-side port allocation call — the port the backend picked is what the agent's `launch` payload (built by `build_node_launch_payload`) tells it to bind.
+- **The poke is a wake hint, not the source of truth.** `converge_device_now` (`reconciler.py`) fires the refresh poke and returns whatever the DB currently holds; it does not itself perform or wait for the start. Correctness comes from the agent's own poll loop (`NodeStateLoop`, 5 s default) — a lost poke costs at most one poll interval.
+- **Readiness confirmation.** There is no in-flow agent status poll in the start path anymore. Observed-running is confirmed only once `host_sweep`'s next `/agent/health` fetch feeds the observe-only reconciler, plus `ReconcilerAgentService.wait_for_node_running` (`reconciler_agent.py`), which polls `AppiumNode.observed_running` (`pid` + `active_connection_target`) for callers that need to block on it.
+- **DB write last.** `mark_node_started` only runs after the observe-only reconciler matches the agent's *reported* running process against the desired row — never speculatively.
 
 Failure modes:
 
 | Failure | Behavior |
 | --- | --- |
-| Readiness fails | Raise `NodeManagerError` with detail; no intent registered, no agent call made |
-| Agent unreachable (transport) | Reserved port released, convergence raises; observed state unchanged |
-| Agent 5xx with non-conflict detail | Reserved port released, raise `NodeManagerError` |
-| Agent says "already in use" | Mapped to `NodePortConflictError`, retry next candidate port |
-| Agent says "already running" (same port, or same connection target on another port) | Mapped to `NodeAlreadyRunningError`; node's resource claims released same as any start failure, but no candidate-port retry and no recovery-backoff count; convergence treats the row as already converged |
+| Readiness fails | Raise `NodeManagerError` with detail; no intent registered |
+| Agent hasn't pulled yet, or the pull failed | No progress; `desired_state=running` persists, the agent converges on its next successful pull |
+| Agent's local start raises `PortOccupiedError` | Agent reports `start_failures: [{kind: "port_conflict", port, ...}]` on its next `/agent/health`; the backend's `_ingest_pull_host_reports` re-pins `desired_port` to the next candidate via `candidate_ports` (Doc 4) — the agent converges on its next pull |
+| Agent's local start raises any other exception | Agent reports `start_failures: [{kind: "spawn_failed", ...}]`; the backend records the start-failure backoff (`_record_start_failure`) but does not re-pin the port |
 
 ## Flow B: Operator stop (`ReconcilerAgentService.stop_node`)
 
-As with start, the operator path is asynchronous: `stop_node` registers an operator:stop intent and returns. The agent `stop_remote_node` call and the ack-gated `mark_node_stopped` happen later in the reconciler convergence pass.
+As with start, the operator path is asynchronous: `stop_node` registers an operator:stop intent and returns; it never calls the agent. The desired-state write, the poke, and the agent's own pull-and-stop are what actually take the process down.
 
 ```mermaid
 sequenceDiagram
@@ -120,40 +124,39 @@ sequenceDiagram
     participant NM as ReconcilerAgentService.stop_node
     participant Op as operator_node.request_stop
     participant Intent as IntentService
-    participant Rec as reconciler convergence (reconciler.py)
-    participant Agent as Host agent
+    participant DSW as write_desired_state
+    participant Poke as converge_device_now / poke_node_refresh
+    participant Agent as Host agent NodeStateLoop
+    participant Rec as Observe-only reconciler (reconciler.py)
     participant Pg as Postgres
 
     API->>NM: stop_node(device)
     NM->>NM: validate device.appium_node.observed_running
     NM->>Op: request_stop(device)
-    Op->>Intent: register_intents_and_reconcile (operator:stop) → write_desired_state(stopped)
+    Op->>Intent: register_intents_and_reconcile (operator:stop)
+    Intent->>DSW: write_desired_state(stopped)
     NM-->>API: AppiumNode row (desired_state=stopped); returns, process not yet stopped
-    Note over Rec: Later convergence pass (reconciler.py)
-    Rec->>Agent: stop_remote_node → POST /agent/appium/stop (port)
-    alt Agent acknowledges (2xx) → stop_remote_node returns True
-        Agent-->>Rec: 2xx
-        Rec->>Pg: lock_device and lock_appium_node
-        Rec->>Rec: mark_node_stopped()
-        Rec->>Pg: AppiumNode.pid=None, active_connection_target=None (observed_running becomes false)
-        Rec->>Pg: DeviceHealthService(...).apply_node_state_transition()
-    else Agent does not acknowledge (transport / 5xx / circuit open) → stop_remote_node returns False
-        Agent-->>Rec: error
-        Note right of Pg: AppiumNode stays observed-running (pid/active_connection_target set).<br/>A later convergence pass reconciles when the agent answers.
-    end
+    API->>Poke: converge_device_now(device_id) → best-effort POST /agent/appium-nodes/refresh
+    Note over Agent: NodeStateLoop wakes (or its next 5s poll fires anyway)
+    Agent->>Agent: GET /agent/appium-nodes/desired → sees desired_state=stopped
+    Agent->>Agent: AppiumManager.stop(port) in-process
+    Note over Rec: Next host_sweep cycle
+    Rec->>Agent: GET /agent/health
+    Agent-->>Rec: appium_processes.running_nodes no longer lists this device's port
+    Rec->>Rec: decide_convergence_action → db_clear_stale_running
+    Rec->>Pg: lock_device and lock_appium_node
+    Rec->>Rec: mark_node_stopped()
+    Rec->>Pg: AppiumNode.pid=None, active_connection_target=None (observed_running becomes false)
+    Rec->>Pg: DeviceHealthService(...).apply_node_state_transition()
 ```
 
-The two clauses of the `alt` are the entire point of the recent fixes. **Do not collapse them.** Specifically:
+The behaviour the recent split-brain fixes protect still holds, just asynchronous now: **`mark_node_stopped` never runs until the agent's own report shows the process gone.** If the agent hasn't pulled the stop yet (or its report still lists the port), the DB keeps the node observed-running; a later sweep clears it once the agent's report catches up (commit `4171847`'s rule, now enforced by fact-ingestion instead of a synchronous ack). This is what stops the manager from believing an orphan is gone while its Appium process keeps serving traffic on its allocated port (still reachable by the router).
 
-- If the agent does not ack, *do not* mark the node stopped (commit `4171847`). The manager would otherwise believe the orphan is gone while the orphan's Appium process keeps serving traffic on its allocated port (still reachable by the router).
-
-The resource claim needs no equivalent ack gate: it is never released on stop at all, acked or not (see "The resource-claim + port allocation interaction" below), so an unacknowledged stop cannot leak the port to a new node either way.
-
-This collapses to the same primitive: `stop_remote_node` returns `bool` and the caller (the reconciler convergence path, not the operator path) gates state mutations on `True`.
+The resource claim needs no equivalent gate: it is never released on stop at all (see "The resource-claim + port allocation interaction" below), so a not-yet-observed stop cannot leak the port to a new node either way.
 
 ## Flow C: Operator restart (`ReconcilerAgentService.restart_node`)
 
-`restart_node` has **no retry loop and no backoff sleep**. It short-circuits to `start_node` when the node is not `observed_running`; otherwise it registers an operator:start restart-form intent (with a fresh `transition_token`/`transition_deadline`), commits, and returns. The agent stop/start and the observed-state flips are driven entirely by the reconciler convergence pass.
+`restart_node` has **no retry loop and no backoff sleep**. It short-circuits to `start_node` when the node is not `observed_running`; otherwise it registers an operator:start restart-form intent (with a fresh `transition_token`/`transition_deadline`), commits, and returns. The agent's own stop/start and the observed-state flips are driven entirely by its next pull and the observe-only reconciler's next ingestion of its health report.
 
 ```mermaid
 sequenceDiagram
@@ -161,25 +164,25 @@ sequenceDiagram
     participant NM as ReconcilerAgentService.restart_node
     participant Op as operator_node.request_restart
     participant Intent as IntentService
-    participant Rec as reconciler convergence (reconciler.py)
-    participant Agent as Host agent
+    participant DSW as write_desired_state
+    participant Poke as converge_device_now / poke_node_refresh
+    participant Agent as Host agent NodeStateLoop
+    participant Rec as Observe-only reconciler (reconciler.py)
     participant Pg as Postgres
 
     NM->>NM: not observed_running? → delegate to start_node
     NM->>Op: request_restart(device)
-    Op->>Intent: register_intents_and_reconcile (operator:start, fresh transition_token/deadline) → write_desired_state(running)
+    Op->>Intent: register_intents_and_reconcile (operator:start, fresh transition_token/deadline)
+    Intent->>DSW: write_desired_state(running, transition_token=<fresh>)
     NM-->>NM: commit and return
-    Note over Rec: Later convergence pass (reconciler.py)
-    Rec->>Agent: stop_remote_node (current port); must ack True before start side
-    Rec->>Agent: start_remote_node (preferred = old port, may rebind)
+    NM->>Poke: converge_device_now(device_id) → best-effort POST /agent/appium-nodes/refresh
+    Agent->>Agent: GET /agent/appium-nodes/desired → unexpired, not-yet-applied transition_token forces one restart
+    Agent->>Agent: AppiumManager.stop(old port) then AppiumManager.start(...) in-process (may rebind to a new port)
+    Note over Rec: Next host_sweep cycle
     Rec->>Pg: mark_node_started(new port, pid, target): restart is one observed-state write, mark_node_stopped is not called
 ```
 
-Why convergence "does not retry on a different port" when the stop is unacknowledged:
-
-> Starting on the next free port while the agent has not confirmed the previous Appium process is dead leaves two live Appium processes for the same device, each reachable on its own port. The backend may then allocate either one to a session: non-deterministic, hard to reproduce, painful to debug.
-
-So the convergence path **must** see a confirmed stop (`stop_remote_node` returns `True`) before it considers the start side. Same rule applies to the loop-driven auto-recovery path below.
+The fresh `transition_token`/`transition_deadline` is what forces exactly one restart per agent process even though the desired projection otherwise looks unchanged (`desired_state=running` before and after): `NodeStateLoop._token_requires_restart` treats an unexpired, not-yet-applied token as "restart now," then records it in `applied_transition_tokens` so it does not fire again. `/agent/health` echoes the applied token back (`applied_transition_token`) so the backend's `_ingest_pull_host_reports` (Doc 4) can clear it via the natural-clear path.
 
 The constants `RESTART_BACKOFF_BASE = 2` and `RESTART_MAX_RETRIES = 3` exist in `reconciler_agent.py` (and its `__all__`) but are currently **dead**: they are referenced nowhere else in `app/` or `tests/`. There is no per-attempt backoff and no owner-allocation release after N failures in the restart path.
 
@@ -192,7 +195,9 @@ sequenceDiagram
     participant Probe as _check_node_health
     participant Agent as Host agent
     participant Process as _process_node_health
-    participant Rec as reconciler convergence (reconciler.py)
+    participant Intent as IntentService
+    participant NodeAgent as Host agent NodeStateLoop
+    participant Rec as Observe-only reconciler (reconciler.py)
     participant Pg as Postgres
 
     L->>Probe: probe each running AppiumNode
@@ -210,10 +215,10 @@ sequenceDiagram
         Process->>Pg: apply_node_state_transition(health_running=False, mark_offline=True) → device offline
         Process->>Pg: reset consecutive_health_failures
         Process->>Process: _attempt_node_restart
-        Process->>Pg: register_intents_and_reconcile (NODE_PROCESS start + RECOVERY, PRIORITY_AUTO_RECOVERY, fresh transition_token/deadline)
+        Process->>Intent: register_intents_and_reconcile (NODE_PROCESS start + RECOVERY, PRIORITY_AUTO_RECOVERY, fresh transition_token/deadline)
     end
-    Note over Rec: A separate convergence pass picks up the intent
-    Rec->>Agent: stop_remote_node / start_remote_node
+    Note over NodeAgent: NodeStateLoop's next pull sees the fresh transition_token, forces one stop+start locally
+    Note over Rec: A later host_sweep cycle ingests the agent's health report
     Rec->>Pg: mark_node_started (single observed-state write for the restart action)
     Rec->>Pg: on exhaustion record recovery-failed terminal (recovery_backoff_attempts / backoff_until)
 ```
@@ -224,7 +229,7 @@ Three things this flow gets right that earlier versions did not:
 2. **Node state transitions go through `DeviceHealthService.apply_node_state_transition`.** The helper writes transient health detail, last-check timestamp, the dirty-and-reconcile (or dirty-only, below threshold) signal that drives derived operational state, and the derived `device.health_changed` event under the correct locks. It does not write a node `state` column (none exists).
 3. **The agent probe is the authoritative health signal.** Post-cutover there is no Grid `/status` to defer to: the direct `/agent/appium/{port}/status` probe is the source of truth for "is this Appium up". An acked probe persists `health_running=True` truthfully rather than relying on a registration grace window.
 
-At the failure threshold `_process_node_health` resets `consecutive_health_failures` and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` intent plus a RECOVERY auto-recovery intent (`IntentService.register_intents_and_reconcile`, `PRIORITY_AUTO_RECOVERY`, fresh `transition_token`/`transition_deadline`, TTL-bounded via `expires_at`). It does **not** call the agent or rewrite node fields itself. The reconciler convergence pass (`reconciler.py`) performs the agent `stop_remote_node`/`start_remote_node`, the `mark_node_*` flips, and, on exhaustion, records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
+At the failure threshold `_process_node_health` resets `consecutive_health_failures` and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` intent plus a RECOVERY auto-recovery intent (`IntentService.register_intents_and_reconcile`, `PRIORITY_AUTO_RECOVERY`, fresh `transition_token`/`transition_deadline`, TTL-bounded via `expires_at`). It does **not** call the agent or rewrite node fields itself — the write goes through the same `write_desired_state` path as any other desired-state change. The agent applies the restart on its next pull; the observe-only reconciler (`reconciler.py`) performs the `mark_node_*` flips from the agent's next health report and, on exhaustion, records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
 
 ## The resource-claim + port allocation interaction
 
@@ -232,9 +237,9 @@ The allocator is `resource_service` (`app/appium_nodes/services/resource_service
 
 Why this matters for the lifecycle:
 
-- Convergence reserves claims for the node and persists the main Appium port on `AppiumNode.port` only after the agent confirms the process is running.
+- The main Appium port is persisted on `AppiumNode.port` only once the observe-only reconciler matches the agent's confirmation that the process is running (`mark_node_started`).
 - Claims are keyed by `node_id`, not released on stop, and live for the lifetime of the `AppiumNode` row: `appium_node_resource_claims.node_id` is `ON DELETE CASCADE`, so claims are freed only when the node (or its device) is deleted.
-- On start failure (including a per-target `NodeAlreadyRunningError`), `_start_for_node` releases the reserved claims via `release_managed` (and the per-capability port via `release_capability` on a managed port conflict): the only production call sites for either function.
+- Start no longer runs as a single backend-issued agent call, so there is no backend-side start-failure branch here to roll a claim back: the agent applies desired state locally and reports the outcome (`start_failures`) on its next health check. Port conflicts are handled by re-pinning `desired_port` (Doc 4's `kind="port_conflict"` path), not by a claim release/re-reserve cycle.
 - Auto-recovery does not create a new claim; the node row (keyed by `node_id`) carries its claims across the stop→start sequence.
 
 A stopped node's claims always persist: there is no ack gate to get wrong here. The next start for that device finds the existing claim, which is correct: the same node retakes its ports, and a different node can never grab them while this node's row is alive.
@@ -243,18 +248,22 @@ Doc 5 covers the allocator in detail.
 
 ## Port-conflict semantics
 
-There are two distinct kinds of conflict, and they get different treatment:
+Port conflict is now detected locally by the agent, not by a backend-issued start call: `NodeStateLoop._converge_spec` calls `AppiumManager.start(...)` in-process, and a raised `PortOccupiedError` is reported as `start_failures: [{kind: "port_conflict", connection_target, port, detail, at}]` on the agent's next `/agent/health`. Any other start exception is reported as `kind: "spawn_failed"`.
 
-| Kind | Surface | Behavior |
-| --- | --- | --- |
-| External listener on a managed port | Agent rejects start with "already in use" / "already bound" | Mapped to `NodePortConflictError`, convergence tries next candidate port (the `_start_for_node` loop in `reconciler_agent.py`) |
-| Agent already tracks a live process on the requested port, or for the same connection target on a different port | Agent rejects start with "already running" | Mapped to `NodeAlreadyRunningError` (commit `5cf22de8`), not `NodePortConflictError`: `_start_for_node` short-circuits the candidate-port retry instead of iterating the range (the agent's guard keys on the target/port it already holds, so every candidate would hit the same rejection), and the convergence action treats it as already-converged |
+The backend's `_ingest_pull_host_reports` (`reconciler.py`, see Doc 4) ingests that report:
 
-A previously-tracked process that has already exited does not trigger this: the agent drops its own stale process-tracking entry rather than reporting a conflict (commit `54707d1`), so a genuinely-dead port self-heals on the next start attempt.
+| Kind | Backend reaction |
+| --- | --- |
+| `port_conflict` | Records the start-failure backoff (`_record_start_failure`) **and** re-pins `desired_port` to the next free candidate via `candidate_ports` (`_repin_desired_port`) |
+| `spawn_failed` | Records the start-failure backoff only; no re-pin |
 
-The `candidate_ports` helper (`reconciler_allocation.py`) excludes ports of nodes that are **observed-running** (`pid` AND `active_connection_target` both set) **or** have `desired_state == running`. After an unmanaged-listener conflict, convergence moves to the next free managed port; eventually one port wins or convergence raises `NodeManagerError("No free ports available in the configured range")`. A `NodeAlreadyRunningError` never reaches that retry loop.
+There is no same-attempt candidate-port retry loop anymore: a port conflict costs one full pull/report/re-pin/pull round trip, not a synchronous fallback within a single call. The agent converges onto the re-pinned port on its next `GET /agent/appium-nodes/desired`.
 
-Across an auto-recovery rebind, the node's `desired_state` stays `running`, so `candidate_ports` intentionally **excludes** the old `node.port` from the candidate set: the next attempt lands on a different free port. That is the desired behaviour after an unmanaged-listener conflict on the old port: rebind elsewhere, do not retry the same one.
+A previously-tracked process that has already exited does not trigger a conflict report: the agent drops its own stale process-tracking entry (commit `54707d1`), so a genuinely-dead port self-heals on the agent's next attempt without backend involvement.
+
+The `candidate_ports` helper (`reconciler_allocation.py`) excludes ports of nodes that are **observed-running** (`pid` AND `active_connection_target` both set) **or** have `desired_state == running`. Across an auto-recovery rebind, the node's `desired_state` stays `running`, so `candidate_ports` intentionally **excludes** the old `node.port` from the candidate set: the next pin lands on a different free port — rebind elsewhere, do not retry the same one.
+
+`NodePortConflictError`/`NodeAlreadyRunningError`/`NodeStopNotAcknowledgedError` (`app/appium_nodes/exceptions.py`) still exist and are still caught defensively around the convergence loop (`reconciler.py`'s `converge_host_rows`), but nothing in the current start/stop path raises them — they are vestigial from the push-era synchronous-ack contract.
 
 ## Lock acquisition order (deadlock avoidance)
 
@@ -279,12 +288,12 @@ The `event_bus.publish` for `device.health_changed` is **deferred to after-commi
 
 For every new code path that touches node state, verify:
 
-- [ ] The agent call returns a definitive ack (`bool`), not just an exception/no-exception split.
-- [ ] DB writes are gated on `True`. `False` raises or returns; `None` keeps current state.
+- [ ] Observed-state writes are gated on the agent's own self-reported facts (`/agent/health`), never assumed from the absence of an error.
+- [ ] `mark_node_started` / `mark_node_stopped` only fire from the observe-only convergence match, never speculatively.
 - [ ] `mark_node_started` / `mark_node_stopped` run inside a transaction that holds the device row lock.
 - [ ] `DeviceHealthService.apply_node_state_transition` is the node-health writer in that transaction.
-- [ ] The resource claim is never released on stop, only on start-failure rollback or node/device deletion.
-- [ ] On port conflict, the next candidate port is tried, *unless* the conflict came from an unconfirmed stop, in which case no retry is allowed.
+- [ ] The resource claim is never released on stop, only on node/device deletion.
+- [ ] On an agent-reported `port_conflict`, `desired_port` is re-pinned to the next candidate; the agent converges on its next pull.
 - [ ] After any `mark_node_*`, `publisher.queue_for_session("node.state_changed", ...)` is registered before commit.
 
 The recent fixes above each tightened one of these rules. The next class of bugs to ship will come from new code paths that skipped one. This checklist is the trip-wire.

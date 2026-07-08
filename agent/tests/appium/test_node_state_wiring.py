@@ -23,10 +23,10 @@ def _mock_lifespan_deps() -> list[AbstractContextManager[object]]:
     ]
 
 
-def test_node_pull_settings_are_disabled_by_default() -> None:
+def test_node_pull_settings_are_enabled_by_default() -> None:
     settings = RuntimeSettings()
 
-    assert settings.node_pull_enabled is False
+    assert settings.node_pull_enabled is True
     assert settings.node_poll_interval_sec == 5.0
 
 

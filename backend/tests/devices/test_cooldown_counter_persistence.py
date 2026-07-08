@@ -47,12 +47,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
-    # deliver_agent_reconfigures otherwise blocks 5s per call waiting for a TCP
-    # connect to the test host IP. Cooldown flows trigger this from inline
-    # delivery and from the expired-intent reconciler sweep.
+    # poke_node_refresh otherwise blocks waiting for a TCP connect to the test
+    # host IP. Cooldown flows trigger this from inline delivery and from the
+    # expired-intent reconciler sweep.
     monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        AsyncMock(return_value={"port": 4723}),
+        "app.agent_comm.node_poke.agent_operations.agent_nodes_refresh",
+        AsyncMock(),
     )
 
 

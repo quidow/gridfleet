@@ -17,6 +17,7 @@ from sqlalchemy import or_, select
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services import resource_service
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent
@@ -31,6 +32,7 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
 from app.devices.services.observation_reason import ObservationReason
+from app.packs.services.platform_resolver import applicable_resource_ports, resolve_pack_platform
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,6 +133,58 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
     ]
 
 
+async def _reserve_parallel_resources(db: AsyncSession, device: Device, *, node: AppiumNode) -> None:
+    """Reserve host-unique parallel-resource ports (and derivedDataPath) for *node*.
+
+    Claims persist across restarts (unique per node+capability, CASCADE on node
+    delete). Recovery/policy/baseline restarts register start intents directly and
+    never pass through here, so claims are deliberately NOT released on stop — the
+    pull projection must keep serving them for those restarts.
+    """
+    if device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned")
+    try:
+        resolved = await resolve_pack_platform(
+            db,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            device_type=device.device_type.value if device.device_type else None,
+        )
+    except LookupError:
+        # No resolvable pack platform — the node still starts, just without
+        # parallel-resource allocation (same fallback the push path had).
+        return
+    wanted = {p.capability_name: p.start for p in applicable_resource_ports(resolved, device.device_config)}
+    claims = (await resource_service.get_port_claims_for_nodes(db, node_ids=[node.id])).get(node.id, {})
+    if set(claims) - set(wanted):
+        # device_config changed and a skip_when gate now excludes a claimed port. A
+        # stale claim leaks into node capabilities and fails sessions that cannot
+        # forward the port — drop this node's claims and re-reserve below.
+        await resource_service.release_managed(db, node_id=node.id)
+        claims = {}
+    try:
+        for capability_key, start_port in wanted.items():
+            if capability_key not in claims:
+                await resource_service.reserve(
+                    db,
+                    host_id=device.host_id,
+                    capability_key=capability_key,
+                    start_port=start_port,
+                    node_id=node.id,
+                )
+    except resource_service.PoolExhaustedError as exc:
+        raise NodeManagerError(str(exc)) from exc
+    if resolved.parallel_resources.derived_data_path:
+        allocated = await resource_service.get_capabilities(db, node_id=node.id)
+        if "appium:derivedDataPath" not in allocated:
+            await resource_service.set_node_extra_capability(
+                db,
+                node_id=node.id,
+                capability_key="appium:derivedDataPath",
+                value=f"/tmp/gridfleet/derived-data/{uuid.uuid4().hex}",
+            )
+
+
 class OperatorNodeLifecycleService:
     def __init__(self, *, settings: SettingsReader, publisher: EventPublisher, review: ReviewProtocol) -> None:
         self._settings = settings
@@ -168,6 +222,8 @@ class OperatorNodeLifecycleService:
             # different port and induces a two-supervisor oscillation. Pinning
             # node.port keeps desired_port stable across the gap.
             desired_port = node.port
+
+        await _reserve_parallel_resources(db, device, node=node)
 
         revoke_sources = list(operator_stop_sources(device.id))
         if caller in {"operator_route", "operator_restart"}:

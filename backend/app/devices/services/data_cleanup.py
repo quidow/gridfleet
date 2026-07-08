@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, delete, or_, select
 
-from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger, schedule_background_loop
@@ -41,7 +40,6 @@ DELETE_BATCH_SIZE = 1000
 MAX_BATCHES_PER_TABLE = 10
 CleanupModel = (
     type[Session]
-    | type[AgentReconfigureOutbox]
     | type[ConfigAuditLog]
     | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
@@ -89,7 +87,6 @@ class _CleanupCounts:
     probe_sessions_deleted: int = 0
     grid_queue_tickets_deleted: int = 0
     audit_deleted: int = 0
-    agent_reconfigure_outbox_deleted: int = 0
     test_data_audit_deleted: int = 0
     events_deleted: int = 0
     host_resource_samples_deleted: int = 0
@@ -155,7 +152,7 @@ class DataCleanupService:
                 ),
             )
 
-    async def _cleanup_audit_and_outbox(self, db: AsyncSession, now: datetime, counts: _CleanupCounts) -> None:
+    async def _cleanup_audit(self, db: AsyncSession, now: datetime, counts: _CleanupCounts) -> None:
         # ConfigAuditLog
         audit_days: int = self._settings.get("retention.audit_log_days")
         if audit_days > 0:
@@ -165,22 +162,6 @@ class DataCleanupService:
                 model=ConfigAuditLog,
                 timestamp_column=ConfigAuditLog.changed_at,
                 cutoff=cutoff,
-            )
-
-        outbox_days: int = self._settings.get("retention.agent_reconfigure_outbox_days")
-        if outbox_days > 0:
-            cutoff = now - timedelta(days=outbox_days)
-            counts.agent_reconfigure_outbox_deleted = await _delete_in_batches(
-                db,
-                model=AgentReconfigureOutbox,
-                timestamp_column=AgentReconfigureOutbox.created_at,
-                cutoff=cutoff,
-                extra_predicates=(
-                    (
-                        AgentReconfigureOutbox.delivered_at.is_not(None)
-                        | AgentReconfigureOutbox.abandoned_at.is_not(None)
-                    ),
-                ),
             )
 
         # DeviceTestDataAuditLog (reuses retention.audit_log_days)
@@ -271,14 +252,14 @@ class DataCleanupService:
         counts = _CleanupCounts()
 
         await self._cleanup_sessions_and_tickets(db, now, counts)
-        await self._cleanup_audit_and_outbox(db, now, counts)
+        await self._cleanup_audit(db, now, counts)
         await self._cleanup_events_and_telemetry(db, now, counts)
         await self._cleanup_runs_and_jobs(db, now, counts)
 
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
             "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d, "
-            "agent_reconfigure_outbox=%d, grid_queue_tickets=%d"
+            "grid_queue_tickets=%d"
             ", system_events=%d, test_runs=%d, jobs=%d",
             counts.sessions_deleted,
             counts.probe_sessions_deleted,
@@ -287,7 +268,6 @@ class DataCleanupService:
             counts.events_deleted,
             counts.host_resource_samples_deleted,
             counts.capacity_snapshots_deleted,
-            counts.agent_reconfigure_outbox_deleted,
             counts.grid_queue_tickets_deleted,
             counts.system_events_deleted,
             counts.test_runs_deleted,
@@ -303,7 +283,6 @@ class DataCleanupService:
                 "device_events_deleted": counts.events_deleted,
                 "host_resource_samples_deleted": counts.host_resource_samples_deleted,
                 "capacity_snapshots_deleted": counts.capacity_snapshots_deleted,
-                "agent_reconfigure_outbox_deleted": counts.agent_reconfigure_outbox_deleted,
                 "grid_queue_tickets_deleted": counts.grid_queue_tickets_deleted,
                 "system_events_deleted": counts.system_events_deleted,
                 "test_runs_deleted": counts.test_runs_deleted,

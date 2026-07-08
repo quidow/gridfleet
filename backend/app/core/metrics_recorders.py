@@ -176,22 +176,6 @@ INTENT_RECONCILER_CONFLICTS = Counter(
     "intent_reconciler_conflicts_total",
     "Total same-priority device intent conflicts.",
 )
-AGENT_RECONFIGURE_OUTBOX_PENDING = Gauge(
-    "agent_reconfigure_outbox_pending_total",
-    "Current number of undelivered agent reconfigure outbox rows.",
-)
-AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED = Counter(
-    "agent_reconfigure_outbox_stale_skipped_total",
-    "Stale agent reconfigure outbox rows skipped by delivery.",
-)
-AGENT_RECONFIGURE_OUTBOX_ABANDONED = Counter(
-    "agent_reconfigure_outbox_abandoned_total",
-    "Agent reconfigure outbox rows abandoned after exhausting delivery attempts.",
-)
-AGENT_RECONFIGURE_OUTBOX_NO_PROCESS = Counter(
-    "agent_reconfigure_outbox_no_process_total",
-    "Agent reconfigure outbox rows consumed because the agent reports no managed process on the port.",
-)
 
 
 def record_http_request(

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pydantic import ValidationError
 
-from app.agent_comm import reconfigure_delivery as agent_reconfigure_delivery
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services import (
     common as node_service_common,
@@ -438,51 +437,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     )._clear_token_factory(session_scope=SessionCtx)
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
     await clear(row=SimpleNamespace(device_id=uuid.uuid4()))
-
-    row = SimpleNamespace(
-        device_id=uuid.uuid4(),
-        reconciled_generation=1,
-        port=4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        grid_run_id=None,
-        delivery_attempts=9,
-        abandoned_at=None,
-        abandoned_reason=None,
-    )
-    no_host_device = SimpleNamespace(host=None)
-
-    class ExecuteResult:
-        def __init__(self, value: object) -> None:
-            self._value = value
-
-        def scalar_one_or_none(self) -> object:
-            return self._value
-
-        def scalar_one(self) -> object:
-            return self._value
-
-        def scalars(self) -> ExecuteResult:
-            return self
-
-        def all(self) -> list[object]:
-            return [row]
-
-    reconfigure_db = AsyncMock()
-    reconfigure_db.scalar = AsyncMock(return_value=1)
-    reconfigure_db.execute = AsyncMock(
-        side_effect=[
-            ExecuteResult(None),  # pull-host lookup: no host -> legacy push path
-            ExecuteResult(None),
-            ExecuteResult([row]),
-            ExecuteResult(SimpleNamespace(generation=1)),
-            ExecuteResult(no_host_device),
-        ]
-    )
-    await agent_reconfigure_delivery.deliver_agent_reconfigures(
-        reconfigure_db, row.device_id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=Mock()
-    )
-    assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))

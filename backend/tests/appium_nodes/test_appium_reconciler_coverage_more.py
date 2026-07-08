@@ -4,21 +4,19 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
-import httpx2 as httpx
-import pytest
 from sqlalchemy.exc import NoResultFound
 
-from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
-from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry
+from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.devices.models import DeviceOperationalState
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
+    import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -147,146 +145,6 @@ async def test_reconcile_host_filters_backoff_rows_from_explicit_health_payload(
     converge.assert_awaited_once()
     # desired_rows (active_rows) is 2nd positional arg to converge_host_rows(None, active_rows, observed, ...)
     assert converge.call_args.args[1] == [active]
-
-
-async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: pytest.MonkeyPatch) -> None:
-    row = _desired_row()
-    svc = ReconcilerService(
-        publisher=Mock(), settings=FakeSettingsReader(), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
-    )
-    stop_agent = svc._make_stop_agent("10.0.0.1", 5100)
-    assert await stop_agent(row=row, port=None) is None
-    assert await stop_agent(row=row, port=0) is None
-
-    monkeypatch.setattr("app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(return_value=False))
-    with pytest.raises(NodeStopNotAcknowledgedError, match="did not acknowledge"):
-        await stop_agent(row=row, port=4723)
-
-    monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(side_effect=httpx.ConnectError("down"))
-    )
-    with pytest.raises(httpx.ConnectError):
-        await stop_agent(row=row, port=4723)
-
-
-async def test_start_agent_does_not_record_failure_on_already_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A per-target ALREADY_RUNNING from the agent is not a start failure: the
-    ``_start`` closure must re-raise it without tripping recovery backoff."""
-
-    class Session:
-        async def __aenter__(self) -> Session:
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    @asynccontextmanager
-    async def scope() -> Session:
-        yield Session()
-
-    row = _desired_row()
-    device = type("Device", (), {"appium_node": object()})()
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        appium_reconciler,
-        "_start_for_node",
-        AsyncMock(side_effect=NodeAlreadyRunningError("already running for target on port 4724")),
-    )
-    record = AsyncMock()
-    monkeypatch.setattr(appium_reconciler, "_record_start_failure", record)
-
-    svc = ReconcilerService(
-        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
-    )
-    start = svc._make_start_agent(session_scope=scope)
-    with pytest.raises(NodeAlreadyRunningError):
-        await start(row=row, port=4723)
-
-    record.assert_not_awaited()
-
-
-async def test_converge_host_rows_downgrades_transient_stop_not_acknowledged(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A stop the agent won't acknowledge is a self-healing transient: the host
-    convergence loop swallows it (raise_errors=False) and re-raises only when
-    the caller asks (raise_errors=True, the converge_device_now path)."""
-    # desired=stopped + an observed node → decide_convergence_action picks ``stop``.
-    row = _desired_row(desired_state="stopped", connection_target="serial-stop", port=4723, pid=1)
-    observed = [ObservedEntry(port=4723, pid=1, connection_target="serial-stop")]
-    monkeypatch.setattr("app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(return_value=False))
-
-    svc = ReconcilerService(
-        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
-    )
-    host_id = uuid.uuid4()
-
-    # raise_errors=False → swallowed (no raise).
-    await svc.converge_host_rows(
-        None, [row], observed, host_id=host_id, host_ip="10.0.0.1", agent_port=5100, raise_errors=False
-    )
-
-    # raise_errors=True (converge_device_now path) → propagates the transient.
-    with pytest.raises(NodeStopNotAcknowledgedError):
-        await svc.converge_host_rows(
-            None, [row], observed, host_id=host_id, host_ip="10.0.0.1", agent_port=5100, raise_errors=True
-        )
-
-    assert appium_reconciler._classify_start_failure(TimeoutError()) == "timeout"
-    request = httpx.Request("POST", "http://agent/appium")
-    response = httpx.Response(409, text="port is busy", request=request)
-    assert appium_reconciler._classify_start_failure(
-        httpx.HTTPStatusError("bad", request=request, response=response)
-    ) == ("port_occupied")
-    response = httpx.Response(500, text="already_running", request=request)
-    assert appium_reconciler._classify_start_failure(
-        httpx.HTTPStatusError("bad", request=request, response=response)
-    ) == ("already_running")
-    assert appium_reconciler._classify_start_failure(httpx.ConnectError("down")) == "http_error"
-    assert appium_reconciler._classify_start_failure(RuntimeError("boom")) == "http_error"
-
-
-async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert appium_reconciler._session_scope(None) is appium_reconciler.async_session
-
-    @asynccontextmanager
-    async def _mock_session_factory() -> AsyncMock:
-        yield AsyncMock()
-
-    await appium_reconciler._touch_last_observed(
-        [], settings=FakeSettingsReader({}), session_factory=_mock_session_factory
-    )
-
-    class Session:
-        async def __aenter__(self) -> Session:
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    row = _desired_row()
-
-    @asynccontextmanager
-    async def scope() -> Session:
-        yield Session()
-
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=None))
-    svc2 = ReconcilerService(
-        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
-    )
-    start = svc2._make_start_agent(session_scope=scope)
-    with pytest.raises(RuntimeError, match="no longer exists"):
-        await start(row=row, port=4723)
-
-    monkeypatch.setattr(
-        appium_reconciler,
-        "_load_device_for_reconciler",
-        AsyncMock(return_value=type("Device", (), {"appium_node": None})()),
-    )
-    monkeypatch.setattr(appium_reconciler, "_record_start_failure", AsyncMock())
-    with pytest.raises(RuntimeError, match="has no AppiumNode"):
-        await start(row=row, port=4723)
-
-    monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
-    await appium_reconciler._reset_start_failure(row, session_scope=scope, settings=FakeSettingsReader({}))
 
 
 async def test_record_and_reset_start_failure_state(
@@ -436,8 +294,6 @@ async def test_confirm_running_skips_lock_when_no_failure_residue(
         host_id=db_host.id,
         row=row,
         action=ConvergenceAction(kind="confirm_running"),
-        start_agent=AsyncMock(),
-        stop_agent=AsyncMock(),
         write_observed=AsyncMock(),
         clear_token=AsyncMock(),
         reset_start_failure=reset_fn,
@@ -494,8 +350,6 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
         host_id=db_host.id,
         row=row,
         action=ConvergenceAction(kind="confirm_running"),
-        start_agent=AsyncMock(),
-        stop_agent=AsyncMock(),
         write_observed=AsyncMock(),
         clear_token=AsyncMock(),
         reset_start_failure=reset_fn,

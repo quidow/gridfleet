@@ -377,24 +377,6 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
         )
 
 
-async def test_agent_reconfigure_invalid_payload() -> None:
-    reconfigure_client = StrictAgentClient(
-        post_response=_response("POST", "http://10.0.0.5:5100/agent/appium/node/reconfigure", payload=["bad"])
-    )
-    with pytest.raises(AgentUnreachableError, match="invalid payload"):
-        await agent_operations.agent_appium_reconfigure(
-            "10.0.0.5",
-            5100,
-            port=4723,
-            accepting_new_sessions=False,
-            stop_pending=True,
-            grid_run_id=None,
-            http_client_factory=_strict_client_factory(reconfigure_client),
-            settings=SETTINGS,
-            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-        )
-
-
 async def test_pack_device_health_includes_optional_probe_params() -> None:
     client = StrictAgentClient(
         get_response=_response(

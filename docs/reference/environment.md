@@ -89,7 +89,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). The installer overrides this to `<agent_dir>/runtimes` in the generated service environment; the fallback default only applies when the agent is started outside the installer. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
-| `AGENT_NODE_PULL_ENABLED` | `false` | agent process | Starts `NodeStateLoop` and advertises `node_desired_pull: 1`. Keep disabled until the backend pull-mode switch lands. |
+| `AGENT_NODE_PULL_ENABLED` | `true` | agent process | Runs `NodeStateLoop` and advertises `node_desired_pull: 1`. Enabled by default — pull is the only node-orchestration mode; disabling it stops all node convergence for the host. |
 | `AGENT_NODE_POLL_INTERVAL_SEC` | `5.0` | agent process | Poll interval for Appium-node desired state when `AGENT_NODE_PULL_ENABLED=true`. Refresh pokes may wake the loop sooner. |
 | `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable address advertised by the agent during registration. Accepts **any DNS name or IP** the backend and router can reach, not strictly an IPv4 address. Useful for co-located docker deployments where the host's LAN IP is unreachable from containers (e.g. set to `host.docker.internal` or `172.17.0.1`). Leave empty to use UDP-trick discovery. |
 

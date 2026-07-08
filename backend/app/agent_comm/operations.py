@@ -19,7 +19,6 @@ from app.agent_comm.client import (
 )
 from app.agent_comm.generated import (
     AppiumLogsResponse,
-    AppiumReconfigureResponse,
     AppiumStatusResponse,
     HealthResponse,
     HostTelemetryResponse,
@@ -34,8 +33,6 @@ from app.agent_comm.generated import (
 from app.core.errors import AgentResponseError, AgentUnreachableError
 
 if TYPE_CHECKING:
-    import uuid
-
     from pydantic import BaseModel
 
     from app.agent_comm.http_pool import AgentHttpPool
@@ -55,6 +52,10 @@ type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
 # the agent's adapter timer expiry and FastAPI returning the 504 to the
 # backend. If ADAPTER_HOOK_TIMEOUT_SECONDS is raised, raise this in lockstep.
 _PACK_ADAPTER_BACKEND_TIMEOUT: Final[int] = 35
+
+# Wake hint is best-effort (never load-bearing); don't let a down host block
+# a request on the full agent timeout.
+NODE_POKE_TIMEOUT_SEC = 2.0
 
 
 def _as_agent_client(client: _AgentClientLike) -> AgentHttpClient:
@@ -363,46 +364,12 @@ async def appium_stop(
     )
 
 
-async def agent_appium_reconfigure(
-    host: str,
-    agent_port: int,
-    *,
-    port: int,
-    accepting_new_sessions: bool,
-    stop_pending: bool,
-    grid_run_id: uuid.UUID | None,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 10,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any]:
-    response = await _send_request(
-        "POST",
-        f"{agent_base_url(host, agent_port)}/agent/appium/{port}/reconfigure",
-        endpoint="appium_reconfigure",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        timeout=timeout,
-        json_body={
-            "accepting_new_sessions": accepting_new_sessions,
-            "stop_pending": stop_pending,
-            "grid_run_id": str(grid_run_id) if grid_run_id else None,
-        },
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    return _decode_model_payload(response, host=host, action="reconfigure Appium node", model=AppiumReconfigureResponse)
-
-
 async def agent_nodes_refresh(
     host: str,
     agent_port: int,
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 5,
+    timeout: float | int = NODE_POKE_TIMEOUT_SEC,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,

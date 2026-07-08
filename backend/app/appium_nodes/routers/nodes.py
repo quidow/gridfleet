@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, HTTPException
 
 from app.appium_nodes.dependencies import AppiumNodeServicesDep
-from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
@@ -103,10 +102,6 @@ async def restart_node(device_id: uuid.UUID, db: DbDep, appium_services: AppiumN
         converged_node = await appium_services.reconciler.converge_device_now(device.id, db=db)
         if converged_node is not None:
             node = converged_node
-    except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
-        # Expected, self-healing transient during the Appium process restart window
-        # — the reconciler tick converges. Debug, not warning.
-        logger.debug("operator_restart_immediate_convergence_transient", exc_info=True, device_id=str(device.id))
     except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails
         logger.warning("operator_restart_immediate_convergence_failed", exc_info=True, device_id=str(device.id))
     await db.refresh(node)

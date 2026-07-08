@@ -143,6 +143,8 @@ async def register_host(
         host, is_new = await host_services.crud.register_host(db, data)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=426, detail=str(exc)) from None
 
     if not is_new:
         # A re-registering agent is live evidence the backend can reach it again. If its

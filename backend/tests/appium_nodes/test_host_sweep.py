@@ -84,10 +84,7 @@ async def test_sweep_converges_from_ping_payload_without_second_fetch(
         error_category=None,
     )
     monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=ping))
-    agent_health = AsyncMock(return_value={})
-    monkeypatch.setattr(reconciler_module, "agent_health", agent_health)
     monkeypatch.setattr(reconciler_module, "_touch_last_observed", AsyncMock())
-    monkeypatch.setattr(reconciler_module, "reap_orphan_nodes", AsyncMock())
     converge = AsyncMock()
     monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
     settings = FakeSettingsReader()
@@ -101,7 +98,6 @@ async def test_sweep_converges_from_ping_payload_without_second_fetch(
         session_factory=db_session_maker,
     )
 
-    agent_health.assert_not_awaited()
     converge.assert_awaited_once()
     observed = converge.await_args.args[2]
     assert [(entry.port, entry.pid, entry.connection_target) for entry in observed] == [

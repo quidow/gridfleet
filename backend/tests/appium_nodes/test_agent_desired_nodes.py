@@ -7,13 +7,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
 from app.appium_nodes.routers.agent_state import _get_desired
 from app.appium_nodes.services.reconciler_agent import build_node_launch_payload
 from app.devices.models import DeviceOperationalState
 from app.hosts.models import Host, HostStatus, OSType
-from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from tests.fakes import FakeSettingsReader, build_review_service
+from tests.helpers import create_device, test_event_bus
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
@@ -159,3 +160,77 @@ async def test_unrunnable_running_node_degrades_to_reason(
     assert response.status_code == 200
     assert response.json()["nodes"][0]["launch"] is None
     assert response.json()["nodes"][0]["unrunnable_reason"] == "pack is blocked"
+
+
+async def test_desired_launch_projects_reserved_parallel_resources(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="pull-claims",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        live_capabilities={"appium:derivedDataPath": "/tmp/gridfleet/derived-data/test"},
+    )
+    db_session.add(node)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            AppiumNodeResourceClaim(host_id=db_host.id, capability_key="appium:systemPort", port=8207, node_id=node.id),
+            AppiumNodeResourceClaim(
+                host_id=db_host.id, capability_key="appium:mjpegServerPort", port=9203, node_id=node.id
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get("/agent/appium-nodes/desired", params={"host_id": str(db_host.id)})
+
+    assert response.status_code == 200
+    launch = response.json()["nodes"][0]["launch"]
+    assert launch["allocated_caps"] == {
+        "appium:systemPort": 8207,
+        "appium:mjpegServerPort": 9203,
+        "appium:derivedDataPath": "/tmp/gridfleet/derived-data/test",
+    }
+    assert launch["extra_caps"]["appium:systemPort"] == 8207
+    assert launch["extra_caps"]["appium:derivedDataPath"] == "/tmp/gridfleet/derived-data/test"
+
+
+async def test_two_nodes_started_via_pull_get_distinct_parallel_ports(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Spec acceptance: two same-driver nodes on one host get distinct systemPort via the pull path."""
+    dev_a = await create_device(db_session, host_id=db_host.id, name="pull-par-a", verified=True)
+    dev_b = await create_device(db_session, host_id=db_host.id, name="pull-par-b", verified=True)
+    operator = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=test_event_bus
+    )
+    await db_session.refresh(dev_a, attribute_names=["appium_node"])
+    node_a = await operator.request_start(db_session, dev_a, caller="operator_route", reason="test")
+    await db_session.refresh(dev_b, attribute_names=["appium_node"])
+    node_b = await operator.request_start(db_session, dev_b, caller="operator_route", reason="test")
+    assert node_a.desired_state == AppiumDesiredState.running
+    assert node_b.desired_state == AppiumDesiredState.running
+    await db_session.commit()
+
+    desired = await _get_desired(db_session, db_host.id, settings=FakeSettingsReader())
+
+    by_device = {spec.device_id: spec for spec in desired.nodes}
+    launch_a = by_device[dev_a.id].launch
+    launch_b = by_device[dev_b.id].launch
+    assert launch_a is not None and launch_b is not None
+    caps_a = launch_a["allocated_caps"]
+    caps_b = launch_b["allocated_caps"]
+    assert caps_a is not None and caps_b is not None
+    assert caps_a["appium:systemPort"] != caps_b["appium:systemPort"]
+    assert launch_a["extra_caps"]["appium:systemPort"] != launch_b["extra_caps"]["appium:systemPort"]

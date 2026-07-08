@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from app.hosts.schemas import HostCreate, HostHardwareInfo, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
-MIN_ORCHESTRATION_CONTRACT_VERSION = 2
+MIN_ORCHESTRATION_CONTRACT_VERSION = 3
 
 
 def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
@@ -76,12 +76,6 @@ def orchestration_contract_version(capabilities: dict[str, Any] | None) -> int |
         except ValueError:
             return None
     return None
-
-
-def host_uses_node_pull(host: Host) -> bool:
-    """True when the host's agent advertises agent-pull node desired-state (8a)."""
-    caps = host.capabilities
-    return bool(caps.get("node_desired_pull")) if isinstance(caps, dict) else False
 
 
 def validate_orchestration_contract(capabilities: dict[str, Any] | None, *, host_label: str) -> None:

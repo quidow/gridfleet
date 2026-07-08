@@ -38,14 +38,6 @@ _allocator_svc = RunAllocatorService(
 )
 
 
-@pytest.fixture(autouse=True)
-def _stub_inline_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reservation now delivers the grid-routing reconfigure to the agent inline.
-    Default it to a success stub so create_run does not make real agent HTTP
-    calls; tests that assert delivery behavior override this per-test."""
-    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", AsyncMock())
-
-
 @pytest_asyncio.fixture(autouse=True)
 async def seed_packs(db_session: AsyncSession) -> None:
     """Seed driver packs so the policy gate passes in all tests."""
@@ -1258,10 +1250,6 @@ async def test_cooldown_escalation_status_is_released_when_toggle_off(
     status='released' rather than 'maintenance_escalated'."""
     monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
     monkeypatch.setitem(settings_service._cache, "general.run_failure_escalates_to_maintenance", False)
-    monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        AsyncMock(return_value={"port": 4723}),
-    )
 
     device = await create_device_record(
         db_session,

@@ -103,19 +103,20 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         "platforms": ["roku"],
         "tools": {"adb": "1.0.41"},
         "missing_prerequisites": ["java"],
-        "orchestration_contract_version": 2,
+        "orchestration_contract_version": 3,
     }
     second_snapshot = {
         "platforms": ["roku"],
         "tools": {"adb": "1.0.42"},
         "missing_prerequisites": [],
-        "orchestration_contract_version": 2,
+        "orchestration_contract_version": 3,
     }
     default_snapshot = {
         "platforms": [],
         "tools": {},
         "missing_prerequisites": [],
-        "orchestration_contract_version": 2,
+        "orchestration_contract_version": 3,
+        "node_desired_pull": 1,
     }
 
     with patch.object(
@@ -125,9 +126,10 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         side_effect=[first_snapshot, second_snapshot],
     ) as detect:
         assert cache.get() == default_snapshot
-        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 2}
-        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 2}
-        assert await cache.get_or_refresh(force=True) == {**second_snapshot, "orchestration_contract_version": 2}
+        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 3}
+        expected_second_call = {**first_snapshot, "orchestration_contract_version": 3, "node_desired_pull": 1}
+        assert await cache.get_or_refresh() == expected_second_call
+        assert await cache.get_or_refresh(force=True) == {**second_snapshot, "orchestration_contract_version": 3}
 
     assert detect.await_count == 2
 

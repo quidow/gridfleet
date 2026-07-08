@@ -82,17 +82,6 @@ async def release_managed(db: AsyncSession, *, node_id: uuid.UUID) -> int:
     return _rowcount(result)
 
 
-async def release_capability(db: AsyncSession, *, node_id: uuid.UUID, capability_key: str) -> int:
-    """Delete one managed capability claim for the given node."""
-    result = await db.execute(
-        delete(AppiumNodeResourceClaim).where(
-            AppiumNodeResourceClaim.node_id == node_id,
-            AppiumNodeResourceClaim.capability_key == capability_key,
-        )
-    )
-    return _rowcount(result)
-
-
 async def get_capabilities(db: AsyncSession, *, node_id: uuid.UUID) -> dict[str, JsonValue]:
     """Return port claims merged with non-port live capabilities for a node."""
     port_rows = (

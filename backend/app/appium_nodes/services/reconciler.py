@@ -1,38 +1,34 @@
 """Leader-owned reconciler for agent-side Appium processes.
 
-Drives desired-state convergence per online host: walks
-`/agent/health.appium_processes.running_nodes`, reaps stray nodes that no
-desired row can converge (see ``reconciler_convergence.reap_orphan_nodes``),
-then starts/stops/restarts to match each device's desired AppiumNode state.
+Drives observe-only desired-state convergence per online host: walks
+`/agent/health.appium_processes.running_nodes`, counts stray nodes that no
+desired row can converge (see ``reconciler_convergence.orphaned_node_ports``),
+and ingests agent-reported facts (applied-transition-token, start_failures)
+to reconcile each device's desired AppiumNode state. The agent owns
+start/stop/restart of its own Appium processes.
 """
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-import httpx2 as httpx
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.operations import agent_base_url, agent_health, agent_nodes_refresh
+from app.agent_comm.operations import agent_nodes_refresh
 from app.agent_comm.snapshot import parse_running_nodes
-from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeManagerError, NodeStopNotAcknowledgedError
+from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.appium_nodes.services.reconciler_agent import (
     NodeStartDetails,
-    _start_for_node,
     mark_node_started,
     mark_node_stopped,
-    stop_remote_node,
 )
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.appium_nodes.services.reconciler_convergence import (
@@ -43,7 +39,6 @@ from app.appium_nodes.services.reconciler_convergence import (
     decide_convergence_action,
     match_observed_entry,
     orphaned_node_ports,
-    reap_orphan_nodes,
     rows_needing_stale_clear,
     translate_action_for_pull,
 )
@@ -52,8 +47,6 @@ from app.core.metrics_recorders import (
     APPIUM_PULL_MODE_ORPHANS_OBSERVED,
     APPIUM_PULL_MODE_SKIPPED_ACTIONS,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
-    APPIUM_RECONCILER_START_FAILURES,
-    APPIUM_RECONCILER_STOP_FAILURES,
 )
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
@@ -61,7 +54,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
-from app.hosts.service import host_uses_node_pull
 from app.lifecycle.services.actions import (
     record_reconciler_start_failure_state,
     reset_reconciler_start_failure_state,
@@ -286,20 +278,6 @@ async def _touch_last_observed(
         await db.commit()
 
 
-def _classify_start_failure(exc: Exception) -> str:
-    if isinstance(exc, asyncio.TimeoutError):
-        return "timeout"
-    if isinstance(exc, httpx.HTTPStatusError):
-        text = exc.response.text.lower() if exc.response is not None else ""
-        if "already_running" in text:
-            return "already_running"
-        if "port" in text or (exc.response is not None and exc.response.status_code == HTTPStatus.CONFLICT):
-            return "port_occupied"
-    if isinstance(exc, httpx.HTTPError):
-        return "http_error"
-    return "http_error"
-
-
 async def _record_start_failure(
     row: DesiredRow,
     *,
@@ -380,14 +358,13 @@ class ReconcilerService:
         rows: list[DesiredRow],
         backoff_until_by_device: dict[uuid.UUID, datetime],
         payload: dict[str, object],
-        node_pull: bool = False,
     ) -> None:
         """Converge desired Appium nodes on one host from an agent health payload.
 
-        ``node_pull=True`` (host advertises ``node_desired_pull``) puts this host
-        in observe-only mode: no agent start/stop/restart or orphan reaps are
-        issued, and applied-transition-token facts reported by the agent are
-        ingested instead. See ``translate_action_for_pull`` and
+        Observe-only: no agent start/stop/restart or orphan reaps are issued
+        here — the agent owns those transitions and reports the result as
+        observed facts (applied-transition-token, start_failures) that this
+        pass ingests. See ``translate_action_for_pull`` and
         ``_ingest_pull_host_reports``.
         """
         now = now_utc()
@@ -412,23 +389,18 @@ class ReconcilerService:
             if not isinstance(raw_start_failures, list):
                 raw_start_failures = []
             await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
-            # Reap stray agent nodes (duplicates for one target, or nodes
-            # for a device not on this host) before convergence. Keyed off
-            # ALL host rows (rows), not the active subset, so a node for a
-            # device in recovery backoff is never mistaken for an orphan.
-            # Runs even when active_rows — or rows itself — is empty, so a
-            # row-less process on a host with no devices is still reaped.
-            # A pull host owns its own orphan cleanup — the backend only
-            # counts what it observes, it never stops anything.
-            if node_pull:
-                known_targets = {row.connection_target for row in rows} | {
-                    row.active_connection_target for row in rows if row.active_connection_target
-                }
-                orphans = orphaned_node_ports(observed, known_targets=known_targets)
-                if orphans:
-                    APPIUM_PULL_MODE_ORPHANS_OBSERVED.inc(len(orphans))
-            else:
-                await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
+            # Count stray agent nodes (duplicates for one target, or nodes for
+            # a device not on this host) before convergence. Keyed off ALL
+            # host rows (rows), not the active subset, so a node for a device
+            # in recovery backoff is never mistaken for an orphan. The host
+            # owns its own orphan cleanup — the backend only counts what it
+            # observes, it never stops anything.
+            known_targets = {row.connection_target for row in rows} | {
+                row.active_connection_target for row in rows if row.active_connection_target
+            }
+            orphans = orphaned_node_ports(observed, known_targets=known_targets)
+            if orphans:
+                APPIUM_PULL_MODE_ORPHANS_OBSERVED.inc(len(orphans))
             # Clear leaked observed pids for devices excluded from active
             # convergence (in recovery backoff). The active loop below never
             # reaches them, so a node stopped during backoff keeps a stale
@@ -451,16 +423,15 @@ class ReconcilerService:
             ]
             if not active_rows:
                 return
-            if node_pull:
-                # Persists the token clear (in the DB) for any node the agent
-                # confirms it applied, before convergence. Note this does NOT
-                # mutate the in-memory active_rows snapshots, so this pass's
-                # decide_convergence_action still sees the old token and returns
-                # restart — harmless only because translate_action_for_pull maps
-                # restart -> None in pull mode; the observed-column sync lands on
-                # the next cycle's fresh fetch_desired_rows. Scoped to active_rows
-                # (backoff-excluded rows never converge this cycle anyway).
-                await self._ingest_pull_host_reports(active_rows, raw_running_nodes, raw_start_failures)
+            # Persists the token clear (in the DB) for any node the agent
+            # confirms it applied, before convergence. Note this does NOT
+            # mutate the in-memory active_rows snapshots, so this pass's
+            # decide_convergence_action still sees the old token and returns
+            # restart — harmless only because translate_action_for_pull maps
+            # restart -> None; the observed-column sync lands on the next
+            # cycle's fresh fetch_desired_rows. Scoped to active_rows
+            # (backoff-excluded rows never converge this cycle anyway).
+            await self._ingest_pull_host_reports(active_rows, raw_running_nodes, raw_start_failures)
             await self.converge_host_rows(
                 None,
                 active_rows,
@@ -468,7 +439,6 @@ class ReconcilerService:
                 host_id=host_id,
                 host_ip=host_ip,
                 agent_port=agent_port,
-                node_pull=node_pull,
             )
         finally:
             APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(time.monotonic() - cycle_start)
@@ -483,12 +453,9 @@ class ReconcilerService:
         host_ip: str,
         agent_port: int,
         raise_errors: bool = False,
-        node_pull: bool = False,
     ) -> None:
         """Drive convergence for one host."""
         session_scope = _session_scope(db)
-        start_agent = self._make_start_agent(session_scope=session_scope)
-        stop_agent = self._make_stop_agent(host_ip, agent_port)
         write_observed = self._write_observed_factory(session_scope=session_scope)
         clear_token = self._clear_token_factory(session_scope=session_scope)
         reset_start_failure = self._make_reset_start_failure(session_scope=session_scope)
@@ -496,38 +463,20 @@ class ReconcilerService:
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
             obs = match_observed_entry(row, observed_by_target)
             action = decide_convergence_action(row, observed=obs, now=now_utc())
-            if node_pull:
-                translated = translate_action_for_pull(action)
-                if translated is None:
-                    APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind=action.kind).inc()
-                    continue
-                action = translated
+            translated = translate_action_for_pull(action)
+            if translated is None:
+                APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind=action.kind).inc()
+                continue
+            action = translated
             try:
                 await _execute_action(
                     host_id=host_id,
                     row=row,
                     action=action,
-                    start_agent=start_agent,
-                    stop_agent=stop_agent,
                     write_observed=write_observed,
                     clear_token=clear_token,
                     reset_start_failure=reset_start_failure,
                 )
-            except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
-                # Expected, self-healing transients during the Appium process
-                # restart / sidecar-respawn window: a node already runs for the
-                # target, or the agent hasn't acknowledged a stop yet. The next
-                # reconciler tick converges; the APPIUM_RECONCILER_* metrics are
-                # the durable signal, so log at debug, not warning.
-                logger.debug(
-                    "appium_reconciler_convergence_action_transient",
-                    exc_info=True,
-                    host_id=str(host_id),
-                    device_id=str(row.device_id),
-                    action=action.kind,
-                )
-                if raise_errors:
-                    raise
             except Exception:  # convergence loop; log and continue, re-raise if requested
                 logger.warning(
                     "appium_reconciler_convergence_action_failed",
@@ -630,95 +579,6 @@ class ReconcilerService:
                     row, reason="spawn_failed", session_scope=self._session_factory, settings=self._settings
                 )
 
-    def _make_start_agent(
-        self,
-        *,
-        session_scope: SessionScope | None = None,
-    ) -> Callable[..., Awaitable[dict[str, Any]]]:
-        resolved_session_scope = session_scope or self._session_factory
-
-        async def _start(*, row: DesiredRow, port: int | None) -> dict[str, Any]:
-            async with resolved_session_scope() as db:
-                device = await _load_device_for_reconciler(db, row.device_id)
-                if device is None:
-                    raise RuntimeError(f"Device {row.device_id} no longer exists")
-                try:
-                    node = device.appium_node
-                    if node is None:
-                        raise RuntimeError(f"Device {row.device_id} has no AppiumNode row to converge")
-                    handle = await _start_for_node(
-                        db,
-                        device,
-                        node=node,
-                        preferred_port=port,
-                        settings=self._settings,
-                        pool=self._pool,
-                        circuit_breaker=self._circuit_breaker,
-                    )
-                    if handle.port <= 0:
-                        raise RuntimeError(
-                            f"Agent returned invalid Appium port {handle.port} for device {row.device_id}"
-                        )
-                except NodeAlreadyRunningError:
-                    # The agent already runs a node for this target — not a start
-                    # failure. Don't trip recovery backoff; let the convergence
-                    # action treat it as already-converged.
-                    raise
-                except Exception as exc:
-                    reason = _classify_start_failure(exc)
-                    APPIUM_RECONCILER_START_FAILURES.labels(reason=reason).inc()
-                    await _record_start_failure(
-                        row,
-                        reason=reason,
-                        session_scope=resolved_session_scope,
-                        settings=self._settings,
-                    )
-                    raise
-                await _reset_start_failure(
-                    row,
-                    session_scope=resolved_session_scope,
-                    settings=self._settings,
-                )
-                return {
-                    "port": handle.port,
-                    "pid": handle.pid,
-                    "active_connection_target": handle.active_connection_target,
-                    "allocated_caps": await appium_node_resource_service.get_capabilities(db, node_id=node.id),
-                }
-
-        return _start
-
-    def _make_stop_agent(
-        self,
-        host_ip: str,
-        agent_port: int,
-    ) -> Callable[..., Awaitable[None]]:
-        async def _stop(*, row: DesiredRow | None = None, port: int | None) -> None:
-            if port is None or port <= 0:
-                return
-            try:
-                stopped = await stop_remote_node(
-                    port=port,
-                    agent_base=agent_base_url(host_ip, agent_port),
-                    host=host_ip,
-                    agent_port=agent_port,
-                    http_client_factory=httpx.AsyncClient,
-                    settings=self._settings,
-                    pool=self._pool,
-                    circuit_breaker=self._circuit_breaker,
-                )
-            except Exception:
-                APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()
-                raise
-            if not stopped:
-                APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
-                device_ref = row.device_id if row is not None else "<orphan>"
-                raise NodeStopNotAcknowledgedError(
-                    f"Agent did not acknowledge Appium stop for device {device_ref} on port {port}"
-                )
-
-        return _stop
-
     def _write_observed_factory(
         self,
         *,
@@ -819,51 +679,18 @@ class ReconcilerService:
             if host is None or host.status != HostStatus.online:
                 return None
 
-        if host_uses_node_pull(host):
-            # Pull-capable host: no agent start/stop/restart I/O here — just
-            # wake the agent's own poller so it re-pulls desired state now.
-            try:
-                await agent_nodes_refresh(
-                    host.ip,
-                    host.agent_port,
-                    settings=self._settings,
-                    pool=self._pool,
-                    circuit_breaker=self._circuit_breaker,
-                )
-            except Exception:  # noqa: BLE001 - poke is best-effort
-                logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)
-        else:
-            payload = (
-                await agent_health(
-                    host.ip,
-                    host.agent_port,
-                    http_client_factory=httpx.AsyncClient,
-                    settings=self._settings,
-                    pool=self._pool,
-                    circuit_breaker=self._circuit_breaker,
-                )
-                or {}
+        # No agent start/stop/restart I/O here — just wake the agent's own
+        # poller so it re-pulls desired state now.
+        try:
+            await agent_nodes_refresh(
+                host.ip,
+                host.agent_port,
+                settings=self._settings,
+                pool=self._pool,
+                circuit_breaker=self._circuit_breaker,
             )
-            appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
-            if not isinstance(appium_processes, dict):
-                return None
-            observed = [
-                ObservedEntry(
-                    port=entry.port,
-                    pid=entry.pid,
-                    connection_target=entry.connection_target,
-                )
-                for entry in parse_running_nodes(appium_processes)
-            ]
-            await self.converge_host_rows(
-                db,
-                [row],
-                observed,
-                host_id=host.id,
-                host_ip=host.ip,
-                agent_port=host.agent_port,
-                raise_errors=True,
-            )
+        except Exception:  # noqa: BLE001 - poke is best-effort
+            logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)
         async with session_scope() as read_db:
             node = await read_db.get(AppiumNode, row.node_id)
             if node is not None:

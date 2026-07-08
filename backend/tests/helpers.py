@@ -19,13 +19,11 @@ from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.core.type_defs import SessionFactory
 
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
@@ -534,51 +532,3 @@ async def run_one_heartbeat_cycle(db: AsyncSession, heartbeat: object) -> None:
         settings=heartbeat._settings,  # type: ignore[attr-defined]
         session_factory=heartbeat._session_factory,  # type: ignore[attr-defined]
     )
-
-
-async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -> None:
-    """Drive per-host reconciliation with explicit payloads supplied by test mocks."""
-    import httpx2 as httpx
-    from sqlalchemy import select
-
-    from app.appium_nodes.services import reconciler as appium_reconciler
-    from app.appium_nodes.services.reconciler import ReconcilerService
-    from app.hosts.models import Host, HostStatus
-
-    resolved_settings = settings or FakeSettingsReader({})
-    pool = Mock()
-    circuit_breaker = Mock()
-    service = ReconcilerService(
-        publisher=test_event_bus,
-        settings=resolved_settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-        session_factory=appium_reconciler.async_session,
-    )
-    async with appium_reconciler.async_session() as db:
-        hosts = list((await db.execute(select(Host).where(Host.status == HostStatus.online))).scalars().all())
-        desired = await appium_reconciler.fetch_desired_rows(db)
-        backoff = await appium_reconciler.fetch_backoff_until(db)
-    rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
-    for row in desired:
-        rows_by_host.setdefault(row.host_id, []).append(row)
-    for host in hosts:
-        payload = (
-            await appium_reconciler.agent_health(
-                host.ip,
-                host.agent_port,
-                http_client_factory=httpx.AsyncClient,
-                settings=resolved_settings,
-                pool=pool,
-                circuit_breaker=circuit_breaker,
-            )
-            or {}
-        )
-        await service.reconcile_host(
-            host_id=host.id,
-            host_ip=host.ip,
-            agent_port=host.agent_port,
-            rows=rows_by_host.get(host.id, []),
-            backoff_until_by_device=backoff,
-            payload=payload,
-        )

@@ -18,12 +18,12 @@ from app.hosts.service import HostCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
-CAPS_V2 = {"orchestration_contract_version": 2}
+CAPS_V3 = {"orchestration_contract_version": 3}
 
 
 def test_validate_orchestration_contract_ignores_unknown_capability_keys() -> None:
     host_service.validate_orchestration_contract(
-        {"orchestration_contract_version": 2, "node_desired_pull": 1},
+        {"orchestration_contract_version": 3, "node_desired_pull": 1},
         host_label="newer-agent",
     )
 
@@ -104,7 +104,7 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
             os_type=OSType.macos,
             agent_port=None,
             agent_version="2.0.0",
-            capabilities={**CAPS_V2, "missing_prerequisites": ["adb", 5]},
+            capabilities={**CAPS_V3, "missing_prerequisites": ["adb", 5]},
         ),
     )
 
@@ -112,7 +112,7 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
     assert registered.ip == "10.0.0.99"
     assert registered.os_type == OSType.macos
     assert registered.status == HostStatus.online
-    assert registered.capabilities == {**CAPS_V2, "missing_prerequisites": ["adb"]}
+    assert registered.capabilities == {**CAPS_V3, "missing_prerequisites": ["adb"]}
 
 
 async def test_register_host_creates_pending_or_online_host_based_on_setting(
@@ -129,7 +129,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             ip="10.0.0.20",
             os_type=OSType.linux,
             agent_port=None,
-            capabilities=CAPS_V2,
+            capabilities=CAPS_V3,
         ),
     )
 
@@ -148,7 +148,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             ip="10.0.0.21",
             os_type=OSType.linux,
             agent_port=None,
-            capabilities=CAPS_V2,
+            capabilities=CAPS_V3,
         ),
     )
     assert online_host.status == HostStatus.online
@@ -220,7 +220,7 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
             ip="10.0.0.51",
             os_type=OSType.linux,
             agent_port=5200,
-            capabilities=CAPS_V2,
+            capabilities=CAPS_V3,
         ),
     )
 

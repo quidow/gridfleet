@@ -9,11 +9,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import exists, select
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.reconfigure_delivery import (
-    INLINE_AGENT_CALL_TIMEOUT_SEC,
-    InlineReconfigureDeliveryFailedError,
-    deliver_agent_reconfigures,
-)
+from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
 from app.core.timeutil import now_utc
@@ -338,49 +334,29 @@ class RunAllocatorService:
                 await db.rollback()
                 raise
 
-        deferred = await self._deliver_routing_reconfigures(db, device_infos)
+        await self._deliver_routing_reconfigures(db, device_infos)
 
         refreshed_run = await get_run(db, run.id)
         assert refreshed_run is not None
-        if deferred:
-            self._publisher.queue_for_session(
-                db,
-                "run.routing_delivery_deferred",
-                {
-                    "run_id": str(refreshed_run.id),
-                    "name": refreshed_run.name,
-                    "device_count": len(deferred),
-                },
-                severity="warning",
-            )
-            await db.commit()
         return refreshed_run, device_infos
 
-    async def _deliver_routing_reconfigures(
-        self, db: AsyncSession, device_infos: list[ReservedDeviceInfo]
-    ) -> list[str]:
-        """Deliver the staged grid-routing reconfigure to each reserved device's
-        agent inline, so the node stereotype carries the run id by the time the
-        reservation is returned. Best-effort: a failed delivery leaves its outbox
-        row for the reconciler loop to retry and is reported back to the caller so
-        it can be surfaced. Returns the device ids whose delivery was deferred.
+    async def _deliver_routing_reconfigures(self, db: AsyncSession, device_infos: list[ReservedDeviceInfo]) -> None:
+        """Wake each reserved device's agent inline so it re-pulls its desired
+        state (carrying the new run id) without waiting for the next poll.
         """
-        deferred: list[str] = []
+        # ponytail: sequential, not gathered — each poke queries the shared
+        # AsyncSession, which is not safe for concurrent use. A down host costs
+        # N * NODE_POKE_TIMEOUT_SEC here; dedup by host (or per-task sessions)
+        # only if that edge case ever matters.
         for info in device_infos:
-            try:
-                await deliver_agent_reconfigures(
-                    db,
-                    uuid.UUID(info.device_id),
-                    agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
-                    raise_on_failure=True,
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
-                    publisher=self._publisher,
-                )
-            except InlineReconfigureDeliveryFailedError:
-                deferred.append(info.device_id)
-        return deferred
+            await poke_node_refresh(
+                db,
+                uuid.UUID(info.device_id),
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
+                publisher=self._publisher,
+            )
 
     def _resolve_run_options(self, data: RunCreate) -> tuple[int, int]:
         ttl_minutes = data.ttl_minutes

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 
-from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent_reconciler import reconcile_device
@@ -29,13 +28,13 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Without this stub, deliver_agent_reconfigures attempts a real TCP connect
-    # to the test host IP (10.0.0.x) and waits the full 5s inline timeout.
-    # Tests that need to assert on the call override this with their own
-    # monkeypatch; pytest applies test-level patches on top of autouse ones.
+    # Without this stub, poke_node_refresh attempts a real TCP connect to the
+    # test host IP (10.0.0.x). Tests that need to assert on the call override
+    # this with their own monkeypatch; pytest applies test-level patches on
+    # top of autouse ones.
     monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        AsyncMock(return_value={"port": 4723}),
+        "app.agent_comm.node_poke.agent_operations.agent_nodes_refresh",
+        AsyncMock(),
     )
 
 
@@ -101,71 +100,6 @@ async def test_cooldown_device_success(client: AsyncClient, db_session: AsyncSes
     assert entry.cooldown_count == 1
     assert entry.exclusion_reason == "flaky connection"
     assert entry.excluded_until is not None
-
-
-async def test_cooldown_device_returns_503_when_inline_delivery_fails(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If the inline ``deliver_agent_reconfigures`` cannot reach the agent,
-    the cooldown HTTP handler must return 5xx — not 200. The DB state is
-    already updated (intents committed, reservation excluded), but the
-    agent-side drain did not land. Returning 200 misleads testkit into
-    requesting another session that lands on the very device that was
-    supposed to be on cooldown (this is the original repro).
-    """
-    from app.core.errors import AgentUnreachableError
-
-    device = await _create_available_device(db_session, default_host_id, "cooldown-flaky-agent")
-    # Seed an AppiumNode so ``reconcile_device`` stages a real reconfigure
-    # outbox row — without a node the intent reconciler returns early and
-    # no agent call is attempted, so the failure path stays unexercised.
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=12345,
-            active_connection_target=device.connection_target,
-            generation=1,
-        )
-    )
-    await db_session.commit()
-    run = await _create_run(client)
-    run_id = run["id"]
-    device_id = str(device.id)
-
-    # Override the autouse stub so the inline delivery sees an unreachable
-    # agent. The exception type matches what ``agent_appium_reconfigure``
-    # raises in production when the agent socket is closed.
-    monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "offline")),
-    )
-
-    resp = await client.post(
-        f"/api/runs/{run_id}/devices/{device_id}/cooldown",
-        json={"reason": "flaky connection", "ttl_seconds": 120},
-    )
-    assert resp.status_code == 503
-    assert resp.headers.get("retry-after") == "5"
-
-    # DB state is still committed — the cooldown intent + reservation
-    # exclusion landed; only the agent-side drain push failed. The
-    # background delivery loop will retry it.
-    entry = (
-        await db_session.execute(
-            select(DeviceReservation).where(
-                DeviceReservation.run_id == uuid.UUID(run_id),
-                DeviceReservation.device_id == device.id,
-            )
-        )
-    ).scalar_one()
-    assert entry.excluded is True
-    assert entry.exclusion_reason == "flaky connection"
 
 
 async def test_cooldown_device_not_found_run(client: AsyncClient) -> None:
@@ -320,16 +254,16 @@ async def test_cooldown_preserves_desired_grid_run_id(
     assert node.stop_pending is False
 
 
-async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
+async def test_cooldown_escalation_pokes_agent_inline(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Escalation to maintenance also flips ``accepting_new_sessions=False``
-    via the maintenance intents. The push must be inline for the same reason
-    as the cooldown-set branch — otherwise the Grid hub keeps routing to the
-    relay until the next reconciler tick.
+    via the maintenance intents. The agent must be poked inline for the same
+    reason as the cooldown-set branch — otherwise the Grid hub keeps routing
+    to the relay until the next reconciler tick.
     """
     monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
     device = await _create_available_device(db_session, default_host_id, "cooldown-esc-inline")
@@ -345,11 +279,8 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
     db_session.add(node)
     await db_session.commit()
 
-    reconfigure = AsyncMock(return_value={"port": 4723})
-    monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        reconfigure,
-    )
+    poke = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.node_poke.agent_operations.agent_nodes_refresh", poke)
 
     resp = await client.post(
         f"/api/runs/{run_id}/devices/{device.id}/cooldown",
@@ -358,23 +289,20 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
     assert resp.status_code == 200
     assert resp.json()["status"] == "maintenance_escalated"
 
-    reconfigure.assert_awaited()
-    kwargs = reconfigure.await_args.kwargs
-    assert kwargs["port"] == 4723
-    assert kwargs["accepting_new_sessions"] is False
+    poke.assert_awaited()
 
 
-async def test_cooldown_delivers_agent_reconfigure_inline(
+async def test_cooldown_pokes_agent_inline(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cooldown must push the ``accepting_new_sessions=False`` reconfigure to
-    the agent before the HTTP response returns. Otherwise new sessions keep
-    reaching the cooled-down device until the next
-    ``device_intent_reconciler_loop`` tick (default 5 s). During that window
-    testkit's next ``webdriver.Remote(...)`` can still land on the same node.
+    """Cooldown must wake the agent before the HTTP response returns, so it
+    re-pulls the ``accepting_new_sessions=False`` desired state without
+    waiting for the next ``device_intent_reconciler_loop`` tick (default 5 s).
+    During that window testkit's next ``webdriver.Remote(...)`` can still
+    land on the same node.
     """
     device = await _create_available_device(db_session, default_host_id, "cooldown-inline")
     run = await _create_run(client)
@@ -389,11 +317,8 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     db_session.add(node)
     await db_session.commit()
 
-    reconfigure = AsyncMock(return_value={"port": 4723})
-    monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        reconfigure,
-    )
+    poke = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.node_poke.agent_operations.agent_nodes_refresh", poke)
 
     resp = await client.post(
         f"/api/runs/{run_id}/devices/{device.id}/cooldown",
@@ -401,14 +326,7 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     )
     assert resp.status_code == 200
 
-    reconfigure.assert_awaited_once()
-    kwargs = reconfigure.await_args.kwargs
-    assert kwargs["port"] == 4723
-    assert kwargs["accepting_new_sessions"] is False
-    assert kwargs["stop_pending"] is False
-    # Inline delivery must pass a bounded timeout — testkit's cooldown call
-    # times out at 10 s, so the agent-call budget here has to leave headroom.
-    assert kwargs["timeout"] == INLINE_AGENT_CALL_TIMEOUT_SEC
+    poke.assert_awaited_once()
 
 
 async def test_cooldown_does_not_mutate_operational_state(

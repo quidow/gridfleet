@@ -1,13 +1,13 @@
 import uuid
-from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, Mock
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.appium_nodes.services import (
     reconciler_agent as appium_reconciler_agent,
 )
-from app.appium_nodes.services.reconciler_agent import AgentTransport, build_agent_start_payload
+from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
@@ -22,23 +22,6 @@ class _FakeHost:
     ip = "127.0.0.1"
     agent_port = 5100
     tool_env: dict[str, str] | None = None
-
-
-class _FakeHttpxResponse:
-    """Minimal shim for httpx.Response used by node_service.
-
-    `response_json_dict(resp)` calls `resp.json()`; caller also calls
-    `resp.raise_for_status()` in both start and restart paths.
-    """
-
-    def __init__(self, payload: dict[str, Any]) -> None:
-        self._payload = payload
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        return None
 
 
 @pytest.fixture
@@ -57,30 +40,6 @@ def _android_real_device() -> MagicMock:
     device.os_version = "14"
     device.tags = {}
     return device
-
-
-@pytest.fixture
-def _patched_remote_start(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    captured: dict[str, Any] = {}
-
-    async def _fake_appium_start(
-        agent_base: str, *, host: str, payload: dict[str, Any], **kwargs: Any
-    ) -> _FakeHttpxResponse:
-        captured["payload"] = payload
-        return _FakeHttpxResponse(
-            {
-                "port": payload["port"],
-                "pid": 1,
-                "connection_target": payload["connection_target"],
-            }
-        )
-
-    async def _noop_session_aligned(*args: Any, **kwargs: Any) -> None:
-        return None
-
-    monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", _noop_session_aligned)
-    return captured
 
 
 @pytest.mark.asyncio
@@ -111,11 +70,19 @@ async def test_uiautomator2_stereotype_uses_device_template(
     assert "appium:platformName" not in stereotype
 
 
+# ---------------------------------------------------------------------------
+# Restored after push-path deletion (f7c5d947): these guarded behavior of
+# build_node_launch_payload, which survives as the shared payload builder for
+# the pull channel (app/appium_nodes/routers/agent_state.py). Originally
+# exercised through the now-deleted start_remote_node/push flow; rewritten to
+# call build_node_launch_payload directly.
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_temporary_start_forwards_pack_appium_env(
+async def test_build_node_launch_payload_forwards_pack_appium_env(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
-    _patched_remote_start: dict[str, Any],
 ) -> None:
     await seed_test_packs(db_session)
     await db_session.commit()
@@ -138,6 +105,7 @@ async def test_temporary_start_forwards_pack_appium_env(
     )
 
     monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", AsyncMock(return_value=None))
     monkeypatch.setattr(
         appium_reconciler_agent,
         "build_agent_start_payload",
@@ -154,21 +122,19 @@ async def test_temporary_start_forwards_pack_appium_env(
         },
     )
 
-    await appium_reconciler_agent.start_remote_node(
+    payload = await appium_reconciler_agent.build_node_launch_payload(
         db_session,
         device,
         port=4723,
         allocated_caps=None,
-        agent_base="http://starts.local:5100",
-        transport=AgentTransport(http_client_factory=AsyncMock(), circuit_breaker=Mock()),
         settings=FakeSettingsReader({}),
     )
 
-    assert _patched_remote_start["payload"]["appium_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
+    assert payload["appium_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
 
 
 @pytest.mark.asyncio
-async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
+async def test_build_node_launch_payload_sends_device_field_caps_only_to_appium_defaults(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -192,34 +158,16 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
         device_config={"roku_password": "dev-password"},
     )
 
-    captured: dict[str, Any] = {}
-
-    async def _fake_appium_start(
-        agent_base: str, *, host: str, payload: dict[str, Any], **kwargs: Any
-    ) -> _FakeHttpxResponse:
-        captured["payload"] = payload
-        return _FakeHttpxResponse(
-            {
-                "port": payload["port"],
-                "pid": 3,
-                "connection_target": payload["connection_target"],
-            }
-        )
-
     monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
-    monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
 
-    await appium_reconciler_agent.start_remote_node(
+    payload = await appium_reconciler_agent.build_node_launch_payload(
         db_session,
         device,
         port=4724,
         allocated_caps=None,
-        agent_base="http://starts.local:5100",
-        transport=AgentTransport(http_client_factory=AsyncMock(), circuit_breaker=Mock()),
         settings=FakeSettingsReader({}),
     )
 
-    payload = captured["payload"]
     assert payload["extra_caps"]["appium:password"] == "dev-password"
     assert payload["extra_caps"]["appium:ip"] == "192.168.1.2"
     assert "stereotype_caps" not in payload

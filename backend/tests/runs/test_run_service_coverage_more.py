@@ -860,7 +860,7 @@ async def test_cooldown_escalation_releases_device(
     run = await create_reserved_run(db_session, name="cooldown-esc-run", devices=[device], state=RunState.active)
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.deliver_agent_reconfigures", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.poke_node_refresh", AsyncMock())
 
     maintenance = AsyncMock()
     svc = RunFailureService(
@@ -905,7 +905,7 @@ async def test_cooldown_escalation_enters_maintenance_when_enabled(
     run = await create_reserved_run(db_session, name="cooldown-esc-maint-run", devices=[device], state=RunState.active)
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.deliver_agent_reconfigures", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.poke_node_refresh", AsyncMock())
 
     maintenance = AsyncMock()
     svc = RunFailureService(

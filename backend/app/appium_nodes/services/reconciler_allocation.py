@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
-from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
+from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import resource_service as resource_claims
-from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
 from app.devices.models import Device
 
 if TYPE_CHECKING:
@@ -67,35 +66,7 @@ async def candidate_ports(
     raise NodeManagerError("No free ports available in the configured range")
 
 
-async def reserve_appium_port(
-    db: AsyncSession,
-    *,
-    host_id: uuid.UUID,
-    port: int,
-    node_id: uuid.UUID,
-) -> int:
-    """Reserve exactly one main Appium port for a node."""
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:host_id AS text) || ':' || :capability_key, 0))"),
-        {"host_id": str(host_id), "capability_key": APPIUM_PORT_CAPABILITY},
-    )
-    await resource_claims.release_capability(db, node_id=node_id, capability_key=APPIUM_PORT_CAPABILITY)
-    reserved = await resource_claims.reserve(
-        db,
-        host_id=host_id,
-        capability_key=APPIUM_PORT_CAPABILITY,
-        start_port=port,
-        node_id=node_id,
-    )
-    if reserved == port:
-        return reserved
-    await resource_claims.release_capability(db, node_id=node_id, capability_key=APPIUM_PORT_CAPABILITY)
-    APPIUM_RECONCILER_ALLOCATION_COLLISIONS.inc()
-    raise NodePortConflictError(f"Appium port {port} is already reserved on host {host_id}")
-
-
 __all__ = [
     "APPIUM_PORT_CAPABILITY",
     "candidate_ports",
-    "reserve_appium_port",
 ]
