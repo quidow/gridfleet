@@ -21,6 +21,7 @@ from app.core.background_loop import BackgroundLoop
 from app.core.metrics_recorders import APPIUM_RECONCILER_CYCLE_FAILURES, APPIUM_RECONCILER_LAST_CYCLE_SECONDS
 from app.core.observability import get_logger
 from app.hosts.models import Host, HostStatus
+from app.hosts.service import host_uses_node_pull
 
 if TYPE_CHECKING:
     import uuid
@@ -107,6 +108,7 @@ async def run_host_sweep_once(
                     rows=rows_by_host.get(host_id, []),
                     backoff_until_by_device=backoff,
                     payload=result.payload or {},
+                    node_pull=host_uses_node_pull(host),
                 )
             except Exception:
                 # Stage isolation: a convergence failure must not poison other

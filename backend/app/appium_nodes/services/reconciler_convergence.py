@@ -246,6 +246,18 @@ def rows_needing_stale_clear(
     ]
 
 
+def translate_action_for_pull(action: ConvergenceAction) -> ConvergenceAction | None:
+    """Translate a convergence action for a pull-capable host.
+
+    Agent-touching kinds (``start``/``stop``/``restart``) are skipped: the
+    agent owns those transitions and reports the result as observed facts on
+    its next health payload. DB-only kinds pass through unchanged.
+    """
+    if action.kind in ("start", "stop", "restart"):
+        return None
+    return action
+
+
 async def _execute_agent_action(
     *,
     host_id: uuid.UUID,

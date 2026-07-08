@@ -41,11 +41,15 @@ from app.appium_nodes.services.reconciler_convergence import (
     _needs_start_failure_reset,
     decide_convergence_action,
     match_observed_entry,
+    orphaned_node_ports,
     reap_orphan_nodes,
     rows_needing_stale_clear,
+    translate_action_for_pull,
 )
 from app.core.database import async_session
 from app.core.metrics_recorders import (
+    APPIUM_PULL_MODE_ORPHANS_OBSERVED,
+    APPIUM_PULL_MODE_SKIPPED_ACTIONS,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
     APPIUM_RECONCILER_START_FAILURES,
     APPIUM_RECONCILER_STOP_FAILURES,
@@ -179,6 +183,17 @@ async def _lock_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) ->
         return None
 
 
+def _applied_token_for_row(row: DesiredRow, applied_by_target: dict[str, object]) -> object:
+    """Return the agent-reported ``applied_transition_token`` for ``row``, if any.
+
+    Mirrors ``match_observed_entry``'s target-matching fallback: prefer the
+    row's recorded live target, then fall back to the registered one.
+    """
+    if row.active_connection_target is not None and row.active_connection_target in applied_by_target:
+        return applied_by_target[row.active_connection_target]
+    return applied_by_target.get(row.connection_target)
+
+
 async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     device = await _lock_device_for_reconciler(db, row.device_id)
     if device is None or device.appium_node is None:
@@ -306,8 +321,16 @@ class ReconcilerService:
         rows: list[DesiredRow],
         backoff_until_by_device: dict[uuid.UUID, datetime],
         payload: dict[str, object],
+        node_pull: bool = False,
     ) -> None:
-        """Converge desired Appium nodes on one host from an agent health payload."""
+        """Converge desired Appium nodes on one host from an agent health payload.
+
+        ``node_pull=True`` (host advertises ``node_desired_pull``) puts this host
+        in observe-only mode: no agent start/stop/restart or orphan reaps are
+        issued, and applied-transition-token facts reported by the agent are
+        ingested instead. See ``translate_action_for_pull`` and
+        ``_ingest_pull_host_reports``.
+        """
         now = now_utc()
         cycle_start = time.monotonic()
         try:
@@ -323,6 +346,9 @@ class ReconcilerService:
                 )
                 for entry in running
             ]
+            raw_running_nodes = appium_processes.get("running_nodes")
+            if not isinstance(raw_running_nodes, list):
+                raw_running_nodes = []
             await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
             # Reap stray agent nodes (duplicates for one target, or nodes
             # for a device not on this host) before convergence. Keyed off
@@ -330,7 +356,17 @@ class ReconcilerService:
             # device in recovery backoff is never mistaken for an orphan.
             # Runs even when active_rows — or rows itself — is empty, so a
             # row-less process on a host with no devices is still reaped.
-            await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
+            # A pull host owns its own orphan cleanup — the backend only
+            # counts what it observes, it never stops anything.
+            if node_pull:
+                known_targets = {row.connection_target for row in rows} | {
+                    row.active_connection_target for row in rows if row.active_connection_target
+                }
+                orphans = orphaned_node_ports(observed, known_targets=known_targets)
+                if orphans:
+                    APPIUM_PULL_MODE_ORPHANS_OBSERVED.inc(len(orphans))
+            else:
+                await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
             # Clear leaked observed pids for devices excluded from active
             # convergence (in recovery backoff). The active loop below never
             # reaches them, so a node stopped during backoff keeps a stale
@@ -353,6 +389,11 @@ class ReconcilerService:
             ]
             if not active_rows:
                 return
+            if node_pull:
+                # Runs before convergence so a token the agent confirms it
+                # applied is cleared this pass, before decide_convergence_action
+                # would otherwise re-decide a restart for it.
+                await self._ingest_pull_host_reports(active_rows, raw_running_nodes)
             await self.converge_host_rows(
                 None,
                 active_rows,
@@ -360,6 +401,7 @@ class ReconcilerService:
                 host_id=host_id,
                 host_ip=host_ip,
                 agent_port=agent_port,
+                node_pull=node_pull,
             )
         finally:
             APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(time.monotonic() - cycle_start)
@@ -374,6 +416,7 @@ class ReconcilerService:
         host_ip: str,
         agent_port: int,
         raise_errors: bool = False,
+        node_pull: bool = False,
     ) -> None:
         """Drive convergence for one host."""
         session_scope = _session_scope(db)
@@ -386,6 +429,12 @@ class ReconcilerService:
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
             obs = match_observed_entry(row, observed_by_target)
             action = decide_convergence_action(row, observed=obs, now=now_utc())
+            if node_pull:
+                translated = translate_action_for_pull(action)
+                if translated is None:
+                    APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind=action.kind).inc()
+                    continue
+                action = translated
             try:
                 await _execute_action(
                     host_id=host_id,
@@ -422,6 +471,35 @@ class ReconcilerService:
                 )
                 if raise_errors:
                     raise
+
+    async def _ingest_pull_host_reports(self, rows: list[DesiredRow], raw_running_nodes: list[dict[str, Any]]) -> None:
+        """Ingest agent-reported facts for a pull-capable host (reconcile_host, pull mode only).
+
+        Task 2 scope: applied-transition-token clear only. For each row
+        carrying a pending ``transition_token``, if the agent's matching
+        running-node entry reports ``applied_transition_token`` equal to that
+        token, clear it via the same natural-clear path used for expiry
+        (``_clear_transition_token``) so the clear does not trip
+        ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN``. Start-failure ingest
+        (Task 4) and mark-stopped-on-absence (already handled by the
+        ``db_clear_stale_running`` pass-through) are out of scope here.
+        """
+        applied_by_target: dict[str, object] = {}
+        for entry in raw_running_nodes:
+            if not isinstance(entry, dict):
+                continue
+            target = entry.get("connection_target")
+            if isinstance(target, str):
+                applied_by_target[target] = entry.get("applied_transition_token")
+        if not applied_by_target:
+            return
+        clear_token = self._clear_token_factory()
+        for row in rows:
+            if row.transition_token is None:
+                continue
+            applied = _applied_token_for_row(row, applied_by_target)
+            if applied == str(row.transition_token):
+                await clear_token(row=row)
 
     def _make_start_agent(
         self,
