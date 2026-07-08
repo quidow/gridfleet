@@ -10,23 +10,17 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
+from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
-from app.appium_nodes.services import (
-    reconciler_agent as appium_reconciler_agent,
-)
 from app.appium_nodes.services import (
     resource_service as appium_node_resource_service,
 )
 from app.appium_nodes.services.reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
 from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
-from app.devices.models import Device
 from app.hosts.models import Host, HostStatus, OSType
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
@@ -304,66 +298,3 @@ async def test_reserve_appium_port_replaces_same_node_main_port_claim(db_session
 
     assert moved_port == start + 1
     assert [claim.port for claim in claims] == [start + 1]
-
-
-async def test_start_node_reserves_main_appium_port_and_retries_collision(
-    db_session: AsyncSession,
-) -> None:
-    host = await _make_host(db_session, ip="10.0.0.81")
-    device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-reserve",
-        connection_target="dev-main-port-reserve",
-        name="dev-main-port-reserve",
-    )
-    other_device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-other",
-        connection_target="dev-main-port-other",
-        name="dev-main-port-other",
-    )
-    start = settings_service.get("appium.port_range_start")
-    other_node = AppiumNode(device_id=other_device.id, port=start)
-    node = AppiumNode(device_id=device.id, port=start)
-    db_session.add_all([other_node, node])
-    await db_session.flush()
-    before = APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get()
-    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=other_node.id)
-    await db_session.commit()
-    device = (
-        await db_session.execute(
-            select(Device)
-            .where(Device.id == device.id)
-            .options(selectinload(Device.appium_node), selectinload(Device.host))
-        )
-    ).scalar_one()
-
-    remote_start = AsyncMock(
-        return_value=RemoteStartResult(
-            port=start + 1,
-            pid=1234,
-            active_connection_target=device.identity_value,
-            agent_base="http://agent",
-        )
-    )
-    with patch("app.appium_nodes.services.reconciler_agent.start_remote_node", new=remote_start):
-        handle = await appium_reconciler_agent._start_for_node(
-            db_session, device, node=node, preferred_port=start, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
-
-    assert handle.port == start + 1
-    assert remote_start.await_args.kwargs["port"] == start + 1
-    assert APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get() == before + 1
-    claims = (
-        await db_session.execute(
-            select(AppiumNodeResourceClaim).where(
-                AppiumNodeResourceClaim.host_id == host.id,
-                AppiumNodeResourceClaim.node_id == node.id,
-            )
-        )
-    ).scalars()
-    claims_by_key = {claim.capability_key: claim.port for claim in claims}
-    assert claims_by_key[APPIUM_PORT_CAPABILITY] == start + 1
-    await appium_node_resource_service.release_managed(db_session, node_id=node.id)

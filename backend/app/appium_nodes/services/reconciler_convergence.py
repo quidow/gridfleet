@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS, APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED
 from app.core.observability import get_logger
 
@@ -15,18 +14,6 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     import uuid
     from datetime import datetime
-
-
-def _log_already_running(*, host_id: uuid.UUID, row: DesiredRow, action: str) -> None:
-    """The agent already runs a node for this target — the start/restart leg is
-    a no-op. The next observation tick records the node via ``db_mark_running``."""
-    logger.debug(
-        "appium_reconciler_node_already_running",
-        host_id=str(host_id),
-        device_id=str(row.device_id),
-        connection_target=row.connection_target,
-        action=action,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +78,6 @@ def _needs_start_failure_reset(state: dict[str, Any] | None) -> bool:
     )
 
 
-StartAgent = Callable[..., Awaitable[dict[str, Any]]]
-StopAgent = Callable[..., Awaitable[None]]
 WriteObserved = Callable[..., Awaitable[None]]
 ClearToken = Callable[..., Awaitable[None]]
 ResetStartFailure = Callable[..., Awaitable[None]]
@@ -185,32 +170,6 @@ def orphaned_node_ports(observed: list[ObservedEntry], *, known_targets: set[str
     return orphans
 
 
-async def reap_orphan_nodes(
-    observed: list[ObservedEntry],
-    desired_rows: list[DesiredRow],
-    *,
-    stop_agent: Callable[..., Awaitable[None]],
-) -> list[int]:
-    """Stop agent-reported nodes that no desired row can converge.
-
-    See ``orphaned_node_ports`` for what counts as an orphan. A per-port stop
-    failure is logged and swallowed so one stray node cannot abort the host's
-    reconcile cycle. Returns the ports identified as orphans (for observability
-    and tests).
-    """
-    known_targets = {row.connection_target for row in desired_rows} | {
-        row.active_connection_target for row in desired_rows if row.active_connection_target
-    }
-    orphans = orphaned_node_ports(observed, known_targets=known_targets)
-    for port in orphans:
-        logger.warning("appium_reconciler_orphan_node_stop", port=port)
-        try:
-            await stop_agent(row=None, port=port)
-        except Exception:  # noqa: BLE001 — one stray node must not abort the host cycle
-            logger.warning("appium_reconciler_orphan_node_stop_failed", exc_info=True, port=port)
-    return orphans
-
-
 def match_observed_entry(row: DesiredRow, observed_by_target: dict[str, ObservedEntry]) -> ObservedEntry | None:
     """Return the agent-reported node for ``row``, if any.
 
@@ -258,77 +217,21 @@ def translate_action_for_pull(action: ConvergenceAction) -> ConvergenceAction | 
     return action
 
 
-async def _execute_agent_action(
-    *,
-    host_id: uuid.UUID,
-    row: DesiredRow,
-    action: ConvergenceAction,
-    start_agent: StartAgent,
-    stop_agent: StopAgent,
-    write_observed: WriteObserved,
-) -> None:
-    """Execute the agent-touching legs (start/stop/restart) of a convergence action."""
-    if action.kind == "start":
-        try:
-            result = await start_agent(row=row, port=action.port)
-        except NodeAlreadyRunningError:
-            _log_already_running(host_id=host_id, row=row, action=action.kind)
-            return
-        result_port = _int_or_none(result.get("port"))
-        await write_observed(
-            row=row,
-            state="running",
-            port=result_port or action.port,
-            pid=_int_or_none(result.get("pid")),
-            active_connection_target=_str_or_none(result.get("active_connection_target")) or row.connection_target,
-            clear_desired_port=_uses_fallback_port(requested=action.port, actual=result_port),
-            allocated_caps=result.get("allocated_caps"),
-        )
-        return
-    if action.kind == "stop":
-        await stop_agent(row=row, port=action.port)
-        await write_observed(
-            row=row,
-            state="stopped",
-            port=None,
-            pid=None,
-            active_connection_target=None,
-            clear_desired_port=action.clear_desired_port,
-            clear_transition=row.transition_token is not None,
-        )
-        return
-    if action.kind == "restart":
-        if action.stop_port is not None:
-            await stop_agent(row=row, port=action.stop_port)
-        try:
-            result = await start_agent(row=row, port=action.start_port)
-        except NodeAlreadyRunningError:
-            _log_already_running(host_id=host_id, row=row, action=action.kind)
-            return
-        result_port = _int_or_none(result.get("port"))
-        await write_observed(
-            row=row,
-            state="running",
-            port=result_port or action.start_port,
-            pid=_int_or_none(result.get("pid")),
-            active_connection_target=_str_or_none(result.get("active_connection_target")) or row.connection_target,
-            allocated_caps=result.get("allocated_caps"),
-            clear_desired_port=_uses_fallback_port(requested=action.start_port, actual=result_port),
-            clear_transition=True,
-        )
-
-
 async def _execute_action(
     *,
     host_id: uuid.UUID,
     row: DesiredRow,
     action: ConvergenceAction,
-    start_agent: StartAgent,
-    stop_agent: StopAgent,
     write_observed: WriteObserved,
     clear_token: ClearToken,
     reset_start_failure: ResetStartFailure,
 ) -> None:
+    """Dispatch one DB-only convergence action.
+
+    ``translate_action_for_pull`` is the only action path into this function:
+    it strips agent-touching kinds (``start``/``stop``/``restart``) before a
+    row ever reaches here, so every kind handled below is DB-only.
+    """
     APPIUM_RECONCILER_CONVERGENCE_ACTIONS.labels(action=action.kind).inc()
     logger.info(
         "appium_reconciler_convergence_action",
@@ -360,27 +263,7 @@ async def _execute_action(
             active_connection_target=action.active_connection_target,
         )
         return
-    await _execute_agent_action(
-        host_id=host_id,
-        row=row,
-        action=action,
-        start_agent=start_agent,
-        stop_agent=stop_agent,
-        write_observed=write_observed,
-    )
-
-
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) else None
 
 
 def _positive_or_none(value: int | None) -> int | None:
     return value if value is not None and value > 0 else None
-
-
-def _str_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) else None
-
-
-def _uses_fallback_port(*, requested: int | None, actual: int | None) -> bool:
-    return requested is not None and actual is not None and actual != requested

@@ -1,12 +1,11 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 from httpx2 import AsyncClient, HTTPStatusError, Request, Response
-from sqlalchemy import select
 
 from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -96,17 +95,21 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
 
 @pytest.fixture
 def remote_manager_client() -> Generator[AsyncMock]:
+    """Historical push-path scaffolding.
+
+    Node start/stop/restart routes are desired-state writes only — no agent
+    HTTP call happens synchronously in-request — so this mock is not wired
+    into any live code path. It is kept (unpatched) purely so existing tests
+    can still set ``.return_value``/``.side_effect`` on it without error;
+    those assignments are inert.
+    """
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get.return_value = _mock_agent_response(
         {"running": True, "port": 4723, "appium_status": {"value": {"ready": True}}}
     )
-    with (
-        patch("app.appium_nodes.services.reconciler.httpx.AsyncClient", return_value=mock_client),
-        patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client),
-    ):
-        yield mock_client
+    yield mock_client
 
 
 def _mock_agent_response(json_data: dict[str, Any], status_code: int = 200) -> MagicMock:
@@ -298,75 +301,6 @@ async def test_restart_node(
     data = resp.json()
     assert data["desired_state"] == AppiumDesiredState.running.value
     assert data["transition_token"] is not None
-
-
-async def test_restart_node_converges_immediately(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-    remote_manager_client: AsyncMock,
-) -> None:
-    device = await _create_device(db_session, default_host_id)
-    device_id = device["id"]
-    connection_target = await db_session.scalar(
-        select(Device.connection_target).where(Device.id == uuid.UUID(device_id))
-    )
-    assert connection_target is not None
-    host = await db_session.get(Host, uuid.UUID(default_host_id))
-    assert host is not None
-    host.status = HostStatus.online
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device_id),
-            port=4723,
-            pid=12345,
-            active_connection_target=connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-        )
-    )
-    await db_session.commit()
-    remote_manager_client.get.return_value = _mock_agent_response(
-        {
-            "status": "ok",
-            "hostname": "test-host",
-            "os_type": "linux",
-            "version": "1.0.0",
-            "registered": True,
-            "missing_prerequisites": [],
-            "capabilities": {},
-            "version_guidance": {},
-            "appium_processes": {
-                "running_nodes": [
-                    {
-                        "port": 4723,
-                        "pid": 12345,
-                        "connection_target": connection_target,
-                        "platform_id": "android_mobile",
-                    }
-                ]
-            },
-        }
-    )
-    remote_manager_client.post.side_effect = [
-        _mock_agent_response({"stopped": True, "port": 4723}),
-        _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": connection_target}),
-    ]
-
-    resp = await client.post(f"/api/devices/{device_id}/node/restart")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert remote_manager_client.get.await_count == 1
-    assert [call.args[0] for call in remote_manager_client.post.await_args_list] == [
-        "http://10.0.0.40:5100/agent/appium/stop",
-        "http://10.0.0.40:5100/agent/appium/start",
-    ]
-    stored_pid = await db_session.scalar(select(AppiumNode.pid).where(AppiumNode.device_id == uuid.UUID(device_id)))
-    assert stored_pid == 12346
-    assert data["pid"] == 12346
-    assert data["transition_token"] is None
-    assert remote_manager_client.post.await_count == 2
 
 
 async def test_restart_node_cold_start(

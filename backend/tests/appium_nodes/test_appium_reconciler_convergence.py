@@ -8,15 +8,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.appium_nodes.services.reconciler_convergence import (
-    ConvergenceAction,
     DesiredRow,
     ObservedEntry,
     _execute_action,
     decide_convergence_action,
     match_observed_entry,
-    reap_orphan_nodes,
 )
 
 
@@ -26,8 +23,6 @@ async def converge_host_rows(
     rows: list[DesiredRow],
     agent_running: list[ObservedEntry],
     now: datetime,
-    start_agent: object,
-    stop_agent: object,
     write_observed: object,
     clear_token: object,
     reset_start_failure: object,
@@ -43,8 +38,6 @@ async def converge_host_rows(
                 host_id=host_id,
                 row=row,
                 action=action,
-                start_agent=start_agent,  # type: ignore[arg-type]
-                stop_agent=stop_agent,  # type: ignore[arg-type]
                 write_observed=write_observed,  # type: ignore[arg-type]
                 clear_token=clear_token,  # type: ignore[arg-type]
                 reset_start_failure=reset_start_failure,  # type: ignore[arg-type]
@@ -112,35 +105,6 @@ def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry()
     assert action.clear_desired_port is True
 
 
-@pytest.mark.parametrize("kind", ["start", "restart"])
-@pytest.mark.asyncio
-async def test_execute_action_treats_already_running_as_benign_noop(kind: str) -> None:
-    """When the agent reports the target already running, the start leg of a
-    start/restart action must be a no-op: no ``write_observed`` push, no raise.
-    The next observation tick records the running node via ``db_mark_running``."""
-    row = _row(desired_state="running", desired_port=4723, port=4724, pid=1)
-    action = ConvergenceAction(kind=kind, port=4723, stop_port=4724, start_port=4723)
-
-    start_agent = AsyncMock(side_effect=NodeAlreadyRunningError("already running for target on port 4724"))
-    stop_agent = AsyncMock()
-    write_observed = AsyncMock()
-
-    # Must not raise.
-    await _execute_action(
-        host_id=uuid.uuid4(),
-        row=row,
-        action=action,
-        start_agent=start_agent,  # type: ignore[arg-type]
-        stop_agent=stop_agent,  # type: ignore[arg-type]
-        write_observed=write_observed,  # type: ignore[arg-type]
-        clear_token=AsyncMock(),  # type: ignore[arg-type]
-        reset_start_failure=AsyncMock(),  # type: ignore[arg-type]
-    )
-
-    start_agent.assert_awaited_once()
-    write_observed.assert_not_awaited()
-
-
 def test_orphaned_node_ports_flags_duplicates_and_unknown_targets() -> None:
     """Stray agent nodes the per-row loop cannot reach must be flagged for stop.
 
@@ -171,63 +135,6 @@ def test_orphaned_node_ports_empty_when_each_known_target_has_one_node() -> None
         ObservedEntry(port=4724, pid=2, connection_target="dev-B-in-backoff"),
     ]
     assert orphaned_node_ports(observed, known_targets={"dev-A", "dev-B-in-backoff"}) == []
-
-
-async def test_reap_orphan_nodes_keeps_node_reported_under_active_connection_target() -> None:
-    """A virtual device's node reports its live ADB serial (the row's
-    ``active_connection_target``), not the registered AVD target — it must count
-    as a known target. Reaping it puts the reconciler in a permanent 30s
-    stop/start loop for the device."""
-    from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
-
-    observed = [ObservedEntry(port=4724, pid=1, connection_target="emulator-5554")]
-    rows = [
-        _row(
-            connection_target="Television_1080p",
-            active_connection_target="emulator-5554",
-            desired_state="running",
-            desired_port=4724,
-        )
-    ]
-    stop_agent = AsyncMock()
-
-    reaped = await reap_orphan_nodes(observed, rows, stop_agent=stop_agent)
-
-    assert reaped == []
-    stop_agent.assert_not_awaited()
-
-
-async def test_reap_orphan_nodes_stops_each_orphan_port() -> None:
-    from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
-
-    observed = [
-        ObservedEntry(port=4723, pid=1, connection_target="dev-A"),
-        ObservedEntry(port=4724, pid=2, connection_target="dev-A"),  # duplicate
-        ObservedEntry(port=4725, pid=3, connection_target="ghost"),  # unknown
-    ]
-    rows = [_row(connection_target="dev-A", desired_state="running")]
-    stop_agent = AsyncMock()
-
-    reaped = await reap_orphan_nodes(observed, rows, stop_agent=stop_agent)
-
-    assert sorted(reaped) == [4723, 4725]
-    stopped_ports = sorted(call.kwargs["port"] for call in stop_agent.await_args_list)
-    assert stopped_ports == [4723, 4725]
-    # Orphans carry no desired row.
-    assert all(call.kwargs["row"] is None for call in stop_agent.await_args_list)
-
-
-async def test_reap_orphan_nodes_swallows_stop_errors() -> None:
-    """A failing stop for one orphan must not abort the host cycle."""
-    from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
-
-    observed = [ObservedEntry(port=4999, pid=9, connection_target="ghost")]
-    stop_agent = AsyncMock(side_effect=RuntimeError("agent unreachable"))
-
-    reaped = await reap_orphan_nodes(observed, [], stop_agent=stop_agent)
-
-    assert reaped == [4999]
-    stop_agent.assert_awaited_once()
 
 
 def test_rows_needing_stale_clear_selects_only_db_clear_action() -> None:
@@ -367,30 +274,6 @@ def test_desired_stopped_no_observed_but_db_says_running_picks_db_clear() -> Non
 
 
 @pytest.mark.asyncio
-async def test_converge_host_rows_calls_start_for_running_intent_no_observation() -> None:
-    row = _row(desired_state="running", desired_port=4723)
-    start_agent = AsyncMock(return_value={"pid": 1234, "port": 4723})
-    stop_agent = AsyncMock()
-    write_observed = AsyncMock()
-
-    await converge_host_rows(
-        host_id=row.host_id,
-        rows=[row],
-        agent_running=[],
-        now=datetime.now(UTC),
-        start_agent=start_agent,
-        stop_agent=stop_agent,
-        write_observed=write_observed,
-        clear_token=AsyncMock(),
-        reset_start_failure=AsyncMock(),
-    )
-
-    start_agent.assert_awaited_once()
-    stop_agent.assert_not_awaited()
-    write_observed.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_converge_host_rows_resets_start_failure_when_observed_matches_db() -> None:
     # Row carries reconciler failure residue: reset must be called.
     row = _row(
@@ -403,8 +286,6 @@ async def test_converge_host_rows_resets_start_failure_when_observed_matches_db(
     )
     observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     reset_start_failure = AsyncMock()
-    start_agent = AsyncMock()
-    stop_agent = AsyncMock()
     write_observed = AsyncMock()
 
     await converge_host_rows(
@@ -412,16 +293,12 @@ async def test_converge_host_rows_resets_start_failure_when_observed_matches_db(
         rows=[row],
         agent_running=[observed],
         now=datetime.now(UTC),
-        start_agent=start_agent,
-        stop_agent=stop_agent,
         write_observed=write_observed,
         clear_token=AsyncMock(),
         reset_start_failure=reset_start_failure,
     )
 
     reset_start_failure.assert_awaited_once_with(row=row)
-    start_agent.assert_not_awaited()
-    stop_agent.assert_not_awaited()
     write_observed.assert_not_awaited()
 
 
@@ -444,43 +321,12 @@ async def test_converge_host_rows_confirm_running_skips_reset_when_no_residue() 
         rows=[row],
         agent_running=[observed],
         now=datetime.now(UTC),
-        start_agent=AsyncMock(),
-        stop_agent=AsyncMock(),
         write_observed=AsyncMock(),
         clear_token=AsyncMock(),
         reset_start_failure=reset_start_failure,
     )
 
     reset_start_failure.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_converge_host_rows_clears_desired_port_when_start_uses_fallback_port() -> None:
-    row = _row(desired_state="running", desired_port=4723)
-    start_agent = AsyncMock(return_value={"pid": 1234, "port": 4724})
-    write_observed = AsyncMock()
-
-    await converge_host_rows(
-        host_id=row.host_id,
-        rows=[row],
-        agent_running=[],
-        now=datetime.now(UTC),
-        start_agent=start_agent,
-        stop_agent=AsyncMock(),
-        write_observed=write_observed,
-        clear_token=AsyncMock(),
-        reset_start_failure=AsyncMock(),
-    )
-
-    write_observed.assert_awaited_once_with(
-        row=row,
-        state="running",
-        port=4724,
-        pid=1234,
-        active_connection_target=row.connection_target,
-        clear_desired_port=True,
-        allocated_caps=None,
-    )
 
 
 @pytest.mark.asyncio
@@ -494,8 +340,6 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         rows=[row],
         agent_running=[observed],
         now=datetime.now(UTC),
-        start_agent=AsyncMock(),
-        stop_agent=AsyncMock(),
         write_observed=write_observed,
         clear_token=AsyncMock(),
         reset_start_failure=AsyncMock(),
@@ -508,33 +352,6 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         pid=12345,
         active_connection_target=row.connection_target,
     )
-
-
-@pytest.mark.asyncio
-async def test_converge_host_rows_skips_one_failed_row_continues_others() -> None:
-    host_id = uuid.uuid4()
-    row_bad = _row(host_id=host_id, desired_state="running", desired_port=4724)
-    row_ok = _row(host_id=host_id, desired_state="running", desired_port=4723)
-
-    async def start_agent(*, row: DesiredRow, port: int | None) -> dict[str, int]:
-        if row.device_id == row_bad.device_id:
-            raise RuntimeError("agent unreachable")
-        return {"pid": 1, "port": port or 4723}
-
-    write_observed = AsyncMock()
-    await converge_host_rows(
-        host_id=host_id,
-        rows=[row_bad, row_ok],
-        agent_running=[],
-        now=datetime.now(UTC),
-        start_agent=start_agent,
-        stop_agent=AsyncMock(),
-        write_observed=write_observed,
-        clear_token=AsyncMock(),
-        reset_start_failure=AsyncMock(),
-    )
-
-    write_observed.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -563,8 +380,6 @@ async def test_converge_host_rows_clear_token_and_db_clear_branches() -> None:
         rows=[expired, stale],
         agent_running=[ObservedEntry(port=4723, pid=1, connection_target=expired.connection_target)],
         now=datetime.now(UTC),
-        start_agent=AsyncMock(),
-        stop_agent=AsyncMock(),
         write_observed=write_observed,
         clear_token=clear_token,
         reset_start_failure=AsyncMock(),
@@ -588,54 +403,23 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
         rows=[noop],
         agent_running=[],
         now=datetime.now(UTC),
-        start_agent=AsyncMock(),
-        stop_agent=AsyncMock(),
         write_observed=AsyncMock(),
         clear_token=AsyncMock(),
         reset_start_failure=AsyncMock(),
     )
 
+    # db_mark_running (a DB-only action) still surfaces its write_observed
+    # failure when raise_errors=True — the loop only swallows by default.
     failing = _row(desired_state="running", desired_port=4723)
-    with pytest.raises(RuntimeError, match="start failed"):
+    observed = ObservedEntry(port=4723, pid=12345, connection_target=failing.connection_target)
+    with pytest.raises(RuntimeError, match="write failed"):
         await converge_host_rows(
             host_id=failing.host_id,
             rows=[failing],
-            agent_running=[],
+            agent_running=[observed],
             now=datetime.now(UTC),
-            start_agent=AsyncMock(side_effect=RuntimeError("start failed")),
-            stop_agent=AsyncMock(),
-            write_observed=AsyncMock(),
+            write_observed=AsyncMock(side_effect=RuntimeError("write failed")),
             clear_token=AsyncMock(),
             reset_start_failure=AsyncMock(),
             raise_errors=True,
         )
-
-
-def _stop_recorder(stopped: list[int]) -> object:
-    async def _stop(*, row: object = None, port: int) -> None:
-        stopped.append(port)
-
-    return _stop
-
-
-@pytest.mark.asyncio
-async def test_reap_orphan_nodes_stops_row_less_host_process() -> None:
-    # A running process whose target matches no desired row must be stopped,
-    # otherwise a stray Appium process leaks (the case the deleted Phase-1
-    # ``no_db_row`` path used to cover).
-    observed = [ObservedEntry(port=4731, pid=1, connection_target="10.0.0.5:4731")]
-    stopped: list[int] = []
-    reaped = await reap_orphan_nodes(observed, [], stop_agent=_stop_recorder(stopped))
-    assert stopped == [4731]
-    assert reaped == [4731]
-
-
-@pytest.mark.asyncio
-async def test_reap_orphan_nodes_keeps_backed_off_node() -> None:
-    # A node present in desired rows (even one in recovery backoff, which the
-    # reaper is keyed off the FULL desired set to protect) must NOT be reaped.
-    row = _row(desired_state="running", connection_target="10.0.0.6:4732")
-    observed = [ObservedEntry(port=4732, pid=1, connection_target="10.0.0.6:4732")]
-    stopped: list[int] = []
-    await reap_orphan_nodes(observed, [row], stop_agent=_stop_recorder(stopped))
-    assert stopped == []

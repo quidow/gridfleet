@@ -3,32 +3,22 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from app.agent_comm.http_pool import AgentHttpPool
+    import uuid
+
     from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
 
-import httpx2 as httpx
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_comm import operations as agent_operations
-from app.agent_comm.error_codes import AgentErrorCode
-from app.agent_comm.models import AgentReconfigureOutbox
-from app.agent_comm.operations import appium_start, appium_stop, parse_agent_error_detail, response_json_dict
-from app.appium_nodes.exceptions import (
-    NodeAlreadyRunningError,
-    NodeManagerError,
-    NodePortConflictError,
-    RemoteStartResult,
-)
+from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import (
     capability_keys as appium_capability_keys,
@@ -43,13 +33,7 @@ from app.appium_nodes.services.common import (
     build_appium_driver_caps,
     node_state_severity,
 )
-from app.appium_nodes.services.reconciler_allocation import (
-    APPIUM_PORT_CAPABILITY,
-    candidate_ports,
-    reserve_appium_port,
-)
 from app.core.database import async_session
-from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
@@ -59,15 +43,12 @@ from app.lifecycle.services.actions import (
     reset_reconciler_start_failure_state,
 )
 from app.packs.services import capability as pack_capability
-from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
 
-applicable_resource_ports = pack_platform_resolver.applicable_resource_ports
 assert_runnable = pack_platform_resolver.assert_runnable
 build_device_context = pack_start_shim.build_device_context
 build_pack_start_payload = pack_start_shim.build_pack_start_payload
-device_is_virtual = pack_platform_catalog.device_is_virtual
 render_default_capabilities = pack_capability.render_default_capabilities
 render_device_field_capabilities = pack_capability.render_device_field_capabilities
 render_stereotype = pack_capability.render_stereotype
@@ -78,32 +59,18 @@ PackStartPayloadError = pack_start_shim.PackStartPayloadError
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_comm.client import AgentClientFactory
-    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
     from app.events.protocols import EventPublisher
     from app.hosts.models import Host
 
-logger = logging.getLogger(__name__)
-
 RESTART_BACKOFF_BASE = 2
 
 
 RESTART_MAX_RETRIES = 3
-AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 
 appium_status = agent_operations.appium_status
-
-
-@dataclass(frozen=True, slots=True)
-class AgentTransport:
-    """Plumbing forwarded verbatim to the agent HTTP call (``appium_start``)."""
-
-    http_client_factory: AgentClientFactory
-    circuit_breaker: CircuitBreakerProtocol
-    pool: AgentHttpPool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,24 +89,18 @@ def _short_session_factory(db: AsyncSession) -> async_sessionmaker[AsyncSession]
 
 
 __all__ = [
-    "AVD_LAUNCH_HTTP_TIMEOUT_SECS",
     "RESTART_BACKOFF_BASE",
     "RESTART_MAX_RETRIES",
-    "AgentTransport",
     "NodeManagerError",
     "NodePortConflictError",
     "NodeStartDetails",
     "ReconcilerAgentService",
-    "RemoteStartResult",
     "agent_url",
     "build_agent_start_payload",
     "build_node_launch_payload",
-    "candidate_ports",
     "mark_node_started",
     "mark_node_stopped",
     "require_management_host",
-    "start_remote_node",
-    "stop_remote_node",
 ]
 
 
@@ -220,28 +181,10 @@ async def mark_node_started(
     if details.clear_transition:
         node.transition_token = None
         node.transition_deadline = None
-    # Re-deliver the drain/stop state to the freshly restarted process. A new
-    # Appium process always starts non-draining, and the agent does not enforce
-    # ``accepting_new_sessions`` itself — admission is gated centrally by the
-    # backend soft-gate (``allocation._eligible_devices``), so that flag is
-    # belt-and-suspenders here. ``stop_pending`` IS honored by the agent, and the
-    # dedup in ``_stage_agent_reconfigure`` only stages on metadata change — so a
-    # steady-state cooldown/stop intent would never re-emit on its own. Stage a
-    # forced outbox row whenever the restart lands on a process that should be
-    # drained or stopping; the background delivery loop re-pushes it to the new
-    # port within seconds.
-    if node.port is not None and (not node.accepting_new_sessions or node.stop_pending):
-        db.add(
-            AgentReconfigureOutbox(
-                device_id=node.device_id,
-                port=node.port,
-                accepting_new_sessions=node.accepting_new_sessions,
-                stop_pending=node.stop_pending,
-                grid_run_id=node.desired_grid_run_id,
-                reconciled_generation=node.generation,
-            )
-        )
-        await db.flush()
+    # Pull re-applies drain/stop flags from the last pull on crash-restart (the
+    # agent re-derives accepting_new_sessions/stop_pending from desired state
+    # every launch), so the belt-and-suspenders outbox re-push that used to run
+    # here for the push path is unnecessary.
     publisher.queue_for_session(
         db,
         "node.state_changed",
@@ -376,69 +319,6 @@ async def _merge_appium_default_pack_caps(db: AsyncSession, device: Device, payl
     }
 
 
-def _agent_start_timeout(device: Device, *, settings: SettingsReader) -> float | int:
-    base = settings.get_int("appium.startup_timeout_sec") + 5
-    if device_is_virtual(device):
-        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, base)
-    return base
-
-
-async def start_remote_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    port: int,
-    allocated_caps: dict[str, Any] | None,
-    agent_base: str,
-    transport: AgentTransport,
-    settings: SettingsReader,
-) -> RemoteStartResult:
-    payload = await build_node_launch_payload(
-        db,
-        device,
-        port=port,
-        allocated_caps=allocated_caps,
-        settings=settings,
-    )
-    host = require_management_host(device, action="start Appium nodes")
-    try:
-        resp = await appium_start(
-            agent_base,
-            host=host.ip,
-            agent_port=host.agent_port,
-            payload=payload,
-            http_client_factory=transport.http_client_factory,
-            timeout=_agent_start_timeout(device, settings=settings),
-            settings=settings,
-            pool=transport.pool,
-            circuit_breaker=transport.circuit_breaker,
-        )
-        resp.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        code, message_text = parse_agent_error_detail(exc.response)
-        message = f"Agent failed to start node: {message_text}"
-        if code == AgentErrorCode.ALREADY_RUNNING.value:
-            # Per-target conflict: a node already runs for this connection target.
-            # Retrying on a different candidate port is futile (the agent's guard
-            # keys on the target, not the port), so raise the distinct subclass.
-            raise NodeAlreadyRunningError(message) from exc
-        if code == AgentErrorCode.PORT_OCCUPIED.value:
-            raise NodePortConflictError(message) from exc
-        raise NodeManagerError(message) from exc
-    except AgentCallError:
-        raise
-    except httpx.HTTPError as exc:
-        raise NodeManagerError(f"Cannot reach agent at {agent_base}: {exc}") from exc
-    data = response_json_dict(resp)
-    active_connection_target = data.get("connection_target")
-    return RemoteStartResult(
-        port=port,
-        pid=data.get("pid"),
-        active_connection_target=active_connection_target if isinstance(active_connection_target, str) else None,
-        agent_base=agent_base,
-    )
-
-
 async def build_node_launch_payload(
     db: AsyncSession,
     device: Device,
@@ -533,212 +413,6 @@ async def _build_session_aligned_start_caps(
         if automation_name:
             caps["appium:automationName"] = automation_name
     return caps
-
-
-async def stop_remote_node(
-    *,
-    port: int,
-    agent_base: str,
-    host: str,
-    agent_port: int,
-    http_client_factory: AgentClientFactory,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    pool: AgentHttpPool | None = None,
-) -> bool:
-    """Ask the agent to stop the Appium node on ``port``.
-
-    Returns True on confirmed agent acknowledgement, False otherwise. Callers
-    that mutate DB node state on the back of a stop MUST gate that mutation on
-    True — a False return means we cannot prove the agent process is gone, and
-    flipping the DB to ``stopped`` would leave the agent's Appium process
-    orphaned and still reachable by the router on its allocated port.
-    """
-    try:
-        resp = await appium_stop(
-            agent_base,
-            host=host,
-            agent_port=agent_port,
-            port=port,
-            http_client_factory=http_client_factory,
-            settings=settings,
-            pool=pool,
-            circuit_breaker=circuit_breaker,
-        )
-        resp.raise_for_status()
-        return True
-    except AgentCallError, httpx.HTTPError:
-        return False
-
-
-async def _start_for_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    node: AppiumNode,
-    preferred_port: int | None = None,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    pool: AgentHttpPool | None = None,
-) -> RemoteStartResult:
-    if device.host_id is None:
-        raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
-    resource_ports: dict[str, int] = {}
-    excluded_port_caps: set[str] = set()
-    needs_derived_data_path = False
-    try:
-        resolved = await resolve_pack_platform(
-            db,
-            pack_id=device.pack_id,
-            platform_id=device.platform_id,
-            device_type=device.device_type.value if device.device_type else None,
-        )
-        resource_ports = {p.capability_name: p.start for p in applicable_resource_ports(resolved, device.device_config)}
-        # Parallel-resource ports the current device_config excludes via skip_when
-        # (e.g. appium:mjpegServerPort once prefer_devicectl=true). A leftover claim
-        # for one of these — from when the config differed — must be released, not
-        # carried forward; otherwise it survives every restart and leaks back into
-        # the node capabilities, failing sessions that cannot forward the port.
-        excluded_port_caps = {p.capability_name for p in resolved.parallel_resources.ports} - set(resource_ports)
-        needs_derived_data_path = resolved.parallel_resources.derived_data_path
-    except LookupError:
-        # Pack platform missing or unresolved — fall back to no parallel
-        # resource allocation. Devices without a pack still start, the
-        # allocator simply gets no port/derived-data-path hints.
-        pass
-    allocated_caps = await _reserve_node_resource_ports(
-        db,
-        device,
-        node=node,
-        excluded_port_caps=excluded_port_caps,
-        resource_ports=resource_ports,
-    )
-
-    if needs_derived_data_path and "appium:derivedDataPath" not in allocated_caps:
-        allocated_caps["appium:derivedDataPath"] = f"/tmp/gridfleet/derived-data/{uuid.uuid4().hex}"
-
-    agent_base = await agent_url(device)
-    handle = await _start_node_on_candidate_port(
-        db,
-        device,
-        node=node,
-        preferred_port=preferred_port,
-        settings=settings,
-        transport=AgentTransport(
-            http_client_factory=httpx.AsyncClient,
-            circuit_breaker=circuit_breaker,
-            pool=pool,
-        ),
-        allocated_caps=allocated_caps,
-        agent_base=agent_base,
-    )
-    handle.allocated_caps = allocated_caps
-    return handle
-
-
-async def _reserve_node_resource_ports(
-    db: AsyncSession,
-    device: Device,
-    *,
-    node: AppiumNode,
-    excluded_port_caps: set[str],
-    resource_ports: dict[str, int],
-) -> dict[str, Any]:
-    allocated_caps: dict[str, Any] = await appium_node_resource_service.get_capabilities(db, node_id=node.id)
-    stale_caps = [cap for cap in excluded_port_caps if cap in allocated_caps]
-    try:
-        short_session = _short_session_factory(db)
-        async with short_session() as reserve_db:
-            for capability_key in stale_caps:
-                await appium_node_resource_service.release_capability(
-                    reserve_db, node_id=node.id, capability_key=capability_key
-                )
-                allocated_caps.pop(capability_key, None)
-            for capability_key, start in resource_ports.items():
-                if capability_key in allocated_caps:
-                    continue
-                allocated_caps[capability_key] = await appium_node_resource_service.reserve(
-                    reserve_db,
-                    host_id=device.host_id,
-                    capability_key=capability_key,
-                    start_port=start,
-                    node_id=node.id,
-                )
-            await reserve_db.commit()
-    except Exception:
-        short_session = _short_session_factory(db)
-        async with short_session() as cleanup_db:
-            await appium_node_resource_service.release_managed(cleanup_db, node_id=node.id)
-            await cleanup_db.commit()
-        raise
-    return allocated_caps
-
-
-async def _start_node_on_candidate_port(
-    db: AsyncSession,
-    device: Device,
-    *,
-    node: AppiumNode,
-    preferred_port: int | None,
-    settings: SettingsReader,
-    transport: AgentTransport,
-    allocated_caps: dict[str, Any],
-    agent_base: str,
-) -> RemoteStartResult:
-    try:
-        last_conflict: NodePortConflictError | None = None
-        for port in await candidate_ports(db, host_id=device.host_id, preferred_port=preferred_port, settings=settings):
-            try:
-                short_session = _short_session_factory(db)
-                async with short_session() as reserve_db:
-                    await reserve_appium_port(
-                        reserve_db,
-                        host_id=device.host_id,
-                        port=port,
-                        node_id=node.id,
-                    )
-                    await reserve_db.commit()
-                handle = await start_remote_node(
-                    db,
-                    device,
-                    port=port,
-                    allocated_caps=allocated_caps,
-                    agent_base=agent_base,
-                    transport=transport,
-                    settings=settings,
-                )
-                break
-            except NodeAlreadyRunningError:
-                # Per-target conflict — every candidate port hits the same
-                # agent-side guard, so stop iterating and re-raise. The outer
-                # ``except`` releases the reserved port via ``release_managed``;
-                # the caller treats this as already-converged.
-                raise
-            except NodePortConflictError as exc:
-                last_conflict = exc
-                short_session = _short_session_factory(db)
-                async with short_session() as cleanup_db:
-                    await appium_node_resource_service.release_capability(
-                        cleanup_db,
-                        node_id=node.id,
-                        capability_key=APPIUM_PORT_CAPABILITY,
-                    )
-                    await cleanup_db.commit()
-                logger.warning(
-                    "Managed Appium port conflict for device %s on port %d; trying next candidate",
-                    device.id,
-                    port,
-                )
-        else:
-            assert last_conflict is not None
-            raise last_conflict
-    except Exception:
-        short_session = _short_session_factory(db)
-        async with short_session() as cleanup_db:
-            await appium_node_resource_service.release_managed(cleanup_db, node_id=node.id)
-            await cleanup_db.commit()
-        raise
-    return handle
 
 
 class ReconcilerAgentService:

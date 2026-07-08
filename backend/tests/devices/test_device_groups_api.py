@@ -76,23 +76,6 @@ async def _create_group(client: AsyncClient, **overrides: object) -> dict[str, A
     return dict(resp.json())
 
 
-def _mock_agent_response(json_data: dict[str, Any], status_code: int = 200) -> MagicMock:
-    mock_resp = MagicMock()
-    mock_resp.status_code = status_code
-    mock_resp.json.return_value = json_data
-    mock_resp.raise_for_status = MagicMock()
-    return mock_resp
-
-
-def _mock_agent_client(*, post_responses: list[MagicMock], get_responses: list[MagicMock] | None = None) -> MagicMock:
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(side_effect=post_responses)
-    mock_client.get = AsyncMock(side_effect=get_responses or [])
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    return mock_client
-
-
 async def test_create_static_group(client: AsyncClient) -> None:
     data = await _create_group(client)
     assert data["name"] == "Test Group"
@@ -334,23 +317,10 @@ async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSe
     device = await _create_device(db_session, "grp-restart-001", "Restart Me", default_host_id)
     await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
 
-    mock_client = _mock_agent_client(
-        post_responses=[
-            _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "grp-restart-001"}),
-            _mock_agent_response({"stopped": True, "port": 4723}),
-            _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": "grp-restart-001"}),
-        ],
-        get_responses=[
-            _mock_agent_response({"running": True, "port": 4723}),
-            _mock_agent_response({"running": True, "port": 4723}),
-        ],
-    )
+    start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
+    assert start_resp.status_code == 200
 
-    with patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client):
-        start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
-        assert start_resp.status_code == 200
-
-        resp = await client.post(f"/api/device-groups/{group['id']}/bulk/restart-nodes")
+    resp = await client.post(f"/api/device-groups/{group['id']}/bulk/restart-nodes")
 
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1

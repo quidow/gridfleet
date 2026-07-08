@@ -1,11 +1,8 @@
 """Pull-mode (agent-pull node desired state) tests for the Appium reconciler.
 
-See ``.superpowers/sdd/task-2-brief.md``: a host whose agent advertises
-``node_desired_pull`` (``node_pull=True``) puts the reconciler in observe-only
-mode for that host — no agent start/stop/restart or orphan reaps are issued,
-and applied-transition-token facts reported by the agent are ingested
-instead. ``node_pull=False`` (the default) must stay byte-identical to the
-existing push path.
+Pull is now the only reconcile mode: the reconciler is always observe-only —
+no agent start/stop/restart or orphan reaps are issued, and applied-
+transition-token facts reported by the agent are ingested instead.
 """
 
 from __future__ import annotations
@@ -19,7 +16,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
@@ -111,24 +107,17 @@ class _DummySession:
         return None
 
 
-async def test_pull_host_running_desired_node_absent_skips_start_and_counts_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """desired=running, agent reports nothing → push mode would start the agent;
-    a pull host must not, and must record the skip."""
+async def test_pull_host_running_desired_node_absent_skips_start_and_counts_it() -> None:
+    """desired=running, agent reports nothing → the reconciler never starts a
+    node itself; it records the skip and leaves the start to the agent."""
     row = _desired_row(desired_state="running", desired_port=4723, connection_target="pull-start")
-    start_spy = AsyncMock()
-    monkeypatch.setattr(appium_reconciler, "_start_for_node", start_spy)
 
     svc = _make_service()
     before = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
 
-    await svc.converge_host_rows(
-        None, [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100, node_pull=True
-    )
+    await svc.converge_host_rows(None, [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100)
 
     after = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
-    start_spy.assert_not_awaited()
     assert after == before + 1
 
 
@@ -147,7 +136,7 @@ async def test_pull_host_observed_running_writes_same_as_push_mode(monkeypatch: 
 
     svc = _make_service()
     await svc.converge_host_rows(
-        _DummySession(), [row], observed, host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100, node_pull=True
+        _DummySession(), [row], observed, host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100
     )
 
     mark_started.assert_awaited_once()
@@ -249,16 +238,14 @@ async def test_pull_host_stopped_desired_absent_from_payload_marks_observed_stop
     monkeypatch.setattr(appium_reconciler, "mark_node_stopped", mark_stopped)
 
     svc = _make_service()
-    await svc.converge_host_rows(
-        _DummySession(), [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100, node_pull=True
-    )
+    await svc.converge_host_rows(_DummySession(), [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100)
 
     mark_stopped.assert_awaited_once()
 
 
 async def test_pull_host_orphan_process_is_counted_not_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
     """A stray agent-reported node with no matching desired row is never stopped
-    on a pull host — only counted."""
+    by the reconciler — only counted; the agent owns its own orphan cleanup."""
     host_id = uuid.uuid4()
     row = _desired_row(
         host_id=host_id,
@@ -277,8 +264,6 @@ async def test_pull_host_orphan_process_is_counted_not_stopped(monkeypatch: pyte
         }
     }
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
-    stop_spy = AsyncMock()
-    monkeypatch.setattr(appium_reconciler, "stop_remote_node", stop_spy)
 
     svc = _make_service()
     before = APPIUM_PULL_MODE_ORPHANS_OBSERVED._value.get()
@@ -290,36 +275,10 @@ async def test_pull_host_orphan_process_is_counted_not_stopped(monkeypatch: pyte
         rows=[row],
         backoff_until_by_device={},
         payload=payload,
-        node_pull=True,
     )
 
     after = APPIUM_PULL_MODE_ORPHANS_OBSERVED._value.get()
-    stop_spy.assert_not_awaited()
     assert after == before + 1
-
-
-@pytest.mark.parametrize("node_pull_kwargs", [{}, {"node_pull": False}], ids=["default", "explicit-false"])
-async def test_node_pull_false_runs_agent_start_unchanged(
-    monkeypatch: pytest.MonkeyPatch, node_pull_kwargs: dict[str, bool]
-) -> None:
-    """``node_pull`` defaults to False and behaves identically to an explicit
-    False — the legacy push path stays byte-identical (plan Global Constraints)."""
-    row = _desired_row(desired_state="running", desired_port=4723, connection_target="push-start")
-    fake_device = SimpleNamespace(appium_node=object())
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=fake_device))
-    start_spy = AsyncMock(side_effect=NodeAlreadyRunningError("already running for target"))
-    monkeypatch.setattr(appium_reconciler, "_start_for_node", start_spy)
-
-    svc = _make_service()
-    before = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
-
-    await svc.converge_host_rows(
-        _DummySession(), [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100, **node_pull_kwargs
-    )
-
-    after = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
-    start_spy.assert_awaited_once()
-    assert after == before
 
 
 @pytest.mark.db
