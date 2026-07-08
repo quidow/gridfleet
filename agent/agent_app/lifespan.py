@@ -260,7 +260,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
 
     node_task: asyncio.Task[None] | None = None
-    if backend_url and agent_settings.runtime.node_pull_enabled:
+    if backend_url:
         node_task = asyncio.create_task(_start_node_loop_when_ready(app, host_identity, backend_url))
         node_task.add_done_callback(_watchdog("node_state_loop"))
 

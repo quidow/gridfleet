@@ -68,7 +68,6 @@ class RuntimeSettings(BaseSettings):
     runtime_root: str = "/opt/gridfleet-agent/runtimes"
     appium_port_range_start: int = 4723
     appium_port_range_end: int = 4823
-    node_pull_enabled: bool = True
     node_poll_interval_sec: float = 5.0
 
 
