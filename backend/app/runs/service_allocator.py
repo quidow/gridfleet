@@ -344,15 +344,20 @@ class RunAllocatorService:
         """Wake each reserved device's agent inline so it re-pulls its desired
         state (carrying the new run id) without waiting for the next poll.
         """
-        for info in device_infos:
-            await poke_node_refresh(
-                db,
-                uuid.UUID(info.device_id),
-                settings=self._settings,
-                circuit_breaker=self._circuit_breaker,
-                pool=self._pool,
-                publisher=self._publisher,
-            )
+        await asyncio.gather(
+            *[
+                poke_node_refresh(
+                    db,
+                    uuid.UUID(info.device_id),
+                    settings=self._settings,
+                    circuit_breaker=self._circuit_breaker,
+                    pool=self._pool,
+                    publisher=self._publisher,
+                )
+                for info in device_infos
+            ],
+            return_exceptions=True,
+        )
 
     def _resolve_run_options(self, data: RunCreate) -> tuple[int, int]:
         ttl_minutes = data.ttl_minutes

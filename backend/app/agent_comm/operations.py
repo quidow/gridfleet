@@ -56,6 +56,10 @@ type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
 # backend. If ADAPTER_HOOK_TIMEOUT_SECONDS is raised, raise this in lockstep.
 _PACK_ADAPTER_BACKEND_TIMEOUT: Final[int] = 35
 
+# Wake hint is best-effort (never load-bearing); don't let a down host block
+# a request on the full agent timeout.
+NODE_POKE_TIMEOUT_SEC = 2.0
+
 
 def _as_agent_client(client: _AgentClientLike) -> AgentHttpClient:
     return cast("AgentHttpClient", client)
@@ -402,7 +406,7 @@ async def agent_nodes_refresh(
     agent_port: int,
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 5,
+    timeout: float | int = NODE_POKE_TIMEOUT_SEC,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
