@@ -120,14 +120,14 @@ APPIUM_RECONCILER_STOP_FAILURES = Counter(
 )
 APPIUM_PULL_MODE_SKIPPED_ACTIONS = Counter(
     "gridfleet_appium_pull_mode_skipped_actions_total",
-    "Agent-touching convergence actions skipped on pull-capable hosts, labeled by the action kind; "
+    "Agent-touching convergence actions skipped in pull mode, labeled by the action kind; "
     "the agent owns the start/stop/restart transition and reports the result as observed facts.",
     labelnames=("kind",),
 )
 APPIUM_PULL_MODE_ORPHANS_OBSERVED = Counter(
     "gridfleet_appium_pull_mode_orphans_observed_total",
-    "Orphan Appium node ports observed on pull-capable hosts with no matching desired row. "
-    "Metric-only: the backend does not reap these on a pull-capable host.",
+    "Orphan Appium node ports observed in pull mode with no matching desired row. "
+    "Metric-only: the backend does not reap these directly.",
 )
 APPIUM_TERMINATE_FAILED_TOTAL = Counter(
     "appium_terminate_failed_total",

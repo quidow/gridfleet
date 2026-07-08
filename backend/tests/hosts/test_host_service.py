@@ -23,7 +23,7 @@ CAPS_V3 = {"orchestration_contract_version": 3}
 
 def test_validate_orchestration_contract_ignores_unknown_capability_keys() -> None:
     host_service.validate_orchestration_contract(
-        {"orchestration_contract_version": 3, "node_desired_pull": 1},
+        {"orchestration_contract_version": 3, "future_agent_capability": True},
         host_label="newer-agent",
     )
 

@@ -206,7 +206,7 @@ def rows_needing_stale_clear(
 
 
 def translate_action_for_pull(action: ConvergenceAction) -> ConvergenceAction | None:
-    """Translate a convergence action for a pull-capable host.
+    """Translate a convergence action for pull-only orchestration.
 
     Agent-touching kinds (``start``/``stop``/``restart``) are skipped: the
     agent owns those transitions and reports the result as observed facts on

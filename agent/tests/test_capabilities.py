@@ -31,8 +31,11 @@ async def test_detect_capabilities_works_without_adapter_registry() -> None:
     assert capabilities["tools"] == {}
 
 
-async def test_node_desired_pull_capability_is_always_advertised() -> None:
-    assert (await _cache(None).detect())["node_desired_pull"] == 1
+async def test_detect_capabilities_uses_contract_version_without_pull_marker() -> None:
+    capabilities = await _cache(None).detect()
+
+    assert capabilities["orchestration_contract_version"] == 3
+    assert set(capabilities) == {"platforms", "tools", "missing_prerequisites", "orchestration_contract_version"}
 
 
 async def test_detect_capabilities_merges_multiple_adapters() -> None:
@@ -105,7 +108,6 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         "tools": {},
         "missing_prerequisites": [],
         "orchestration_contract_version": 3,
-        "node_desired_pull": 1,
     }
 
     with patch.object(
@@ -116,8 +118,7 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
     ) as detect:
         assert cache.get() == default_snapshot
         assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 3}
-        expected_second_call = {**first_snapshot, "orchestration_contract_version": 3, "node_desired_pull": 1}
-        assert await cache.get_or_refresh() == expected_second_call
+        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 3}
         assert await cache.get_or_refresh(force=True) == {**second_snapshot, "orchestration_contract_version": 3}
 
     assert detect.await_count == 2

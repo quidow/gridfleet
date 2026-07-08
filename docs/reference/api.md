@@ -181,7 +181,7 @@ Each `appium_processes.running_nodes` entry also includes `applied_generation` a
 
 Running specs include the complete `launch` payload. Stopped specs use `launch: null`. A node whose launch inputs cannot be resolved also uses `launch: null` and includes `unrunnable_reason`; one blocked node does not fail the host response. The refresh endpoint returns `202` as a best-effort wake hint.
 
-Orchestration-contract-v3 agents always advertise `node_desired_pull: 1` and run the pull loop whenever a backend URL is configured. Pull is the only node-orchestration mode; there is no backend push path.
+Orchestration-contract-v3 agents run the pull loop whenever a backend URL is configured. Contract version 3 is the compatibility signal for pull-only node orchestration; there is no backend push path.
 
 ## Agent Driver-Pack State
 
