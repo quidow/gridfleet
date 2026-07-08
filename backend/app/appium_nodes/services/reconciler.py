@@ -21,7 +21,7 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.operations import agent_base_url, agent_health
+from app.agent_comm.operations import agent_base_url, agent_health, agent_nodes_refresh
 from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
@@ -60,6 +60,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
+from app.hosts.service import host_uses_node_pull
 from app.lifecycle.services.actions import (
     record_reconciler_start_failure_state,
     reset_reconciler_start_failure_state,
@@ -695,37 +696,51 @@ class ReconcilerService:
             if host is None or host.status != HostStatus.online:
                 return None
 
-        payload = (
-            await agent_health(
-                host.ip,
-                host.agent_port,
-                http_client_factory=httpx.AsyncClient,
-                settings=self._settings,
-                pool=self._pool,
-                circuit_breaker=self._circuit_breaker,
+        if host_uses_node_pull(host):
+            # Pull-capable host: no agent start/stop/restart I/O here — just
+            # wake the agent's own poller so it re-pulls desired state now.
+            try:
+                await agent_nodes_refresh(
+                    host.ip,
+                    host.agent_port,
+                    settings=self._settings,
+                    pool=self._pool,
+                    circuit_breaker=self._circuit_breaker,
+                )
+            except Exception:  # noqa: BLE001 - poke is best-effort
+                logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)
+        else:
+            payload = (
+                await agent_health(
+                    host.ip,
+                    host.agent_port,
+                    http_client_factory=httpx.AsyncClient,
+                    settings=self._settings,
+                    pool=self._pool,
+                    circuit_breaker=self._circuit_breaker,
+                )
+                or {}
             )
-            or {}
-        )
-        appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
-        if not isinstance(appium_processes, dict):
-            return None
-        observed = [
-            ObservedEntry(
-                port=entry.port,
-                pid=entry.pid,
-                connection_target=entry.connection_target,
+            appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+            if not isinstance(appium_processes, dict):
+                return None
+            observed = [
+                ObservedEntry(
+                    port=entry.port,
+                    pid=entry.pid,
+                    connection_target=entry.connection_target,
+                )
+                for entry in parse_running_nodes(appium_processes)
+            ]
+            await self.converge_host_rows(
+                db,
+                [row],
+                observed,
+                host_id=host.id,
+                host_ip=host.ip,
+                agent_port=host.agent_port,
+                raise_errors=True,
             )
-            for entry in parse_running_nodes(appium_processes)
-        ]
-        await self.converge_host_rows(
-            db,
-            [row],
-            observed,
-            host_id=host.id,
-            host_ip=host.ip,
-            agent_port=host.agent_port,
-            raise_errors=True,
-        )
         async with session_scope() as read_db:
             node = await read_db.get(AppiumNode, row.node_id)
             if node is not None:

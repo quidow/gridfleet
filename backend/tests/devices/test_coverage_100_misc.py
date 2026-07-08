@@ -472,6 +472,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     reconfigure_db.scalar = AsyncMock(return_value=1)
     reconfigure_db.execute = AsyncMock(
         side_effect=[
+            ExecuteResult(None),  # pull-host lookup: no host -> legacy push path
             ExecuteResult(None),
             ExecuteResult([row]),
             ExecuteResult(SimpleNamespace(generation=1)),

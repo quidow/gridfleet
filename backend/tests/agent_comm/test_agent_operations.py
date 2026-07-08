@@ -209,6 +209,48 @@ async def test_agent_appium_reconfigure_posts_payload() -> None:
     ]
 
 
+async def test_agent_nodes_refresh_posts_with_no_body() -> None:
+    client = StrictAgentClient(
+        post_response=_response("POST", "http://10.0.0.5:5100/agent/appium-nodes/refresh", payload={"accepted": True})
+    )
+
+    await agent_operations.agent_nodes_refresh(
+        "10.0.0.5",
+        5100,
+        http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
+    )
+
+    assert client.post_calls == [
+        (
+            "http://10.0.0.5:5100/agent/appium-nodes/refresh",
+            {"params": None, "headers": {}, "json": None, "timeout": 5},
+        )
+    ]
+
+
+async def test_agent_nodes_refresh_raises_response_error_on_http_500() -> None:
+    from app.core.errors import AgentResponseError
+
+    client = StrictAgentClient(
+        post_response=_response(
+            "POST", "http://10.0.0.5:5100/agent/appium-nodes/refresh", status_code=503, payload={"detail": "busy"}
+        )
+    )
+
+    with pytest.raises(AgentResponseError) as caught:
+        await agent_operations.agent_nodes_refresh(
+            "10.0.0.5",
+            5100,
+            http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
+            circuit_breaker=_noop_breaker(),
+        )
+
+    assert caught.value.http_status == 503
+
+
 async def test_pack_device_health_get_request() -> None:
     client = StrictAgentClient(
         get_response=_response(

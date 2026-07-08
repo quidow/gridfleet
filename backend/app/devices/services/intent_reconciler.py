@@ -37,6 +37,7 @@ from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
+from app.hosts.service import host_uses_node_pull
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -400,7 +401,11 @@ async def reconcile_device(
         and node.port is not None
         and (node.desired_state == AppiumDesiredState.running or node.stop_pending or not node.accepting_new_sessions)
     )
-    if should_stage_reconfigure:
+    # Pull-capable hosts (``host_uses_node_pull``) never get an outbox row: the
+    # agent re-pulls its desired state on its own cadence, woken by a
+    # post-commit poke from ``deliver_agent_reconfigures`` instead of a staged
+    # push. ``device.host`` is already eager-loaded by ``lock_device``.
+    if should_stage_reconfigure and not (device.host is not None and host_uses_node_pull(device.host)):
         await _stage_agent_reconfigure(db, node)
     await db.flush()
 

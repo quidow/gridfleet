@@ -397,6 +397,36 @@ async def agent_appium_reconfigure(
     return _decode_model_payload(response, host=host, action="reconfigure Appium node", model=AppiumReconfigureResponse)
 
 
+async def agent_nodes_refresh(
+    host: str,
+    agent_port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 5,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> None:
+    """Fire-and-forget wake hint: ask the agent to re-pull desired node state now.
+
+    Callers treat this as best-effort (a lost wake costs at most one poll
+    interval) and swallow any exception raised here.
+    """
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/appium-nodes/refresh",
+        endpoint="appium_nodes_refresh",
+        host=host,
+        agent_port=agent_port,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+        settings=settings,
+        pool=pool,
+        circuit_breaker=circuit_breaker,
+    )
+    _raise_for_status(response, host=host, action="poke node refresh")
+
+
 def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | None, str]:
     """Return (code, message) parsed from an agent failure response."""
     if response is None:

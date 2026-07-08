@@ -11,8 +11,11 @@ from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumNode
 from app.core import metrics_recorders
 from app.core.errors import AgentResponseError, AgentUnreachableError
+from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices.models import Device
+from app.hosts.models import Host
+from app.hosts.service import host_uses_node_pull
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +24,8 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+
+logger = get_logger(__name__)
 
 DELIVERY_BATCH_SIZE = 5
 MAX_DELIVERY_ATTEMPTS = 10
@@ -83,6 +88,21 @@ async def deliver_agent_reconfigures(
     publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
+    host = (
+        await db.execute(select(Host).join(Device, Device.host_id == Host.id).where(Device.id == device_id))
+    ).scalar_one_or_none()
+    if host is not None and host_uses_node_pull(host):
+        # Pull-capable host: replace the outbox scan/push with a fire-and-forget
+        # wake hint. A lost poke costs at most one agent poll interval, so any
+        # failure is logged and swallowed rather than affecting the caller.
+        try:
+            await agent_operations.agent_nodes_refresh(
+                host.ip, host.agent_port, settings=settings, pool=pool, circuit_breaker=circuit_breaker
+            )
+        except Exception:  # noqa: BLE001 - poke is best-effort
+            logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)
+        return
+
     await _mark_duplicate_generation_rows_delivered(db, device_id)
     metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
         int(
@@ -218,7 +238,24 @@ async def deliver_pending_agent_reconfigures(
         .scalars()
         .all()
     )
+    if not device_ids:
+        return
+    # A pull-capable host never stages new outbox rows (see reconcile_device),
+    # so any row here is a pre-upgrade stale row that must not be delivered as
+    # a legacy reconfigure (8c drops the table). Batch-resolve pull hosts for
+    # this candidate set in one indexed join instead of a query per device.
+    pull_host_device_ids = {
+        device_id
+        for device_id, host in (
+            await db.execute(
+                select(Device.id, Host).join(Host, Device.host_id == Host.id).where(Device.id.in_(device_ids))
+            )
+        ).all()
+        if host_uses_node_pull(host)
+    }
     for device_id in device_ids:
+        if device_id in pull_host_device_ids:
+            continue
         await deliver_agent_reconfigures(
             db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )

@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent_comm.models import AgentReconfigureOutbox
+from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentUnreachableError
 from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
@@ -523,6 +524,49 @@ async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSessi
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert outbox.reconciled_generation == 8
     assert outbox.accepting_new_sessions is False
+
+
+async def test_pull_host_metadata_change_pokes_instead_of_staging(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host advertising ``node_desired_pull`` must never get a staged outbox
+    row from ``reconcile_device`` — its desired-state write is delivered as a
+    single post-commit poke by ``deliver_agent_reconfigures`` instead."""
+    db_host.capabilities = {"node_desired_pull": True}
+    await db_session.commit()
+    device = await create_device(db_session, host_id=db_host.id, name="pull-metadata")
+    node = await _seed_node(db_session, device.id, generation=7)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source="grid:block",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 80},
+            ),
+        ],
+    )
+    await db_session.commit()
+    poke = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_nodes_refresh", poke)
+    reconfigure = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
+
+    assert (await db_session.execute(select(AgentReconfigureOutbox))).scalars().all() == []
+    reconfigure.assert_not_awaited()
+    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
 
 
 async def test_stage_agent_reconfigure_dedupes_identical_undelivered_generation(
