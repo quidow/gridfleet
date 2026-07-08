@@ -462,7 +462,7 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.0.9",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
             },
         )
 
@@ -476,6 +476,22 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert len(scheduled) == 1
     assert scheduled[0][0] is _auto_discover
     assert scheduled[0][1][0] == host_id  # host_id arg
+
+
+async def test_register_rejects_pre_pull_contract_v2(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/hosts/register",
+        json={
+            "hostname": "pre-pull-agent",
+            "ip": "192.168.1.111",
+            "os_type": "linux",
+            "agent_port": 5100,
+            "agent_version": "0.0.9",
+            "capabilities": {"orchestration_contract_version": 2},
+        },
+    )
+
+    assert resp.status_code == 426
 
 
 async def test_reregister_closes_open_circuit_breaker(client: AsyncClient) -> None:
@@ -492,7 +508,7 @@ async def test_reregister_closes_open_circuit_breaker(client: AsyncClient) -> No
         "os_type": "linux",
         "agent_port": 5100,
         "agent_version": "0.3.0",
-        "capabilities": {"orchestration_contract_version": 2},
+        "capabilities": {"orchestration_contract_version": 3},
     }
     first = await client.post("/api/hosts/register", json=body)
     assert first.status_code in (200, 201)
@@ -522,7 +538,7 @@ async def test_hosts_list_and_detail_include_recommended_agent_version(client: A
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.2.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
             },
         )
 
@@ -551,7 +567,7 @@ async def test_agent_update_available_false_when_current(client: AsyncClient) ->
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.3.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
             },
         )
 
@@ -573,7 +589,7 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
                     "platforms": ["android_mobile", "roku"],
                     "tools": {"appium": "3.0.0"},
                     "missing_prerequisites": ["java"],
-                    "orchestration_contract_version": 2,
+                    "orchestration_contract_version": 3,
                 },
             },
         )
@@ -613,7 +629,7 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.1.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
             },
         )
         host_id = register_resp.json()["id"]
@@ -677,7 +693,7 @@ async def test_register_host_persists_hardware_info(client: AsyncClient) -> None
                 "os_type": "macos",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
                 "host_info": {
                     "os_version": "macOS 14.5",
                     "kernel_version": "Darwin 23.5.0",
@@ -711,7 +727,7 @@ async def test_register_host_without_host_info_keeps_columns_null(client: AsyncC
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
             },
         )
 
@@ -780,7 +796,7 @@ async def test_register_host_does_not_overwrite_hardware_info_with_null(client: 
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
                 "host_info": {
                     "os_version": "Ubuntu 22.04.3 LTS",
                     "cpu_cores": 8,
@@ -798,7 +814,7 @@ async def test_register_host_does_not_overwrite_hardware_info_with_null(client: 
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 2},
+                "capabilities": {"orchestration_contract_version": 3},
                 "host_info": {
                     "cpu_arch": "x86_64",
                 },

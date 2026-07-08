@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from app.hosts.schemas import HostCreate, HostHardwareInfo, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
-MIN_ORCHESTRATION_CONTRACT_VERSION = 2
+MIN_ORCHESTRATION_CONTRACT_VERSION = 3
 
 
 def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
