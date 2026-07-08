@@ -6,7 +6,6 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from app.agent_comm.models import AgentReconfigureOutbox  # noqa: F401
 from app.analytics.models import AnalyticsCapacitySnapshot  # noqa: F401
 from app.appium_nodes.models import AppiumNode, AppiumNodeResourceClaim  # noqa: F401
 from app.core.config import settings

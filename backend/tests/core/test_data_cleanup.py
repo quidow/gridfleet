@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services.data_cleanup import DataCleanupService
@@ -151,59 +150,6 @@ async def test_cleanup_uses_separate_retention_window_for_probes(
     assert "probe-recent" in remaining_ids
     assert "real-old" not in remaining_ids
     assert "probe-old" not in remaining_ids
-
-
-async def test_cleanup_old_agent_reconfigure_outbox_rows(db_session: AsyncSession, db_host: Host) -> None:
-    device_id = await _create_device(db_session, db_host)
-    old_time = datetime.now(UTC) - timedelta(days=10)
-    recent_time = datetime.now(UTC) - timedelta(hours=1)
-    old_delivered = AgentReconfigureOutbox(
-        device_id=device_id,
-        port=4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        reconciled_generation=1,
-        created_at=old_time,
-        delivered_at=old_time,
-    )
-    old_abandoned = AgentReconfigureOutbox(
-        device_id=device_id,
-        port=4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        reconciled_generation=2,
-        created_at=old_time,
-        abandoned_at=old_time,
-        abandoned_reason="max delivery attempts exceeded",
-    )
-    old_pending = AgentReconfigureOutbox(
-        device_id=device_id,
-        port=4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        reconciled_generation=3,
-        created_at=old_time,
-    )
-    recent_delivered = AgentReconfigureOutbox(
-        device_id=device_id,
-        port=4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        reconciled_generation=4,
-        created_at=recent_time,
-        delivered_at=recent_time,
-    )
-    db_session.add_all([old_delivered, old_abandoned, old_pending, recent_delivered])
-    await db_session.commit()
-
-    await DataCleanupService(publisher=event_bus, settings=FakeSettingsReader({})).cleanup_old_data(db_session)
-
-    remaining = (await db_session.execute(select(AgentReconfigureOutbox))).scalars().all()
-    remaining_ids = {row.id for row in remaining}
-    assert old_delivered.id not in remaining_ids
-    assert old_abandoned.id not in remaining_ids
-    assert old_pending.id in remaining_ids
-    assert recent_delivered.id in remaining_ids
 
 
 async def test_cleanup_old_audit_logs(db_session: AsyncSession, db_host: Host) -> None:
