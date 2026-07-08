@@ -58,6 +58,17 @@ async def seed_packs(db_session: AsyncSession) -> None:
     await db_session.commit()
 
 
+@pytest.fixture(autouse=True)
+def _stub_node_poke(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the agent wake-hint poke so node-control/run-creation tests here
+    don't make a real network call. ``converge_device_now`` (restart route)
+    binds ``agent_nodes_refresh`` directly into the reconciler module, while
+    run creation reaches it via ``node_poke``'s ``agent_operations`` module
+    attribute — both call sites need patching independently."""
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.agent_nodes_refresh", AsyncMock())
+    monkeypatch.setattr("app.agent_comm.operations.agent_nodes_refresh", AsyncMock())
+
+
 @pytest_asyncio.fixture
 async def default_host_id(client: AsyncClient) -> str:
     host = await create_host(client, **HOST_PAYLOAD)
