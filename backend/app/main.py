@@ -74,8 +74,7 @@ from app.portability import router as portability_router
 from app.runs import router as runs_router
 from app.runs.service_reaper import RunReaperLoop
 from app.sessions import router as sessions_router
-from app.sessions.service_sync import SessionSyncLoop
-from app.sessions.service_viability import SessionViabilityLoop
+from app.sessions.appium_sweep import AppiumSweepLoop
 from app.settings import router as settings
 from app.settings.dependencies import (
     SettingsServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
@@ -208,8 +207,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
             ),
         ),
     )
-    session_sync = SessionSyncLoop(services=app_services.sessions)
-    session_viability = SessionViabilityLoop(services=app_services.sessions)
+    appium_sweep = AppiumSweepLoop(services=app_services.sessions)
 
     run_reaper = RunReaperLoop(services=app_services.runs)
     allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
@@ -219,12 +217,11 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
 
     _leader_loops: list[tuple[Any, str]] = [
         (host_sweep.run(), "host_sweep_loop"),
-        (session_sync.run(), "session_sync_loop"),
+        (appium_sweep.run(), "appium_sweep_loop"),
         (job_worker.run(), "durable_job_worker_loop"),
         (run_reaper.run(), "run_reaper_loop"),
         (allocation_reaper.run(), "grid_allocation_reaper_loop"),
         (data_cleanup.run(), "data_cleanup_loop"),
-        (session_viability.run(), "session_viability_loop"),
         (fleet_capacity.run(), "fleet_capacity_collector_loop"),
         (pack_drain.run(), "pack_drain_loop"),
         (intent_reconciler.run(), "device_intent_reconciler_loop"),

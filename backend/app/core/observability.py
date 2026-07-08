@@ -48,12 +48,11 @@ LOOP_HEARTBEAT_NAMESPACE = "observability.background_loops"
 LOOP_HEARTBEAT_STALE_GRACE_SEC = 10
 BACKGROUND_LOOP_NAMES = (
     "host_sweep",
-    "session_sync",
+    "appium_sweep",
     "durable_job_worker",
     "run_reaper",
     "grid_allocation_reaper",
     "data_cleanup",
-    "session_viability",
     "fleet_capacity_collector",
     "pack_drain",
     "device_intent_reconciler",
