@@ -78,6 +78,12 @@ def orchestration_contract_version(capabilities: dict[str, Any] | None) -> int |
     return None
 
 
+def host_uses_node_pull(host: Host) -> bool:
+    """True when the host's agent advertises agent-pull node desired-state (8a)."""
+    caps = host.capabilities
+    return bool(caps.get("node_desired_pull")) if isinstance(caps, dict) else False
+
+
 def validate_orchestration_contract(capabilities: dict[str, Any] | None, *, host_label: str) -> None:
     version = orchestration_contract_version(capabilities)
     if version is None or version < MIN_ORCHESTRATION_CONTRACT_VERSION:

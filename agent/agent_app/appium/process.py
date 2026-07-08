@@ -263,6 +263,24 @@ class AppiumLaunchSpec:
 
 
 @dataclass(frozen=True)
+class AppiumStartFailure:
+    port: int
+    connection_target: str
+    kind: str
+    detail: str
+    at: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "port": self.port,
+            "connection_target": self.connection_target,
+            "kind": self.kind,
+            "detail": self.detail,
+            "at": self.at,
+        }
+
+
+@dataclass(frozen=True)
 class AppiumRestartEvent:
     sequence: int
     process: str
@@ -311,6 +329,7 @@ class AppiumProcessManager:
             maxlen=MAX_RESTART_EVENTS
         )
         self._restart_sequence = 0
+        self._start_failures: collections.deque[AppiumStartFailure] = collections.deque(maxlen=MAX_RESTART_EVENTS)
         self._intentional_stop_ports: set[int] = set()
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
@@ -419,6 +438,22 @@ class AppiumProcessManager:
                 exit_code=exit_code,
                 occurred_at=datetime.now(UTC).isoformat(),
                 will_retry=will_retry,
+            )
+        )
+
+    def record_start_failure(self, *, port: int, connection_target: str, kind: str, detail: str) -> None:
+        """Record a failed `start()` attempt for the next `/agent/health` payload.
+
+        Level-style fact, not an event stream: the backend dedupes by (port, at),
+        so unlike the restart-event ring this carries no sequence cursor.
+        """
+        self._start_failures.append(
+            AppiumStartFailure(
+                port=port,
+                connection_target=connection_target,
+                kind=kind,
+                detail=detail,
+                at=datetime.now(UTC).isoformat(),
             )
         )
 
@@ -923,6 +958,7 @@ class AppiumProcessManager:
         return {
             "running_nodes": [await self._running_node_snapshot(info) for info in self.list_running()],
             "recent_restart_events": [event.to_payload() for event in self._recent_restart_events],
+            "start_failures": [failure.to_payload() for failure in self._start_failures],
         }
 
     async def _running_node_snapshot(self, info: AppiumProcessInfo) -> dict[str, Any]:

@@ -40,6 +40,17 @@ The same convergence pass is the canonical orphan reaper. It parses
 processes that no DB row claims by `(connection_target, port)`. Reasons surfaced
 via metrics include `no_db_row`, `db_state_not_running`, and `port_mismatch`.
 
+During the 8a→8c agent-pull rollout, node lifecycle runs in two modes selected
+per host by the agent's `node_desired_pull` capability (advertised only when
+that agent has `AGENT_NODE_PULL_ENABLED=true`). Legacy hosts keep the push
+path above unchanged. Pull-capable hosts stay observe-only: the reconciler
+still writes DB-only convergence facts but skips agent-touching start/stop/
+restart, orphan reap becomes metric-only, and reconfigure delivery is
+replaced by a fire-and-forget wake poke (`POST /agent/appium-nodes/refresh`)
+— the agent's own `NodeStateLoop` pulls desired state and owns start/stop and
+orphan cleanup for that host. See `docs/design/04-backend-agent-contract.md`
+for the full contract.
+
 Loop-level readiness and dashboard gauges now use `host_sweep`. The historical
 `heartbeat` and `appium_reconciler` loop-level gauge series end at this release;
 heartbeat ping metrics and `APPIUM_RECONCILER_*` concern metrics retain their names.

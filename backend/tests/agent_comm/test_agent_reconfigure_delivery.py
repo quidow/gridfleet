@@ -13,9 +13,11 @@ from app.agent_comm.reconfigure_delivery import (
     InlineReconfigureDeliveryFailedError,
     _record_delivery_failure,
     deliver_agent_reconfigures,
+    deliver_pending_agent_reconfigures,
 )
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentResponseError
+from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -23,8 +25,6 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
-
-    from app.hosts.models import Host
 
 SETTINGS = FakeSettingsReader()
 CIRCUIT_BREAKER = Mock()
@@ -444,6 +444,74 @@ async def test_delivery_processes_at_most_one_batch_per_device(
     assert reconfigure.await_count == 5
 
 
+async def test_deliver_pending_skips_pull_host_devices(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale outbox row for a pull-capable host must not be delivered as a
+    legacy reconfigure by the batch loop, and must not even trigger a poke —
+    ``deliver_pending_agent_reconfigures`` filters these devices out entirely."""
+    pull_host = Host(
+        hostname=f"pull-host-{uuid.uuid4().hex[:8]}",
+        ip="10.0.0.251",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        capabilities={"node_desired_pull": True},
+    )
+    db_session.add(pull_host)
+    await db_session.flush()
+
+    legacy_device = await create_device(db_session, host_id=db_host.id, name="pending-legacy")
+    legacy_node = AppiumNode(
+        device_id=legacy_device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        generation=1,
+    )
+    legacy_row = AgentReconfigureOutbox(
+        device_id=legacy_device.id,
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        reconciled_generation=1,
+    )
+    pull_device = await create_device(db_session, host_id=pull_host.id, name="pending-pull")
+    pull_node = AppiumNode(
+        device_id=pull_device.id,
+        port=4724,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4724,
+        generation=1,
+    )
+    stale_pull_row = AgentReconfigureOutbox(
+        device_id=pull_device.id,
+        port=4724,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        reconciled_generation=1,
+    )
+    db_session.add_all([legacy_node, legacy_row, pull_node, stale_pull_row])
+    await db_session.commit()
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
+    poke = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_nodes_refresh", poke)
+
+    await deliver_pending_agent_reconfigures(
+        db_session, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+
+    reconfigure.assert_awaited_once()
+    poke.assert_not_awaited()
+    await db_session.refresh(legacy_row)
+    await db_session.refresh(stale_pull_row)
+    assert legacy_row.delivered_at is not None
+    assert stale_pull_row.delivered_at is None
+
+
 async def test_delivery_abandons_row_after_max_attempts(
     db_session: AsyncSession,
     db_host: Host,
@@ -650,6 +718,74 @@ async def test_404_mark_node_stopped_failure_records_delivery_failure(
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivery_attempts == 1, "mark_node_stopped failure must count as a delivery attempt"
     assert stored.delivered_at is None, "a row whose cleanup failed must stay retryable, not be consumed"
+
+
+async def test_pull_host_pokes_instead_of_delivering_and_leaves_row_untouched(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host advertising ``node_desired_pull`` gets a fire-and-forget poke instead
+    of the outbox scan/delivery. A pre-upgrade stale row (8b should never stage new
+    ones for a pull host) must be left undelivered — 8c drops the table."""
+    db_host.capabilities = {"node_desired_pull": True}
+    await db_session.commit()
+    device = await create_device(db_session, host_id=db_host.id, name="pull-poke")
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        generation=4,
+    )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        reconciled_generation=4,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    reconfigure = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
+    poke = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_nodes_refresh", poke)
+
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus, pool=POOL
+    )
+
+    reconfigure.assert_not_awaited()
+    poke.assert_awaited_once_with(
+        db_host.ip, db_host.agent_port, settings=SETTINGS, pool=POOL, circuit_breaker=CIRCUIT_BREAKER
+    )
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert stored.delivered_at is None
+    assert stored.delivery_attempts == 0
+
+
+async def test_pull_host_poke_failure_is_swallowed(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poke failure (agent unreachable) must be logged, not propagated —
+    the reconcile/delivery caller must not be affected."""
+    from app.core.errors import AgentUnreachableError
+
+    db_host.capabilities = {"node_desired_pull": True}
+    await db_session.commit()
+    device = await create_device(db_session, host_id=db_host.id, name="pull-poke-fail")
+    poke = AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline"))
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_nodes_refresh", poke)
+
+    # Must not raise.
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+
+    poke.assert_awaited_once()
 
 
 async def test_non_404_response_error_keeps_failure_path(

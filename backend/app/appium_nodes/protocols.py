@@ -27,6 +27,7 @@ class ReconcilerProtocol(Protocol):
         rows: list[DesiredRow],
         backoff_until_by_device: dict[uuid.UUID, datetime],
         payload: dict[str, object],
+        node_pull: bool = ...,
     ) -> None: ...
 
     async def converge_device_now(

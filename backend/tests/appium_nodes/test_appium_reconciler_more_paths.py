@@ -56,7 +56,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
     db.get = AsyncMock(return_value=None)
     assert await svc.converge_device_now(device_id, db=db) is None
 
-    host = SimpleNamespace(id=row.host_id, status=HostStatus.online, ip="10.0.0.1", agent_port=5100)
+    host = SimpleNamespace(id=row.host_id, status=HostStatus.online, ip="10.0.0.1", agent_port=5100, capabilities=None)
     db.get = AsyncMock(side_effect=[host])
     monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"status": "ok"}))
     assert await svc.converge_device_now(device_id, db=db) is None
@@ -78,6 +78,49 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
 
     assert await svc.converge_device_now(device_id, db=db) is node
     converge.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(node)
+
+
+async def test_converge_device_now_pull_host_pokes_without_agent_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host advertising ``node_desired_pull`` must skip ``agent_health`` /
+    ``converge_host_rows`` entirely: fire a wake poke and return the node row."""
+    device_id = uuid.uuid4()
+    db = MagicMock()
+    settings = FakeSettingsReader({})
+    circuit_breaker = Mock()
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=settings,
+        pool=None,
+        circuit_breaker=circuit_breaker,
+        session_factory=AsyncMock(),
+    )
+    row = SimpleNamespace(device_id=device_id, host_id=uuid.uuid4(), node_id=uuid.uuid4())
+    monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=row))
+    host = SimpleNamespace(
+        id=row.host_id,
+        status=HostStatus.online,
+        ip="10.0.0.9",
+        agent_port=5100,
+        capabilities={"node_desired_pull": True},
+    )
+    node = SimpleNamespace(id=row.node_id)
+    db.get = AsyncMock(side_effect=[host, node])
+    db.refresh = AsyncMock()
+    agent_health_mock = AsyncMock()
+    monkeypatch.setattr(appium_reconciler, "agent_health", agent_health_mock)
+    converge = AsyncMock()
+    monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
+    poke = AsyncMock()
+    monkeypatch.setattr(appium_reconciler, "agent_nodes_refresh", poke)
+
+    assert await svc.converge_device_now(device_id, db=db) is node
+
+    poke.assert_awaited_once_with(
+        host.ip, host.agent_port, settings=settings, pool=None, circuit_breaker=circuit_breaker
+    )
+    agent_health_mock.assert_not_awaited()
+    converge.assert_not_awaited()
     db.refresh.assert_awaited_once_with(node)
 
 

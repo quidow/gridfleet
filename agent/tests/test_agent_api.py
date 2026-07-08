@@ -62,7 +62,7 @@ async def test_health(client: AsyncClient) -> None:
     assert "hostname" in data
     assert "os_type" in data
     assert data["missing_prerequisites"] == []
-    assert data["appium_processes"] == {"running_nodes": [], "recent_restart_events": []}
+    assert data["appium_processes"] == {"running_nodes": [], "recent_restart_events": [], "start_failures": []}
 
 
 async def test_host_telemetry(client: AsyncClient) -> None:

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from agent_app.appium.exceptions import PortOccupiedError
 from agent_app.appium.schemas import AppiumStartRequest
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,17 @@ class NodeStateLoop:
             local = None
 
         if local is None:
-            started = await self.manager.start(**self._launch_kwargs(launch))
+            try:
+                started = await self.manager.start(**self._launch_kwargs(launch))
+            except Exception as exc:
+                kind = "port_conflict" if isinstance(exc, PortOccupiedError) else "spawn_failed"
+                self.manager.record_start_failure(
+                    port=spec.port,
+                    connection_target=launch.connection_target,
+                    kind=kind,
+                    detail=str(exc),
+                )
+                raise
             running_by_port[spec.port] = started
         else:
             launch_specs = getattr(self.manager, "_launch_specs", {})
