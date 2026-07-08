@@ -178,7 +178,7 @@ async def test_agent_nodes_refresh_posts_with_no_body() -> None:
     assert client.post_calls == [
         (
             "http://10.0.0.5:5100/agent/appium-nodes/refresh",
-            {"params": None, "headers": {}, "json": None, "timeout": 5},
+            {"params": None, "headers": {}, "json": None, "timeout": agent_operations.NODE_POKE_TIMEOUT_SEC},
         )
     ]
 
