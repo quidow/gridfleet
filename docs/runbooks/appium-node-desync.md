@@ -32,3 +32,9 @@ divergence automatically. If it does not:
 "Force-clear restart" button. For a stuck agent process, call
 `POST /agent/appium/stop {"port": N}` against the host agent. File an incident
 if either override is needed.
+
+> **Pull-capable hosts** (agent advertises `node_desired_pull`): a direct
+> `POST /agent/appium/stop` is reverted on the agent's next pull while the
+> backend still desires the node running. Change desired state through the
+> backend instead (e.g. set the device to maintenance / stop the run), then let
+> the agent converge.
