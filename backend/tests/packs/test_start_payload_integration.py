@@ -1,9 +1,12 @@
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.appium_nodes.services import (
+    reconciler_agent as appium_reconciler_agent,
+)
 from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.packs.services.capability import render_stereotype
@@ -13,6 +16,12 @@ from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class _FakeHost:
+    ip = "127.0.0.1"
+    agent_port = 5100
+    tool_env: dict[str, str] | None = None
 
 
 @pytest.fixture
@@ -59,6 +68,109 @@ async def test_uiautomator2_stereotype_uses_device_template(
     assert stereotype["appium:device_type"] == "real_device"
     # Redundant appium:platformName mirror is removed in favor of unprefixed platformName.
     assert "appium:platformName" not in stereotype
+
+
+# ---------------------------------------------------------------------------
+# Restored after push-path deletion (f7c5d947): these guarded behavior of
+# build_node_launch_payload, which survives as the shared payload builder for
+# the pull channel (app/appium_nodes/routers/agent_state.py). Originally
+# exercised through the now-deleted start_remote_node/push flow; rewritten to
+# call build_node_launch_payload directly.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_node_launch_payload_forwards_pack_appium_env(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        identity_value="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        connection_target="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        name="Living Room",
+        os_version="26.4",
+        host_id=uuid.uuid4(),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.5",
+        device_config={"wda_base_url": "http://192.168.1.5"},
+    )
+
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        appium_reconciler_agent,
+        "build_agent_start_payload",
+        lambda device, port, **kwargs: {
+            "connection_target": device.connection_target,
+            "platform_id": device.platform_id,
+            "port": port,
+            "extra_caps": None,
+            "device_type": device.device_type.value,
+            "ip_address": device.ip_address,
+            "allocated_caps": None,
+            "session_override": None,
+            "headless": True,
+        },
+    )
+
+    payload = await appium_reconciler_agent.build_node_launch_payload(
+        db_session,
+        device,
+        port=4723,
+        allocated_caps=None,
+        settings=FakeSettingsReader({}),
+    )
+
+    assert payload["appium_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
+
+
+@pytest.mark.asyncio
+async def test_build_node_launch_payload_sends_device_field_caps_only_to_appium_defaults(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="roku-serial",
+        connection_target="192.168.1.2",
+        name="Roku Stick",
+        os_version="15.1.4",
+        ip_address="192.168.1.2",
+        host_id=uuid.uuid4(),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        device_config={"roku_password": "dev-password"},
+    )
+
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+
+    payload = await appium_reconciler_agent.build_node_launch_payload(
+        db_session,
+        device,
+        port=4724,
+        allocated_caps=None,
+        settings=FakeSettingsReader({}),
+    )
+
+    assert payload["extra_caps"]["appium:password"] == "dev-password"
+    assert payload["extra_caps"]["appium:ip"] == "192.168.1.2"
+    assert "stereotype_caps" not in payload
 
 
 async def test_start_payload_sends_manifest_appium_platform_name(db_session: AsyncSession) -> None:

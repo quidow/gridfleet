@@ -336,6 +336,112 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
     assert payload["headless"] is False
 
 
+# ---------------------------------------------------------------------------
+# Restored after push-path deletion (f7c5d947): these guarded behavior of
+# build_node_launch_payload, which survives as the shared payload builder for
+# the pull channel (app/appium_nodes/routers/agent_state.py). Originally
+# exercised through the now-deleted start_remote_node/push flow; rewritten to
+# call build_node_launch_payload directly.
+# ---------------------------------------------------------------------------
+
+
+async def test_build_node_launch_payload_aligns_simulator_caps_with_probe_request(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = await create_host(
+        client,
+        hostname="mac-host",
+        ip="192.168.88.105",
+        os_type="macos",
+        agent_port=5100,
+    )
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="315C5A92-07A9-45D2-8210-6B7FB88B406E",
+        connection_target="315C5A92-07A9-45D2-8210-6B7FB88B406E",
+        name="iPhone 17 Simulator",
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        identity_scheme="simulator_udid",
+        identity_scope="host",
+        os_version="18.0",
+        device_type="simulator",
+    )
+    loaded = await _crud.get_device(db_session, device.id)
+    assert loaded is not None
+
+    with (
+        patch("app.appium_nodes.services.reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
+        patch(
+            "app.appium_nodes.services.reconciler_agent.render_stereotype",
+            new=AsyncMock(return_value={"appium:automationName": "XCUITest"}),
+        ),
+    ):
+        payload = await node_agent.build_node_launch_payload(
+            db_session,
+            loaded,
+            port=4724,
+            allocated_caps={"appium:wdaLocalPort": 8100},
+            settings=FakeSettingsReader(
+                {
+                    "appium.session_override": True,
+                    "appium.startup_timeout_sec": 30,
+                }
+            ),
+        )
+
+    assert payload["extra_caps"]["appium:automationName"] == "XCUITest"
+    assert "appium:platformVersion" not in payload["extra_caps"]
+    assert "appium:simulatorRunning" not in payload["extra_caps"]
+
+
+async def test_build_node_launch_payload_renders_stereotype_once(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.packs.services import capability as pack_capability_service
+    from app.packs.services import start_shim as pack_start_shim
+
+    host = await create_host(client, **HOST_PAYLOAD)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="remote-dev-001",
+        connection_target="remote-dev-001",
+        name="Remote Android",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+    )
+    loaded = await _crud.get_device(db_session, device.id)
+    assert loaded is not None
+
+    calls = 0
+    original = pack_capability_service.render_stereotype
+
+    async def counting(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return await original(*args, **kwargs)
+
+    # Patch the locally-bound name in both consumer modules so we count every call.
+    monkeypatch.setattr(node_agent, "render_stereotype", counting)
+    monkeypatch.setattr(pack_start_shim, "render_stereotype", counting)
+
+    await node_agent.build_node_launch_payload(
+        db_session,
+        loaded,
+        port=4723,
+        allocated_caps=None,
+        settings=FakeSettingsReader({}),
+    )
+
+    assert calls == 1
+
+
 async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_host: Host) -> None:
     from app.devices.services import health as device_health
 
