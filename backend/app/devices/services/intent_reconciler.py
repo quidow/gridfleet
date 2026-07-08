@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import NoResultFound
 
-from app.agent_comm.models import AgentReconfigureOutbox
-from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
+from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services.desired_state_writer import (
     DesiredStateWrite,
@@ -37,7 +36,6 @@ from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
-from app.hosts.service import host_uses_node_pull
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -104,7 +102,7 @@ async def _reconcile_commit_deliver(
     else:
         await reconcile_device(db, device_id, publisher=publisher)
     await db.commit()
-    await deliver_agent_reconfigures(
+    await poke_node_refresh(
         db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
 
@@ -119,9 +117,6 @@ async def run_device_intent_reconciler_once(
     pool: AgentHttpPool | None = None,
 ) -> None:
     full_scan_every = settings.get_int("general.intent_reconcile_full_scan_every_cycles")
-    await deliver_pending_agent_reconfigures(
-        db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-    )
     await _reconcile_expired_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
@@ -205,7 +200,7 @@ async def _reconcile_dirty_devices(
         if current is not None and current.generation == generation:
             await db.delete(current)
         await db.commit()
-        await deliver_agent_reconfigures(
+        await poke_node_refresh(
             db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
 
@@ -387,26 +382,6 @@ async def reconcile_device(
     )
     if changed:
         node.generation += 1
-    # Stage a reconfigure for caps/run-id updates on a running node, and for
-    # any transition that must stop new sessions reaching it: ``stop_pending``
-    # (graceful) or ``not accepting_new_sessions`` (a hard stop flips this
-    # without setting ``stop_pending``). Without the ``accepting_new_sessions``
-    # arm, a hard/idle ``desired_state=stopped`` derives ``offline`` synchronously
-    # (``stop_in_flight``) but pushes no drain — the Appium node stays UP and a
-    # direct session lands on the now-offline device (N7,
-    # ``session_on_non_available``). Mirrors the start-path defense-in-depth in
-    # ``reconciler_agent.mark_node_running``.
-    should_stage_reconfigure = (
-        metadata_changed
-        and node.port is not None
-        and (node.desired_state == AppiumDesiredState.running or node.stop_pending or not node.accepting_new_sessions)
-    )
-    # Pull-capable hosts (``host_uses_node_pull``) never get an outbox row: the
-    # agent re-pulls its desired state on its own cadence, woken by a
-    # post-commit poke from ``deliver_agent_reconfigures`` instead of a staged
-    # push. ``device.host`` is already eager-loaded by ``lock_device``.
-    if should_stage_reconfigure and not (device.host is not None and host_uses_node_pull(device.host)):
-        await _stage_agent_reconfigure(db, node)
     await db.flush()
 
     try:
@@ -443,37 +418,6 @@ async def _apply_recovery_decision(
             recovery_decision.reason,
         )
         device.recovery_blocked_reason = recovery_decision.reason
-
-
-async def _stage_agent_reconfigure(db: AsyncSession, node: AppiumNode) -> None:
-    existing = (
-        await db.execute(
-            select(AgentReconfigureOutbox.id)
-            .where(
-                AgentReconfigureOutbox.device_id == node.device_id,
-                AgentReconfigureOutbox.delivered_at.is_(None),
-                AgentReconfigureOutbox.abandoned_at.is_(None),
-                AgentReconfigureOutbox.reconciled_generation == node.generation,
-                AgentReconfigureOutbox.port == node.port,
-                AgentReconfigureOutbox.accepting_new_sessions == node.accepting_new_sessions,
-                AgentReconfigureOutbox.stop_pending == node.stop_pending,
-                AgentReconfigureOutbox.grid_run_id == node.desired_grid_run_id,
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return
-    db.add(
-        AgentReconfigureOutbox(
-            device_id=node.device_id,
-            port=node.port,
-            accepting_new_sessions=node.accepting_new_sessions,
-            stop_pending=node.stop_pending,
-            grid_run_id=node.desired_grid_run_id,
-            reconciled_generation=node.generation,
-        )
-    )
 
 
 async def _record_field_change(

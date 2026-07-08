@@ -1259,8 +1259,8 @@ async def test_cooldown_escalation_status_is_released_when_toggle_off(
     monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
     monkeypatch.setitem(settings_service._cache, "general.run_failure_escalates_to_maintenance", False)
     monkeypatch.setattr(
-        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
-        AsyncMock(return_value={"port": 4723}),
+        "app.agent_comm.node_poke.agent_operations.agent_nodes_refresh",
+        AsyncMock(),
     )
 
     device = await create_device_record(

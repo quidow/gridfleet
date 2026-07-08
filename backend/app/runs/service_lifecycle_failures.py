@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, deliver_agent_reconfigures
+from app.agent_comm.node_poke import poke_node_refresh
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
@@ -202,11 +202,9 @@ class RunFailureService:
                 ),
             )
             await db.commit()
-            await deliver_agent_reconfigures(
+            await poke_node_refresh(
                 db,
                 device.id,
-                agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
-                raise_on_failure=True,
                 settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
                 publisher=self._publisher,
@@ -239,11 +237,9 @@ class RunFailureService:
         await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
 
         await db.commit()
-        await deliver_agent_reconfigures(
+        await poke_node_refresh(
             db,
             device.id,
-            agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
-            raise_on_failure=True,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
             pool=self._pool,

@@ -7,19 +7,15 @@ from unittest.mock import ANY, AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 
-from app.agent_comm.models import AgentReconfigureOutbox
-from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
+from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.errors import AgentUnreachableError
 from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
     _reconcile_all_devices_once,
     _reconcile_dirty_devices,
     _reconcile_expired_intents,
-    _stage_agent_reconfigure,
     reconcile_device,
-    run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
 from app.sessions.models import Session, SessionStatus
@@ -134,156 +130,6 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     assert node.accepting_new_sessions is True
 
 
-async def test_expired_running_metadata_change_is_delivered(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="expired-delivery")
-    node = await _seed_node(db_session, device.id, generation=4)
-    node.desired_state = AppiumDesiredState.running
-    node.desired_port = 4723
-    node.port = 4723
-    node.pid = 1234
-    node.active_connection_target = device.connection_target
-    node.accepting_new_sessions = False
-    await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source="expired:grid:block",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 90},
-                expires_at=datetime.now(UTC) - timedelta(seconds=1),
-            ),
-        ],
-    )
-    await db_session.commit()
-    reconfigure = AsyncMock()
-    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
-
-    settings = FakeSettingsReader()
-    await _reconcile_expired_intents(db_session, settings=settings, circuit_breaker=Mock(), publisher=event_bus)
-
-    reconfigure.assert_awaited_once_with(
-        db_host.ip,
-        db_host.agent_port,
-        port=4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        grid_run_id=None,
-        timeout=10,
-        settings=settings,
-        pool=None,
-        circuit_breaker=ANY,
-    )
-    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
-    assert outbox.delivered_at is not None
-
-
-async def test_reconciler_once_forwards_agent_auth_pool(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The reconciler loop must thread its agent BasicAuth pool through to the
-    delivery call; without it reconfigures are unauthenticated and rejected when
-    the auth gate is enabled."""
-    pool = Mock()
-    device = await create_device(db_session, host_id=db_host.id, name="reconciler-pool")
-    node = await _seed_node(db_session, device.id, generation=4)
-    node.desired_state = AppiumDesiredState.running
-    node.desired_port = 4723
-    node.port = 4723
-    node.pid = 1234
-    node.active_connection_target = device.connection_target
-    db_session.add(
-        AgentReconfigureOutbox(
-            device_id=device.id,
-            port=4723,
-            accepting_new_sessions=True,
-            stop_pending=False,
-            reconciled_generation=4,
-        )
-    )
-    await db_session.commit()
-    reconfigure = AsyncMock(return_value={"port": 4723})
-    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
-
-    await run_device_intent_reconciler_once(
-        db_session,
-        cycle=1,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
-        pool=pool,
-    )
-
-    assert reconfigure.await_count >= 1
-    assert all(call.kwargs.get("pool") is pool for call in reconfigure.await_args_list)
-
-
-async def test_pending_reconfigure_from_expired_last_intent_is_retried(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="expired-retry")
-    node = await _seed_node(db_session, device.id, generation=4)
-    node.desired_state = AppiumDesiredState.running
-    node.desired_port = 4723
-    node.port = 4723
-    node.pid = 1234
-    node.active_connection_target = device.connection_target
-    node.accepting_new_sessions = False
-    await db_session.commit()
-    service = IntentService(db_session)
-    [intent] = await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source="expired:grid:block",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 90},
-                expires_at=datetime.now(UTC) + timedelta(minutes=5),
-            ),
-        ],
-    )
-    await db_session.commit()
-    await _reconcile_dirty_devices(
-        db_session, limit=10, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
-    intent.expires_at = datetime.now(UTC) - timedelta(seconds=1)
-    await db_session.commit()
-    reconfigure = AsyncMock(side_effect=[AgentUnreachableError(db_host.ip, "offline"), {"port": 4723}])
-    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
-
-    await _reconcile_expired_intents(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
-
-    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
-    dirty_rows = (await db_session.execute(select(DeviceIntentDirty))).scalars().all()
-    intents = (
-        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
-    )
-    assert outbox.delivered_at is None
-    assert outbox.delivery_attempts == 1
-    assert dirty_rows == []
-    assert intents == []
-
-    await run_device_intent_reconciler_once(
-        db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-    )
-
-    await db_session.refresh(outbox)
-    assert outbox.delivered_at is not None
-    assert outbox.delivery_attempts == 1
-    assert reconfigure.await_count == 2
-
-
 async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     db_session: AsyncSession,
     db_host: Host,
@@ -313,13 +159,9 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     await db_session.commit()
 
     await db_session.refresh(node)
-    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.stop_pending is True
     assert node.accepting_new_sessions is False
-    assert outbox.port == 4723
-    assert outbox.stop_pending is True
-    assert outbox.accepting_new_sessions is False
 
 
 async def test_hard_stop_on_idle_device_stages_agent_drain(
@@ -364,9 +206,6 @@ async def test_hard_stop_on_idle_device_stages_agent_drain(
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.stop_pending is False
     assert node.accepting_new_sessions is False
-    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
-    assert outbox.port == 4723
-    assert outbox.accepting_new_sessions is False
 
 
 async def test_graceful_stop_holds_node_running_while_session_active(
@@ -499,43 +338,13 @@ async def test_graceful_stop_applies_once_session_ends(
     assert node.accepting_new_sessions is False
 
 
-async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSession, db_host: Host) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="metadata")
-    node = await _seed_node(db_session, device.id, generation=7)
-    node.desired_state = AppiumDesiredState.running
-    node.desired_port = 4723
-    await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source="grid:block",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 80},
-            ),
-        ],
-    )
-    await db_session.commit()
-
-    await reconcile_device(db_session, device.id, publisher=event_bus)
-    await db_session.commit()
-
-    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
-    assert outbox.reconciled_generation == 8
-    assert outbox.accepting_new_sessions is False
-
-
 async def test_pull_host_metadata_change_pokes_instead_of_staging(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A host advertising ``node_desired_pull`` must never get a staged outbox
-    row from ``reconcile_device`` — its desired-state write is delivered as a
-    single post-commit poke by ``deliver_agent_reconfigures`` instead."""
-    db_host.capabilities = {"node_desired_pull": True}
-    await db_session.commit()
+    """A metadata-only desired-state change must wake the agent with a
+    fire-and-forget poke instead of staging any delivery row."""
     device = await create_device(db_session, host_id=db_host.id, name="pull-metadata")
     node = await _seed_node(db_session, device.id, generation=7)
     node.desired_state = AppiumDesiredState.running
@@ -554,41 +363,15 @@ async def test_pull_host_metadata_change_pokes_instead_of_staging(
     )
     await db_session.commit()
     poke = AsyncMock()
-    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_nodes_refresh", poke)
-    reconfigure = AsyncMock()
-    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
+    monkeypatch.setattr("app.agent_comm.node_poke.agent_operations.agent_nodes_refresh", poke)
 
     await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
-    await deliver_agent_reconfigures(
+    await poke_node_refresh(
         db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
     )
 
-    assert (await db_session.execute(select(AgentReconfigureOutbox))).scalars().all() == []
-    reconfigure.assert_not_awaited()
     poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
-
-
-async def test_stage_agent_reconfigure_dedupes_identical_undelivered_generation(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="stage-dedupe")
-    node = await _seed_node(db_session, device.id, generation=3)
-    node.port = 4723
-    node.accepting_new_sessions = False
-    node.stop_pending = True
-    await db_session.commit()
-
-    await _stage_agent_reconfigure(db_session, node)
-    await _stage_agent_reconfigure(db_session, node)
-    await db_session.commit()
-
-    rows = (await db_session.execute(select(AgentReconfigureOutbox))).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].reconciled_generation == 3
-    assert rows[0].accepting_new_sessions is False
-    assert rows[0].stop_pending is True
 
 
 async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
@@ -643,7 +426,7 @@ async def test_full_scan_reconciles_each_intent_device(
         reconciled.append(device_id)
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
-    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", deliver)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", deliver)
 
     await _reconcile_all_devices_once(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
@@ -680,7 +463,7 @@ async def test_full_scan_recovers_non_available_device_without_intents(
         reconciled.append(device_id)
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
-    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", AsyncMock())
+    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", AsyncMock())
 
     await _reconcile_all_devices_once(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
@@ -840,7 +623,7 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     device.operational_state = DeviceOperationalState.offline  # the drift
     await db_session.commit()
 
-    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", AsyncMock())
+    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", AsyncMock())
 
     await _reconcile_all_devices_once(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
