@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
@@ -101,15 +102,20 @@ async def test_desired_launch_payload_matches_push_payload(
         operational_state=DeviceOperationalState.available,
     )
     device.host = db_host
+    grid_run_id = uuid.uuid4()
     node = AppiumNode(
         device_id=device.id,
         port=4730,
         desired_state=AppiumDesiredState.running,
         desired_port=4730,
         generation=12,
+        accepting_new_sessions=False,
+        stop_pending=True,
+        desired_grid_run_id=grid_run_id,
     )
     db_session.add(node)
     await db_session.commit()
+    device.appium_node = node
     settings = FakeSettingsReader()
 
     pushed = await build_node_launch_payload(
@@ -119,6 +125,7 @@ async def test_desired_launch_payload_matches_push_payload(
         allocated_caps=None,
         settings=settings,
     )
+    db_session.expire(device, ["appium_node"])
     desired = await _get_desired(db_session, db_host.id, settings=settings)
     spec = next(item for item in desired.nodes if item.device_id == device.id)
 

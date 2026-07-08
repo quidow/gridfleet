@@ -35,7 +35,10 @@ async def _get_desired(
                 select(AppiumNode)
                 .join(Device)
                 .where(Device.host_id == host_id)
-                .options(joinedload(AppiumNode.device).joinedload(Device.host))
+                .options(
+                    joinedload(AppiumNode.device).joinedload(Device.host),
+                    joinedload(AppiumNode.device).joinedload(Device.appium_node),
+                )
                 .order_by(AppiumNode.device_id)
             )
         )
