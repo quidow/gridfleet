@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import agent_base_url, agent_health, agent_nodes_refresh
 from app.agent_comm.snapshot import parse_running_nodes
-from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
+from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeManagerError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
@@ -34,6 +34,7 @@ from app.appium_nodes.services.reconciler_agent import (
     mark_node_stopped,
     stop_remote_node,
 )
+from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
@@ -195,6 +196,22 @@ def _applied_token_for_row(row: DesiredRow, applied_by_target: dict[str, object]
     return applied_by_target.get(row.connection_target)
 
 
+def _running_rows_by_target(rows: list[DesiredRow]) -> dict[str, DesiredRow]:
+    """Index desired-running rows by connection target for start-failure matching.
+
+    Also indexes by ``active_connection_target`` as a fallback, though a
+    failed start normally reports no active target.
+    """
+    running_by_target: dict[str, DesiredRow] = {}
+    for row in rows:
+        if row.desired_state != "running":
+            continue
+        running_by_target[row.connection_target] = row
+        if row.active_connection_target:
+            running_by_target.setdefault(row.active_connection_target, row)
+    return running_by_target
+
+
 async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     device = await _lock_device_for_reconciler(db, row.device_id)
     if device is None or device.appium_node is None:
@@ -211,6 +228,40 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
             target=node.desired_state,
             desired_port=node.desired_port,
             transition_token_natural_clear=True,
+        ),
+    )
+    await db.commit()
+
+
+async def _repin_desired_port(
+    db: AsyncSession, row: DesiredRow, *, conflict_port: int, settings: SettingsReader
+) -> None:
+    device = await _lock_device_for_reconciler(db, row.device_id)
+    if device is None or device.appium_node is None:
+        return
+    node = device.appium_node
+    try:
+        ports = await candidate_ports(db, host_id=row.host_id, exclude_ports={conflict_port}, settings=settings)
+    except NodeManagerError:
+        logger.warning(
+            "appium_reconciler_repin_no_free_ports",
+            device_id=str(row.device_id),
+            host_id=str(row.host_id),
+            conflict_port=conflict_port,
+        )
+        return
+    # Preserve the existing token/deadline: this write only corrects the port
+    # under the same lease, it is not a competing writer, so minting or
+    # clearing a token here would wrongly trip APPIUM_TRANSITION_TOKEN_OVERRIDDEN.
+    await write_desired_state(
+        db,
+        node=node,
+        caller="appium_reconciler",
+        write=DesiredStateWrite(
+            target=node.desired_state,
+            desired_port=ports[0],
+            transition_token=node.transition_token,
+            transition_deadline=node.transition_deadline,
         ),
     )
     await db.commit()
@@ -312,6 +363,13 @@ class ReconcilerService:
         self._pool = pool
         self._circuit_breaker = circuit_breaker
         self._session_factory = session_factory
+        # Sweep-local dedupe cursor for agent-reported start_failures (Task 4):
+        # keyed by device_id, holds the max ``at`` already processed so the
+        # same ring entry lingering across sweeps doesn't re-fire the re-pin
+        # or backoff increment. A scheduler restart resets this in-memory
+        # map, re-processing at most one stale report — harmless, the
+        # backoff window in ``_record_start_failure`` absorbs it.
+        self._last_seen_failure_at: dict[uuid.UUID, str] = {}
 
     async def reconcile_host(
         self,
@@ -350,6 +408,9 @@ class ReconcilerService:
             raw_running_nodes = appium_processes.get("running_nodes")
             if not isinstance(raw_running_nodes, list):
                 raw_running_nodes = []
+            raw_start_failures = appium_processes.get("start_failures")
+            if not isinstance(raw_start_failures, list):
+                raw_start_failures = []
             await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
             # Reap stray agent nodes (duplicates for one target, or nodes
             # for a device not on this host) before convergence. Keyed off
@@ -399,7 +460,7 @@ class ReconcilerService:
                 # restart -> None in pull mode; the observed-column sync lands on
                 # the next cycle's fresh fetch_desired_rows. Scoped to active_rows
                 # (backoff-excluded rows never converge this cycle anyway).
-                await self._ingest_pull_host_reports(active_rows, raw_running_nodes)
+                await self._ingest_pull_host_reports(active_rows, raw_running_nodes, raw_start_failures)
             await self.converge_host_rows(
                 None,
                 active_rows,
@@ -478,17 +539,24 @@ class ReconcilerService:
                 if raise_errors:
                     raise
 
-    async def _ingest_pull_host_reports(self, rows: list[DesiredRow], raw_running_nodes: list[dict[str, Any]]) -> None:
+    async def _ingest_pull_host_reports(
+        self,
+        rows: list[DesiredRow],
+        raw_running_nodes: list[dict[str, Any]],
+        start_failures: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Ingest agent-reported facts for a pull-capable host (reconcile_host, pull mode only).
 
-        Task 2 scope: applied-transition-token clear only. For each row
-        carrying a pending ``transition_token``, if the agent's matching
-        running-node entry reports ``applied_transition_token`` equal to that
-        token, clear it via the same natural-clear path used for expiry
+        Applied-transition-token clear: for each row carrying a pending
+        ``transition_token``, if the agent's matching running-node entry
+        reports ``applied_transition_token`` equal to that token, clear it
+        via the same natural-clear path used for expiry
         (``_clear_transition_token``) so the clear does not trip
-        ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN``. Start-failure ingest
-        (Task 4) and mark-stopped-on-absence (already handled by the
-        ``db_clear_stale_running`` pass-through) are out of scope here.
+        ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN``.
+
+        Start-failure ingest (Task 4, D3): see ``_ingest_start_failures``.
+        Mark-stopped-on-absence is already handled by the
+        ``db_clear_stale_running`` pass-through and is out of scope here.
         """
         applied_by_target: dict[str, object] = {}
         for entry in raw_running_nodes:
@@ -497,15 +565,70 @@ class ReconcilerService:
             target = entry.get("connection_target")
             if isinstance(target, str):
                 applied_by_target[target] = entry.get("applied_transition_token")
-        if not applied_by_target:
+        if applied_by_target:
+            clear_token = self._clear_token_factory()
+            for row in rows:
+                if row.transition_token is None:
+                    continue
+                applied = _applied_token_for_row(row, applied_by_target)
+                if applied == str(row.transition_token):
+                    await clear_token(row=row)
+        await self._ingest_start_failures(rows, start_failures or [])
+
+    def _match_new_start_failure(
+        self, failure: dict[str, Any], running_by_target: dict[str, DesiredRow]
+    ) -> tuple[DesiredRow, str, object] | None:
+        """Resolve one raw ``start_failures`` entry to ``(row, kind, port)`` if it
+        matches a desired-running row and is newer than the dedupe cursor for
+        that device — updating the cursor as a side effect. Returns ``None``
+        for anything unmatched, malformed, or already-seen (level-style dedupe).
+        """
+        if not isinstance(failure, dict):
+            return None
+        target = failure.get("connection_target")
+        at = failure.get("at")
+        kind = failure.get("kind")
+        if not isinstance(target, str) or not isinstance(at, str) or not isinstance(kind, str):
+            return None
+        row = running_by_target.get(target)
+        if row is None:
+            return None
+        if at <= self._last_seen_failure_at.get(row.device_id, ""):
+            return None
+        self._last_seen_failure_at[row.device_id] = at
+        return row, kind, failure.get("port")
+
+    async def _ingest_start_failures(self, rows: list[DesiredRow], start_failures: list[dict[str, Any]]) -> None:
+        """Ingest agent-reported ``start_failures`` (D3): a ``port_conflict`` re-pins
+        ``desired_port`` to the next free candidate and trips the existing
+        start-failure backoff; a ``spawn_failed`` trips backoff only.
+
+        Only rows desired ``running`` can have a start failure. A failed start
+        has no ``active_connection_target``, so failures match by
+        ``connection_target`` (falling back to ``active_connection_target`` for
+        safety). Dedupe is level-style: see ``_match_new_start_failure``.
+        """
+        if not start_failures:
             return
-        clear_token = self._clear_token_factory()
-        for row in rows:
-            if row.transition_token is None:
+        running_by_target = _running_rows_by_target(rows)
+        if not running_by_target:
+            return
+        for failure in start_failures:
+            matched = self._match_new_start_failure(failure, running_by_target)
+            if matched is None:
                 continue
-            applied = _applied_token_for_row(row, applied_by_target)
-            if applied == str(row.transition_token):
-                await clear_token(row=row)
+            row, kind, port = matched
+            if kind == "port_conflict":
+                await _record_start_failure(
+                    row, reason="port_conflict", session_scope=self._session_factory, settings=self._settings
+                )
+                if isinstance(port, int):
+                    async with self._session_factory() as db:
+                        await _repin_desired_port(db, row, conflict_port=port, settings=self._settings)
+            elif kind == "spawn_failed":
+                await _record_start_failure(
+                    row, reason="spawn_failed", session_scope=self._session_factory, settings=self._settings
+                )
 
     def _make_start_agent(
         self,

@@ -42,6 +42,18 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 
+def _start_failure(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "port": 4723,
+        "connection_target": "pull-conflict",
+        "kind": "port_conflict",
+        "detail": "port in use",
+        "at": datetime.now(UTC).isoformat(),
+    }
+    values.update(overrides)
+    return values
+
+
 def _desired_row(**overrides: object) -> DesiredRow:
     values: dict[str, object] = {
         "device_id": uuid.uuid4(),
@@ -308,3 +320,253 @@ async def test_node_pull_false_runs_agent_start_unchanged(
     after = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
     start_spy.assert_awaited_once()
     assert after == before
+
+
+@pytest.mark.db
+async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Task 4 / D3: a port_conflict start_failures report re-pins desired_port to
+    the next free candidate and trips backoff once. A second sweep reporting the
+    SAME (port, at) failure must not re-pin or re-increment (level-style dedupe)."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="pull-port-conflict",
+        identity_value="pull-port-conflict-001",
+        connection_target="pull-port-conflict-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=None,
+        pid=None,
+        active_connection_target=None,
+    )
+    failure = _start_failure(port=4723, connection_target=device.connection_target, kind="port_conflict")
+
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 5}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_scope_for(db_session),
+    )
+
+    await svc._ingest_pull_host_reports([row], [], [failure])
+
+    await db_session.refresh(node)
+    await db_session.refresh(device)
+    assert node.desired_port is not None
+    assert node.desired_port != 4723
+    first_new_port = node.desired_port
+    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+
+    # Second sweep, same (port, at) report still in the agent's ring: dedupe
+    # must skip both the re-pin and the backoff increment.
+    await svc._ingest_pull_host_reports([row], [], [failure])
+
+    await db_session.refresh(node)
+    await db_session.refresh(device)
+    assert node.desired_port == first_new_port
+    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+
+
+@pytest.mark.db
+async def test_pull_host_start_failure_threshold_sets_backoff_until(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Threshold behavior reuses ``_record_start_failure`` verbatim: backoff_until
+    stays unset below threshold and is set once attempts reach it, matching the
+    push path's window (appium.startup_timeout_sec * 4)."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="pull-threshold",
+        identity_value="pull-threshold-001",
+        connection_target="pull-threshold-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=None,
+        pid=None,
+        active_connection_target=None,
+    )
+
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 2, "appium.startup_timeout_sec": 5}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_scope_for(db_session),
+    )
+
+    t0 = datetime.now(UTC).isoformat()
+    await svc._ingest_pull_host_reports(
+        [row], [], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t0)]
+    )
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+    assert device.lifecycle_policy_state["backoff_until"] is None
+
+    t1 = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
+    before = datetime.now(UTC)
+    await svc._ingest_pull_host_reports(
+        [row], [], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t1)]
+    )
+    after = datetime.now(UTC)
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 2
+    # backoff window = appium.startup_timeout_sec * 4 (see _record_start_failure),
+    # matching the push path's computation exactly.
+    backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
+    assert before + timedelta(seconds=20) <= backoff_until <= after + timedelta(seconds=20)
+
+
+@pytest.mark.db
+async def test_pull_host_spawn_failed_records_backoff_without_repin(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """spawn_failed trips the same backoff bookkeeping but never touches desired_port."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="pull-spawn-failed",
+        identity_value="pull-spawn-failed-001",
+        connection_target="pull-spawn-failed-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=None,
+        pid=None,
+        active_connection_target=None,
+    )
+    failure = _start_failure(kind="spawn_failed", connection_target=device.connection_target, port=None)
+
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 5}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_scope_for(db_session),
+    )
+
+    await svc._ingest_pull_host_reports([row], [], [failure])
+
+    await db_session.refresh(node)
+    await db_session.refresh(device)
+    assert node.desired_port == 4723
+    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+
+
+@pytest.mark.db
+async def test_pull_host_port_conflict_repin_preserves_transition_token(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """The re-pin write must preserve the node's existing transition token/deadline
+    so it stays off APPIUM_TRANSITION_TOKEN_OVERRIDDEN (desired_state_writer.py:116)."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="pull-repin-token",
+        identity_value="pull-repin-token-001",
+        connection_target="pull-repin-token-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    token = uuid.uuid4()
+    deadline = datetime.now(UTC) + timedelta(seconds=60)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        transition_token=token,
+        transition_deadline=deadline,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        transition_token=token,
+        transition_deadline=deadline,
+        port=None,
+        pid=None,
+        active_connection_target=None,
+    )
+    failure = _start_failure(port=4723, connection_target=device.connection_target, kind="port_conflict")
+
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_scope_for(db_session),
+    )
+
+    before = _override_total()
+    await svc._ingest_pull_host_reports([row], [], [failure])
+    after = _override_total()
+
+    await db_session.refresh(node)
+    assert node.transition_token == token
+    assert node.transition_deadline is not None
+    assert node.desired_port != 4723
+    assert after == before, "re-pin must preserve the existing token and not trip APPIUM_TRANSITION_TOKEN_OVERRIDDEN"
