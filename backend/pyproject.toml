@@ -35,9 +35,9 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.6.0",
-    "mypy>=2.1.0",
+    "mypy>=2.2.0",
     "ruff>=0.15.20",
-    "datamodel-code-generator==0.68.0",
+    "datamodel-code-generator==0.68.1",
 ]
 
 [tool.pytest.ini_options]
