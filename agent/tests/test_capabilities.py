@@ -116,6 +116,7 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         "tools": {},
         "missing_prerequisites": [],
         "orchestration_contract_version": 3,
+        "node_desired_pull": 1,
     }
 
     with patch.object(
@@ -126,7 +127,8 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
     ) as detect:
         assert cache.get() == default_snapshot
         assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 3}
-        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 3}
+        expected_second_call = {**first_snapshot, "orchestration_contract_version": 3, "node_desired_pull": 1}
+        assert await cache.get_or_refresh() == expected_second_call
         assert await cache.get_or_refresh(force=True) == {**second_snapshot, "orchestration_contract_version": 3}
 
     assert detect.await_count == 2
