@@ -141,7 +141,7 @@ from adapter import Adapter
 
 ### `DriverPackAdapter` Protocol
 
-The protocol (from `agent_app/pack/adapter_types.py`) defines the hooks the agent may call. Each method's default body raises `NotImplementedError`; implement only the ones your pack needs. The dispatch layer calls each hook directly (it does not check for attribute existence). Any exception a hook raises — including the protocol's default `NotImplementedError` for an unimplemented hook — is caught and re-raised as `AdapterHookExecutionError`, which aborts that operation; it is not a silent no-op. A no-op result (`None` / an empty capabilities dict) occurs only when no adapter is loaded for the pack at all.
+The protocol (from `agent_app/pack/adapter_types.py`) defines the hooks the agent may call. Only two are **required** — `discover` and `normalize_device`; implement only the optional hooks your pack needs. Curated adapters are plain classes that do **not** subclass the Protocol, so the agent probes each hook with a truthful `hasattr` check (`adapter_supports`): a missing optional hook is treated exactly like a pack that ships no adapter for that concern — the dispatch site takes its no-adapter branch (`None`, an empty capabilities dict, or an HTTP 404 `NO_ADAPTER`), never surfacing as an `AdapterHookExecutionError`. An exception a hook raises *while running* is still caught and re-raised as `AdapterHookExecutionError`, which aborts that operation. See **Minimal Packs: Three Tiers** below for the declare-it-then-implement-it rule that ties manifest declarations to adapter hooks.
 
 ```python
 from typing import Any, Literal, Protocol
@@ -174,6 +174,26 @@ class DriverPackAdapter(Protocol):
 ```
 
 The hooks are `async` and take typed dataclass/Protocol context objects (not a `context: dict`), returning dataclasses rather than raw dicts. The protocol is not `@runtime_checkable`. See `agent_app/pack/adapter_types.py` for the context and result dataclass definitions.
+
+## Minimal Packs: Three Tiers
+
+A pack scales its adapter surface to what it actually needs. There are three supported shapes, smallest first:
+
+1. **Manifest-only (no adapter).** A `manifest.yaml` with platforms and static capabilities, and no `adapter/` wheel. Every adapter hook is treated as "no adapter loaded". Use this when static config is enough.
+2. **Core two-hook adapter.** An `Adapter` implementing exactly the required core — `discover` and `normalize_device` — and nothing else. The pack gets custom device enumeration and canonicalization while every optional hook (health, lifecycle, sessions, features, telemetry) transparently degrades to the no-adapter branch. The end-to-end example is the agent test `agent/tests/pack/test_adapter_loader.py::test_minimal_two_hook_adapter_loads_and_dispatches`, which loads a real two-hook wheel and drives it through discover + normalize.
+3. **Capability add-ons.** Start from the core two hooks and add optional hooks as the pack needs them — `health_check`/`doctor`, `lifecycle_action`, `pre_session`/`post_session`, `feature_action`/`sidecar_lifecycle`, `telemetry`. The curated Roku adapter (`driver-packs/adapters/roku/adapter/`) implements the full optional surface and is the living example of this tier.
+
+### The declare-it-then-implement-it rule
+
+If the manifest **declares** a capability, the adapter **must** carry its hook, or the pack is blocked at load:
+
+| Manifest declaration | Required adapter hook |
+|----------------------|-----------------------|
+| a platform `lifecycle_actions` entry | `lifecycle_action` |
+| a feature with an `actions` entry | `feature_action` |
+| a feature with a `sidecar` block | `sidecar_lifecycle` |
+
+At adapter load the agent cross-checks these declarations against the loaded `Adapter` (`missing_declared_hooks`). A pack that declares a capability its adapter does not implement is reported `blocked`, with the missing hook named in `blocked_reason` — the same status pathway a runtime-resolution failure uses. (`health_check` has no manifest declaration, so it is never cross-checked: it is dispatched whenever an adapter is present and skipped when absent.)
 
 ## Hooks Dispatched in B.2
 

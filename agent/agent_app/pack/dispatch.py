@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
+from agent_app.pack.adapter_dispatch import adapter_supports
 from agent_app.pack.adapter_dispatch import (
     dispatch_health_check as _dispatch_health,
 )
@@ -74,7 +75,7 @@ async def adapter_health_check(
     """Dispatch through the loaded adapter; return ``None`` if not available."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "health_check"):
         return None
     results = await _dispatch_health(adapter, ctx)
     return _adapter_health_payload(results)
@@ -93,7 +94,7 @@ async def adapter_lifecycle_action(
     """Dispatch through the loaded adapter; return ``None`` if not available."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "lifecycle_action"):
         return None
     ctx = LifecycleCtx(host_id=host_id, device_identity_value=identity_value)
     result = await _dispatch_lifecycle(adapter, action, args, ctx)
@@ -112,7 +113,7 @@ async def adapter_pre_session(
     """Return adapter-supplied extra caps. Empty dict when no adapter is loaded."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "pre_session"):
         return {}
     spec = SessionSpec(
         pack_id=pack_id,
@@ -136,7 +137,7 @@ async def adapter_post_session(
     """Return ``True`` when the call was dispatched, ``False`` if no adapter."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "post_session"):
         return False
     spec = SessionSpec(
         pack_id=pack_id,
@@ -178,7 +179,7 @@ async def adapter_telemetry(
     """Dispatch hardware telemetry through the loaded adapter."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "telemetry"):
         return None
     ctx = TelemetryCtx(device_identity_value=identity_value, connection_target=connection_target)
     result = await _dispatch_telemetry(adapter, ctx)

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 from unittest.mock import Mock
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
+from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
@@ -98,10 +98,10 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
     assert by_pack["appium-xcuitest"].runtime_id is None
     assert by_pack["appium-xcuitest"].blocked_reason == "driver install failed for xcuitest-driver"
 
-    runtimes = (await db_session.execute(select(HostRuntimeInstallation))).scalars().all()
-    assert len(runtimes) == 1
-    assert runtimes[0].runtime_id == "runtime-ok"
-    assert runtimes[0].status == "installed"
+    # Runtime report folded onto the pack row it belongs to.
+    assert by_pack["appium-uiautomator2"].runtime_status == "installed"
+    assert by_pack["appium-uiautomator2"].appium_server_version == "2.19.0"
+    assert by_pack["appium-xcuitest"].runtime_status is None
 
 
 @pytest.mark.asyncio
@@ -224,16 +224,6 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
     )
     db_session.add(host)
     await db_session.flush()
-    runtime = HostRuntimeInstallation(
-        host_id=host.id,
-        runtime_id="runtime-xcuitest",
-        appium_server_package="appium",
-        appium_server_version="2.19.0",
-        driver_specs=[{"package": "appium-xcuitest-driver", "version": "9.1.0"}],
-        appium_home="/opt/gridfleet-agent/runtimes/runtime-xcuitest",
-        status="installed",
-        blocked_reason=None,
-    )
     pack = HostPackInstallation(
         host_id=host.id,
         pack_id="appium-xcuitest",
@@ -244,6 +234,12 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
         installer_log_excerpt="installed xcuitest",
         resolver_version="resolver-1",
         blocked_reason=None,
+        appium_server_package="appium",
+        appium_server_version="2.19.0",
+        driver_specs=[{"package": "appium-xcuitest-driver", "version": "9.1.0"}],
+        appium_home="/opt/gridfleet-agent/runtimes/runtime-xcuitest",
+        runtime_status="installed",
+        runtime_blocked_reason=None,
     )
     doctor = HostPackDoctorResult(
         host_id=host.id,
@@ -252,7 +248,7 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
         ok=False,
         message="Xcode missing",
     )
-    db_session.add_all([runtime, pack, doctor])
+    db_session.add_all([pack, doctor])
     await db_session.commit()
 
     payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest")

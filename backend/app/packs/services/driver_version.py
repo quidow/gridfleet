@@ -6,7 +6,6 @@ if TYPE_CHECKING:
     from app.packs.models import (
         DriverPackRelease,
         HostPackInstallation,
-        HostRuntimeInstallation,
     )
 
 
@@ -25,21 +24,17 @@ def desired_driver_version(pack_row: HostPackInstallation, release: DriverPackRe
     return None
 
 
-def installed_driver_version(runtime: HostRuntimeInstallation | None) -> str | None:
-    if runtime is None:
+def installed_driver_version(pack_row: HostPackInstallation | None) -> str | None:
+    if pack_row is None:
         return None
-    driver_specs = runtime.driver_specs or []
+    driver_specs = pack_row.driver_specs or []
     if not driver_specs:
         return None
     version = driver_specs[0].get("version")
     return str(version) if version is not None else None
 
 
-def has_driver_drift(
-    pack_row: HostPackInstallation,
-    release: DriverPackRelease | None,
-    runtime: HostRuntimeInstallation | None,
-) -> bool:
+def has_driver_drift(pack_row: HostPackInstallation, release: DriverPackRelease | None) -> bool:
     desired = desired_driver_version(pack_row, release)
-    installed = installed_driver_version(runtime)
+    installed = installed_driver_version(pack_row)
     return desired is not None and installed is not None and desired != installed

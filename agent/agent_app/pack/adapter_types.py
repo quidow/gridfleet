@@ -173,18 +173,51 @@ class HardwareTelemetry:
 
 
 class DriverPackAdapter(Protocol):
+    """The full surface a driver-pack adapter *may* implement.
+
+    A curated adapter is a plain ``Adapter`` class — it does NOT subclass this
+    Protocol; the Protocol only documents the contract and gives the core type
+    checks something to validate against. Because adapters are plain classes,
+    the agent probes each hook with a truthful ``hasattr`` check
+    (``adapter_supports``), so an adapter ships only the hooks it needs.
+
+    Required core (every pack must implement both):
+      - ``discover``          — enumerate candidate devices on the host.
+      - ``normalize_device``  — turn raw operator input into the canonical shape.
+
+    Everything below is optional. A missing optional hook is treated exactly
+    like a pack that ships no adapter for that concern (the dispatch site takes
+    its no-adapter branch); it never surfaces as a hook-execution error. If the
+    manifest *declares* a capability whose hook is absent, the load-time
+    cross-check (``missing_declared_hooks``) blocks the pack instead.
+
+    Optional hook groups:
+      - health:            ``health_check``, ``doctor``
+      - lifecycle:         ``lifecycle_action``
+      - sessions:          ``pre_session``, ``post_session``
+      - features/sidecars: ``feature_action``, ``sidecar_lifecycle``
+      - telemetry:         ``telemetry``
+      - environment:       ``subprocess_env``, ``tool_versions``
+    """
+
     pack_id: str
     pack_release: str
 
+    # --- Required core -----------------------------------------------------
     async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
+        raise NotImplementedError
+
+    async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
+        raise NotImplementedError
+
+    # --- Optional: health --------------------------------------------------
+    async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
         raise NotImplementedError
 
     async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
         raise NotImplementedError
 
-    async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
-        raise NotImplementedError
-
+    # --- Optional: lifecycle ----------------------------------------------
     async def lifecycle_action(
         self,
         action_id: Literal["reconnect", "boot", "shutdown", "state", "release_forwarded_ports"],
@@ -193,12 +226,14 @@ class DriverPackAdapter(Protocol):
     ) -> LifecycleActionResult:
         raise NotImplementedError
 
+    # --- Optional: sessions ------------------------------------------------
     async def pre_session(self, spec: SessionSpec) -> dict[str, Any]:
         raise NotImplementedError
 
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
         raise NotImplementedError
 
+    # --- Optional: features / sidecars ------------------------------------
     async def feature_action(
         self,
         feature_id: str,
@@ -215,12 +250,11 @@ class DriverPackAdapter(Protocol):
     ) -> SidecarStatus:
         raise NotImplementedError
 
-    async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
-        raise NotImplementedError
-
+    # --- Optional: telemetry ----------------------------------------------
     async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
         raise NotImplementedError
 
+    # --- Optional: environment --------------------------------------------
     def subprocess_env(self) -> SubprocessEnvContribution:
         return SubprocessEnvContribution()
 

@@ -1,10 +1,16 @@
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
 from agent_app.pack.state import PackStateClient, PackStateLoop
+
+if TYPE_CHECKING:
+    from agent_app.pack.manifest import DesiredPack
 
 
 def _host_identity(value: str) -> HostIdentity:
@@ -244,3 +250,41 @@ async def test_state_loop_installs_pack_without_probe_family_filtering() -> None
             "blocked_reason": None,
         }
     ]
+
+
+class _MinimalStateAdapter:
+    """Loads clean but implements only the required core (no lifecycle_action)."""
+
+    pack_id = "appium-uiautomator2"
+    pack_release = "2026.04.0"
+
+    async def discover(self, ctx: object) -> list[object]:
+        return []
+
+    async def normalize_device(self, ctx: object) -> object:
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_loop_blocks_pack_when_manifest_declares_unimplemented_hook() -> None:
+    client = _FakeClient()
+    # Manifest promises a lifecycle action the minimal adapter cannot deliver.
+    client.desired_payload["packs"][0]["platforms"][0]["lifecycle_actions"] = [{"id": "reconnect"}]
+    registry = AdapterRegistry()
+
+    async def _loader(pack: DesiredPack, env: RuntimeEnv) -> None:
+        registry.set(pack.id, pack.release, _MinimalStateAdapter())
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
+        adapter_registry=registry,
+        adapter_loader=_loader,
+    )
+
+    await loop.run_once()
+
+    pack_entry = next(p for p in client.posted[-1]["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "blocked"
+    assert "lifecycle_action" in pack_entry["blocked_reason"]

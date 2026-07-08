@@ -1,6 +1,5 @@
 from app.packs.models.host_feature_status import HostPackFeatureStatus
-from app.packs.models.host_installation import HostPackDoctorResult, HostPackInstallation
-from app.packs.models.host_runtime_installation import HostRuntimeInstallation
+from app.packs.models.host_installation import HostPackDoctorResult, HostPackInstallation, InstallStatus
 from app.packs.models.pack import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
 
 __all__ = [
@@ -11,6 +10,6 @@ __all__ = [
     "HostPackDoctorResult",
     "HostPackFeatureStatus",
     "HostPackInstallation",
-    "HostRuntimeInstallation",
+    "InstallStatus",
     "PackState",
 ]

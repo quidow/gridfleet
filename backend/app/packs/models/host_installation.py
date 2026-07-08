@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
 from typing import Any
@@ -9,6 +10,12 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+
+class InstallStatus(enum.StrEnum):
+    pending = "pending"
+    installed = "installed"
+    blocked = "blocked"
 
 
 class HostPackInstallation(Base):
@@ -33,6 +40,14 @@ class HostPackInstallation(Base):
     installer_log_excerpt: Mapped[str | None] = mapped_column(String, nullable=True)
     resolver_version: Mapped[str | None] = mapped_column(String, nullable=True)
     blocked_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Reported install of the runtime this pack resolved to (folded in from the former
+    # host_runtime_installations table; keyed by runtime_id, denormalized per pack row).
+    runtime_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    runtime_blocked_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    appium_server_package: Mapped[str | None] = mapped_column(String, nullable=True)
+    appium_server_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    driver_specs: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    appium_home: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

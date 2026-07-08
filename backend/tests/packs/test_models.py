@@ -12,7 +12,6 @@ from app.packs.models import (
     DriverPackRelease,
     HostPackDoctorResult,
     HostPackInstallation,
-    HostRuntimeInstallation,
 )
 
 if TYPE_CHECKING:
@@ -138,9 +137,12 @@ async def test_driver_pack_feature(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_host_runtime_installation(db_session: AsyncSession, db_host: Host) -> None:
-    runtime_install = HostRuntimeInstallation(
+async def test_host_pack_installation_runtime_columns(db_session: AsyncSession, db_host: Host) -> None:
+    pack = DriverPack(id="runtime-pack", display_name="Runtime Pack")
+    pack_install = HostPackInstallation(
         host_id=db_host.id,
+        pack_id="runtime-pack",
+        pack_release="1.0.0",
         runtime_id="appium-runtime",
         appium_server_package="appium",
         appium_server_version="2.0.0",
@@ -148,20 +150,21 @@ async def test_host_runtime_installation(db_session: AsyncSession, db_host: Host
             {"driver": "uiautomator2", "version": "1.0.0"},
             {"driver": "xcuitest", "version": "1.0.0"},
         ],
+        runtime_status="installed",
     )
-    db_session.add(runtime_install)
+    db_session.add_all([pack, pack_install])
     await db_session.commit()
 
     rows = (
-        (await db_session.execute(select(HostRuntimeInstallation).where(HostRuntimeInstallation.host_id == db_host.id)))
+        (await db_session.execute(select(HostPackInstallation).where(HostPackInstallation.host_id == db_host.id)))
         .scalars()
         .all()
     )
     assert len(rows) == 1
     assert rows[0].runtime_id == "appium-runtime"
     assert rows[0].appium_server_version == "2.0.0"
-    assert len(rows[0].driver_specs) == 2
-    assert rows[0].status == "pending"
+    assert len(rows[0].driver_specs or []) == 2
+    assert rows[0].runtime_status == "installed"
 
 
 @pytest.mark.asyncio

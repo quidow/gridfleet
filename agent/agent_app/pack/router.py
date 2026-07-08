@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Query, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
-from agent_app.pack.adapter_dispatch import dispatch_doctor, dispatch_feature_action
+from agent_app.pack.adapter_dispatch import adapter_supports, dispatch_doctor, dispatch_feature_action
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx
 from agent_app.pack.dependencies import (
@@ -269,7 +269,7 @@ async def feature_action_route(
     host_id: HostIdDep,
 ) -> dict[str, Any]:
     adapter = adapter_registry.get_current(body.pack_id) if adapter_registry is not None else None
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "feature_action"):
         raise http_exc(
             status_code=404,
             code=AgentErrorCode.NO_ADAPTER,
@@ -334,7 +334,7 @@ async def pack_doctor_route(
     host_id: HostIdDep,
 ) -> dict[str, Any]:
     adapter = adapter_registry.get_current(pack_id) if adapter_registry is not None else None
-    if adapter is None:
+    if adapter is None or not adapter_supports(adapter, "doctor"):
         return {"checks": []}
     try:
         results = await dispatch_doctor(adapter, DoctorCtx(host_id=host_id))

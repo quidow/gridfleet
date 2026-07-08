@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
@@ -21,7 +21,6 @@ from app.packs.models import (
     HostPackDoctorResult,
     HostPackFeatureStatus,
     HostPackInstallation,
-    HostRuntimeInstallation,
     PackState,
 )
 from app.packs.schemas import (
@@ -277,18 +276,10 @@ class PackCatalogService:
             return {}
 
         rows = (
-            await db.execute(
-                select(HostPackInstallation, HostRuntimeInstallation)
-                .outerjoin(
-                    HostRuntimeInstallation,
-                    and_(
-                        HostRuntimeInstallation.host_id == HostPackInstallation.host_id,
-                        HostRuntimeInstallation.runtime_id == HostPackInstallation.runtime_id,
-                    ),
-                )
-                .where(HostPackInstallation.pack_id.in_(pack_ids))
-            )
-        ).all()
+            (await db.execute(select(HostPackInstallation).where(HostPackInstallation.pack_id.in_(pack_ids))))
+            .scalars()
+            .all()
+        )
 
         release_rows = (
             (await db.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id.in_(pack_ids)))).scalars().all()
@@ -296,20 +287,19 @@ class PackCatalogService:
         release_map = {(r.pack_id, r.release): r for r in release_rows}
 
         counters: dict[str, _RuntimeSummaryAccumulator] = {}
-        for pack_row, runtime in rows:
+        for pack_row in rows:
             data = counters.setdefault(pack_row.pack_id, _RuntimeSummaryAccumulator())
             if pack_row.status == "installed":
                 data.installed_hosts += 1
             if pack_row.status == "blocked":
                 data.blocked_hosts += 1
-            if runtime is not None:
-                if runtime.appium_server_version:
-                    data.server_versions.add(runtime.appium_server_version)
-                driver_version = installed_driver_version(runtime)
-                if driver_version:
-                    data.driver_versions.add(driver_version)
+            if pack_row.appium_server_version:
+                data.server_versions.add(pack_row.appium_server_version)
+            driver_version = installed_driver_version(pack_row)
+            if driver_version:
+                data.driver_versions.add(driver_version)
             release = release_map.get((pack_row.pack_id, pack_row.pack_release))
-            if has_driver_drift(pack_row, release, runtime):
+            if has_driver_drift(pack_row, release):
                 data.driver_drift_hosts += 1
 
         summaries: dict[str, PackRuntimeSummaryOut] = {}

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostPackInstallation, HostRuntimeInstallation
+from app.packs.models import HostPackInstallation
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
@@ -181,26 +181,19 @@ async def test_catalog_exposes_observed_runtime_versions(
 ) -> None:
     await seed_test_packs(db_session)
     host_id = uuid.UUID(default_host_id)
-    db_session.add_all(
-        [
-            HostRuntimeInstallation(
-                host_id=host_id,
-                runtime_id="runtime-android",
-                appium_server_package="appium",
-                appium_server_version="2.19.0",
-                driver_specs=[{"package": "appium-uiautomator2-driver", "version": "4.2.0"}],
-                status="installed",
-                blocked_reason=None,
-            ),
-            HostPackInstallation(
-                host_id=host_id,
-                pack_id="appium-uiautomator2",
-                pack_release="2026.04.0",
-                runtime_id="runtime-android",
-                status="installed",
-                resolved_install_spec={"appium_driver_version": "3.6.0"},
-            ),
-        ]
+    db_session.add(
+        HostPackInstallation(
+            host_id=host_id,
+            pack_id="appium-uiautomator2",
+            pack_release="2026.04.0",
+            runtime_id="runtime-android",
+            status="installed",
+            resolved_install_spec={"appium_driver_version": "3.6.0"},
+            appium_server_package="appium",
+            appium_server_version="2.19.0",
+            driver_specs=[{"package": "appium-uiautomator2-driver", "version": "4.2.0"}],
+            runtime_status="installed",
+        )
     )
     await db_session.commit()
 

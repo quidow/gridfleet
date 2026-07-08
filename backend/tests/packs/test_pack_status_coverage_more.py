@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from sqlalchemy import select
 
-from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
+from app.packs.models import HostPackDoctorResult, HostPackInstallation
 from app.packs.services import status as pack_status_service
 from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
 from app.packs.services.feature_dispatch import FeatureService
@@ -24,24 +24,20 @@ if TYPE_CHECKING:
 
 async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session: AsyncSession, db_host: Host) -> None:
     await seed_test_packs(db_session)
-    runtime = HostRuntimeInstallation(
-        host_id=db_host.id,
-        runtime_id="rt-existing",
-        appium_server_package="appium",
-        appium_server_version="2.0.0",
-        driver_specs=[],
-        appium_home="/old",
-        status="pending",
-        blocked_reason="old",
-    )
     pack = HostPackInstallation(
         host_id=db_host.id,
         pack_id="appium-uiautomator2",
         pack_release="2026.04.0",
         runtime_id="rt-existing",
         status="pending",
+        appium_server_package="appium",
+        appium_server_version="2.0.0",
+        driver_specs=[],
+        appium_home="/old",
+        runtime_status="pending",
+        runtime_blocked_reason="old",
     )
-    db_session.add_all([runtime, pack])
+    db_session.add(pack)
     await db_session.commit()
 
     await _status_svc.apply_status(
@@ -78,10 +74,10 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
     )
     await db_session.commit()
 
-    await db_session.refresh(runtime)
     await db_session.refresh(pack)
-    assert runtime.appium_server_version == "2.19.0"
-    assert runtime.appium_home == "/new"
+    assert pack.appium_server_version == "2.19.0"
+    assert pack.appium_home == "/new"
+    assert pack.runtime_status == "installed"
     assert pack.pack_release == "2026.05.0"
     assert pack.installed_at is not None
     doctors = (await db_session.execute(select(HostPackDoctorResult))).scalars().all()
@@ -100,7 +96,7 @@ async def test_pack_status_helper_fallbacks(db_session: AsyncSession, db_host: H
     assert pack_status_service._pack_row_supports_host(pack, db_host, {}) is True
     assert desired_driver_version(pack, None) is None
     assert installed_driver_version(None) is None
-    assert has_driver_drift(pack, None, None) is False
+    assert has_driver_drift(pack, None) is False
 
     pack.resolved_install_spec = {"appium_driver": {"uiautomator2": "5.0.0"}}
     assert desired_driver_version(pack, None) == "5.0.0"
@@ -108,10 +104,5 @@ async def test_pack_status_helper_fallbacks(db_session: AsyncSession, db_host: H
     release = type("Release", (), {"manifest_json": {"appium_driver": {"recommended": "6.0.0"}}})()
     assert desired_driver_version(pack, release) == "6.0.0"
 
-    runtime = HostRuntimeInstallation(
-        host_id=db_host.id,
-        runtime_id="rt",
-        driver_specs=[{"version": "5.0.0"}],
-    )
-    pack.runtime_id = "rt"
-    assert installed_driver_version(runtime) == "5.0.0"
+    pack.driver_specs = [{"version": "5.0.0"}]
+    assert installed_driver_version(pack) == "5.0.0"

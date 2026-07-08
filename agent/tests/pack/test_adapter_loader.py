@@ -19,17 +19,25 @@ import io
 import sys
 import tarfile
 import zipfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+from agent_app.pack.adapter_dispatch import (
+    adapter_supports,
+    dispatch_discover,
+    dispatch_normalize_device,
+    missing_declared_hooks,
+)
 from agent_app.pack.adapter_loader import (
     AdapterLoadError,
     load_adapter,
 )
+from agent_app.pack.manifest import DesiredPack, DesiredPlatform
+from agent_app.pack.runtime_types import AppiumInstallable
 
 _ADAPTER_PY = """\
 from typing import Any
@@ -432,3 +440,96 @@ async def test_adapter_loader_rejects_traversing_wheel_entry(tmp_path: Path) -> 
         )
 
     assert not (tmp_path / "outside.py").exists()
+
+
+# ---------------------------------------------------------------------------
+# Minimal two-hook adapter: the supported "core-only" pack shape.
+# ---------------------------------------------------------------------------
+
+_MINIMAL_CORE_ADAPTER_PY = """\
+from typing import Any
+
+from agent_app.pack.adapter_types import NormalizedDevice
+
+
+class Adapter:
+    pack_id = "vendor-minimal"
+    pack_release = "0.1.0"
+
+    async def discover(self, ctx: Any) -> list[Any]:
+        return []
+
+    async def normalize_device(self, ctx: Any) -> NormalizedDevice:
+        target = ctx.raw_input.get("connection_target", "")
+        return NormalizedDevice(
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=target,
+            connection_target=target,
+            ip_address="",
+            device_type="emulator",
+            connection_type="usb",
+            os_version="14",
+            field_errors=[],
+        )
+"""
+
+
+class _MinimalDiscoveryCtx:
+    host_id = "host-1"
+    platform_id = "android_mobile"
+
+
+class _MinimalNormalizeCtx:
+    host_id = "host-1"
+    platform_id = "android_mobile"
+    raw_input: ClassVar[dict[str, str]] = {"connection_target": "emulator-5554"}
+
+
+def _installable() -> AppiumInstallable:
+    return AppiumInstallable(source="npm", package="appium", version="2.0.0", recommended=None, known_bad=[])
+
+
+@pytest.mark.asyncio
+async def test_minimal_two_hook_adapter_loads_and_dispatches(tmp_path: Path) -> None:
+    """A pack whose adapter implements only the required core (discover +
+    normalize_device) is a supported shape: it loads with no cross-check block,
+    dispatches its two hooks, and reports every optional hook as unsupported
+    rather than raising."""
+    tarball = _build_named_tarball_with_adapter_wheel(tmp_path, "vendor-minimal", body=_MINIMAL_CORE_ADAPTER_PY)
+    adapter = await load_adapter(
+        pack_id="vendor-minimal",
+        release="0.1.0",
+        tarball_path=tarball,
+        runtime_dir=tmp_path / "runtime",
+    )
+
+    assert adapter_supports(adapter, "discover") is True
+    assert adapter_supports(adapter, "normalize_device") is True
+    for optional in ("health_check", "doctor", "lifecycle_action", "feature_action", "sidecar_lifecycle", "telemetry"):
+        assert adapter_supports(adapter, optional) is False
+
+    # A bare-platform manifest declares no optional capabilities → clean cross-check.
+    pack = DesiredPack(
+        id="vendor-minimal",
+        release="0.1.0",
+        appium_server=_installable(),
+        appium_driver=_installable(),
+        platforms=[
+            DesiredPlatform(
+                id="p",
+                automation_name="a",
+                device_types=["real_device"],
+                connection_types=["usb"],
+                identity_scheme="s",
+                identity_scope="host",
+                stereotype={},
+            )
+        ],
+    )
+    assert missing_declared_hooks(pack, adapter) == []
+
+    # Both core hooks dispatch end to end through the real loaded wheel.
+    assert await dispatch_discover(adapter, _MinimalDiscoveryCtx()) == []
+    normalized = await dispatch_normalize_device(adapter, _MinimalNormalizeCtx())
+    assert normalized.connection_target == "emulator-5554"

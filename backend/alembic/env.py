@@ -34,7 +34,6 @@ from app.packs.models import (  # noqa: F401
     HostPackDoctorResult,
     HostPackFeatureStatus,
     HostPackInstallation,
-    HostRuntimeInstallation,
 )
 from app.runs.models import RunState, TestRun  # noqa: F401
 from app.sessions.models import Session, SessionStatus  # noqa: F401
