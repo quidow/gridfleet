@@ -26,12 +26,7 @@ _DEFAULT_CAPABILITIES: dict[str, Any] = {
 
 def default_capabilities() -> dict[str, Any]:
     """Capabilities payload used before the cache has run any detection."""
-    return _with_process_capabilities(deepcopy(_DEFAULT_CAPABILITIES))
-
-
-def _with_process_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
-    capabilities["node_desired_pull"] = 1
-    return capabilities
+    return deepcopy(_DEFAULT_CAPABILITIES)
 
 
 class CapabilitiesCache:
@@ -62,20 +57,18 @@ class CapabilitiesCache:
     async def detect(self) -> dict[str, Any]:
         """Detect installed tools and infer supported platforms."""
         tools = await self._collect_adapter_tool_versions()
-        return _with_process_capabilities(
-            {
-                "platforms": [],
-                "tools": tools,
-                "missing_prerequisites": [],
-                "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
-            }
-        )
+        return {
+            "platforms": [],
+            "tools": tools,
+            "missing_prerequisites": [],
+            "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
+        }
 
     def get(self) -> dict[str, Any]:
         """Return the last detected capabilities without running probes."""
         snapshot = deepcopy(self._snapshot or _DEFAULT_CAPABILITIES)
         snapshot["orchestration_contract_version"] = ORCHESTRATION_CONTRACT_VERSION
-        return _with_process_capabilities(snapshot)
+        return snapshot
 
     def _is_stale(self) -> bool:
         if self._snapshot_at is None:
