@@ -2,6 +2,26 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.30.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.29.5...gridfleet-agent-v0.30.0) (2026-07-08)
+
+
+### Features
+
+* **agent:** advertise node_desired_pull capability when pull is enabled ([5a24ec5](https://github.com/quidow/gridfleet/commit/5a24ec57dafa9f79d7f57d15981cd6024042008c))
+* **agent:** advertise orchestration contract v3 for node-pull release ([e33ef89](https://github.com/quidow/gridfleet/commit/e33ef89573a5cb304863476fba32ad975f67792c))
+* **agent:** enable node-pull by default (pull is the only mode) ([5d1abe2](https://github.com/quidow/gridfleet/commit/5d1abe2e8dfe43db0c4c4828c114944987186eb6))
+* **agent:** node desired-state pull loop (phase 8a) ([a5e5ec6](https://github.com/quidow/gridfleet/commit/a5e5ec6cddbf9eb28dd7ef1b8ece4249b9be8634))
+* **agent:** node desired-state pull loop behind AGENT_NODE_PULL_ENABLED ([47c2682](https://github.com/quidow/gridfleet/commit/47c268260e53eca5da28078de4aa1f297a88f0b5))
+* **agent:** node refresh poke endpoint and applied-generation health reporting ([a1f8203](https://github.com/quidow/gridfleet/commit/a1f820393c8e6e6ff4730df5daf79003edc312bc))
+* **agent:** report node start failures in agent health ([e54ce92](https://github.com/quidow/gridfleet/commit/e54ce923199b3d56e681e2b595a7c1a427f60cc5))
+* **backend:** agent-pull node desired state — phase 8b (backend mode switch) ([ab471d7](https://github.com/quidow/gridfleet/commit/ab471d78a046198fc6f708d0b5e2ac187e3bb23e))
+
+
+### Dependencies
+
+* **deps:** bump mypy in /agent in the python-dependencies group ([#755](https://github.com/quidow/gridfleet/issues/755)) ([9834cc7](https://github.com/quidow/gridfleet/commit/9834cc731664700e708b4707bd49d9062a489b98))
+* **deps:** bump uvicorn[standard] ([#742](https://github.com/quidow/gridfleet/issues/742)) ([30b4999](https://github.com/quidow/gridfleet/commit/30b499990b817aac68176cb707ac4fae47c2af19))
+
 ## [0.29.5](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.29.4...gridfleet-agent-v0.29.5) (2026-07-06)
 
 
