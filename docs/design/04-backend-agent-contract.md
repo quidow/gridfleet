@@ -60,28 +60,25 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/pack/devices/normalize` | intake/discovery | normalise raw input to canonical device fields | 200 → dict, 404 → `None` |
 | POST | `/agent/pack/{pack_id}/doctor` | host onboarding/diagnostics (`hosts/router`, wrapper `pack_doctor`) | run pack adapter doctor checks | 2xx → checks list |
 | POST | `/agent/pack/features/{feat}/actions/{act}` | feature dispatch | dispatch arbitrary pack feature action | 2xx required |
-| POST | `/agent/appium/start` | `reconciler_agent` (`appium_start`, via the `start_node` service method) | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
-| POST | `/agent/appium/stop` | `reconciler_agent` (`appium_stop`, via the `stop_node` service method) and the orphan-reconcile `_stop` helper in `reconciler` | kill an Appium node | wrapper returns `httpx.Response`; consumers call `response.raise_for_status()`, so 2xx → success and transport/HTTP error raises |
-| POST | `/agent/appium/{port}/reconfigure` | `reconfigure_delivery` (wrapper `agent_appium_reconfigure`) | toggle accepting-new-sessions / stop-pending / run scope | 2xx → `dict` |
 | GET | `/agent/appium/{port}/status` | `node_health` reconcile path | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
-| POST | `/agent/appium-nodes/refresh` | `deliver_agent_reconfigures` and `converge_device_now`, for pull-capable hosts (phase 8b) | wake `NodeStateLoop`; correctness still comes from polling | 202, including when pull mode is disabled |
+| POST | `/agent/appium-nodes/refresh` | `poke_node_refresh` (`app/agent_comm/node_poke.py`) after every desired-state write, and `converge_device_now` (`reconciler.py`) as the operator fast path | wake `NodeStateLoop`; correctness still comes from polling | 202; best-effort — failures are logged and swallowed |
 | GET | `/agent/tools/status` | host onboarding | Node provider and host helper versions | 2xx required |
 
 Most rows have a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). The one exception is the feature-dispatch endpoint (`/agent/pack/features/{feat}/actions/{act}`), which has no wrapper in `operations.py`: it is issued from `app/packs/services/feature_dispatch.py` via the shared `app.agent_comm.client.request`, so the circuit breaker and metrics still fire. Routers and services should never call `httpx` directly. Go through these wrappers (or that shared `request`) so the circuit breaker and metrics fire.
 
-### `/agent/appium/start` cap surfaces
+### `launch` payload cap surfaces
 
-The Appium start payload sends two capability surfaces to the agent. They have separate sources of truth and separate consumers; keep them disentangled when extending the contract.
+The `launch` payload inside `GET /agent/appium-nodes/desired`'s response (built by `build_node_launch_payload`) sends two capability surfaces to the agent. They have separate sources of truth and separate consumers; keep them disentangled when extending the contract.
 
 | Field             | Source of truth                                                                                                                                                             | Consumer                                                                                |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `extra_caps`      | `_build_session_aligned_start_caps(...)` in `app/appium_nodes/services/reconciler_agent.py`: full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent: merged into the Appium `/session` request body (`agent/agent_app/appium/process.py`) |
 | `allocated_caps`  | `appium_node_resource_service.get_capabilities(...)` (UDID + reserved ports)                                                                                                | Agent → Appium driver                                                                   |
 
-The start payload also carries `accepting_new_sessions`, `stop_pending`, and `grid_run_id`. The agent records these but does not route on them; new-session suppression and run scoping are enforced by the backend allocation service, not at the node.
+The desired-node spec also carries `accepting_new_sessions`, `stop_pending`, and `grid_run_id` alongside `launch`. The agent records these but does not route on them; new-session suppression and run scoping are enforced by the backend allocation service, not at the node.
 
-**Backend-internal routing surface.** Capability matching now happens in the backend, not on the node: `device_match_surface` (`app/grid/allocation.py`, the pack platform's `platformName` scalar plus any identity/tag keys the manifest stereotype base declares, merged with `build_grid_stereotype_caps`'s deviceId + tag fanout) is the per-device routing surface the allocation service matches incoming session requests against when the router asks it to allocate a device. It carries only the keys the matcher consults. The rest of the pack stereotype is rendered only at node-start, never for matching. It is **not** part of the start payload and is never sent to the agent.
+**Backend-internal routing surface.** Capability matching now happens in the backend, not on the node: `device_match_surface` (`app/grid/allocation.py`, the pack platform's `platformName` scalar plus any identity/tag keys the manifest stereotype base declares, merged with `build_grid_stereotype_caps`'s deviceId + tag fanout) is the per-device routing surface the allocation service matches incoming session requests against when the router asks it to allocate a device. It carries only the keys the matcher consults. The rest of the pack stereotype is rendered only at node-start, never for matching. It is **not** part of the `launch` payload and is never sent to the agent.
 
 **Cross-component invariant.** Keep the routing stereotype and the driver caps disjoint. The backend MUST NOT include Appium-only device metadata (manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`) in the routing stereotype. That metadata MUST flow to the driver via `extra_caps` only.
 
@@ -95,38 +92,38 @@ The start payload also carries `accepting_new_sessions`, `stop_pending`, and `gr
 | GET | `/agent/appium-nodes/desired` | `NodeStateLoop` (5 s when enabled) | desired Appium-node projection for this host | 200 → `{nodes: [...], generation_hint}` |
 | GET | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | `tarball_fetch` | download the sha256-pinned pack tarball | 2xx → tarball bytes |
 
-The node desired response contains `device_id`, `generation`, `desired_state`, `port`, drain flags, `grid_run_id`, and transition-token fields. A running node also receives `launch`, the complete payload built by `build_node_launch_payload`. The push start path uses the same builder, and a contract test requires exact equality between both channels. If launch inputs are not runnable, the spec carries `launch: null` and `unrunnable_reason` instead of failing the whole host response.
+The node desired response contains `device_id`, `generation`, `desired_state`, `port`, drain flags, `grid_run_id`, and transition-token fields. A running node also receives `launch`, the complete payload built by `build_node_launch_payload`. If launch inputs are not runnable, the spec carries `launch: null` and `unrunnable_reason` instead of failing the whole host response.
 
-`NodeStateLoop` is disabled by default in phase 8a. When enabled, it starts, stops, reconfigures, and reaps local orphan processes from the desired projection. An unexpired transition token forces one restart per agent process. The loop records applied generations and transition tokens in memory; `/agent/health` includes them on each running-node entry as `applied_generation` and `applied_transition_token`.
+`NodeStateLoop` only runs when `AGENT_NODE_PULL_ENABLED=true` (`agent_settings.runtime.node_pull_enabled`); the current agent release enables it by default, and the backend has no fallback for a host where it isn't running — that host's nodes simply never converge. When running, the loop starts, stops, reconfigures, and reaps local orphan processes from the desired projection on every poll (5 s default, or immediately on a wake poke). An unexpired transition token forces one restart per agent process. The loop records applied generations and transition tokens in memory; `/agent/health` includes them on each running-node entry as `applied_generation` and `applied_transition_token`. The agent also advertises `node_desired_pull: 1` in its registration capabilities when the loop is enabled, and `orchestration_contract_version: 3` unconditionally; the backend does not branch on either capability — it always writes desired state and pokes (see `docs/reference/architecture.md` for the contract-version floor).
 
-Phase 8a landed dual-channel: agents advertise `node_desired_pull: 1` only when `AGENT_NODE_PULL_ENABLED=true`, but that alone did not change backend behavior. Phase 8b (landed) adds the per-host mode switch described below: the backend suppresses push commands and uses refresh pokes for pull-capable hosts, while legacy hosts keep the full push path unchanged. Phase 8c can remove the push and outbox code entirely after the fleet upgrade is complete.
+## Node lifecycle: pull only
 
-## Pull-mode convergence (phase 8b)
+Nodes converge by agent pull. The backend never starts, stops, restarts, or reconfigures an Appium process — the only backend→agent node signal is the refresh poke. There is no push path, no reconfigure-delivery machinery, and no `AgentReconfigureOutbox` table.
 
-Per host, `host_uses_node_pull(host)` (`backend/app/hosts/service.py`) reads `host.capabilities.get("node_desired_pull")`. Capability refreshes on every agent registration, so downgrading (or rolling back) an agent flips its host back to the push path automatically — there is no separate backend toggle. Legacy hosts are unaffected: the full push path (start/stop, reconfigure delivery, outbox staging, backend-executed orphan reap) described above is unchanged.
+`POST /agent/appium/start`, `POST /agent/appium/stop`, and `POST /agent/appium/{port}/reconfigure` still exist as HTTP routes on the agent (`agent_app/appium/router.py`), but the backend does not call any of them — node lifecycle now happens entirely in-process inside the agent, via `AppiumManager.start`/`.stop`/`.reconfigure` driven by `NodeStateLoop`.
 
-For pull-capable hosts, `reconcile_host(node_pull=True)` (`app/appium_nodes/services/reconciler.py`) still parses the agent health payload and runs DB-writing convergence — confirm/mark-running, stale clears, expired-token clears — but translates every agent-effecting action to a no-op via `translate_action_for_pull` (`app/appium_nodes/services/reconciler_convergence.py`):
+Per host, `reconcile_host` (`app/appium_nodes/services/reconciler.py`) parses the agent's `/agent/health` payload and runs DB-writing convergence — confirm/mark-running, stale clears, expired-token clears — but every agent-effecting action (`start`, `stop`, `restart`) is translated to a no-op by `translate_action_for_pull` (`app/appium_nodes/services/reconciler_convergence.py`):
 
-| Convergence action | Push-mode outcome | Pull-mode outcome |
-| --- | --- | --- |
-| `start` | `POST /agent/appium/start` | skipped; `APPIUM_PULL_MODE_SKIPPED_ACTIONS{kind="start"}` increments |
-| `stop` | `POST /agent/appium/stop` | skipped; `APPIUM_PULL_MODE_SKIPPED_ACTIONS{kind="stop"}` increments |
-| `restart` | stop+start pair | skipped; `APPIUM_PULL_MODE_SKIPPED_ACTIONS{kind="restart"}` increments |
-| DB-only actions (confirm, mark-running, stale clears, etc.) | writes observed columns | unchanged, same write |
-| Orphan reap | `appium_stop` on stray processes | metric-only: `APPIUM_PULL_MODE_ORPHANS_OBSERVED` counts strays; backend stops nothing |
+| Convergence action | Outcome |
+| --- | --- |
+| `start` | Skipped; `APPIUM_PULL_MODE_SKIPPED_ACTIONS{kind="start"}` increments. The agent's own `NodeStateLoop` starts the process. |
+| `stop` | Skipped; `APPIUM_PULL_MODE_SKIPPED_ACTIONS{kind="stop"}` increments. The agent stops it. |
+| `restart` | Skipped; `APPIUM_PULL_MODE_SKIPPED_ACTIONS{kind="restart"}` increments. The agent restarts it (forced by an unexpired transition token). |
+| DB-only actions (confirm, mark-running, stale clears, etc.) | Writes observed columns, unchanged |
+| Orphan reap | Metric-only: `APPIUM_PULL_MODE_ORPHANS_OBSERVED` counts strays; the backend stops nothing. The agent's `NodeStateLoop` already stopped anything running that isn't in its own desired projection. |
 
-The agent owns start/stop and orphan cleanup for pull hosts. The backend only observes.
+The agent owns start/stop and orphan cleanup for every host. The backend only observes.
 
-**Pull-only ingests.** `_ingest_pull_host_reports` runs before convergence, against active rows, and covers two things the push path has no equivalent for:
+**Ingests.** `_ingest_pull_host_reports` runs before convergence, against active rows:
 
 1. **Applied-transition-token clear.** When a running-node health entry reports `applied_transition_token == node.transition_token`, the backend clears the token via the natural-clear path (it does not trip `APPIUM_TRANSITION_TOKEN_OVERRIDDEN`).
 2. **Start-failure ingest.** The agent reports `start_failures: [{connection_target, port, kind, detail, at}]` inside `/agent/health`'s `appium_processes`, deduped per device by `(port, at)` — a level-style cursor that matches only failures newer than the last one seen for that device. Two kinds:
    - `kind="port_conflict"` — records the existing start-failure backoff (`_record_start_failure`) **and** re-pins `desired_port` to the next free candidate port via `write_desired_state`. The backend stays the single port authority (decision D3); the conflict converges within two poll cycles.
    - `kind="spawn_failed"` — records the start-failure backoff only; no re-pin.
 
-"Never mark stopped unless the agent proved the process gone" still holds for pull hosts: the only stopped-observed write is the existing `db_clear_stale_running` pass-through, which fires only when the agent reports the process absent.
+"Never mark stopped unless the agent proved the process gone" still holds: the only stopped-observed write is the `db_clear_stale_running` pass-through, which fires only when the agent reports the process absent.
 
-**Delivery: poke replaces reconfigure push.** Pull hosts get no outbox staging — `_stage_agent_reconfigure` (`app/devices/services/intent_reconciler.py`) is skipped for them, and `deliver_pending_agent_reconfigures` skips their rows outright. In place of a reconfigure push, the post-commit `deliver_agent_reconfigures` call fires a fire-and-forget wake poke (`POST /agent/appium-nodes/refresh`, 202, no payload) for pull hosts. `converge_device_now` (the operator start/stop fast path) follows the same rule: for a pull host it pokes and returns without any agent start/stop/restart I/O. A lost poke costs at most one agent poll interval; correctness comes from the agent's own poll, not the poke. Note the run-hot inline callers (`runs/service_allocator.py`, `runs/service_lifecycle_failures.py`) that pass `raise_on_failure=True` also degrade to the poke for pull hosts: a failed poke is swallowed rather than raising `InlineReconfigureDeliveryFailedError`, so the run-id / stop-pending stamp lands on the agent's next poll instead of inline. This stays within the D1 latency budget, and the reservation table — not the agent node flags — remains the allocation authority.
+**Delivery: the poke is the only signal.** There is no outbox staging and no reconfigure push. Every desired-state write (`write_desired_state`) is followed by a fire-and-forget wake poke: `poke_node_refresh` (`app/agent_comm/node_poke.py`) fires `POST /agent/appium-nodes/refresh` (202, no payload, `NODE_POKE_TIMEOUT_SEC = 2.0`) for the device's host. `converge_device_now` (the operator start/stop/restart fast path, `app/appium_nodes/routers/nodes.py` and `app/verification/services/execution.py`) follows the same rule: it pokes and returns without any agent start/stop/restart I/O. The `device_intent_reconciler` loop pokes after every dirty-device reconcile too (`app/devices/services/intent_reconciler.py`). A lost poke costs at most one agent poll interval; correctness comes from the agent's own poll, not the poke.
 
 ## Request envelope
 
@@ -148,7 +145,7 @@ The wrapper guarantees:
 - `AgentUnreachableError` for transport failures (DNS, TCP, TLS, idle timeout).
 - `AgentResponseError` for non-2xx responses when the wrapper calls `_raise_for_status`.
 - `CircuitOpenError` for hosts in the open state: body includes `retry_after_seconds`.
-- `httpx.HTTPStatusError` only escapes when a caller chose to inspect the response itself (e.g. `appium_start` to detect "already in use" details).
+- `httpx.HTTPStatusError` only escapes when a caller chooses to inspect the response itself instead of going through `_raise_for_status`.
 
 ## Failure taxonomy
 
@@ -190,16 +187,12 @@ Per endpoint, a brief contract:
 | `/agent/health` | yes | Read-only |
 | `/agent/host/telemetry` | yes | Read-only |
 | `/agent/pack/devices` (GET) | yes | Snapshot of currently-visible devices |
-| `/agent/appium/start` | **no** | Caller must allocate a free port first (`candidate_ports`). Re-issuing with the same port and the agent already running on it → `NodePortConflictError`. Re-issuing with a fresh port → second running node. |
-| `/agent/appium/stop` | yes | Stop on a port that has nothing returns 2xx. Safe to retry. |
 | `/agent/appium/{port}/status` | yes | Read-only. |
 | `/agent/appium/{port}/logs` | yes | Read-only |
 | `/agent/driver-packs/desired` | yes | Read-only by host_id |
 | `/agent/driver-packs/status` | yes | Replaces previous status; full snapshot |
 | `/agent/appium-nodes/desired` | yes | Read-only projection by `host_id` |
 | `/agent/appium-nodes/refresh` | yes | Wake hint; a lost request costs at most one poll interval |
-
-The non-idempotent endpoint is `/agent/appium/start`. That is exactly where the split-brain rules from Doc 2 apply: a port is allocated, the agent is asked to start once, and the manager waits for the readiness probe before flipping DB state. If the agent times out mid-start the manager calls `/agent/appium/stop` to undo before raising. The pattern is "allocate, attempt, verify, persist, or rollback".
 
 ## Ack semantics for the lifecycle path
 
@@ -231,9 +224,9 @@ sequenceDiagram
 
 The agent endpoint whose result is a tri-state probe (`/agent/appium/{port}/status`) projects HTTP shapes into `bool | None`:
 
-- **`appium_status`** (`agent_operations.py`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`. 
+- **`appium_status`** (`agent_operations.py`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`.
 
-- **`appium_stop`**. `agent_operations.appium_stop` returns the raw response. The consumers bridge into the DB-flip rule by calling `response.raise_for_status()`: the `_stop` helper in `app/appium_nodes/services/reconciler.py` does this on the orphan-reconcile path before calling `mark_node_stopped` (defined in `reconciler_agent.py`), and the `stop_node` service method in `reconciler_agent.py` is the other `appium_stop` consumer. Success → proceed; `AgentCallError` or `httpx.HTTPError` → the stop did not take and the DB flip is skipped.
+- **`mark_node_started` / `mark_node_stopped`** (`reconciler_agent.py`). These are not gated by an HTTP ack at all anymore — the node-lifecycle path (Doc 2) makes no state-changing agent call. They fire only when the observe-only reconciler (`reconciler.py`) matches a running/absent entry in the agent's self-reported `/agent/health.appium_processes.running_nodes` against the desired row. A stale or missing report changes nothing.
 
 The agent does not expose a WebDriver session probe endpoint. Probe sessions are created by the backend directly against the device's Appium node (`probe_session_direct`, targeting `node_target(device)`), exercising the same Appium endpoint a router-proxied CI session lands on, minus the router hop.
 
@@ -246,13 +239,12 @@ Each wrapper picks a default. Override via the `timeout=` argument when the call
 | Endpoint | Default timeout | Reason |
 | --- | --- | --- |
 | `/agent/health` | 5 s | liveness ping |
-| `/agent/appium/start` | `appium.startup_timeout_sec + 5` (~35 s), or `AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190` for virtual devices | virtual devices boot is slow |
-| `/agent/appium/stop` | 10 s | bounded shutdown |
 | `/agent/appium/{port}/status` | 5 s | quick check |
 | `/agent/appium/{port}/logs` | 10 s | small payload |
 | `/agent/tools/status` | 15 s | local probe |
 | `/agent/pack/devices` | 45 s | adapter discovery |
 | `/agent/appium-nodes/desired` | 15 s | agent pull poll |
+| `/agent/appium-nodes/refresh` | `NODE_POKE_TIMEOUT_SEC = 2.0` | best-effort wake; never load-bearing |
 
 Timeouts are deliberately tight on health-path endpoints so a slow agent does not pin the leader's loops. They are deliberately loose on installer endpoints because operator-initiated install is allowed to take minutes.
 
@@ -276,7 +268,7 @@ Operational note: pooled clients do not refresh DNS until they are closed. If a 
 
 ## Versioning
 
-There is no formal API version on either side today. The backend records the agent's `version` from `/agent/health` on the `Host` row and computes `agent_version_status` against `agent.min_version` for operator visibility. The bootstrap installer and `/agent/health` `version_guidance` payload help keep agents within compatible ranges. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
+One axis is hard-enforced; the rest is soft guidance. `orchestration_contract_version` (agent registration capabilities, checked against `MIN_ORCHESTRATION_CONTRACT_VERSION = 3` in `app/hosts/service.py`) is the hard gate: a pre-v3 agent is rejected at registration with HTTP 426, and any already-registered pre-v3 host is marked offline at scheduler startup — this is what guarantees every online host is running the node-pull agent. Beyond that floor, there is no formal endpoint-level API version. The backend separately records the agent's `version` from `/agent/health` on the `Host` row and computes `agent_version_status` against `agent.min_version` for operator visibility. The bootstrap installer and `/agent/health` `version_guidance` payload help keep agents within compatible ranges. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
 
 `agent.min_version` is backend-enforced guidance for hosts that report to the current backend. It protects new backend expectations for old agents, but it cannot protect the opposite direction: an old backend calling an endpoint removed from a newer agent. Backend-called endpoint removals are safe only when the backend stops calling the endpoint before or at the same time the agent removes it. Roll those changes out backend-first, or deploy backend and agent together; do not roll newer agents across the fleet while an older backend still depends on the removed endpoint.
 
@@ -311,7 +303,6 @@ The exception classes below are defined in `agent_app/appium/exceptions.py`; the
 
 ## Known gaps
 
-- Phase 8b's per-host mode switch is live, but the push path, outbox table, and `_stage_agent_reconfigure`/delivery machinery are not deleted yet — they stay until the fleet is upgraded and `GRIDFLEET_MIN_AGENT_VERSION` is raised (phase 8c).
 - Wrappers do not retry requests. Loops own retry and backoff so a degraded agent cannot amplify traffic across layers.
 
 ## What this doc does NOT cover

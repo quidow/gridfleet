@@ -19,14 +19,21 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 
 Operator routes and lifecycle paths commit intent to `AppiumNode.desired_state`
 plus optional `desired_port`, `transition_token`, and `transition_deadline`,
-then return in milliseconds. The scheduler's `host_sweep` fetches
+then return in milliseconds; each write is followed by a fire-and-forget wake
+poke (`POST /agent/appium-nodes/refresh`). The scheduler's `host_sweep` fetches
 `/agent/health` once per host at `general.heartbeat_interval_sec`, applies the
 host-liveness verdict first, and passes that same payload to the reconciler for
 freshly alive hosts. The reconciler (`app/appium_nodes/services/reconciler*.py`)
-reads intent, drives the host agent's Appium processes (`appium_start` /
-`appium_stop`), and writes
-observed columns (`pid`, `active_connection_target`, health fields). The
-reconciler is the primary writer of observed Appium-node process state.
+is observe-only: it matches the agent's self-reported Appium processes against
+desired rows and writes observed columns (`pid`, `active_connection_target`,
+health fields) — it never starts, stops, or restarts an agent process itself.
+The host agent's own `NodeStateLoop` pulls `GET /agent/appium-nodes/desired`,
+diffs it against its locally running processes, and owns start/stop/reconfigure
+for every host. The minimum orchestration contract is v3
+(`MIN_ORCHESTRATION_CONTRACT_VERSION`, `app/hosts/service.py`): a pre-v3 agent
+is rejected at registration with HTTP 426, and any already-registered pre-v3
+host is marked offline at scheduler startup. See
+`docs/design/04-backend-agent-contract.md` for the full contract.
 
 After the per-host fan-out, `host_sweep` runs its cadence-gated stages
 (`stage_due`): node health per alive host (`general.node_check_interval_sec`),
@@ -35,21 +42,12 @@ then the cross-host global stages in order — connectivity
 telemetry, and property refresh (each gated by its own interval setting) —
 against the host statuses this same sweep cycle just wrote.
 
-The same convergence pass is the canonical orphan reaper. It parses
-`appium_processes.running_nodes` from the shared sweep payload and stops agent-side
-processes that no DB row claims by `(connection_target, port)`. Reasons surfaced
-via metrics include `no_db_row`, `db_state_not_running`, and `port_mismatch`.
-
-During the 8a→8c agent-pull rollout, node lifecycle runs in two modes selected
-per host by the agent's `node_desired_pull` capability (advertised only when
-that agent has `AGENT_NODE_PULL_ENABLED=true`). Legacy hosts keep the push
-path above unchanged. Pull-capable hosts stay observe-only: the reconciler
-still writes DB-only convergence facts but skips agent-touching start/stop/
-restart, orphan reap becomes metric-only, and reconfigure delivery is
-replaced by a fire-and-forget wake poke (`POST /agent/appium-nodes/refresh`)
-— the agent's own `NodeStateLoop` pulls desired state and owns start/stop and
-orphan cleanup for that host. See `docs/design/04-backend-agent-contract.md`
-for the full contract.
+The same convergence pass counts orphans. It parses
+`appium_processes.running_nodes` from the shared sweep payload and increments a
+metric-only detector (`APPIUM_PULL_MODE_ORPHANS_OBSERVED`) for agent-side
+processes that no DB row claims by `(connection_target, port)` — the agent
+already stopped them locally as part of its own pull-and-reap; the backend
+stops nothing.
 
 Loop-level readiness and dashboard gauges now use `host_sweep`. The historical
 `heartbeat` and `appium_reconciler` loop-level gauge series end at this release;
