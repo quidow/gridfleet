@@ -21,8 +21,7 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from app.sessions.service_sync import SessionSyncLoop
-from app.sessions.service_viability import SessionViabilityLoop
+from app.sessions.appium_sweep import AppiumSweepLoop
 from app.sessions.services_container import SessionServices
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
@@ -70,68 +69,28 @@ async def test_host_sweep_loop_one_successful_iteration(monkeypatch: pytest.Monk
     run_once.assert_awaited_once()
 
 
-async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-
-    viability_mock = Mock()
-    viability_mock.check_due_devices = AsyncMock()
-    services = SessionServices(
-        crud=Mock(),
-        sync=Mock(),
-        viability=viability_mock,
-        settings=FakeSettingsReader({}),
-        session_factory=_Session,
-        publisher=event_bus,
-    )
-    with pytest.raises(asyncio.CancelledError):
-        await SessionViabilityLoop(services=services).run()
-
-    viability_mock.check_due_devices.assert_awaited_once()
-
-
-async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_appium_sweep_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core import background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
     mock_sync.sync = AsyncMock()
-    mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits the loop
-
+    mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)
+    viability_mock = Mock()
+    viability_mock.check_due_devices = AsyncMock()
     services = SessionServices(
         crud=Mock(),
         sync=mock_sync,
-        viability=Mock(),
+        viability=viability_mock,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         session_factory=_Session,
         publisher=event_bus,
     )
     with pytest.raises(asyncio.CancelledError):
-        await SessionSyncLoop(services=services).run()
+        await AppiumSweepLoop(services=services).run()
 
     mock_sync.sync.assert_awaited_once()
-
-
-async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    mock_sync = Mock()
-    mock_sync.sync = AsyncMock(side_effect=RuntimeError("boom"))
-    mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits after error
-
-    services = SessionServices(
-        crud=Mock(),
-        sync=mock_sync,
-        viability=Mock(),
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
-        session_factory=_Session,
-        publisher=event_bus,
-    )
-    with pytest.raises(asyncio.CancelledError):
-        await SessionSyncLoop(services=services).run()
+    viability_mock.check_due_devices.assert_awaited_once()
 
 
 async def test_capacity_loop_covers_retry_path(monkeypatch: pytest.MonkeyPatch) -> None:

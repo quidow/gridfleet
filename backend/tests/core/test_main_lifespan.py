@@ -170,11 +170,10 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
     monkeypatch.setattr(main, "HostSweepLoop", _mock_loop)
-    monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
+    monkeypatch.setattr(main, "AppiumSweepLoop", _mock_loop)
     monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
     monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
     monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
-    monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
     monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
     monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
@@ -183,11 +182,10 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
             "host_sweep_loop",
-            "session_sync_loop",
+            "appium_sweep_loop",
             "durable_job_worker_loop",
             "run_reaper_loop",
             "data_cleanup_loop",
-            "session_viability_loop",
             "fleet_capacity_collector_loop",
             "pack_drain_loop",
             "device_intent_reconciler_loop",

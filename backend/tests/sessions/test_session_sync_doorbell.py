@@ -12,8 +12,8 @@ import asyncio
 import contextlib
 from unittest.mock import AsyncMock, Mock
 
+from app.sessions.appium_sweep import AppiumSweepLoop
 from app.sessions.service_sync import (
-    SessionSyncLoop,
     SessionSyncService,
     request_session_sync_wake,
 )
@@ -52,7 +52,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
         session_factory=_NullCtx,
         publisher=event_bus,
     )
-    task = asyncio.create_task(SessionSyncLoop(services=services).run())
+    task = asyncio.create_task(AppiumSweepLoop(services=services).run())
     try:
         svc.wake()
         # Loop should observe the doorbell within ~50ms even though interval=30s.
@@ -98,7 +98,7 @@ async def test_running_loop_registers_module_wake_hook() -> None:
         session_factory=_NullCtx,
         publisher=event_bus,
     )
-    task = asyncio.create_task(SessionSyncLoop(services=services).run())
+    task = asyncio.create_task(AppiumSweepLoop(services=services).run())
     try:
         await asyncio.sleep(0.05)  # let the loop start and register the hook
         invocations_before = invocations
@@ -145,7 +145,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
         session_factory=_NullCtx,
         publisher=event_bus,
     )
-    task = asyncio.create_task(SessionSyncLoop(services=services).run())
+    task = asyncio.create_task(AppiumSweepLoop(services=services).run())
     try:
         svc.wake()
         await sync_started.wait()
