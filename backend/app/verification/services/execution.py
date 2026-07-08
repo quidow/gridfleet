@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
-from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeManagerError, NodeStopNotAcknowledgedError
+from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.core.errors import AgentCallError
@@ -219,10 +219,6 @@ class VerificationExecutionService:
             # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
             try:
                 await self._reconciler.converge_device_now(device.id, db=db)
-            except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
-                # Expected, self-healing transient in the relay re-register
-                # window — the reconciler tick converges. Debug, not warning.
-                logger.debug("verification_converge_kick_transient", exc_info=True, extra={"device_id": str(device.id)})
             except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
                 logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 

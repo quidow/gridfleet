@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 
-from app.appium_nodes.exceptions import NodeManagerError, NodeStopNotAcknowledgedError
+from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.devices import locking as device_locking
@@ -424,7 +424,7 @@ async def test_run_probe_swallows_transient_converge_kick_failure(
     nm = AsyncMock()
     nm.start_node = AsyncMock(return_value=fake_node)
     nm.wait_for_node_running = AsyncMock(return_value=None)
-    converge_mock = AsyncMock(side_effect=NodeStopNotAcknowledgedError("agent did not acknowledge stop"))
+    converge_mock = AsyncMock(side_effect=RuntimeError("agent did not acknowledge stop"))
 
     # Must not raise despite the transient kick failure.
     _node, error = await VerificationExecutionService(

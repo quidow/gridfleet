@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import agent_nodes_refresh
 from app.agent_comm.snapshot import parse_running_nodes
-from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeManagerError, NodeStopNotAcknowledgedError
+from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.appium_nodes.services.reconciler_agent import (
@@ -477,21 +477,6 @@ class ReconcilerService:
                     clear_token=clear_token,
                     reset_start_failure=reset_start_failure,
                 )
-            except NodeAlreadyRunningError, NodeStopNotAcknowledgedError:
-                # Expected, self-healing transients during the Appium process
-                # restart / sidecar-respawn window: a node already runs for the
-                # target, or the agent hasn't acknowledged a stop yet. The next
-                # reconciler tick converges; the APPIUM_RECONCILER_* metrics are
-                # the durable signal, so log at debug, not warning.
-                logger.debug(
-                    "appium_reconciler_convergence_action_transient",
-                    exc_info=True,
-                    host_id=str(host_id),
-                    device_id=str(row.device_id),
-                    action=action.kind,
-                )
-                if raise_errors:
-                    raise
             except Exception:  # convergence loop; log and continue, re-raise if requested
                 logger.warning(
                     "appium_reconciler_convergence_action_failed",

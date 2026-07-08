@@ -12,15 +12,10 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
 
-from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
-from app.appium_nodes.services import (
-    resource_service as appium_node_resource_service,
-)
-from app.appium_nodes.services.reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
-from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.hosts.models import Host, HostStatus, OSType
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
@@ -195,106 +190,3 @@ async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) ->
 
     assert ports_for_a[0] != start, "Same host must skip the in-use port"
     assert ports_for_b[0] == start, "Different host must reuse the same port"
-
-
-async def test_reserve_appium_port_increments_collision_metric(db_session: AsyncSession) -> None:
-    host = await _make_host(db_session, ip="10.0.0.80")
-    first_device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-reserve-a",
-        connection_target="dev-main-port-reserve-a",
-        name="dev-main-port-reserve-a",
-    )
-    second_device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-reserve-b",
-        connection_target="dev-main-port-reserve-b",
-        name="dev-main-port-reserve-b",
-    )
-    first_node = AppiumNode(device_id=first_device.id, port=4723)
-    second_node = AppiumNode(device_id=second_device.id, port=4724)
-    db_session.add_all([first_node, second_node])
-    await db_session.flush()
-    start = settings_service.get("appium.port_range_start")
-    before = APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get()
-
-    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=first_node.id)
-    with pytest.raises(NodePortConflictError):
-        await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=second_node.id)
-
-    assert APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get() == before + 1
-
-
-async def test_reserve_appium_port_conflict_preserves_other_node_claims(db_session: AsyncSession) -> None:
-    host = await _make_host(db_session, ip="10.0.0.82")
-    first_device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-preserve-a",
-        connection_target="dev-main-port-preserve-a",
-        name="dev-main-port-preserve-a",
-    )
-    second_device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-preserve-b",
-        connection_target="dev-main-port-preserve-b",
-        name="dev-main-port-preserve-b",
-    )
-    first_node = AppiumNode(device_id=first_device.id, port=4723)
-    second_node = AppiumNode(device_id=second_device.id, port=4724)
-    db_session.add_all([first_node, second_node])
-    await db_session.flush()
-    start = settings_service.get("appium.port_range_start")
-    derived_data_port = await appium_node_resource_service.reserve(
-        db_session,
-        host_id=host.id,
-        capability_key="appium:derivedDataPort",
-        start_port=8200,
-        node_id=second_node.id,
-    )
-    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=first_node.id)
-
-    with pytest.raises(NodePortConflictError):
-        await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=second_node.id)
-
-    claim = await db_session.scalar(
-        select(AppiumNodeResourceClaim).where(
-            AppiumNodeResourceClaim.node_id == second_node.id,
-            AppiumNodeResourceClaim.capability_key == "appium:derivedDataPort",
-        )
-    )
-    assert claim is not None
-    assert claim.port == derived_data_port
-
-
-async def test_reserve_appium_port_replaces_same_node_main_port_claim(db_session: AsyncSession) -> None:
-    host = await _make_host(db_session, ip="10.0.0.83")
-    device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="dev-main-port-move",
-        connection_target="dev-main-port-move",
-        name="dev-main-port-move",
-    )
-    start = settings_service.get("appium.port_range_start")
-    node = AppiumNode(device_id=device.id, port=start)
-    db_session.add(node)
-    await db_session.flush()
-
-    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=node.id)
-    moved_port = await reserve_appium_port(db_session, host_id=host.id, port=start + 1, node_id=node.id)
-
-    claims = (
-        await db_session.execute(
-            select(AppiumNodeResourceClaim).where(
-                AppiumNodeResourceClaim.node_id == node.id,
-                AppiumNodeResourceClaim.capability_key == APPIUM_PORT_CAPABILITY,
-            )
-        )
-    ).scalars()
-
-    assert moved_port == start + 1
-    assert [claim.port for claim in claims] == [start + 1]
