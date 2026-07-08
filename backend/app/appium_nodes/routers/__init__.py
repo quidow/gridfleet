@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from types import ModuleType
 
-__all__ = ["admin", "nodes"]
+__all__ = ["admin", "agent_state", "nodes"]
 
 
 def __getattr__(name: str) -> ModuleType:
