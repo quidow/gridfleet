@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/agent/appium-nodes/desired": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Desired */
+        get: operations["desired_agent_appium_nodes_desired_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent/driver-packs/desired": {
         parameters: {
             query?: never;
@@ -1977,6 +1994,11 @@ export interface components {
          * @enum {string}
          */
         AgentVersionStatus: "disabled" | "ok" | "outdated" | "unknown";
+        /**
+         * AppiumDesiredState
+         * @enum {string}
+         */
+        AppiumDesiredState: "running" | "stopped";
         /** AppiumInstallableOut */
         AppiumInstallableOut: {
             /** Github Repo */
@@ -4196,6 +4218,42 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** NodeDesiredSpecOut */
+        NodeDesiredSpecOut: {
+            /** Accepting New Sessions */
+            accepting_new_sessions: boolean;
+            desired_state: components["schemas"]["AppiumDesiredState"];
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            /** Generation */
+            generation: number;
+            /** Grid Run Id */
+            grid_run_id: string | null;
+            /** Launch */
+            launch: {
+                [key: string]: unknown;
+            } | null;
+            /** Port */
+            port: number;
+            /** Stop Pending */
+            stop_pending: boolean;
+            /** Transition Deadline */
+            transition_deadline: string | null;
+            /** Transition Token */
+            transition_token: string | null;
+            /** Unrunnable Reason */
+            unrunnable_reason?: string | null;
+        };
+        /** NodesDesiredOut */
+        NodesDesiredOut: {
+            /** Generation Hint */
+            generation_hint: number;
+            /** Nodes */
+            nodes: components["schemas"]["NodeDesiredSpecOut"][];
+        };
         /** NotificationListRead */
         NotificationListRead: {
             /** Items */
@@ -4981,6 +5039,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    desired_agent_appium_nodes_desired_get: {
+        parameters: {
+            query: {
+                host_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodesDesiredOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     desired_agent_driver_packs_desired_get: {
         parameters: {
             query: {
