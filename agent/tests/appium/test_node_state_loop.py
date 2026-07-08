@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from agent_app.appium.exceptions import PortOccupiedError, RuntimeMissingError
 from agent_app.appium.node_state import NodeStateLoop
 
 
@@ -28,7 +29,7 @@ class _Client:
 
 
 class _Manager:
-    def __init__(self, running: list[_Info] | None = None) -> None:
+    def __init__(self, running: list[_Info] | None = None, *, fail_start_with: Exception | None = None) -> None:
         self.running = running or []
         self._launch_specs: dict[int, SimpleNamespace] = {
             info.port: SimpleNamespace(
@@ -41,11 +42,15 @@ class _Manager:
         self.started: list[dict[str, object]] = []
         self.stopped: list[int] = []
         self.reconfigured: list[tuple[int, dict[str, Any]]] = []
+        self.start_failures: list[dict[str, Any]] = []
+        self._fail_start_with = fail_start_with
 
     def list_running(self) -> list[_Info]:
         return list(self.running)
 
     async def start(self, **kwargs: object) -> _Info:
+        if self._fail_start_with is not None:
+            raise self._fail_start_with
         self.started.append(kwargs)
         info = _Info(
             port=cast("int", kwargs["port"]),
@@ -59,6 +64,11 @@ class _Manager:
             grid_run_id=kwargs["grid_run_id"],
         )
         return info
+
+    def record_start_failure(self, *, port: int, connection_target: str, kind: str, detail: str) -> None:
+        self.start_failures.append(
+            {"port": port, "connection_target": connection_target, "kind": kind, "detail": detail}
+        )
 
     async def stop(self, port: int) -> None:
         self.stopped.append(port)
@@ -216,3 +226,38 @@ async def test_local_process_with_no_desired_spec_is_stopped() -> None:
     await loop.run_once()
 
     assert manager.stopped == [4799]
+
+
+@pytest.mark.asyncio
+async def test_port_occupied_start_failure_is_recorded_as_port_conflict() -> None:
+    manager = _Manager(fail_start_with=PortOccupiedError("Port 4723 is already in use"))
+    loop = NodeStateLoop(client=_Client([_node()]), manager=manager)
+
+    await loop.run_once()  # must not raise: run_once still swallows convergence failures
+
+    assert manager.start_failures == [
+        {
+            "port": 4723,
+            "connection_target": "device-1",
+            "kind": "port_conflict",
+            "detail": "Port 4723 is already in use",
+        }
+    ]
+    assert manager.started == []
+
+
+@pytest.mark.asyncio
+async def test_other_start_failure_is_recorded_as_spawn_failed() -> None:
+    manager = _Manager(fail_start_with=RuntimeMissingError("appium executable not found"))
+    loop = NodeStateLoop(client=_Client([_node()]), manager=manager)
+
+    await loop.run_once()
+
+    assert manager.start_failures == [
+        {
+            "port": 4723,
+            "connection_target": "device-1",
+            "kind": "spawn_failed",
+            "detail": "appium executable not found",
+        }
+    ]

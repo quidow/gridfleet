@@ -4,6 +4,7 @@ import dataclasses
 import inspect
 import json
 from collections import deque
+from datetime import datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,6 +24,7 @@ from agent_app.appium.exceptions import (
 )
 from agent_app.appium.log_files import appium_log_path
 from agent_app.appium.process import (
+    MAX_RESTART_EVENTS,
     AppiumInvocation,
     AppiumLaunchSpec,
     AppiumProcessInfo,
@@ -344,6 +346,46 @@ async def test_process_snapshot_omits_has_active_session_when_enumeration_unavai
         snapshot = await manager.process_snapshot()
 
     assert "has_active_session" not in snapshot["running_nodes"][0]
+
+
+async def test_process_snapshot_reports_start_failures() -> None:
+    manager = AppiumProcessManager()
+
+    manager.record_start_failure(
+        port=4723,
+        connection_target="device-1",
+        kind="port_conflict",
+        detail="Port 4723 is already in use",
+    )
+
+    snapshot = await manager.process_snapshot()
+
+    assert len(snapshot["start_failures"]) == 1
+    entry = snapshot["start_failures"][0]
+    assert entry["port"] == 4723
+    assert entry["connection_target"] == "device-1"
+    assert entry["kind"] == "port_conflict"
+    assert entry["detail"] == "Port 4723 is already in use"
+    # `at` must be a real ISO timestamp, matching AppiumRestartEvent.occurred_at.
+    datetime.fromisoformat(entry["at"])
+
+
+async def test_process_snapshot_start_failures_ring_is_bounded() -> None:
+    manager = AppiumProcessManager()
+
+    for i in range(MAX_RESTART_EVENTS + 10):
+        manager.record_start_failure(
+            port=4723,
+            connection_target="device-1",
+            kind="spawn_failed",
+            detail=f"attempt {i}",
+        )
+
+    snapshot = await manager.process_snapshot()
+
+    assert len(snapshot["start_failures"]) == MAX_RESTART_EVENTS
+    # Oldest entries are evicted; the newest attempt survives.
+    assert snapshot["start_failures"][-1]["detail"] == f"attempt {MAX_RESTART_EVENTS + 9}"
 
 
 async def test_start_requires_pack_metadata() -> None:
