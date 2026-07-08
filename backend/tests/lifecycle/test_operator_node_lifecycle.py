@@ -10,7 +10,9 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import select
 
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
+from app.appium_nodes.services import resource_service
 from app.devices.models import DeviceIntent
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_active
@@ -21,6 +23,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.models import Device
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -519,3 +522,96 @@ async def test_request_restart_moved_port_node_converges_without_oscillation(
         )
     ).scalar_one()
     assert intent.payload["desired_port"] == 4725
+
+
+# ---------------------------------------------------------------------------
+# Parallel-resource reservation at request_start (8c item-1 regression)
+# ---------------------------------------------------------------------------
+
+
+async def _request_start(db_session: AsyncSession, device: Device) -> AppiumNode:
+    # request_start reads device.appium_node as a plain attribute; a device fresh off
+    # create_device() has it unloaded, and a bare lazy-load outside a greenlet context
+    # raises MissingGreenlet. Prime it explicitly (same pattern used elsewhere in this
+    # suite, e.g. tests/devices/test_device_health.py).
+    await db_session.refresh(device, attribute_names=["appium_node"])
+    return await OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    ).request_start(db_session, device, caller="operator_route", reason="test start")
+
+
+async def test_request_start_reserves_distinct_parallel_ports_for_host_neighbors(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    dev_a = await create_device(db_session, host_id=db_host.id, name="par-ports-a", verified=True)
+    dev_b = await create_device(db_session, host_id=db_host.id, name="par-ports-b", verified=True)
+
+    node_a = await _request_start(db_session, dev_a)
+    node_b = await _request_start(db_session, dev_b)
+
+    claims = await resource_service.get_port_claims_for_nodes(db_session, node_ids=[node_a.id, node_b.id])
+    assert claims[node_a.id]["appium:systemPort"] == 8200
+    assert claims[node_b.id]["appium:systemPort"] == 8201
+    assert claims[node_a.id]["appium:mjpegServerPort"] != claims[node_b.id]["appium:mjpegServerPort"]
+
+
+async def test_request_start_reuses_existing_claims_on_restart(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="par-ports-reuse", verified=True)
+
+    node = await _request_start(db_session, device)
+    first = await resource_service.get_port_claims_for_nodes(db_session, node_ids=[node.id])
+    node_again = await _request_start(db_session, device)
+    second = await resource_service.get_port_claims_for_nodes(db_session, node_ids=[node_again.id])
+
+    assert node_again.id == node.id
+    assert second == first
+
+
+async def test_request_start_drops_claims_no_longer_declared_by_the_pack(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="par-ports-stale", verified=True)
+    node = await _request_start(db_session, device)
+    db_session.add(
+        AppiumNodeResourceClaim(host_id=db_host.id, capability_key="appium:retiredPort", port=7777, node_id=node.id)
+    )
+    await db_session.flush()
+
+    await _request_start(db_session, device)
+
+    claims = (await resource_service.get_port_claims_for_nodes(db_session, node_ids=[node.id])).get(node.id, {})
+    assert "appium:retiredPort" not in claims
+    assert "appium:systemPort" in claims
+
+
+async def test_request_start_assigns_derived_data_path_for_xcuitest(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="par-ports-ios",
+        verified=True,
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+    )
+
+    node = await _request_start(db_session, device)
+
+    caps = await resource_service.get_capabilities(db_session, node_id=node.id)
+    assert caps["appium:wdaLocalPort"] == 8100
+    assert str(caps["appium:derivedDataPath"]).startswith("/tmp/gridfleet/derived-data/")
+
+
+async def test_request_start_maps_pool_exhaustion_to_node_manager_error(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="par-ports-full", verified=True)
+
+    async def _exhausted(*args: object, **kwargs: object) -> int:
+        raise resource_service.PoolExhaustedError("no free port")
+
+    monkeypatch.setattr(resource_service, "reserve", _exhausted)
+
+    with pytest.raises(NodeManagerError):
+        await _request_start(db_session, device)
