@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from agent_app.api_auth import BasicAuthMiddleware
+from agent_app.appium.router import node_state_router
 from agent_app.appium.router import router as appium_router
 from agent_app.config import agent_settings
 from agent_app.error_codes import AgentErrorCode
@@ -71,6 +72,7 @@ async def _unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
 for _router in (
     host_router,
     appium_router,
+    node_state_router,
     pack_router,
     tools_router,
 ):

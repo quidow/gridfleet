@@ -46,7 +46,7 @@ def test_every_operation_has_tags(method: str, path: str, op: dict[str, Any]) ->
 @pytest.mark.parametrize(("method", "path", "op"), _operations())
 def test_every_operation_declares_2xx_schema(method: str, path: str, op: dict[str, Any]) -> None:
     responses = op.get("responses", {})
-    ok = responses.get("200") or responses.get("201")
+    ok = next((response for code, response in responses.items() if code.startswith("2")), None)
     assert ok, f"{method} {path}: no 2xx response declared"
     schema_ref = ok.get("content", {}).get("application/json", {}).get("schema")
     assert schema_ref, f"{method} {path}: 2xx response has no JSON schema"

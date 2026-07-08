@@ -14,6 +14,10 @@ class AppiumReconfigureRequest(BaseModel):
     grid_run_id: UUID | None = None
 
 
+class NodeRefreshResponse(BaseModel):
+    accepted: bool = True
+
+
 class AppiumStartRequest(BaseModel):
     connection_target: str = Field(min_length=1, max_length=512)
     port: int = Field(ge=1024, le=65535)

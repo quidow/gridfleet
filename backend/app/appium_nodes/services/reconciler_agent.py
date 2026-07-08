@@ -133,6 +133,7 @@ __all__ = [
     "RemoteStartResult",
     "agent_url",
     "build_agent_start_payload",
+    "build_node_launch_payload",
     "candidate_ports",
     "mark_node_started",
     "mark_node_stopped",
@@ -392,6 +393,61 @@ async def start_remote_node(
     transport: AgentTransport,
     settings: SettingsReader,
 ) -> RemoteStartResult:
+    payload = await build_node_launch_payload(
+        db,
+        device,
+        port=port,
+        allocated_caps=allocated_caps,
+        settings=settings,
+    )
+    host = require_management_host(device, action="start Appium nodes")
+    try:
+        resp = await appium_start(
+            agent_base,
+            host=host.ip,
+            agent_port=host.agent_port,
+            payload=payload,
+            http_client_factory=transport.http_client_factory,
+            timeout=_agent_start_timeout(device, settings=settings),
+            settings=settings,
+            pool=transport.pool,
+            circuit_breaker=transport.circuit_breaker,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        code, message_text = parse_agent_error_detail(exc.response)
+        message = f"Agent failed to start node: {message_text}"
+        if code == AgentErrorCode.ALREADY_RUNNING.value:
+            # Per-target conflict: a node already runs for this connection target.
+            # Retrying on a different candidate port is futile (the agent's guard
+            # keys on the target, not the port), so raise the distinct subclass.
+            raise NodeAlreadyRunningError(message) from exc
+        if code == AgentErrorCode.PORT_OCCUPIED.value:
+            raise NodePortConflictError(message) from exc
+        raise NodeManagerError(message) from exc
+    except AgentCallError:
+        raise
+    except httpx.HTTPError as exc:
+        raise NodeManagerError(f"Cannot reach agent at {agent_base}: {exc}") from exc
+    data = response_json_dict(resp)
+    active_connection_target = data.get("connection_target")
+    return RemoteStartResult(
+        port=port,
+        pid=data.get("pid"),
+        active_connection_target=active_connection_target if isinstance(active_connection_target, str) else None,
+        agent_base=agent_base,
+    )
+
+
+async def build_node_launch_payload(
+    db: AsyncSession,
+    device: Device,
+    *,
+    port: int,
+    allocated_caps: dict[str, Any] | None,
+    settings: SettingsReader,
+) -> dict[str, Any]:
+    """Build the complete launch payload shared by push and pull channels."""
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
 
@@ -444,43 +500,7 @@ async def start_remote_node(
     elif host.tool_env:
         # No pack overrides, but host provides tool_env — pass it through.
         payload["appium_env"] = dict(host.tool_env)
-    try:
-        resp = await appium_start(
-            agent_base,
-            host=host.ip,
-            agent_port=host.agent_port,
-            payload=payload,
-            http_client_factory=transport.http_client_factory,
-            timeout=_agent_start_timeout(device, settings=settings),
-            settings=settings,
-            pool=transport.pool,
-            circuit_breaker=transport.circuit_breaker,
-        )
-        resp.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        code, message_text = parse_agent_error_detail(exc.response)
-        message = f"Agent failed to start node: {message_text}"
-        if code == AgentErrorCode.ALREADY_RUNNING.value:
-            # Per-target conflict: a node already runs for this connection target.
-            # Retrying on a different candidate port is futile (the agent's guard
-            # keys on the target, not the port), so raise the distinct subclass.
-            raise NodeAlreadyRunningError(message) from exc
-        if code == AgentErrorCode.PORT_OCCUPIED.value:
-            raise NodePortConflictError(message) from exc
-        raise NodeManagerError(message) from exc
-    except AgentCallError:
-        raise
-    except httpx.HTTPError as exc:
-        raise NodeManagerError(f"Cannot reach agent at {agent_base}: {exc}") from exc
-
-    data = response_json_dict(resp)
-    active_connection_target = data.get("connection_target")
-    return RemoteStartResult(
-        port=port,
-        pid=data.get("pid"),
-        active_connection_target=active_connection_target if isinstance(active_connection_target, str) else None,
-        agent_base=agent_base,
-    )
+    return payload
 
 
 async def _build_session_aligned_start_caps(

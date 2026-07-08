@@ -22,6 +22,7 @@ from agent_app.pack.schemas import NormalizeDeviceResponse
 EXPECTED_HTTP_ROUTES = {
     ("GET", "/agent/health"),
     ("GET", "/agent/host/telemetry"),
+    ("POST", "/agent/appium-nodes/refresh"),
     ("POST", "/agent/appium/start"),
     ("POST", "/agent/appium/stop"),
     ("POST", "/agent/appium/{port}/reconfigure"),

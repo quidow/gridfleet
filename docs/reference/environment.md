@@ -77,7 +77,7 @@ These are read directly by `agent/agent_app/config.py`.
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `AGENT_MANAGER_URL` | `http://localhost:8000` | agent process | Backend base URL used for registration and manager-owned calls |
-| `AGENT_BACKEND_URL` | falls back to `AGENT_MANAGER_URL` | agent process | Override of the backend base URL used for pack desired-state polling. |
+| `AGENT_BACKEND_URL` | falls back to `AGENT_MANAGER_URL` | agent process | Override of the backend base URL used for driver-pack and Appium-node desired-state polling. |
 | `AGENT_HOST_ID` | unset | agent process | Pre-assigned host UUID. When set, the agent skips manager-issued identity and enables the pack state loop immediately. |
 | `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `30` | agent process | How often the agent re-registers to refresh mutable host fields such as IP address and capabilities |
 | `AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC` | `630` | agent process | uvicorn keep-alive timeout for the agent API. Must stay above the backend's `agent.http_pool_idle_seconds` setting (max 600) so pooled backend→agent connections never outlive the server's keep-alive (otherwise non-idempotent calls fail with `RemoteProtocolError`). |
@@ -89,6 +89,8 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). The installer overrides this to `<agent_dir>/runtimes` in the generated service environment; the fallback default only applies when the agent is started outside the installer. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
+| `AGENT_NODE_PULL_ENABLED` | `false` | agent process | Starts `NodeStateLoop` and advertises `node_desired_pull: 1`. Keep disabled until the backend pull-mode switch lands. |
+| `AGENT_NODE_POLL_INTERVAL_SEC` | `5.0` | agent process | Poll interval for Appium-node desired state when `AGENT_NODE_PULL_ENABLED=true`. Refresh pokes may wake the loop sooner. |
 | `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable address advertised by the agent during registration. Accepts **any DNS name or IP** the backend and router can reach, not strictly an IPv4 address. Useful for co-located docker deployments where the host's LAN IP is unreachable from containers (e.g. set to `host.docker.internal` or `172.17.0.1`). Leave empty to use UDP-trick discovery. |
 
 ## Agent Installer Helper Variables

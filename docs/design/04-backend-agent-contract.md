@@ -2,7 +2,7 @@
 
 > HTTP contract between the FastAPI manager and the FastAPI host agents. Covers endpoint catalog, ack semantics, failure model, circuit breaker, auth surface, and idempotency.
 
-GridFleet has two HTTP-speaking processes per host: the centralised backend and the per-host agent. Most traffic flows backend→agent; the agent initiates a handful of flows back (host registration, desired-pack pull, pack-state status push, and tarball download). All host-aware logic on the backend lives behind the `agent_operations` typed wrapper (`backend/app/agent_comm/operations.py`, imported as `from app.agent_comm import operations as agent_operations`).
+GridFleet has two HTTP-speaking processes per host: the centralised backend and the per-host agent. Most traffic flows backend to agent. The agent also registers itself, pulls desired driver-pack and Appium-node state, reports pack status, and downloads pack tarballs. All host-aware backend calls use the `agent_operations` typed wrapper (`backend/app/agent_comm/operations.py`, imported as `from app.agent_comm import operations as agent_operations`).
 
 This doc specifies that contract.
 
@@ -14,7 +14,7 @@ flowchart LR
     classDef ag fill:#e7f0fe,stroke:#1c4ea3,color:#000
     classDef ext fill:#e9f7ec,stroke:#1f7a3a,color:#000
 
-    backend["FastAPI backend<br/>multi-worker, leader-elected"]:::be
+    backend["FastAPI backend<br/>multi-worker API plus scheduler"]:::be
     agent1["Host agent A<br/>FastAPI 5100"]:::ag
     agent2["Host agent B<br/>FastAPI 5100"]:::ag
     router["WebDriver router<br/>4444"]:::ext
@@ -23,8 +23,8 @@ flowchart LR
 
     backend -->|"agent HTTP"| agent1
     backend -->|"agent HTTP"| agent2
-    agent1 -->|"desired packs, status, host registration"| backend
-    agent2 -->|"desired packs, status, host registration"| backend
+    agent1 -->|"desired state, status, host registration"| backend
+    agent2 -->|"desired state, status, host registration"| backend
     agent1 -.spawns.-> appium1
     agent2 -.spawns.-> appium2
     router -->|"allocate (internal grid API)"| backend
@@ -39,7 +39,7 @@ The CI runner / test client speaks **only** to the WebDriver router for sessions
 The two directions are asymmetric today.
 
 - **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `build_agent_basic_auth` in `backend/app/agent_comm/http_pool.py`, applied per request by the pool. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
-- **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
+- **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. The agent uses these credentials for desired-state polling, pack status, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
 There is no HMAC or message signing. When the optional backend→agent Basic-auth credentials are unset, transport security relies entirely on the network boundary documented in `docs/guides/security.md`.
@@ -65,6 +65,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/appium/{port}/reconfigure` | `reconfigure_delivery` (wrapper `agent_appium_reconfigure`) | toggle accepting-new-sessions / stop-pending / run scope | 2xx → `dict` |
 | GET | `/agent/appium/{port}/status` | `node_health` reconcile path | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
+| POST | `/agent/appium-nodes/refresh` | reserved for the pull-mode backend path in phase 8b | wake `NodeStateLoop`; correctness still comes from polling | 202, including when pull mode is disabled |
 | GET | `/agent/tools/status` | host onboarding | Node provider and host helper versions | 2xx required |
 
 Most rows have a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). The one exception is the feature-dispatch endpoint (`/agent/pack/features/{feat}/actions/{act}`), which has no wrapper in `operations.py`: it is issued from `app/packs/services/feature_dispatch.py` via the shared `app.agent_comm.client.request`, so the circuit breaker and metrics still fire. Routers and services should never call `httpx` directly. Go through these wrappers (or that shared `request`) so the circuit breaker and metrics fire.
@@ -91,9 +92,14 @@ The start payload also carries `accepting_new_sessions`, `stop_pending`, and `gr
 | POST | `/api/hosts/register` | bootstrap | one-time host registration | 2xx, returns `Host` row id |
 | GET | `/agent/driver-packs/desired` | `PackStateLoop` (~10 s) | desired pack list for this host | 200 → `{packs: [...]}` |
 | POST | `/agent/driver-packs/status` | `PackStateLoop` after each tick | report runtime/adapter state | 204 |
+| GET | `/agent/appium-nodes/desired` | `NodeStateLoop` (5 s when enabled) | desired Appium-node projection for this host | 200 → `{nodes: [...], generation_hint}` |
 | GET | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | `tarball_fetch` | download the sha256-pinned pack tarball | 2xx → tarball bytes |
 
-The `/agent/driver-packs/desired` and `/agent/driver-packs/status` routes are defined in `backend/app/packs/routers/agent_state.py` (router prefix `/agent/driver-packs`); the tarball download is served by `backend/app/packs/routers/uploads.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls such as Appium status: the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
+The node desired response contains `device_id`, `generation`, `desired_state`, `port`, drain flags, `grid_run_id`, and transition-token fields. A running node also receives `launch`, the complete payload built by `build_node_launch_payload`. The push start path uses the same builder, and a contract test requires exact equality between both channels. If launch inputs are not runnable, the spec carries `launch: null` and `unrunnable_reason` instead of failing the whole host response.
+
+`NodeStateLoop` is disabled by default in phase 8a. When enabled, it starts, stops, reconfigures, and reaps local orphan processes from the desired projection. An unexpired transition token forces one restart per agent process. The loop records applied generations and transition tokens in memory; `/agent/health` includes them on each running-node entry as `applied_generation` and `applied_transition_token`.
+
+Phase 8a remains dual-channel: the backend push path still controls every host. Agents advertise `node_desired_pull: 1` only when `AGENT_NODE_PULL_ENABLED=true`, but the backend does not switch on that capability until phase 8b. Phase 8b will suppress push commands and use refresh pokes for pull-capable hosts. Phase 8c can remove the push and outbox code after the fleet upgrade is complete.
 
 ## Request envelope
 
@@ -163,6 +169,8 @@ Per endpoint, a brief contract:
 | `/agent/appium/{port}/logs` | yes | Read-only |
 | `/agent/driver-packs/desired` | yes | Read-only by host_id |
 | `/agent/driver-packs/status` | yes | Replaces previous status; full snapshot |
+| `/agent/appium-nodes/desired` | yes | Read-only projection by `host_id` |
+| `/agent/appium-nodes/refresh` | yes | Wake hint; a lost request costs at most one poll interval |
 
 The non-idempotent endpoint is `/agent/appium/start`. That is exactly where the split-brain rules from Doc 2 apply: a port is allocated, the agent is asked to start once, and the manager waits for the readiness probe before flipping DB state. If the agent times out mid-start the manager calls `/agent/appium/stop` to undo before raising. The pattern is "allocate, attempt, verify, persist, or rollback".
 
@@ -217,6 +225,7 @@ Each wrapper picks a default. Override via the `timeout=` argument when the call
 | `/agent/appium/{port}/logs` | 10 s | small payload |
 | `/agent/tools/status` | 15 s | local probe |
 | `/agent/pack/devices` | 45 s | adapter discovery |
+| `/agent/appium-nodes/desired` | 15 s | agent pull poll |
 
 Timeouts are deliberately tight on health-path endpoints so a slow agent does not pin the leader's loops. They are deliberately loose on installer endpoints because operator-initiated install is allowed to take minutes.
 
@@ -273,10 +282,11 @@ The exception classes below are defined in `agent_app/appium/exceptions.py`; the
 | `UNKNOWN_PLATFORM` | `pack.dependencies` | Requested pack/platform is not in the host's desired list |
 | `INTERNAL_ERROR` | route catch-all | Agent-side state corruption or unclassified adapter failure |
 
-## Open contract questions / known gaps
+## Known gaps
 
-- **No agent-initiated state push.** Adding push callbacks from agent → backend has been discussed but is intentionally absent: it would create a second authority for "is the node up", and the cost of polling at 30 s is acceptable. If we ever change this, every code path in Docs 2 and 3 needs revisiting.
-- **No retry budget at the wrapper level.** Loops do their own retry/backoff (`RESTART_MAX_RETRIES`). The wrapper does not retry; that prevents accidental amplification when the agent is degraded.
+- Phase 8a does not select pull mode on the backend. Running with `AGENT_NODE_PULL_ENABLED=true` is an overlap smoke test only until phase 8b adds per-host mode selection and push suppression.
+- Port-conflict reporting and backend repinning remain phase 8b work.
+- Wrappers do not retry requests. Loops own retry and backoff so a degraded agent cannot amplify traffic across layers.
 
 ## What this doc does NOT cover
 

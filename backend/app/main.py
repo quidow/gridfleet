@@ -330,6 +330,7 @@ register_exception_handlers(app)
 
 app.include_router(auth_router_module.router)
 app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(appium_node_routers.agent_state.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
     device_routers.bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence

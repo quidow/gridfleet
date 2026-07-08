@@ -38,6 +38,30 @@ def test_parse_running_nodes_returns_typed_entries() -> None:
     ]
 
 
+def test_parse_running_nodes_ignores_pull_convergence_fields() -> None:
+    payload = {
+        "running_nodes": [
+            {
+                "port": 5001,
+                "pid": 1000,
+                "connection_target": "test-target-a",
+                "platform_id": "test_platform",
+                "applied_generation": 9,
+                "applied_transition_token": "token-1",
+            }
+        ]
+    }
+
+    assert parse_running_nodes(payload) == [
+        RunningAppiumNode(
+            port=5001,
+            pid=1000,
+            connection_target="test-target-a",
+            platform_id="test_platform",
+        )
+    ]
+
+
 def test_parse_running_nodes_skips_malformed_entries() -> None:
     payload = {
         "running_nodes": [

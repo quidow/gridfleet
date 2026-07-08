@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from agent_app.appium import appium_mgr
+from agent_app.appium.node_state import NodeStateClient, NodeStateLoop
 from agent_app.config import agent_settings
 from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.host.version_guidance import VersionGuidanceStore
@@ -105,6 +106,23 @@ class HttpPackStateClient(PackStateClient):
         resp.raise_for_status()
 
 
+class HttpNodeStateClient(NodeStateClient):
+    def __init__(self, base_url: str, host_identity: HostIdentity) -> None:
+        self._base = base_url.rstrip("/")
+        self._host_identity = host_identity
+
+    async def fetch_desired(self) -> dict[str, Any]:
+        host_id = self._host_identity.get()
+        if host_id is None:
+            raise RuntimeError("HttpNodeStateClient used before host identity was assigned")
+        kwargs: dict[str, Any] = {"params": {"host_id": host_id}, "timeout": 15.0}
+        if (auth := _manager_auth()) is not None:
+            kwargs["auth"] = auth
+        resp = await get_shared_http_client().get(f"{self._base}/agent/appium-nodes/desired", **kwargs)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+
 def _build_adapter_loader(
     backend_url: str,
     adapter_registry: AdapterRegistry,
@@ -167,6 +185,18 @@ async def _start_pack_loop_when_ready(
     await loop.run_forever()
 
 
+async def _start_node_loop_when_ready(app: FastAPI, host_identity: HostIdentity, backend_url: str) -> None:
+    await host_identity.wait()
+    loop = NodeStateLoop(
+        client=HttpNodeStateClient(backend_url, host_identity),
+        manager=appium_mgr,
+        poll_interval=agent_settings.runtime.node_poll_interval_sec,
+    )
+    app.state.node_state_loop = loop
+    appium_mgr.set_node_state_observer(loop)
+    await loop.run_forever()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     host_identity = HostIdentity()
@@ -186,6 +216,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.boot_id = boot_id
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
+    app.state.node_state_loop = None
     version_guidance = VersionGuidanceStore()
     app.state.version_guidance = version_guidance
 
@@ -228,9 +259,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
 
+    node_task: asyncio.Task[None] | None = None
+    if backend_url and agent_settings.runtime.node_pull_enabled:
+        node_task = asyncio.create_task(_start_node_loop_when_ready(app, host_identity, backend_url))
+        node_task.add_done_callback(_watchdog("node_state_loop"))
+
     try:
         yield
     finally:
+        if node_task is not None:
+            node_task.cancel()
         if pack_task is not None:
             pack_task.cancel()
         reg_task.cancel()
