@@ -344,20 +344,19 @@ class RunAllocatorService:
         """Wake each reserved device's agent inline so it re-pulls its desired
         state (carrying the new run id) without waiting for the next poll.
         """
-        await asyncio.gather(
-            *[
-                poke_node_refresh(
-                    db,
-                    uuid.UUID(info.device_id),
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
-                    publisher=self._publisher,
-                )
-                for info in device_infos
-            ],
-            return_exceptions=True,
-        )
+        # ponytail: sequential, not gathered — each poke queries the shared
+        # AsyncSession, which is not safe for concurrent use. A down host costs
+        # N * NODE_POKE_TIMEOUT_SEC here; dedup by host (or per-task sessions)
+        # only if that edge case ever matters.
+        for info in device_infos:
+            await poke_node_refresh(
+                db,
+                uuid.UUID(info.device_id),
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
+                publisher=self._publisher,
+            )
 
     def _resolve_run_options(self, data: RunCreate) -> tuple[int, int]:
         ttl_minutes = data.ttl_minutes
