@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.schemas import NodeDesiredSpecOut, NodesDesiredOut
+from app.appium_nodes.services import resource_service
 from app.appium_nodes.services.reconciler_agent import build_node_launch_payload
 from app.core.dependencies import DbDep
 from app.devices.models import Device
@@ -50,12 +51,13 @@ async def _get_desired(
         launch = None
         unrunnable_reason = None
         if node.desired_state == AppiumDesiredState.running:
+            allocated = await resource_service.get_capabilities(db, node_id=node.id)
             try:
                 launch = await build_node_launch_payload(
                     db,
                     node.device,
                     port=node.desired_port or node.port,
-                    allocated_caps=None,
+                    allocated_caps=allocated or None,
                     settings=settings,
                 )
             except (LookupError, NodeManagerError) as exc:
