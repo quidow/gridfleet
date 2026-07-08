@@ -21,6 +21,13 @@ from tests.helpers import create_device_record
 CAPS_V2 = {"orchestration_contract_version": 2}
 
 
+def test_validate_orchestration_contract_ignores_unknown_capability_keys() -> None:
+    host_service.validate_orchestration_contract(
+        {"orchestration_contract_version": 2, "node_desired_pull": 1},
+        host_label="newer-agent",
+    )
+
+
 def test_coerce_missing_prerequisites_filters_duplicates_and_invalid_items() -> None:
     assert host_service._coerce_missing_prerequisites(["adb", "adb", 1, "java"]) == ["adb", "java"]
     assert host_service._coerce_missing_prerequisites("bad") is None

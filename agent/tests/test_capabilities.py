@@ -1,9 +1,14 @@
 import asyncio
 import contextlib
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
+from agent_app.config import agent_settings
 from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.pack.adapter_registry import AdapterRegistry
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _cache(registry: AdapterRegistry | None = None) -> CapabilitiesCache:
@@ -29,6 +34,16 @@ async def test_detect_capabilities_includes_adapter_tool_versions() -> None:
 async def test_detect_capabilities_works_without_adapter_registry() -> None:
     capabilities = await _cache(None).detect()
     assert capabilities["tools"] == {}
+
+
+async def test_node_desired_pull_capability_is_advertised_only_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(agent_settings.runtime, "node_pull_enabled", False)
+    assert "node_desired_pull" not in await _cache(None).detect()
+
+    monkeypatch.setattr(agent_settings.runtime, "node_pull_enabled", True)
+    assert (await _cache(None).detect())["node_desired_pull"] == 1
 
 
 async def test_detect_capabilities_merges_multiple_adapters() -> None:
