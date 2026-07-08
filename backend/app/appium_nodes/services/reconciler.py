@@ -390,9 +390,14 @@ class ReconcilerService:
             if not active_rows:
                 return
             if node_pull:
-                # Runs before convergence so a token the agent confirms it
-                # applied is cleared this pass, before decide_convergence_action
-                # would otherwise re-decide a restart for it.
+                # Persists the token clear (in the DB) for any node the agent
+                # confirms it applied, before convergence. Note this does NOT
+                # mutate the in-memory active_rows snapshots, so this pass's
+                # decide_convergence_action still sees the old token and returns
+                # restart — harmless only because translate_action_for_pull maps
+                # restart -> None in pull mode; the observed-column sync lands on
+                # the next cycle's fresh fetch_desired_rows. Scoped to active_rows
+                # (backoff-excluded rows never converge this cycle anyway).
                 await self._ingest_pull_host_reports(active_rows, raw_running_nodes)
             await self.converge_host_rows(
                 None,
