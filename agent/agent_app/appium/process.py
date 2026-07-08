@@ -13,7 +13,7 @@ import subprocess
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import httpx2 as httpx
 
@@ -43,6 +43,11 @@ from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_post_sessi
 from agent_app.pack.runtime_registry import RuntimeRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class NodeStateObserver(Protocol):
+    applied_generations: dict[int, int]
+    applied_transition_tokens: dict[int, str]
 
 
 def _has_lifecycle_action(actions: list[dict[str, Any]], action_id: str) -> bool:
@@ -309,6 +314,7 @@ class AppiumProcessManager:
         self._intentional_stop_ports: set[int] = set()
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
+        self._node_state_observer: NodeStateObserver | None = None
         self._start_lock = asyncio.Lock()
 
     def set_runtime_registry(self, registry: RuntimeRegistry) -> None:
@@ -316,6 +322,9 @@ class AppiumProcessManager:
 
     def set_adapter_registry(self, registry: AdapterRegistry) -> None:
         self._adapter_registry = registry
+
+    def set_node_state_observer(self, observer: NodeStateObserver | None) -> None:
+        self._node_state_observer = observer
 
     def start_log_maintenance(self) -> None:
         """Sweep orphaned Appium log files and start the periodic size-cap pass."""
@@ -922,6 +931,16 @@ class AppiumProcessManager:
             "pid": info.pid,
             "connection_target": info.connection_target,
             "platform_id": info.platform_id,
+            "applied_generation": (
+                self._node_state_observer.applied_generations.get(info.port)
+                if self._node_state_observer is not None
+                else None
+            ),
+            "applied_transition_token": (
+                self._node_state_observer.applied_transition_tokens.get(info.port)
+                if self._node_state_observer is not None
+                else None
+            ),
         }
         # Re-emit has_active_session for the agent self-update drain gate (harness C1).
         # The grid relay that used to track sessions is gone, so the only authoritative

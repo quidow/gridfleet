@@ -193,6 +193,7 @@ async def _start_node_loop_when_ready(app: FastAPI, host_identity: HostIdentity,
         poll_interval=agent_settings.runtime.node_poll_interval_sec,
     )
     app.state.node_state_loop = loop
+    appium_mgr.set_node_state_observer(loop)
     await loop.run_forever()
 
 

@@ -151,6 +151,10 @@ class HostTelemetryResponse(BaseModel):
     recorded_at: Annotated[str | None, Field(title="Recorded At")] = None
 
 
+class NodeRefreshResponse(BaseModel):
+    accepted: Annotated[bool | None, Field(title="Accepted")] = True
+
+
 class NormalizeDeviceRequest(BaseModel):
     pack_id: Annotated[
         str,

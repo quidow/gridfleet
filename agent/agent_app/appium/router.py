@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 
 from agent_app.appium.dependencies import AppiumMgrDep
 from agent_app.appium.exceptions import (
@@ -25,10 +25,26 @@ from agent_app.appium.schemas import (
     AppiumStatusResponse,
     AppiumStopRequest,
     AppiumStopResponse,
+    NodeRefreshResponse,
 )
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 
 router = APIRouter(prefix="/agent/appium", tags=["appium"])
+node_state_router = APIRouter(prefix="/agent/appium-nodes", tags=["appium-nodes"])
+
+
+@node_state_router.post(
+    "/refresh",
+    response_model=NodeRefreshResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Wake the desired Appium-node state poller",
+    responses={status.HTTP_401_UNAUTHORIZED: {"model": ErrorEnvelope, "description": "UNAUTHORIZED"}},
+)
+async def refresh_node_state(request: Request) -> dict[str, bool]:
+    loop = getattr(request.app.state, "node_state_loop", None)
+    if loop is not None:
+        loop.wake()
+    return {"accepted": True}
 
 
 @router.post(
