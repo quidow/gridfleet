@@ -170,7 +170,7 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 - `version_guidance.agent_version_status`: manager-computed status for the installed agent version (compared against minimum, not recommended).
 - `version_guidance.agent_update_available`: `true` when the installed version trails the recommended version.
 
-Each `appium_processes.running_nodes` entry also includes `applied_generation` and `applied_transition_token`. Both are `null` while node pull is disabled. When enabled, they report the last desired generation and transition token applied to that port.
+Each `appium_processes.running_nodes` entry also includes `applied_generation` and `applied_transition_token`. They report the last desired generation and transition token applied to that port, or `null` before the agent has applied one.
 
 ## Agent Appium-Node Desired State
 
@@ -179,9 +179,9 @@ Each `appium_processes.running_nodes` entry also includes `applied_generation` a
 | `GET` | `/agent/appium-nodes/desired` | Agent fetches host-scoped Appium-node intent | `host_id` | `{ nodes: NodeDesiredSpecOut[], generation_hint }` |
 | `POST` | `/agent/appium-nodes/refresh` | Wake the agent node poller | none | `{ accepted: true }` (`202`) |
 
-Running specs include the complete `launch` payload. Stopped specs use `launch: null`. A node whose launch inputs cannot be resolved also uses `launch: null` and includes `unrunnable_reason`; one blocked node does not fail the host response. The refresh endpoint is a hint and returns `202` even when the pull loop is disabled.
+Running specs include the complete `launch` payload. Stopped specs use `launch: null`. A node whose launch inputs cannot be resolved also uses `launch: null` and includes `unrunnable_reason`; one blocked node does not fail the host response. The refresh endpoint returns `202` as a best-effort wake hint.
 
-Agents advertise `node_desired_pull: 1` only when `AGENT_NODE_PULL_ENABLED=true`. Enabled by default — pull is the only node-orchestration mode; there is no backend push path.
+Orchestration-contract-v3 agents always advertise `node_desired_pull: 1` and run the pull loop whenever a backend URL is configured. Pull is the only node-orchestration mode; there is no backend push path.
 
 ## Agent Driver-Pack State
 

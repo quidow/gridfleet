@@ -23,28 +23,14 @@ def _mock_lifespan_deps() -> list[AbstractContextManager[object]]:
     ]
 
 
-def test_node_pull_settings_are_enabled_by_default() -> None:
+def test_node_pull_settings_only_expose_poll_interval() -> None:
     settings = RuntimeSettings()
 
-    assert settings.node_pull_enabled is True
+    assert "node_pull_enabled" not in RuntimeSettings.model_fields
     assert settings.node_poll_interval_sec == 5.0
 
 
-def test_node_state_loop_is_not_constructed_when_flag_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_settings.runtime, "node_pull_enabled", False)
-    monkeypatch.setattr(agent_settings.core, "host_id", "00000000-0000-0000-0000-000000000042")
-
-    with ExitStack() as stack:
-        for mock in _mock_lifespan_deps():
-            stack.enter_context(mock)
-        loop_cls = stack.enter_context(patch("agent_app.lifespan.NodeStateLoop"))
-        with TestClient(app, raise_server_exceptions=True):
-            assert app.state.node_state_loop is None
-            loop_cls.assert_not_called()
-
-
-def test_node_state_loop_starts_when_flag_is_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_settings.runtime, "node_pull_enabled", True)
+def test_node_state_loop_starts_when_backend_is_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(agent_settings.runtime, "node_poll_interval_sec", 1.25)
     monkeypatch.setattr(agent_settings.core, "host_id", "00000000-0000-0000-0000-000000000042")
 

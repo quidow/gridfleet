@@ -9,8 +9,6 @@ import time
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from agent_app.config import agent_settings
-
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
 
@@ -32,10 +30,7 @@ def default_capabilities() -> dict[str, Any]:
 
 
 def _with_process_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
-    if agent_settings.runtime.node_pull_enabled:
-        capabilities["node_desired_pull"] = 1
-    else:
-        capabilities.pop("node_desired_pull", None)
+    capabilities["node_desired_pull"] = 1
     return capabilities
 
 
