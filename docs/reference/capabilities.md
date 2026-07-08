@@ -25,6 +25,8 @@ and finally the manager-owned base capabilities (`platformName`, `appium:udid`,
 the highest precedence (`appium:automationName` is likewise written last by the builder
 when the pack resolves one). Existing stored `appium_caps` are treated as user overrides.
 
+A pack with a loaded adapter can also compute capabilities imperatively at session-request time via its optional `pre_session` hook. That hook, like the rest of the adapter surface, is optional — see [Minimal Packs: Three Tiers](../guides/driver-pack-tarball-upload.md#minimal-packs-three-tiers) for which hooks a pack must implement and which degrade cleanly when absent.
+
 ## API Endpoint
 
 ```
