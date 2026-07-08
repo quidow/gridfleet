@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
 from app.hosts.models import Host, HostStatus
@@ -17,12 +16,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.type_defs import SessionFactory
     from app.devices.protocols import PackDevicePropertiesProvider
-    from app.devices.services_container import DeviceServices
 
 logger = get_logger(__name__)
-LOOP_NAME = "property_refresh"
 
 # Cap simultaneous host fetches so a large fleet does not fan out unbounded HTTP load.
 MAX_PARALLEL_HOST_FETCHES = 8
@@ -86,23 +82,3 @@ class PropertyRefreshService:
             except Exception:
                 logger.exception("Failed to apply refreshed properties for device %s", device.identity_value)
                 await db.rollback()
-
-
-class PropertyRefreshLoop(BackgroundLoop):
-    """Background loop that periodically refreshes device properties."""
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Property refresh cycle failed"
-
-    def __init__(self, *, services: DeviceServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.property_refresh_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.property_refresh.refresh_all_properties(db)

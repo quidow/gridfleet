@@ -29,13 +29,13 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated out of the run; the escalated device is placed into maintenance or left available per `general.run_failure_escalates_to_maintenance`; `0` disables escalation |
 | `general.run_failure_escalates_to_maintenance` | `general` | `bool` | `true` | none | boolean | When a device is escalated out of a run (CI preparation failure or cooldown threshold exceeded), true places it into maintenance (manual recovery); false leaves it available. The device is released from the run regardless |
-| `general.property_refresh_interval_sec` | `general` | `int` | `600` | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `60..7200` | Interval for background property refresh |
-| `general.hardware_telemetry_interval_sec` | `general` | `int` | `300` | none | `30..7200` | How often hardware telemetry is refreshed |
+| `general.property_refresh_interval_sec` | `general` | `int` | `600` | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `60..7200` | Cadence of the host-sweep property-refresh stage; effective period rounds to a multiple of `general.heartbeat_interval_sec` |
+| `general.hardware_telemetry_interval_sec` | `general` | `int` | `300` | none | `30..7200` | Cadence of the host-sweep hardware-telemetry stage; effective period rounds to a multiple of `general.heartbeat_interval_sec` |
 | `general.hardware_telemetry_stale_timeout_sec` | `general` | `int` | `900` | none | `60..86400` | How old hardware telemetry can get before the UI marks it stale |
 | `general.hardware_temperature_warning_c` | `general` | `int` | `38` | none | `20..100` | Temperature threshold that raises a hardware warning |
 | `general.hardware_temperature_critical_c` | `general` | `int` | `42` | none | `20..100` | Temperature threshold that raises a critical hardware alert |
 | `general.hardware_telemetry_consecutive_samples` | `general` | `int` | `2` | none | `1..10` | Consecutive warning or critical samples required before escalating hardware health |
-| `general.host_resource_telemetry_interval_sec` | `general` | `int` | `60` | none | `15..3600` | How often host resource telemetry is refreshed |
+| `general.host_resource_telemetry_interval_sec` | `general` | `int` | `60` | none | `15..3600` | Cadence of the host-sweep host-resource-telemetry stage; effective period rounds to a multiple of `general.heartbeat_interval_sec` |
 | `general.host_resource_telemetry_window_minutes` | `general` | `int` | `60` | none | `5..1440` | Default Host Detail telemetry time window |
 | `general.session_viability_interval_sec` | `general` | `int` | `3600` | none | `0..604800` | Interval for idle session-viability probes; `0` disables the loop |
 | `general.session_viability_timeout_sec` | `general` | `int` | `120` | none | `10..600` | Timeout for a session-viability probe |

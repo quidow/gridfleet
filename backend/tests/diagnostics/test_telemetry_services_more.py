@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -27,13 +25,8 @@ from app.hosts import (
     service_resource_telemetry as host_resource_telemetry,
 )
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
-from app.hosts.service_host_events import HostEventsService
-from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop, HostResourceTelemetryService
-from app.hosts.services_container import HostServices
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from tests.fakes import FakeSettingsReader
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
 
 
 class FlushSession:
@@ -417,53 +410,6 @@ async def test_poll_host_resource_telemetry_commits_successful_samples() -> None
 
     assert db.committed is True
     assert db.added
-
-
-async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> None:
-    class _Observation:
-        @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[None]:
-            yield None
-
-    @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[FlushSession]:
-        yield FlushSession()
-
-    resource_telemetry_svc = HostResourceTelemetryService(
-        settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
-        circuit_breaker=Mock(),
-    )
-
-    from app.hosts.service import HostCrudService
-    from app.hosts.service_diagnostics import HostDiagnosticsService
-    from app.hosts.service_hardware_telemetry import HardwareTelemetryService as _HWService
-
-    loop = HostResourceTelemetryLoop(
-        services=HostServices(
-            crud=HostCrudService(publisher=AsyncMock(), settings=FakeSettingsReader({})),
-            hardware_telemetry=_HWService(
-                publisher=AsyncMock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
-            ),
-            resource_telemetry=resource_telemetry_svc,
-            diagnostics=HostDiagnosticsService(circuit_breaker=Mock()),
-            host_events=HostEventsService(),
-            settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
-            session_factory=fake_session,
-        )
-    )
-
-    with (
-        patch("app.core.background_loop.observe_background_loop", return_value=_Observation()),
-        patch.object(resource_telemetry_svc, "poll_once", new=AsyncMock(side_effect=RuntimeError("boom"))),
-        patch("app.core.background_loop.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
-        patch("app.core.background_loop.logger.exception") as log_exception,
-        pytest.raises(asyncio.CancelledError),
-    ):
-        await loop.run()
-
-    log_exception.assert_called_once_with("Host resource telemetry loop failed")
 
 
 async def test_fetch_host_resource_telemetry_validation_paths() -> None:

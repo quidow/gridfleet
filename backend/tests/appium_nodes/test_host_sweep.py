@@ -6,7 +6,7 @@ from app.appium_nodes.services import heartbeat as heartbeat_module
 from app.appium_nodes.services import reconciler as reconciler_module
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
-from app.appium_nodes.services.host_sweep import run_host_sweep_once, stage_due
+from app.appium_nodes.services.host_sweep import SweepStage, run_host_sweep_once, stage_due
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.devices.models import DeviceOperationalState
 from tests.fakes import FakeSettingsReader
@@ -97,7 +97,6 @@ async def test_sweep_converges_from_ping_payload_without_second_fetch(
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
         node_health=Mock(check_host_nodes=AsyncMock()),
-        connectivity=Mock(run_connectivity_pass=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -135,7 +134,6 @@ async def test_sweep_skips_convergence_for_dead_host(
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
         node_health=Mock(check_host_nodes=AsyncMock()),
-        connectivity=Mock(run_connectivity_pass=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -214,8 +212,7 @@ async def _run_sweep_with_recorders(
     monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock(side_effect=_record_reconcile))
     node_health = Mock()
     node_health.check_host_nodes = AsyncMock(side_effect=_record_health)
-    connectivity = Mock()
-    connectivity.run_connectivity_pass = AsyncMock(side_effect=_record_connectivity)
+    connectivity_stage = SweepStage("connectivity", "general.device_check_interval_sec", _record_connectivity)
 
     await run_host_sweep_once(
         db_session,
@@ -224,7 +221,7 @@ async def _run_sweep_with_recorders(
         settings=settings,
         session_factory=db_session_maker,
         node_health=node_health,
-        connectivity=connectivity,
+        global_stages=(connectivity_stage,),
         cycle_index=cycle_index,
     )
 
@@ -319,6 +316,49 @@ async def test_connectivity_stage_skipped_on_off_cycles(
             monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=cycle_index
         )
         assert ("run_connectivity_pass" in calls) is expected
+
+
+async def test_telemetry_stage_divisors(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await db_session.commit()
+    settings = FakeSettingsReader()
+    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=_alive_ping()))
+    monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock())
+    ran: list[tuple[int, str]] = []
+
+    def _stage(label: str, key: str) -> SweepStage:
+        async def _run(_db: AsyncSession) -> None:
+            ran.append((cycle, label))
+
+        return SweepStage(label, key, _run)
+
+    stages = (
+        _stage("connectivity", "general.device_check_interval_sec"),  # 60s → divisor 4
+        _stage("host_resource_telemetry", "general.host_resource_telemetry_interval_sec"),  # 60s → 4
+        _stage("hardware_telemetry", "general.hardware_telemetry_interval_sec"),  # 300s → 20
+        _stage("property_refresh", "general.property_refresh_interval_sec"),  # 600s → 40
+    )
+    for cycle in (0, 1, 4, 20, 40):
+        await run_host_sweep_once(
+            db_session,
+            heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
+            reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
+            node_health=Mock(check_host_nodes=AsyncMock()),
+            settings=settings,
+            session_factory=db_session_maker,
+            global_stages=stages,
+            cycle_index=cycle,
+        )
+    labels_at = {c: [label for cc, label in ran if cc == c] for c in (0, 1, 4, 20, 40)}
+    assert labels_at[0] == [s.label for s in stages]  # everything due at cycle 0, in list order
+    assert labels_at[1] == []
+    assert labels_at[4] == ["connectivity", "host_resource_telemetry"]
+    assert "hardware_telemetry" in labels_at[20] and "property_refresh" not in labels_at[20]
+    assert "property_refresh" in labels_at[40]
 
 
 async def test_connectivity_stage_failure_does_not_fail_the_cycle(

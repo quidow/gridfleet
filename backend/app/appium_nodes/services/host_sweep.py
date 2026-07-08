@@ -2,14 +2,16 @@
 
 Concerns run only for hosts this sweep pass proved alive: host liveness
 (heartbeat evaluation) and appium-node convergence from the same /agent/health
-payload, then node health as a cadence-gated stage. Connectivity folds in as a
-cadence-gated global stage that runs after the per-host fan-out completes. Later
-phases fold telemetry in here with the same cadence gating (see stage_due).
+payload, then node health as a cadence-gated per-host stage. Cross-host passes
+(connectivity, telemetry, property refresh) run as cadence-gated global stages
+after the per-host fan-out completes — one SweepStage entry each, gated by its
+own interval setting (see stage_due).
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -22,6 +24,7 @@ from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Awaitable, Callable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,11 +35,19 @@ if TYPE_CHECKING:
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
-    from app.devices.services.connectivity import ConnectivityService
 
 logger = get_logger(__name__)
 
 LOOP_NAME = "host_sweep"
+
+
+@dataclass(frozen=True)
+class SweepStage:
+    """A cross-host pass gated by its own interval setting, run after the fan-out."""
+
+    label: str  # structured-log stage name
+    interval_setting: str  # settings key read every cycle for the cadence
+    run: Callable[[AsyncSession], Awaitable[None]]
 
 
 def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
@@ -51,9 +62,9 @@ async def run_host_sweep_once(
     heartbeat: HeartbeatService,
     reconciler: ReconcilerProtocol,
     node_health: NodeHealthService,
-    connectivity: ConnectivityService,
     settings: SettingsReader,
     session_factory: SessionFactory,
+    global_stages: Sequence[SweepStage] = (),
     cycle_index: int = 0,
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
@@ -65,15 +76,11 @@ async def run_host_sweep_once(
     for row in desired:
         rows_by_host.setdefault(row.host_id, []).append(row)
     semaphore = asyncio.Semaphore(settings.get_int("appium_reconciler.host_parallelism"))
+    base_interval = settings.get_float("general.heartbeat_interval_sec")
     node_health_due = stage_due(
         cycle_index,
-        base_interval=settings.get_float("general.heartbeat_interval_sec"),
+        base_interval=base_interval,
         stage_interval=settings.get_float("general.node_check_interval_sec"),
-    )
-    connectivity_due = stage_due(
-        cycle_index,
-        base_interval=settings.get_float("general.heartbeat_interval_sec"),
-        stage_interval=settings.get_float("general.device_check_interval_sec"),
     )
 
     async def _sweep_host(host_id: uuid.UUID) -> None:
@@ -114,16 +121,21 @@ async def run_host_sweep_once(
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
-    if connectivity_due:
-        # End the cycle-start read transaction before the long pass — no snapshot
-        # or lock may span the probe phase (repo contract). Host statuses read by
-        # check_connectivity are the ones this cycle's liveness stage just wrote.
+    for stage in global_stages:
+        if not stage_due(
+            cycle_index, base_interval=base_interval, stage_interval=settings.get_float(stage.interval_setting)
+        ):
+            continue
+        # End any open read transaction before a long pass — no snapshot or lock
+        # may span agent I/O (repo contract). The statuses each stage reads are the
+        # ones this cycle's liveness stage just wrote.
         await db.commit()
         try:
-            await connectivity.run_connectivity_pass(db)
+            await stage.run(db)
         except Exception:
-            # Stage isolation: connectivity failure must not fail the sweep cycle.
-            logger.exception("host_sweep_connectivity_failed")
+            # Stage isolation: one stage's failure must not fail the cycle or skip
+            # the stages after it.
+            logger.exception("host_sweep_stage_failed", stage=stage.label)
 
 
 class HostSweepLoop(BackgroundLoop):
@@ -132,9 +144,9 @@ class HostSweepLoop(BackgroundLoop):
     loop_name = LOOP_NAME
     cycle_failed_message = "host_sweep_cycle_failed"
 
-    def __init__(self, *, services: AppiumNodeServices, connectivity: ConnectivityService) -> None:
+    def __init__(self, *, services: AppiumNodeServices, global_stages: Sequence[SweepStage] = ()) -> None:
         self._services = services
-        self._connectivity = connectivity
+        self._global_stages = tuple(global_stages)
         self._cycle = 0
 
     @property
@@ -150,9 +162,9 @@ class HostSweepLoop(BackgroundLoop):
             heartbeat=self._services.heartbeat,
             reconciler=self._services.reconciler,
             node_health=self._services.node_health,
-            connectivity=self._connectivity,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
+            global_stages=self._global_stages,
             cycle_index=self._cycle,
         )
 

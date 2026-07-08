@@ -148,7 +148,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await HostSweepLoop(services=services, connectivity=Mock()).run()
+        await HostSweepLoop(services=services).run()
 
 
 def _dead_result() -> HeartbeatPingResult:

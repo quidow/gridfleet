@@ -8,7 +8,6 @@ import httpx2 as httpx
 from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
-from app.core.background_loop import BackgroundLoop
 from app.core.coerce import coerce_float as _coerce_float
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger
@@ -25,11 +24,8 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
-    from app.hosts.services_container import HostServices
 
 logger = get_logger(__name__)
-LOOP_NAME = "host_resource_telemetry"
 agent_host_telemetry = agent_operations.agent_host_telemetry
 
 # Largest accepted telemetry bucket size: one day, expressed in minutes.
@@ -185,21 +181,3 @@ class HostResourceTelemetryService:
             window_end=until,
             bucket_minutes=bucket_minutes,
         )
-
-
-class HostResourceTelemetryLoop(BackgroundLoop):
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Host resource telemetry loop failed"
-
-    def __init__(self, *, services: HostServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.host_resource_telemetry_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.resource_telemetry.poll_once(db)
