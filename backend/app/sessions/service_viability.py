@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.probe_result import ProbeResult
-from app.core.background_loop import BackgroundLoop
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
@@ -38,17 +37,14 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
     from app.sessions.protocols import DeviceCapabilityReader, DeviceSessionViabilityWriter, HealthFailureHandler
-    from app.sessions.services_container import SessionServices
 
 __all__ = [
     "PROBE_TEST_NAME",
     "SESSION_VIABILITY_KEY",
     "SESSION_VIABILITY_RUNNING_NAMESPACE",
     "SESSION_VIABILITY_STATE_NAMESPACE",
-    "SessionViabilityLoop",
     "SessionViabilityProbeInProgressError",
     "SessionViabilityProbeNotPermittedError",
     "SessionViabilityService",
@@ -92,7 +88,6 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 _RECOVERY_PROBE_ADMISSIBLE_STATES = frozenset({DeviceOperationalState.offline, DeviceOperationalState.verifying})
 
 logger = get_logger(__name__)
-LOOP_NAME = "session_viability"
 is_ready_for_use_async = device_readiness.is_ready_for_use_async
 readiness_error_detail_async = device_readiness.readiness_error_detail_async
 
@@ -567,21 +562,3 @@ def grid_probe_response_to_result(result: tuple[bool, str | None]) -> ProbeResul
     if detail.startswith(infrastructure_markers):
         return ProbeResult(status="indeterminate", detail=detail)
     return ProbeResult(status="refused", detail=detail)
-
-
-class SessionViabilityLoop(BackgroundLoop):
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Session viability loop failed"
-
-    def __init__(self, *, services: SessionServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return 60.0  # fixed sweep tick; per-device due-ness is computed inside check_due_devices
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.viability.check_due_devices(db)

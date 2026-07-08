@@ -30,7 +30,7 @@ References in these docs cite **file paths and function/class names**, not line 
 
 ## Deferred stop note (`stop_pending`)
 
-The current implementation has a `stop_pending` lifecycle path: `session_sync_loop` runs `_sweep_stale_stop_pending`, `app.lifecycle.services.policy.clear_pending_auto_stop_on_recovery` clears the intent on health recovery, and lifecycle failure paths set `Device.lifecycle_policy_state["stop_pending"] = true` when an active client session prevents an immediate stop. Doc 1 documents the JSON fields. The session-sync backstop (`_sweep_stale_stop_pending`) is implemented in `backend/app/sessions/service_sync.py` and runs every session_sync cycle.
+The current implementation has a `stop_pending` lifecycle path: the `appium_sweep` sync pass runs `_sweep_stale_stop_pending`, `app.lifecycle.services.policy.clear_pending_auto_stop_on_recovery` clears the intent on health recovery, and lifecycle failure paths set `Device.lifecycle_policy_state["stop_pending"] = true` when an active client session prevents an immediate stop. Doc 1 documents the JSON fields. The backstop is implemented in `backend/app/sessions/service_sync.py` and runs on every sweep cycle.
 
 ## Companion docs
 

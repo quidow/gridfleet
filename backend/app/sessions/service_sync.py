@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.background_loop import BackgroundLoop
 from app.core.concurrency import per_key_semaphores
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
@@ -33,13 +32,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
     from app.sessions.protocols import DeviceSessionLifecycle
-    from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
-LOOP_NAME = "session_sync"
 # Freshness gate for the liveness probe (wave-5 #19): the router flushes
 # last_activity_at every ~10s while traffic flows (router tasks.rs,
 # spawn_activity_flush), so activity within 3x that cadence proves the session
@@ -630,39 +626,3 @@ class SessionSyncService:
             if device is None:
                 continue
             await self._lifecycle.complete_deferred_stop_if_session_ended(db, device)
-
-
-class SessionSyncLoop(BackgroundLoop):
-    """Background loop that runs the session observation sweep.
-
-    Wakes on either the doorbell (rung via ``request_session_sync_wake`` —
-    e.g. the allocation reaper after it frees a reaped pending device, P2)
-    or the registry-configured timeout, whichever comes first. The poll runs
-    as a drift reconciler.
-    """
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Session sync failed"
-
-    def __init__(self, *, services: SessionServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    async def _on_start(self) -> None:
-        # Register this running service's doorbell so co-located leader loops can ring it
-        # (P2). Registered on the leader process; non-leader loops exit before reaching
-        # work, so the last registration wins and points at the active loop.
-        register_session_sync_wake_hook(self._services.sync.wake)
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("grid.session_poll_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.sync.sync(db)
-
-    async def _wait(self, interval: float) -> None:
-        woke = await self._services.sync.wait_for_wake(interval)
-        SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()

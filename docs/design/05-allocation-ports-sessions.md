@@ -18,7 +18,7 @@ A WebDriver session is what consumes a node. A `Session` row is the manager's re
 
 The split matters because the **reapers are different**:
 
-- `session_sync_loop` reaps `Session` rows whose Appium session no longer exists on the node.
+- The `appium_sweep` sync pass reaps `Session` rows whose Appium session no longer exists on the node.
 - Run release paths that end a run abnormally (`RunLifecycleService.cancel_run`, `.force_release`, `.expire_run`, the last called through `run_reaper_loop`, all in `app/runs/service_lifecycle.py`) explicitly call `appium_direct.terminate_session(...)` against the device's Appium node for each running session before clearing the reservation. Normal `complete_run` does not terminate sessions; the test client/operator owns normal WebDriver teardown.
 - Operator stop/restart of a node never touches sessions directly. Appium's own teardown is what cancels them.
 
@@ -99,7 +99,7 @@ The operator `restart_node` path (`ReconcilerAgentService.restart_node`) marks t
 
 ## WebDriver sessions and routing
 
-There is no per-node Grid relay and no central hub. The router (`router/`) listens on `:4444`, and for each new `POST /session` it calls the backend's internal grid API to allocate a device by capability match, then proxies that session's commands directly to the allocated device's Appium server on its managed port. The backend owns allocation and matching (`app/grid/allocation.py`); the router owns request forwarding. The backend observes live sessions directly per node: `session_sync_loop` lists each running node's Appium sessions via `appium_direct.list_sessions(node_target(device))`.
+There is no per-node Grid relay and no central hub. The router (`router/`) listens on `:4444`, and for each new `POST /session` it calls the backend's internal grid API to allocate a device by capability match, then proxies that session's commands directly to the allocated device's Appium server on its managed port. The backend owns allocation and matching (`app/grid/allocation.py`); the router owns request forwarding. The backend observes live sessions directly per node: the `appium_sweep` sync pass lists each running node's Appium sessions via `appium_direct.list_sessions(node_target(device))`.
 
 Two consequences for the lifecycle:
 
@@ -119,7 +119,7 @@ The backend never scrapes a hub `/status`; "what is available right now" is read
 
 `force_release` also probes survivorship after the `DELETE` (one retry on an indeterminate result) and hard-stops the device's Appium process only for sessions that genuinely survived; a confirmed-gone session leaves the node warm instead of forcing a cold restart. `cancel_run` and `expire_run` terminate the session but never hard-stop the node.
 
-`session_sync_loop` does not delete those sessions, and it does not create them either: `Session` rows are created at allocation time by the grid allocator and closed primarily by the router's `/internal/grid/sessions/ended` notification (`AllocationService.mark_ended`). `session_sync_loop` is the liveness backstop: it lists each node's live Appium sessions and, through the same `close_running_session` path, marks a row ended when its session has disappeared without a notification ever arriving.
+The `appium_sweep` sync pass does not delete or create those sessions. `Session` rows are created at allocation time by the grid allocator and closed primarily by the router's `/internal/grid/sessions/ended` notification (`AllocationService.mark_ended`). The sync pass is the liveness backstop: it lists each node's live Appium sessions and, through the same `close_running_session` path, marks a row ended when its session has disappeared without a notification ever arriving.
 
 ## Reservations and run integration
 
@@ -162,7 +162,7 @@ Facts:
 
 - A **reservation** is the run's hold on a device, tracked as a `DeviceReservation` row (the computed `is_reserved` flag derives from it), separate from any active session. The row stays in place between sessions while the run is alive.
 - A `DeviceReservation` row is inserted when the run is created (`is_reserved` becomes true). It is cleared when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
-- `operational_state: available → busy` is the per-session change, but nobody writes it directly. The grid allocator marks the device dirty via `IntentService.mark_dirty_and_reconcile` at claim time (a `pending` Session row already counts as live), and the `device_intent_reconciler` derives `busy`. When the session ends, either the router's `/internal/grid/sessions/ended` notification or `session_sync_loop`'s liveness backstop closes the row through `close_running_session`, which marks the device dirty again; the reconciler then derives `available` or `offline`, leaving any reservation row untouched.
+- `operational_state: available → busy` is the per-session change, but nobody writes it directly. The grid allocator marks the device dirty via `IntentService.mark_dirty_and_reconcile` at claim time (a `pending` Session row already counts as live), and the `device_intent_reconciler` derives `busy`. When the session ends, either the router's `/internal/grid/sessions/ended` notification or the `appium_sweep` sync pass closes the row through `close_running_session`, which marks the device dirty again; the reconciler then derives `available` or `offline`, leaving any reservation row untouched.
 - The `host_sweep` node-health stage polls Appium `/status` on every running node (reserved or busy included) because the probe is a process-liveness check, not a session probe.
 
 ### Run-routed sessions
@@ -180,7 +180,7 @@ Deploy order: upgrade the backend before (or together with) the router. A pre-ru
 | `start_node` keeps failing with "already in use" but the DB row says `desired_state=stopped` | Released a claim while orphan still running; allocator handed the port back | Release typed claims only on confirmed stop |
 | Two Appium processes alive for the same device | Restart issued before stop ack; orphan + new node both alive | Refuse to start during restart unless stop is acknowledged (commit `4171847`) |
 | Device shows `reserved` forever after run abandoned | `run_reaper_loop` did not run (leader down? frozen?) or session terminate failed | Inspect leader state; manually `DELETE /session/{id}` against the device's Appium node or use lifecycle exclusion |
-| `Session` row stays `running` after the Appium session ended | `session_sync_loop` skipped a tick | Reaper retries on next cycle; only escalate if persistent |
+| `Session` row stays `running` after the Appium session ended | `appium_sweep` sync pass skipped a tick | The pass retries on the next cycle; only escalate if persistent |
 | Port range exhausted | Confirmed stop did not release claims, or old managed rows were not deleted | `candidate_ports` raises `NodeManagerError("No free ports available...")`. Audit `appium_node_resource_claims` |
 
 The recurring pattern: the device row, the `AppiumNode` row, typed resource claims, and the agent process must all agree on "is this device served right now". When they disagree, you have a leak. The split-brain rules in Doc 2 keep them aligned at write time; the reapers in Doc 3 catch what slips through.
