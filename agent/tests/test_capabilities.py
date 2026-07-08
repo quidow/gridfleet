@@ -35,7 +35,7 @@ async def test_detect_capabilities_uses_contract_version_without_pull_marker() -
     capabilities = await _cache(None).detect()
 
     assert capabilities["orchestration_contract_version"] == 3
-    assert "node_desired_pull" not in capabilities
+    assert set(capabilities) == {"platforms", "tools", "missing_prerequisites", "orchestration_contract_version"}
 
 
 async def test_detect_capabilities_merges_multiple_adapters() -> None:

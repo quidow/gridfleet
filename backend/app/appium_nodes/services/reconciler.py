@@ -494,7 +494,7 @@ class ReconcilerService:
         raw_running_nodes: list[dict[str, Any]],
         start_failures: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Ingest agent-reported facts for a pull-capable host (reconcile_host, pull mode only).
+        """Ingest agent-reported facts for pull-only orchestration.
 
         Applied-transition-token clear: for each row carrying a pending
         ``transition_token``, if the agent's matching running-node entry
