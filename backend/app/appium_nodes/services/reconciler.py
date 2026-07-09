@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, func, select, update
@@ -35,7 +35,6 @@ from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
     _execute_action,
-    _needs_start_failure_reset,
     decide_convergence_action,
     match_observed_entry,
     orphaned_node_ports,
@@ -55,7 +54,8 @@ from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
 from app.lifecycle.services.actions import (
-    record_reconciler_start_failure_state,
+    escalate_device_remediation_failure,
+    is_reconciler_failure_residue,
     reset_reconciler_start_failure_state,
 )
 
@@ -285,23 +285,13 @@ async def _record_start_failure(
     session_scope: SessionScope | None = None,
     settings: SettingsReader,
 ) -> None:
-    threshold = settings.get_int("appium_reconciler.start_failure_threshold")
-    backoff_seconds = settings.get_int("appium.startup_timeout_sec") * 4
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
-        current = lifecycle_policy_state(device)
-        attempts = int(current.get("recovery_backoff_attempts", 0)) + 1
-        backoff_until = None
-        if attempts >= threshold:
-            backoff_until = (now_utc() + timedelta(seconds=backoff_seconds)).isoformat()
-        record_reconciler_start_failure_state(
-            device,
-            reason=reason,
-            attempts=attempts,
-            backoff_until=backoff_until,
+        await escalate_device_remediation_failure(
+            db, device, settings=settings, source="appium_reconciler", reason=reason
         )
         await db.commit()
 
@@ -318,7 +308,7 @@ async def _reset_start_failure(
         if device is None:
             return
         current = lifecycle_policy_state(device)
-        if not _needs_start_failure_reset(current):
+        if not is_reconciler_failure_residue(current):
             return
         reset_reconciler_start_failure_state(device)
         await db.commit()

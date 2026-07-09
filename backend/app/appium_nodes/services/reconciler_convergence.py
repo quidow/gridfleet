@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS, APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED
 from app.core.observability import get_logger
+from app.lifecycle.services.actions import is_reconciler_failure_residue
 
 logger = get_logger(__name__)
 
@@ -62,20 +63,6 @@ class ConvergenceAction:
     pid: int | None = None
     active_connection_target: str | None = None
     clear_desired_port: bool = False
-
-
-def _needs_start_failure_reset(state: dict[str, Any] | None) -> bool:
-    """True when ``lifecycle_policy_state`` carries appium-reconciler failure/backoff residue."""
-    if state is None:
-        return False
-    has_reconciler_failure = state.get("last_failure_source") == "appium_reconciler"
-    has_orphaned_reason = bool(state.get("last_failure_reason") and not state.get("last_failure_source"))
-    return bool(
-        state.get("recovery_backoff_attempts")
-        or state.get("backoff_until")
-        or has_reconciler_failure
-        or has_orphaned_reason
-    )
 
 
 WriteObserved = Callable[..., Awaitable[None]]
@@ -244,7 +231,7 @@ async def _execute_action(
         return
     if action.kind == "confirm_running":
         # ponytail: cheap pre-check skips the Device row lock in the steady-state path
-        if _needs_start_failure_reset(row.lifecycle_policy_state):
+        if is_reconciler_failure_residue(row.lifecycle_policy_state):
             await reset_start_failure(row=row)
         return
     if action.kind == "clear_expired_token":

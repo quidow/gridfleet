@@ -24,6 +24,8 @@ from app.devices.services.lifecycle_policy_state import (
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.review import ReviewService
+from app.lifecycle.services.escalation import EscalationOutcome, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.devices.models import Device, DeviceReservation
     from app.devices.protocols import RunReservationWriter
     from app.events.protocols import EventPublisher
@@ -418,34 +421,54 @@ def failure_event_type(source: str) -> DeviceEventType:
     return DeviceEventType.connectivity_lost if source == "connectivity" else DeviceEventType.health_check_fail
 
 
-def record_reconciler_start_failure_state(
+async def escalate_device_remediation_failure(
+    db: AsyncSession,
     device: Device,
     *,
+    settings: SettingsReader,
+    source: str,
     reason: str,
-    attempts: int,
-    backoff_until: str | None,
-) -> None:
+) -> EscalationOutcome:
+    """Shared-ladder escalation for callers outside the lifecycle write_state allowlist.
+
+    Stamps the failure trail, records one failed remediation, and persists the
+    mutated policy state. The caller holds the device row lock and owns the
+    transaction commit.
+    """
     fresh = policy_state(device)
-    fresh["recovery_backoff_attempts"] = attempts
-    fresh["last_failure_source"] = "appium_reconciler"
+    fresh["last_failure_source"] = source
     fresh["last_failure_reason"] = reason
-    if backoff_until is not None:
-        fresh["backoff_until"] = backoff_until
+    outcome = await escalate_remediation_failure(
+        db,
+        device,
+        fresh,
+        settings=settings,
+        review=ReviewService(),
+        source=source,
+        reason=reason,
+    )
     write_state(device, fresh)
+    return outcome
+
+
+def is_reconciler_failure_residue(state: dict[str, Any] | None) -> bool:
+    """True when lifecycle policy state carries appium-reconciler start-failure residue."""
+    if state is None:
+        return False
+    has_reconciler_failure = state.get("last_failure_source") == "appium_reconciler"
+    has_orphaned_reason = bool(state.get("last_failure_reason") and not state.get("last_failure_source"))
+    return has_reconciler_failure or has_orphaned_reason
 
 
 def reset_reconciler_start_failure_state(device: Device) -> None:
     fresh = policy_state(device)
-    original = dict(fresh)
-    if fresh.get("last_failure_source") == "appium_reconciler" or (
-        fresh.get("last_failure_reason") and not fresh.get("last_failure_source")
-    ):
-        fresh["last_failure_source"] = None
-        fresh["last_failure_reason"] = None
+    if not is_reconciler_failure_residue(fresh):
+        return
+    fresh["last_failure_source"] = None
+    fresh["last_failure_reason"] = None
     fresh["recovery_backoff_attempts"] = 0
     fresh["backoff_until"] = None
-    if fresh != original:
-        write_state(device, fresh)
+    write_state(device, fresh)
 
 
 def _crash_intents(device: Device) -> list[IntentRegistration]:
