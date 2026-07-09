@@ -270,17 +270,17 @@ async def _claimed_ticket_for(db_session: AsyncSession, allocated_pending: Sessi
 
 
 @pytest.mark.db
-async def test_resume_claimed_returns_same_allocation_for_live_row(
+async def test_resume_allocation_returns_same_allocation_for_live_row(
     db_session: AsyncSession,
     allocated_pending: Session,
     allocation_service: AllocationService,
 ) -> None:
-    """Lost-Allocated-response retry: a claimed ticket with a live pending row returns
+    """Lost-Allocated-response retry: a ticket_id with a live pending row returns
     the SAME allocation, no second Session row, no second device claimed (#2)."""
     ticket = await _claimed_ticket_for(db_session, allocated_pending)
     sessions_before = len((await db_session.execute(select(Session))).scalars().all())
 
-    result = await allocation_service.resume_claimed(db_session, ticket=ticket)
+    result = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
 
     assert result is not None
     assert result.allocation_id == allocated_pending.id
@@ -290,7 +290,43 @@ async def test_resume_claimed_returns_same_allocation_for_live_row(
 
 
 @pytest.mark.db
-async def test_resume_claimed_returns_same_allocation_for_running_row(
+async def test_resume_returns_same_allocation(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    first = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert first is not None
+    resumed = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
+    assert resumed is not None
+    assert resumed.allocation_id == first.allocation_id
+    assert resumed.target == first.target
+    assert resumed.device_id == first.device_id
+
+
+@pytest.mark.db
+async def test_resume_after_reaped_claim_returns_none(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    first = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert first is not None
+    await allocation_service.fail(db_session, allocation_id=first.allocation_id, message="claim window expired")
+    assert await allocation_service.resume_allocation(db_session, ticket_id=ticket.id) is None
+
+
+@pytest.mark.db
+async def test_resume_unknown_ticket_returns_none(
+    db_session: AsyncSession, allocation_service: AllocationService
+) -> None:
+    assert await allocation_service.resume_allocation(db_session, ticket_id=uuid.uuid4()) is None
+
+
+@pytest.mark.db
+async def test_resume_allocation_returns_same_allocation_for_running_row(
     db_session: AsyncSession,
     allocated_pending: Session,
     allocation_service: AllocationService,
@@ -299,27 +335,28 @@ async def test_resume_claimed_returns_same_allocation_for_running_row(
     ticket = await _claimed_ticket_for(db_session, allocated_pending)
     await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="run-id")
 
-    result = await allocation_service.resume_claimed(db_session, ticket=ticket)
+    result = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
 
     assert result is not None
     assert result.allocation_id == allocated_pending.id
 
 
 @pytest.mark.db
-async def test_resume_claimed_resets_ticket_when_row_reaped(
+async def test_resume_allocation_does_not_rewind_ticket_when_row_reaped(
     db_session: AsyncSession,
     allocated_pending: Session,
     allocation_service: AllocationService,
 ) -> None:
-    """If the claim was reaped while the response was lost, resume resets the ticket to
-    waiting so the caller proceeds to a fresh try_allocate (#2)."""
+    """If the claim was reaped while the response was lost, resume leaves the
+    ticket terminal; the caller will create a fresh ticket and rejoin the back."""
     ticket = await _claimed_ticket_for(db_session, allocated_pending)
     await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
 
-    result = await allocation_service.resume_claimed(db_session, ticket=ticket)
+    result = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
 
     assert result is None
-    assert ticket.status == GridQueueStatus.waiting
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.expired
 
 
 @pytest.mark.db

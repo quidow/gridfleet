@@ -128,21 +128,18 @@ def _ticket_liveness_cutoff(now: datetime) -> datetime:
 
 
 def _legal_ticket_transition(current: GridQueueStatus, to: GridQueueStatus) -> bool:
-    """Whether moving a ticket from *current* to *to* is a legal transition.
-
-    ``waiting`` is the active source: it advances to ``claimed`` (a device was
-    found), ``cancelled`` (invalid body) or ``expired`` (reaper). ``resume_claimed``
-    rewinds a terminalized ticket back to ``waiting`` when the client is still
-    long-polling but its claimed Session was reaped — and that reaping path
-    (``fail`` -> ``expire_tickets_for_session``) moves the ticket ``claimed ->
-    expired`` first, so the rewind source is ``claimed`` OR ``expired``.
-    ``cancelled`` (invalid body) is a true sink — it is never resumed.
+    """``waiting`` is the only live state: it advances to ``claimed`` (device
+    found), ``cancelled`` (invalid body / router gave up) or ``expired``
+    (reaper). Terminal states are sinks -- the lost-response resume path reads
+    the Session row by ``ticket_id`` and never rewinds a ticket.
     """
     if current == to:
         return True
-    if current == GridQueueStatus.waiting:
-        return to in (GridQueueStatus.claimed, GridQueueStatus.cancelled, GridQueueStatus.expired)
-    return current in (GridQueueStatus.claimed, GridQueueStatus.expired) and to == GridQueueStatus.waiting
+    return current == GridQueueStatus.waiting and to in (
+        GridQueueStatus.claimed,
+        GridQueueStatus.cancelled,
+        GridQueueStatus.expired,
+    )
 
 
 def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, reason: str) -> None:
@@ -602,47 +599,34 @@ class AllocationService:
                     return result
         return None
 
-    async def resume_claimed(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
-        """Idempotently resume a ``claimed`` ticket whose Allocated response was lost.
+    async def resume_allocation(self, db: DbSession, *, ticket_id: uuid.UUID) -> AllocationResult | None:
+        """Idempotently resume an allocation whose Allocated response was lost.
 
-        A router retry after a transport error on a committed Allocated response
-        re-hits allocate with the same ``claimed`` ticket. Re-claiming would orphan
-        the first pending session and double-allocate a device. Instead:
-
-        * If the ticket's Session row is still ``pending`` or ``running`` (not ended),
-          return the SAME allocation — the original claim is honest and still alive.
-        * If the row was failed/reaped (the claim window expired while the response was
-          lost), reset the ticket to ``waiting`` so the caller proceeds to a fresh
-          ``try_allocate``. The client is still long-polling; that's the honest
-          continuation.
+        A router retry after a transport error re-sends the same ticket id. If a
+        live Session row (pending or running, not ended) carries that ticket id,
+        return the SAME allocation -- re-claiming would orphan the first pending
+        session and double-allocate a device. No live row (the claim window
+        expired while the response was lost, or the device lost its node/host
+        target) returns None: the caller proceeds with a fresh ticket +
+        try_allocate, the honest continuation for a still-polling client.
         """
-        if ticket.session_row_id is None:
-            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_session_row")
-            return None
         stmt = (
             select(Session)
             .options(selectinload(Session.device).selectinload(Device.appium_node))
             .options(selectinload(Session.device).selectinload(Device.host))
-            .where(Session.id == ticket.session_row_id)
+            .where(
+                Session.ticket_id == ticket_id,
+                Session.ended_at.is_(None),
+                Session.status.in_((SessionStatus.pending, SessionStatus.running)),
+            )
         )
         row = (await db.execute(stmt)).scalars().first()
-        if (
-            row is None
-            or row.ended_at is not None
-            or row.status not in (SessionStatus.pending, SessionStatus.running)
-            or row.device is None
-        ):
-            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_session_reaped")
+        if row is None or row.device is None:
             return None
         target = resolve_router_target(row)
         if target is None:
-            # The device lost its node/host association and no target was ever stored;
-            # treat like a reaped claim and let the client wait for a fresh allocation
-            # rather than hand back a dead target.
-            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_target")
             return None
-        device = row.device
-        return AllocationResult(allocation_id=row.id, target=target, device_id=device.id)
+        return AllocationResult(allocation_id=row.id, target=target, device_id=row.device.id)
 
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
         stmt = (

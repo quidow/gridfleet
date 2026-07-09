@@ -94,6 +94,17 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
             device_id=result.device_id,
         )
 
+    if ticket_id is not None:
+        # Lost-Allocated-response retry: a live Session carrying this ticket id
+        # IS the allocation -- return it rather than double-claiming. Checked
+        # once, not per poll: within a single long-poll no other worker can
+        # claim on this ticket's behalf.
+        async with services.session_factory() as db:
+            resumed = await allocation.resume_allocation(db, ticket_id=ticket_id)
+            if resumed is not None:
+                await db.commit()
+                return _allocated(resumed)
+
     while True:
         result: AllocationResult | None
         async with services.session_factory() as db:
@@ -105,14 +116,6 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
             if ticket.status == GridQueueStatus.expired:
                 await db.commit()
                 return JSONResponse(status_code=410, content={"status": "expired", "message": "queue timeout"})
-            if ticket.status == GridQueueStatus.claimed:
-                # Lost-Allocated-response retry: return the original allocation rather
-                # than double-claiming. A reaped claim resets the ticket to waiting and
-                # falls through to a fresh attempt below.
-                resumed = await allocation.resume_claimed(db, ticket=ticket)
-                if resumed is not None:
-                    await db.commit()
-                    return _allocated(resumed)
             attempt_started = time.monotonic()
             try:
                 result = await allocation.try_allocate(db, ticket=ticket)

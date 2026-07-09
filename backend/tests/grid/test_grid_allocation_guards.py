@@ -21,6 +21,7 @@ from app.devices.services.intent import IntentService
 from app.grid.allocation import (
     AllocationService,
     _legal_bulk_ticket_transition,
+    transition_ticket,
     transition_tickets_bulk,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -187,9 +188,8 @@ async def test_claim_declines_when_node_not_viable_under_lock(
 
 
 @pytest.mark.db
-async def test_resume_claimed_without_session_row_resets_to_waiting(db_session: AsyncSession) -> None:
-    """A claimed ticket with no session_row_id (never reached _claim's flush) resets to
-    waiting instead of resuming."""
+async def test_claimed_ticket_cannot_rewind_to_waiting(db_session: AsyncSession) -> None:
+    """Lost-response resume reads Session.ticket_id now; claimed tickets never rewind."""
     ticket = GridSessionQueueTicket(
         requested_body=_body(platformName="Android"),
         status=GridQueueStatus.claimed,
@@ -197,9 +197,8 @@ async def test_resume_claimed_without_session_row_resets_to_waiting(db_session: 
     )
     db_session.add(ticket)
     await db_session.flush()
-    result = await _service().resume_claimed(db_session, ticket=ticket)
-    assert result is None
-    assert ticket.status == GridQueueStatus.waiting
+    with pytest.raises(ValueError, match="illegal ticket transition"):
+        transition_ticket(ticket, GridQueueStatus.waiting, reason="test_no_rewind")
 
 
 @pytest.mark.db
@@ -486,34 +485,34 @@ async def test_routes_falls_back_to_stored_target_when_node_target_gone(
 
 
 @pytest.mark.db
-async def test_resume_claimed_falls_back_to_stored_target(
+async def test_resume_allocation_falls_back_to_stored_target(
     db_session: AsyncSession,
 ) -> None:
-    """#6: resume_claimed prefers a recomputed live target, else the stored one."""
+    """#6: resume_allocation prefers a recomputed live target, else the stored one."""
     from app.appium_nodes.models import AppiumNode
 
     await seed_test_packs(db_session)
     _, device, node = await seed_host_and_running_node(db_session, identity=f"grid-guard-resume-{uuid.uuid4().hex[:8]}")
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        status=GridQueueStatus.claimed,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
     row = Session(
         session_id="alloc-resume-1",
         device_id=device.id,
         status=SessionStatus.pending,
         router_target="http://stored.example:4730",
+        ticket_id=ticket.id,
     )
     db_session.add(row)
-    await db_session.flush()
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android"),
-        status=GridQueueStatus.claimed,
-        session_row_id=row.id,
-    )
-    db_session.add(ticket)
     await db_session.flush()
     # Detach the node so node_target() is None and the stored fallback is used.
     await db_session.delete(await db_session.get(AppiumNode, node.id))
     await db_session.flush()
 
-    result = await _service().resume_claimed(db_session, ticket=ticket)
+    result = await _service().resume_allocation(db_session, ticket_id=ticket.id)
     assert result is not None
     assert result.target == "http://stored.example:4730"
     assert ticket.status == GridQueueStatus.claimed

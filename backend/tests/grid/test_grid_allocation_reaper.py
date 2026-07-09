@@ -254,9 +254,8 @@ async def test_reap_orphaned_claims_spares_claim_on_live_session(
 async def test_reap_orphaned_claims_spares_freshly_polled_claim_on_ended_session(
     db_session: AsyncSession, allocation_service: AllocationService
 ) -> None:
-    """A claimed ticket on an ended session whose client is STILL polling must be left for
-    resume_claimed to rewind to waiting — the sweep must not race it. The staleness gate
-    (fresh last_polled_at) is what keeps the sweep out of that window."""
+    """A claimed ticket on an ended session whose client is STILL polling is spared
+    during the dual-write window; Task 3 removes the orphan-claim arm entirely."""
     ticket, session = await _seed_claimed_ticket(db_session, allocation_service)
     session.status = SessionStatus.error
     session.ended_at = datetime.now(UTC)
