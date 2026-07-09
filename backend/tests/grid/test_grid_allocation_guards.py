@@ -18,11 +18,7 @@ if TYPE_CHECKING:
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
-from app.grid.allocation import (
-    AllocationService,
-    _legal_bulk_ticket_transition,
-    transition_tickets_bulk,
-)
+from app.grid.allocation import AllocationService
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
@@ -184,22 +180,6 @@ async def test_claim_declines_when_node_not_viable_under_lock(
         db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
     )
     assert result is None
-
-
-@pytest.mark.db
-async def test_resume_claimed_without_session_row_resets_to_waiting(db_session: AsyncSession) -> None:
-    """A claimed ticket with no session_row_id (never reached _claim's flush) resets to
-    waiting instead of resuming."""
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android"),
-        status=GridQueueStatus.claimed,
-        session_row_id=None,
-    )
-    db_session.add(ticket)
-    await db_session.flush()
-    result = await _service().resume_claimed(db_session, ticket=ticket)
-    assert result is None
-    assert ticket.status == GridQueueStatus.waiting
 
 
 @pytest.mark.db
@@ -486,57 +466,31 @@ async def test_routes_falls_back_to_stored_target_when_node_target_gone(
 
 
 @pytest.mark.db
-async def test_resume_claimed_falls_back_to_stored_target(
+async def test_resume_allocation_falls_back_to_stored_target(
     db_session: AsyncSession,
 ) -> None:
-    """#6: resume_claimed prefers a recomputed live target, else the stored one."""
+    """#6: resume_allocation prefers a recomputed live target, else the stored one."""
     from app.appium_nodes.models import AppiumNode
 
     await seed_test_packs(db_session)
     _, device, node = await seed_host_and_running_node(db_session, identity=f"grid-guard-resume-{uuid.uuid4().hex[:8]}")
+    ticket_id = uuid.uuid4()
     row = Session(
         session_id="alloc-resume-1",
         device_id=device.id,
         status=SessionStatus.pending,
         router_target="http://stored.example:4730",
+        ticket_id=ticket_id,
     )
     db_session.add(row)
-    await db_session.flush()
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android"),
-        status=GridQueueStatus.claimed,
-        session_row_id=row.id,
-    )
-    db_session.add(ticket)
     await db_session.flush()
     # Detach the node so node_target() is None and the stored fallback is used.
     await db_session.delete(await db_session.get(AppiumNode, node.id))
     await db_session.flush()
 
-    result = await _service().resume_claimed(db_session, ticket=ticket)
+    result = await _service().resume_allocation(db_session, ticket_id=ticket_id)
     assert result is not None
     assert result.target == "http://stored.example:4730"
-    assert ticket.status == GridQueueStatus.claimed
-
-
-def test_bulk_transition_legal_table_terminalizes_claimed() -> None:
-    # The bulk seam permits the claimed -> expired terminalization the per-row table
-    # deliberately omits, and rejects anything else.
-    assert _legal_bulk_ticket_transition(GridQueueStatus.claimed, GridQueueStatus.expired) is True
-    assert _legal_bulk_ticket_transition(GridQueueStatus.cancelled, GridQueueStatus.waiting) is False
-    assert _legal_bulk_ticket_transition(GridQueueStatus.waiting, GridQueueStatus.expired) is False
-
-
-@pytest.mark.asyncio
-async def test_transition_tickets_bulk_raises_on_illegal_transition() -> None:
-    from unittest.mock import AsyncMock
-
-    db = AsyncMock()
-    with pytest.raises(ValueError, match="illegal bulk ticket transition"):
-        await transition_tickets_bulk(
-            db, from_status=GridQueueStatus.cancelled, to=GridQueueStatus.waiting, reason="test"
-        )
-    db.execute.assert_not_called()
 
 
 @pytest.mark.db

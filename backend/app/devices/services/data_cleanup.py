@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import delete, or_, select
 
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.background_loop import BackgroundLoop
@@ -130,10 +130,9 @@ class DataCleanupService:
                 extra_predicates=(Session.test_name == PROBE_TEST_NAME,),
             )
 
-        # Terminal grid_session_queue tickets (reuses retention.sessions_days — a ticket
-        # never outlives its allocation Session). Purges cancelled/expired plus dangling
-        # `claimed` rows whose Session was already deleted (FK SET NULL) — legacy junk
-        # the harness G7 invariant flags. `updated_at` is when it reached its terminal.
+        # Terminal grid_session_queue tickets (reuses retention.sessions_days).
+        # Tickets are deleted at claim; only cancelled/expired terminals remain
+        # to purge. `updated_at` is when it reached its terminal.
         if sessions_days > 0:
             cutoff = now - timedelta(days=sessions_days)
             counts.grid_queue_tickets_deleted = await _delete_in_batches(
@@ -142,13 +141,7 @@ class DataCleanupService:
                 timestamp_column=GridSessionQueueTicket.updated_at,
                 cutoff=cutoff,
                 extra_predicates=(
-                    or_(
-                        GridSessionQueueTicket.status.in_((GridQueueStatus.cancelled, GridQueueStatus.expired)),
-                        and_(
-                            GridSessionQueueTicket.status == GridQueueStatus.claimed,
-                            GridSessionQueueTicket.session_row_id.is_(None),
-                        ),
-                    ),
+                    GridSessionQueueTicket.status.in_((GridQueueStatus.cancelled, GridQueueStatus.expired)),
                 ),
             )
 

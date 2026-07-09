@@ -326,7 +326,7 @@ class SessionSyncService:
             device = session.device
             assert device is not None  # filtered above
             # Resolve via resolve_router_target — the same fallback every other consumer
-            # uses (/routes, resume_claimed, run-release): prefer the live node_target but
+            # uses (/routes, resume_allocation, run-release): prefer the live node_target but
             # fall back to Session.router_target stored at allocation when the live target
             # is unresolvable (node row gone / host association lost). The reap previously
             # used node_target directly, the one consumer that did not adopt the fallback.

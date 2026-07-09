@@ -170,8 +170,6 @@ async def close_running_session(
     loaded for the event payload; ``attached_run`` carries the run-terminal
     decision (pass the eager-loaded ``session.run``).
     """
-    from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
-
     # Lock order (deadlock avoidance): take the device row lock BEFORE the
     # session row is dirtied below. Otherwise the autoflush invoked by the
     # ``select(TestRun ...)`` read stamps the session row first — session →
@@ -216,9 +214,6 @@ async def close_running_session(
     _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
     if not never_confirmed:
         queue_session_ended_event(db, session, device=session.device, publisher=publisher)
-    # Terminalize any allocation ticket whose claim minted this session (router DELETE
-    # + session_sync sweep both flow through here); a no-op for non-allocation sessions.
-    await expire_tickets_for_session(db, session.id)
     await db.flush()
     if session.device_id is not None:
         # active_session intents no longer exist; reconcile so the device's node reflects
@@ -426,15 +421,6 @@ class SessionCrudService:
             session.ended_at = now_utc()
 
         if status != SessionStatus.running and session.device_id is not None:
-            # Terminalize any allocation ticket whose claim minted this session
-            # (expire-then-revoke, mirroring close_running_session). The router
-            # /sessions/ended terminalizer no-ops once this path has stamped
-            # ended_at, so without this the claimed ticket lingers for the reaper
-            # (orphan_claim_reaped churn that masks a real leak). Guarded no-op for
-            # non-allocation sessions.
-            from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
-
-            await expire_tickets_for_session(db, session.id)
             # Reconcile the device after the session ends. ``reconcile_device`` runs inside
             # the helper so ``node.stop_pending`` and ``node.desired_state`` reflect the
             # post-session intent set when the row lock is taken below.

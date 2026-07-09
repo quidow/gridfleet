@@ -106,7 +106,8 @@ async def test_grid_session_queue_table_exists(alembic_session: AsyncSession) ->
         )
     )
     cols = {row[0] for row in res.fetchall()}
-    assert {"id", "requested_body", "status", "session_row_id", "created_at", "updated_at"} <= cols
+    assert {"id", "requested_body", "status", "created_at", "updated_at"} <= cols
+    assert "session_row_id" not in cols
 
 
 @pytest.mark.db

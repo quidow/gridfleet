@@ -7,13 +7,13 @@ lock, the intent reconciler — and owns no writes to protected state columns:
 
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge, Histogram
-from sqlalchemy import ColumnElement, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
@@ -128,21 +128,17 @@ def _ticket_liveness_cutoff(now: datetime) -> datetime:
 
 
 def _legal_ticket_transition(current: GridQueueStatus, to: GridQueueStatus) -> bool:
-    """Whether moving a ticket from *current* to *to* is a legal transition.
-
-    ``waiting`` is the active source: it advances to ``claimed`` (a device was
-    found), ``cancelled`` (invalid body) or ``expired`` (reaper). ``resume_claimed``
-    rewinds a terminalized ticket back to ``waiting`` when the client is still
-    long-polling but its claimed Session was reaped — and that reaping path
-    (``fail`` -> ``expire_tickets_for_session``) moves the ticket ``claimed ->
-    expired`` first, so the rewind source is ``claimed`` OR ``expired``.
-    ``cancelled`` (invalid body) is a true sink — it is never resumed.
+    """``waiting`` is the only live state: it advances to ``cancelled``
+    (invalid body / router gave up) or ``expired`` (reaper). Terminal states are
+    sinks -- the lost-response resume path reads
+    the Session row by ``ticket_id`` and never rewinds a ticket.
     """
     if current == to:
         return True
-    if current == GridQueueStatus.waiting:
-        return to in (GridQueueStatus.claimed, GridQueueStatus.cancelled, GridQueueStatus.expired)
-    return current in (GridQueueStatus.claimed, GridQueueStatus.expired) and to == GridQueueStatus.waiting
+    return current == GridQueueStatus.waiting and to in (
+        GridQueueStatus.cancelled,
+        GridQueueStatus.expired,
+    )
 
 
 def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, reason: str) -> None:
@@ -157,44 +153,6 @@ def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, re
         raise ValueError(f"illegal ticket transition {ticket.status} -> {to} (ticket={ticket.id}, reason={reason})")
     logger.debug("grid_ticket_transition ticket=%s %s->%s reason=%s", ticket.id, ticket.status, to, reason)
     ticket.status = to
-
-
-def _legal_bulk_ticket_transition(from_status: GridQueueStatus, to: GridQueueStatus) -> bool:
-    # Bulk Core UPDATE paths only ever terminalize a ``claimed`` ticket to ``expired``
-    # (session ended / orphan reaped). The per-row ``_legal_ticket_transition`` table
-    # deliberately omits ``claimed -> expired`` — that terminalization is bulk-only — so
-    # the bulk seam keeps its own explicit rule rather than widening the per-row table.
-    return from_status == GridQueueStatus.claimed and to == GridQueueStatus.expired
-
-
-async def transition_tickets_bulk(
-    db: DbSession,
-    *,
-    from_status: GridQueueStatus,
-    to: GridQueueStatus,
-    reason: str,
-    extra_where: Sequence[ColumnElement[bool]] = (),
-    synchronize_session: Literal[False, "auto"] = "auto",
-) -> int:
-    """Bulk counterpart of ``transition_ticket`` for Core ``UPDATE`` paths.
-
-    Enforces a bulk legality table against the statically-known source status
-    (the ``status == from_status`` WHERE arm guarantees every transitioned row
-    matches it), so bulk terminalization stays inside the single-seam contract
-    instead of bypassing it. Returns the number of rows transitioned.
-    """
-    if not _legal_bulk_ticket_transition(from_status, to):
-        raise ValueError(f"illegal bulk ticket transition {from_status} -> {to} (reason={reason})")
-    result = await db.execute(
-        update(GridSessionQueueTicket)
-        .where(GridSessionQueueTicket.status == from_status, *extra_where)
-        .values(status=to)
-        .execution_options(synchronize_session=synchronize_session)
-    )
-    count = int(getattr(result, "rowcount", 0) or 0)
-    if count:
-        logger.debug("grid_ticket_bulk_transition %s->%s count=%d reason=%s", from_status, to, count, reason)
-    return count
 
 
 IntentFactory = Callable[[DbSession], IntentService]
@@ -226,30 +184,6 @@ class RunNotActiveError(Exception):
 
     def __init__(self, run_id: uuid.UUID, state: str) -> None:
         super().__init__(f"run {run_id} is {state}; sessions can only be created for a live (non-terminal) run")
-
-
-async def expire_tickets_for_session(db: DbSession, session_row_id: uuid.UUID) -> int:
-    """Terminalize any ``claimed`` ticket still pointing at *session_row_id*.
-
-    A ticket goes ``claimed`` when ``_claim`` mints its pending Session row, but it
-    is never moved off ``claimed`` afterwards: when the allocation finishes (failed
-    by the reaper, ended by the router, or swept closed) the ticket is left
-    dangling. Once ``data_cleanup`` purges the Session the FK (``ondelete=SET NULL``)
-    nulls ``session_row_id`` and the junk ticket lives forever (harness G7).
-
-    Called from every seam where an allocation Session leaves running/pending:
-    ``AllocationService.fail`` (reaper) and ``close_running_session`` (router DELETE
-    + session_sync sweep). Idempotent — the ``status='claimed'`` guard makes a second
-    call a no-op. Returns the number of tickets transitioned.
-    """
-    # Bulk claimed -> expired through the guarded bulk seam (transition_tickets_bulk).
-    return await transition_tickets_bulk(
-        db,
-        from_status=GridQueueStatus.claimed,
-        to=GridQueueStatus.expired,
-        reason="session_ended",
-        extra_where=(GridSessionQueueTicket.session_row_id == session_row_id,),
-    )
 
 
 def _ticket_passes_reservation(ticket_run_id: uuid.UUID | None, reservation_run_id: uuid.UUID | None) -> bool:
@@ -373,7 +307,6 @@ class AllocationService:
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:
             return  # idempotent: already confirmed/reaped
-        await expire_tickets_for_session(db, allocation_id)
         await db.refresh(row)
         await db.flush()
         if device_id is not None:
@@ -477,37 +410,10 @@ class AllocationService:
             transition_ticket(stale, GridQueueStatus.expired, reason="reaper_queue_timeout_or_stale_poll")
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="expired").inc()
             tickets_expired += 1
-        # Defense-in-depth behind expire_tickets_for_session: terminalize ``claimed``
-        # tickets abandoned by their client AND pointing at a session that can never go
-        # live again (purged -> session_row_id NULL, or ended / not pending|running).
-        # The outcome metric is a deliberate missed-seam canary.
-        not_live_session_ids = select(Session.id).where(
-            or_(
-                Session.ended_at.is_not(None),
-                Session.status.not_in((SessionStatus.pending, SessionStatus.running)),
-            )
-        )
-        orphan_claims_reaped = await transition_tickets_bulk(
-            db,
-            from_status=GridQueueStatus.claimed,
-            to=GridQueueStatus.expired,
-            reason="orphan_claim_reaped",
-            extra_where=(
-                GridSessionQueueTicket.last_polled_at < stale_cutoff,
-                or_(
-                    GridSessionQueueTicket.session_row_id.is_(None),
-                    GridSessionQueueTicket.session_row_id.in_(not_live_session_ids),
-                ),
-            ),
-            synchronize_session=False,
-        )
-        if orphan_claims_reaped:
-            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="orphan_claim_reaped").inc(orphan_claims_reaped)
         await db.flush()
         return {
             "pending_failed": pending_failed,
             "tickets_expired": tickets_expired,
-            "orphan_claims_reaped": orphan_claims_reaped,
         }
 
     async def try_allocate(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
@@ -602,47 +508,34 @@ class AllocationService:
                     return result
         return None
 
-    async def resume_claimed(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
-        """Idempotently resume a ``claimed`` ticket whose Allocated response was lost.
+    async def resume_allocation(self, db: DbSession, *, ticket_id: uuid.UUID) -> AllocationResult | None:
+        """Idempotently resume an allocation whose Allocated response was lost.
 
-        A router retry after a transport error on a committed Allocated response
-        re-hits allocate with the same ``claimed`` ticket. Re-claiming would orphan
-        the first pending session and double-allocate a device. Instead:
-
-        * If the ticket's Session row is still ``pending`` or ``running`` (not ended),
-          return the SAME allocation — the original claim is honest and still alive.
-        * If the row was failed/reaped (the claim window expired while the response was
-          lost), reset the ticket to ``waiting`` so the caller proceeds to a fresh
-          ``try_allocate``. The client is still long-polling; that's the honest
-          continuation.
+        A router retry after a transport error re-sends the same ticket id. If a
+        live Session row (pending or running, not ended) carries that ticket id,
+        return the SAME allocation -- re-claiming would orphan the first pending
+        session and double-allocate a device. No live row (the claim window
+        expired while the response was lost, or the device lost its node/host
+        target) returns None: the caller proceeds with a fresh ticket +
+        try_allocate, the honest continuation for a still-polling client.
         """
-        if ticket.session_row_id is None:
-            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_session_row")
-            return None
         stmt = (
             select(Session)
             .options(selectinload(Session.device).selectinload(Device.appium_node))
             .options(selectinload(Session.device).selectinload(Device.host))
-            .where(Session.id == ticket.session_row_id)
+            .where(
+                Session.ticket_id == ticket_id,
+                Session.ended_at.is_(None),
+                Session.status.in_((SessionStatus.pending, SessionStatus.running)),
+            )
         )
         row = (await db.execute(stmt)).scalars().first()
-        if (
-            row is None
-            or row.ended_at is not None
-            or row.status not in (SessionStatus.pending, SessionStatus.running)
-            or row.device is None
-        ):
-            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_session_reaped")
+        if row is None or row.device is None:
             return None
         target = resolve_router_target(row)
         if target is None:
-            # The device lost its node/host association and no target was ever stored;
-            # treat like a reaped claim and let the client wait for a fresh allocation
-            # rather than hand back a dead target.
-            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_target")
             return None
-        device = row.device
-        return AllocationResult(allocation_id=row.id, target=target, device_id=device.id)
+        return AllocationResult(allocation_id=row.id, target=target, device_id=row.device.id)
 
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
         stmt = (
@@ -789,17 +682,17 @@ class AllocationService:
             requested_capabilities=candidate,
             test_name=requested_test_name if isinstance(requested_test_name, str) else None,
             run_id=run_id,
+            ticket_id=ticket.id,
             # Persist the allocation target so /routes can fall back to it if the
             # device's node port is transiently stale-cleared later (#6).
             router_target=target,
         )
         db.add(row)
-        # Flush the Session row before pointing the ticket at it: there is no ORM
-        # relationship between the two mappers, so the unit of work would not
-        # order the INSERT before the FK-bearing UPDATE on its own.
         await db.flush()
-        transition_ticket(ticket, GridQueueStatus.claimed, reason="device_claimed")
-        ticket.session_row_id = row.id
+        # The ticket's job ends here: the Session row is the allocation ledger
+        # (ticket_id is the router's resume key). Deleting beats a terminal
+        # status -- nothing ever reads a finished ticket again.
+        await db.delete(ticket)
         await db.flush()
         intent = self._intent_factory(db)
         await intent.mark_dirty_and_reconcile(locked.id, publisher=self._publisher)
