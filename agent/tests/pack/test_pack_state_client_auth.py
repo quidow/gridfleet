@@ -38,10 +38,8 @@ async def test_pack_state_client_sends_manager_basic_auth(monkeypatch: pytest.Mo
         identity.set("00000000-0000-0000-0000-000000000001")
         client = HttpPackStateClient("http://manager.local", identity)
         assert await client.fetch_desired() == {"packs": []}
-        await client.post_status({"host_id": "00000000-0000-0000-0000-000000000001"})
     finally:
         await close_shared_http_client()
 
-    assert len(transport.requests) == 2
-    for request in transport.requests:
-        assert request.headers["authorization"].startswith("Basic ")
+    assert len(transport.requests) == 1
+    assert transport.requests[0].headers["authorization"].startswith("Basic ")

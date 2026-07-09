@@ -49,13 +49,9 @@ async def test_host_identity_rotation_returns_consistent_value_to_all_waiters() 
 class _RotationFakeClient:
     def __init__(self, desired_payload: dict[str, Any]) -> None:
         self._desired = desired_payload
-        self.posted: list[dict[str, Any]] = []
 
     async def fetch_desired(self) -> dict[str, Any]:
         return self._desired
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
-        self.posted.append(payload)
 
 
 class _NoopRuntimeMgr:
@@ -79,9 +75,12 @@ class _SucceedingRuntimeMgr:
 
 
 @pytest.mark.asyncio
-async def test_pack_state_loop_payload_picks_up_rotated_host_id() -> None:
-    """PackStateLoop must read the live host_id each iteration so that a
-    manager-issued rotation is reflected in subsequent status POSTs."""
+async def test_pack_state_loop_resolves_rotated_host_id_each_iteration() -> None:
+    """PackStateLoop must read the live host_id each iteration (held by reference,
+    not captured at construction). The status payload no longer carries host_id
+    (see the consolidated status push), so this asserts on the resolver the loop
+    itself uses; ``test_pack_state_loop_doctor_ctx_picks_up_rotated_host_id`` below
+    covers the same rotation through an observable side effect."""
 
     identity = HostIdentity()
     identity.set("host-a")
@@ -96,12 +95,12 @@ async def test_pack_state_loop_payload_picks_up_rotated_host_id() -> None:
     )
 
     await loop.run_once()
-    assert client.posted[-1]["host_id"] == "host-a"
+    assert loop._resolve_host_id() == "host-a"
 
     identity.set("host-b")
 
     await loop.run_once()
-    assert client.posted[-1]["host_id"] == "host-b"
+    assert loop._resolve_host_id() == "host-b"
 
 
 class _DoctorRecordingAdapter:

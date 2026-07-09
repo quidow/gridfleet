@@ -12,6 +12,8 @@ from agent_app.pack.manifest import DesiredPack, parse_desired_payload
 from agent_app.pack.runtime_policy import resolve_runtime_spec
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agent_app.pack.adapter_registry import AdapterRegistry
     from agent_app.pack.adapter_types import DoctorCheckResult
     from agent_app.pack.host_identity import HostIdentity
@@ -24,9 +26,6 @@ logger = logging.getLogger(__name__)
 
 class PackStateClient(Protocol):
     async def fetch_desired(self) -> dict[str, Any]:
-        raise NotImplementedError
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
         raise NotImplementedError
 
 
@@ -49,11 +48,16 @@ class PackStateLoop:
     runtime_registry: RuntimeRegistry | None = None
     adapter_registry: AdapterRegistry | None = None
     adapter_loader: AdapterLoaderFn | None = None
+    on_status: Callable[[], None] | None = None
     _latest_desired: list[DesiredPack] | None = field(default=None, init=False, repr=False)
+    _latest_status: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     @property
     def latest_desired_packs(self) -> list[DesiredPack] | None:
         return self._latest_desired
+
+    def latest_status(self) -> dict[str, Any] | None:
+        return self._latest_status
 
     def _resolve_host_id(self) -> str:
         host_id = self.host_identity.get()
@@ -225,13 +229,13 @@ class PackStateLoop:
             # for packs the backend still wants.
             self.runtime_registry.purge_except({pack.id for pack in parsed.packs})
 
-        payload = {
-            "host_id": host_id,
+        self._latest_status = {
             "runtimes": runtime_entries,
             "packs": pack_entries,
             "doctor": doctor_entries,
         }
-        await self.client.post_status(payload)
+        if self.on_status is not None:
+            self.on_status()
 
     async def _doctor_entries_for_pack(
         self,

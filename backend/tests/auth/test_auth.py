@@ -265,7 +265,7 @@ async def test_agent_registration_requires_machine_auth(
     client: AsyncClient,
     auth_settings: dict[str, str],
 ) -> None:
-    register_payload = {**HOST_PAYLOAD, "capabilities": {"orchestration_contract_version": 4}}
+    register_payload = {**HOST_PAYLOAD, "capabilities": {"orchestration_contract_version": 5}}
     unauthorized = await client.post("/api/hosts/register", json=register_payload)
     assert unauthorized.status_code == 401
 

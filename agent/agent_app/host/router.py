@@ -9,6 +9,7 @@ from fastapi import APIRouter, status
 
 from agent_app import __version__
 from agent_app.appium.dependencies import AppiumMgrDep
+from agent_app.host.capabilities import missing_prerequisites_from
 from agent_app.host.dependencies import (
     CapabilitiesDep,
     HostTelemetryDep,
@@ -38,7 +39,7 @@ async def health(
         "os_type": platform.system().lower(),
         "version": __version__,
         "registered": registered,
-        "missing_prerequisites": capabilities.get("missing_prerequisites", []),
+        "missing_prerequisites": missing_prerequisites_from(capabilities),
         "capabilities": capabilities,
         "appium_processes": await mgr.process_snapshot(),
         "version_guidance": version_guidance,

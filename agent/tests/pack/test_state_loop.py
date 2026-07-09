@@ -62,13 +62,9 @@ class _FakeClient(PackStateClient):
         }
         if runtime_policy is not None:
             self.desired_payload["packs"][0]["runtime_policy"] = runtime_policy
-        self.posted: list[dict[str, Any]] = []
 
     async def fetch_desired(self) -> dict[str, Any]:
         return self.desired_payload
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
-        self.posted.append(payload)
 
 
 class _FakeRuntimeMgr:
@@ -100,8 +96,8 @@ async def test_loop_posts_installed_status_after_reconcile() -> None:
         host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
     await loop.run_once()
-    assert len(client.posted) == 1
-    payload = client.posted[0]
+    payload = loop.latest_status()
+    assert payload is not None
     assert any(p["pack_id"] == "appium-uiautomator2" and p["status"] == "installed" for p in payload["packs"])
     assert len(payload["runtimes"]) == 1
     assert payload["runtimes"][0]["status"] == "installed"
@@ -127,13 +123,9 @@ async def test_loop_two_iterations_reuse_runtime() -> None:
 class FakeClient(PackStateClient):
     def __init__(self, desired_payload: dict[str, Any]) -> None:
         self._desired_payload = desired_payload
-        self.posted_payloads: list[dict[str, Any]] = []
 
     async def fetch_desired(self) -> dict[str, Any]:
         return self._desired_payload
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
-        self.posted_payloads.append(payload)
 
 
 class FakeRuntimeMgr:
@@ -202,7 +194,8 @@ async def test_state_loop_installs_pack_without_probe_family_filtering() -> None
     await loop.run_once()
 
     assert set(runtime_mgr.desired_by_pack) == {"appium-xcuitest"}
-    payload = client.posted_payloads[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     assert payload["packs"] == [
         {
             "pack_id": "appium-xcuitest",
@@ -253,6 +246,8 @@ async def test_loop_blocks_pack_when_manifest_declares_unimplemented_hook() -> N
 
     await loop.run_once()
 
-    pack_entry = next(p for p in client.posted[-1]["packs"] if p["pack_id"] == "appium-uiautomator2")
+    status = loop.latest_status()
+    assert status is not None
+    pack_entry = next(p for p in status["packs"] if p["pack_id"] == "appium-uiautomator2")
     assert pack_entry["status"] == "blocked"
     assert "lifecycle_action" in pack_entry["blocked_reason"]

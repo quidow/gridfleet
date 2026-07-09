@@ -529,14 +529,8 @@ async def test_state_loop_invokes_adapter_loader_for_adapter_packs() -> None:
     }
 
     class _FakeClient(PackStateClient):
-        def __init__(self) -> None:
-            self.posted: list[dict[str, Any]] = []
-
         async def fetch_desired(self) -> dict[str, Any]:
             return desired_payload
-
-        async def post_status(self, payload: dict[str, Any]) -> None:
-            self.posted.append(payload)
 
     class _FakeRuntimeMgr:
         async def reconcile(
@@ -621,14 +615,8 @@ async def test_state_loop_does_not_block_adapter_packs_on_host_probe_support() -
     }
 
     class _FakeClient(PackStateClient):
-        def __init__(self) -> None:
-            self.posted: list[dict[str, Any]] = []
-
         async def fetch_desired(self) -> dict[str, Any]:
             return desired_payload
-
-        async def post_status(self, payload: dict[str, Any]) -> None:
-            self.posted.append(payload)
 
     class _FakeRuntimeMgr:
         async def reconcile(
@@ -646,14 +634,15 @@ async def test_state_loop_does_not_block_adapter_packs_on_host_probe_support() -
                 )
             return out, {}
 
-    fake_client = _FakeClient()
     loop = PackStateLoop(
-        client=fake_client,
+        client=_FakeClient(),
         runtime_mgr=_FakeRuntimeMgr(),
         host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
     await loop.run_once()
-    pack_entry = fake_client.posted[-1]["packs"][0]
+    status = loop.latest_status()
+    assert status is not None
+    pack_entry = status["packs"][0]
     assert pack_entry["pack_id"] == "vendor-foo"
     assert pack_entry["status"] == "installed"
 
