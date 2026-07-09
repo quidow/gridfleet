@@ -65,6 +65,7 @@ from app.grid import router as grid
 from app.grid import router_internal as grid_router_internal
 from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.hosts import router as hosts
+from app.hosts import router_agent as hosts_router_agent
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.lifecycle import router as lifecycle_router
@@ -341,6 +342,7 @@ app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid_router_internal.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(hosts_router_agent.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(verification_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

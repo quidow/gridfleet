@@ -1,0 +1,107 @@
+import uuid
+from typing import TYPE_CHECKING
+
+from sqlalchemy import select
+
+from app.core.leader import state_store as control_plane_state_store
+from app.hosts.models import Host, HostStatus, OSType
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
+from app.packs.models import HostPackInstallation
+from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+PACK_ENTRY = {
+    "pack_id": "appium-uiautomator2",
+    "pack_release": "2026.04.0",
+    "runtime_id": "abc123",
+    "status": "installed",
+    "resolved_install_spec": {"appium": "2.11.5", "uiautomator2": "3.6.0"},
+    "installer_log_excerpt": "ok",
+    "resolver_version": "1",
+    "blocked_reason": None,
+}
+
+
+async def _make_host(db_session: AsyncSession, *, status: HostStatus, hostname: str) -> Host:
+    host = Host(
+        hostname=hostname,
+        ip="10.0.0.9",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=status,
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+    return host
+
+
+async def test_status_push_unknown_host_404(client: AsyncClient) -> None:
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(uuid.uuid4())})
+    assert resp.status_code == 404
+
+
+async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClient, db_session: AsyncSession) -> None:
+    online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-online")
+    body = {
+        "host_id": str(online_host.id),
+        "agent_version": "9.9.9",
+        "capabilities": {"tools": {"node": "22.1.0"}, "orchestration_contract_version": 5},
+        "missing_prerequisites": ["adb"],
+        "appium_processes": {"running_nodes": [{"port": 4723, "pid": 111}]},
+        "host_telemetry": {"recorded_at": "2026-07-09T00:00:00+00:00", "cpu_percent": 1.0},
+    }
+    resp = await client.post("/agent/hosts/status", json=body)
+    assert resp.status_code == 204
+    await db_session.refresh(online_host)
+    assert online_host.last_heartbeat is not None
+    assert online_host.agent_version == "9.9.9"
+    assert online_host.capabilities["tools"] == {"node": "22.1.0"}
+    assert "adb" in online_host.missing_prerequisites
+    stored = await control_plane_state_store.get_value(db_session, HOST_STATUS_NAMESPACE, str(online_host.id))
+    assert stored["payload"]["appium_processes"]["running_nodes"][0]["port"] == 4723
+
+
+async def test_status_push_flips_offline_host_online(client: AsyncClient, db_session: AsyncSession) -> None:
+    offline_host = await _make_host(db_session, status=HostStatus.offline, hostname="status-push-offline")
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(offline_host.id)})
+    assert resp.status_code == 204
+    await db_session.refresh(offline_host)
+    assert offline_host.status == HostStatus.online
+
+
+async def test_status_push_never_flips_pending_host(client: AsyncClient, db_session: AsyncSession) -> None:
+    pending_host = await _make_host(db_session, status=HostStatus.pending, hostname="status-push-pending")
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(pending_host.id)})
+    assert resp.status_code == 204
+    await db_session.refresh(pending_host)
+    assert pending_host.status == HostStatus.pending  # approval flow owns this transition
+    assert pending_host.last_heartbeat is not None
+
+
+async def test_status_push_applies_pack_section(client: AsyncClient, db_session: AsyncSession) -> None:
+    await seed_test_packs(db_session)
+    online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-packs")
+    body = {
+        "host_id": str(online_host.id),
+        "packs": {"runtimes": [], "packs": [PACK_ENTRY], "doctor": []},
+    }
+    resp = await client.post("/agent/hosts/status", json=body)
+    assert resp.status_code == 204
+    installs = (
+        (await db_session.execute(select(HostPackInstallation).where(HostPackInstallation.host_id == online_host.id)))
+        .scalars()
+        .all()
+    )
+    assert len(installs) == 1
+    assert installs[0].pack_id == "appium-uiautomator2"
+    assert installs[0].status == "installed"
+
+
+async def test_status_push_without_packs_section_is_fine(client: AsyncClient, db_session: AsyncSession) -> None:
+    online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-no-packs")
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(online_host.id)})
+    assert resp.status_code == 204

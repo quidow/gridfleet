@@ -54,6 +54,7 @@ from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
+from app.hosts.service_status_push import HostStatusPushService
 from app.hosts.services_container import HostServices
 from app.lifecycle.dependencies import get_lifecycle_services
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -479,6 +480,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             diagnostics=HostDiagnosticsService(circuit_breaker=test_circuit_breaker),
             host_events=HostEventsService(),
+            status_push=HostStatusPushService(publisher=test_event_bus),
             settings=settings_service,
             session_factory=sf,
         )
