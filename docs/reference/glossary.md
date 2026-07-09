@@ -18,7 +18,7 @@ This glossary defines the product terms that show up across the API, UI, and ope
 | Reservation | The period where a run owns devices and prevents other runs from matching them |
 | Lifecycle incident | A recent persisted device-event record used to explain deferred stops, backoff, exclusions, and recoveries |
 | Maintenance | An operator-controlled state that blocks normal use while the device is intentionally withheld from testing |
-| Recovery allowed | The `recovery_allowed` flag governing whether lifecycle automation may automatically recover (restart) the device’s Appium node |
+| Recovery availability | Whether lifecycle automation may automatically recover (restart) the device’s Appium node right now — recomputed at read time by `recovery_projection.recovery_availability` (no stored flag) |
 | Intake candidate | A host-visible device detected by the agent but not yet imported into the canonical registry |
 | Discovery | The host-scoped scan that compares what the agent sees to what the manager already has persisted |
 | Device group | A saved static or dynamic set of devices used for operator organization and bulk actions |

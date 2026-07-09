@@ -50,6 +50,14 @@ denies (with `MAINTENANCE_HOLD_SUPPRESSION_REASON`); else `cooldown_active`
 denies (with the exclusion reason); else `auto_recovery:recovery` allows; else
 default-allow.
 
+The recovery axis is consumed **read-side**, not cached by the reconciler: the
+reconciler derives node-process and grid-routing state only. `decide_recovery` is
+folded into `app.devices.services.recovery_projection.recovery_availability` (the
+read-time "can recovery act now" projection consulted by the write path and the
+lifecycle-policy badge) and into the presenter's `derived.recovery` debug view.
+There is no `Device.recovery_allowed` / `recovery_blocked_reason` column — the
+decision is recomputed at read time (see `docs/reference/device-lifecycle.md`).
+
 ## Per-source payload table
 
 Stored command payloads carry only the fields a decider reads. `action` (and
