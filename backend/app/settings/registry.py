@@ -494,18 +494,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
-        key="appium_reconciler.start_failure_threshold",
-        category="grid",
-        setting_type="int",
-        default=5,
-        description=(
-            "Consecutive desired-state convergence failures before lifecycle policy treats the device as "
-            "backoff-suppressed. Suppression lasts appium.startup_timeout_sec * 4 seconds."
-        ),
-        min_value=1,
-        max_value=100,
-    ),
-    SettingDefinition(
         key="appium_reconciler.host_parallelism",
         category="grid",
         setting_type="int",

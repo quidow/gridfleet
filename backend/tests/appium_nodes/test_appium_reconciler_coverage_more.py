@@ -169,7 +169,7 @@ async def test_record_and_reset_start_failure_state(
         row,
         reason="timeout",
         session_scope=_scope,
-        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}),
+        settings=FakeSettingsReader({}),
     )
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
@@ -192,7 +192,7 @@ async def test_record_and_reset_start_failure_state(
         _desired_row(device_id=uuid.uuid4()),
         reason="timeout",
         session_scope=_scope,
-        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}),
+        settings=FakeSettingsReader({}),
     )
 
 

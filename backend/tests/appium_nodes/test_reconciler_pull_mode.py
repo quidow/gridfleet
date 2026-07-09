@@ -322,7 +322,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
 
     svc = ReconcilerService(
         publisher=Mock(),
-        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 5}),
+        settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=_scope_for(db_session),
@@ -348,13 +348,11 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
 
 
 @pytest.mark.db
-async def test_pull_host_start_failure_threshold_sets_backoff_until(
+async def test_pull_host_start_failure_uses_shared_exponential_backoff(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Threshold behavior reuses ``_record_start_failure`` verbatim: backoff_until
-    stays unset below threshold and is set once attempts reach it, matching the
-    push path's window (appium.startup_timeout_sec * 4)."""
+    """Start failures back off from the first failure through the shared ladder."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -387,32 +385,39 @@ async def test_pull_host_start_failure_threshold_sets_backoff_until(
 
     svc = ReconcilerService(
         publisher=Mock(),
-        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 2, "appium.startup_timeout_sec": 5}),
+        settings=FakeSettingsReader(
+            {
+                "general.lifecycle_recovery_backoff_base_sec": 5,
+                "general.lifecycle_recovery_backoff_max_sec": 60,
+                "general.lifecycle_recovery_review_threshold": 5,
+            }
+        ),
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=_scope_for(db_session),
     )
 
     t0 = datetime.now(UTC).isoformat()
+    before_first = datetime.now(UTC)
     await svc._ingest_pull_host_reports(
         [row], [], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t0)]
     )
+    after_first = datetime.now(UTC)
     await db_session.refresh(device)
     assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
-    assert device.lifecycle_policy_state["backoff_until"] is None
+    first_backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
+    assert before_first + timedelta(seconds=5) <= first_backoff_until <= after_first + timedelta(seconds=5)
 
     t1 = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
-    before = datetime.now(UTC)
+    before_second = datetime.now(UTC)
     await svc._ingest_pull_host_reports(
         [row], [], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t1)]
     )
-    after = datetime.now(UTC)
+    after_second = datetime.now(UTC)
     await db_session.refresh(device)
     assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 2
-    # backoff window = appium.startup_timeout_sec * 4 (see _record_start_failure),
-    # matching the push path's computation exactly.
-    backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
-    assert before + timedelta(seconds=20) <= backoff_until <= after + timedelta(seconds=20)
+    second_backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
+    assert before_second + timedelta(seconds=10) <= second_backoff_until <= after_second + timedelta(seconds=10)
 
 
 @pytest.mark.db
@@ -454,7 +459,7 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
 
     svc = ReconcilerService(
         publisher=Mock(),
-        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 5}),
+        settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=_scope_for(db_session),

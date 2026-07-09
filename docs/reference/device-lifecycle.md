@@ -126,6 +126,27 @@ whether and which action remediates; core only validates, bounds, and dispatches
 The canonical case is the android pack's `reconnect` (I10): adb transport down but
 device TCP-reachable.
 
+### Shared remediation escalation ladder
+
+All automated remediations — recovery probes, node-health restarts, appium start
+retries — escalate through one ladder owned by
+`app/lifecycle/services/escalation.py`: `recovery_backoff_attempts` and
+`backoff_until` on `lifecycle_policy_state`, exponential backoff from
+`general.lifecycle_recovery_backoff_base_sec` capped at
+`general.lifecycle_recovery_backoff_max_sec`, promoted to
+`Device.review_required` at `general.lifecycle_recovery_review_threshold`. An armed
+backoff window defers every automated remediation, not just the one that armed it.
+Detection debounce (ip_ping hysteresis, `general.node_max_failures`,
+probe-unanswered counting, the link-repair attempt budget) stays per-observer and
+only decides when a failure event is real; the ladder owns what happens after.
+
+A successful node start clears only reconciler-sourced residue
+(`last_failure_source == "appium_reconciler"`). Backoff from failed recovery probes
+or node-health restarts survives until a verified recovery — a probe pass or the
+connectivity self-heal — clears it. Callers outside the lifecycle `write_state`
+allowlist escalate via
+`app.lifecycle.services.actions.escalate_device_remediation_failure`.
+
 **Orphan systemPort cure.** When the control plane reports no live session or
 in-flight probe for a device, the android adapter connect-tests the node's claimed
 `appium:systemPort` (`claimed_ports_free` health check, debounced). A bound socket
