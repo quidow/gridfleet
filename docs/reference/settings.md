@@ -18,8 +18,9 @@ This page documents the shipped settings registry. Each setting has a persisted 
 
 | Key | Category | Type | Default | Env var | Validation | Operational meaning |
 | --- | --- | --- | --- | --- | --- | --- |
-| `general.heartbeat_interval_sec` | `general` | `int` | `15` | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `5..300` | Host-sweep cadence: one agent health fetch per host feeds liveness and Appium-node convergence |
-| `general.max_missed_heartbeats` | `general` | `int` | `3` | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `1..20` | Missed agent pings before a host is marked offline |
+| `general.heartbeat_interval_sec` | `general` | `int` | `15` | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `5..300` | Host-sweep cadence: how often the latest pushed agent status is evaluated, feeding liveness and Appium-node convergence |
+| `general.host_offline_after_sec` | `general` | `int` | `45` | none | `15..3600` | Seconds without a status push before a host is marked offline |
+| `general.partition_probe_interval_sec` | `general` | `int` | `60` | none | `15..3600` | How often the manager verifies it can reach each online agent (network-partition diagnostic; feeds no liveness state) |
 | `general.intent_reconcile_interval_sec` | `general` | `int` | `5` | none | `1..300` | Seconds between intent reconciler full-device scans |
 | `general.node_check_interval_sec` | `general` | `int` | `30` | `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `10..600` | Cadence of the host-sweep node-health stage; effective period rounds to a multiple of `general.heartbeat_interval_sec` |
 | `general.node_max_failures` | `general` | `int` | `3` | `GRIDFLEET_NODE_MAX_FAILURES` | `1..20` | Consecutive failed node checks before restart or suppression logic runs |

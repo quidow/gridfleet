@@ -2,7 +2,7 @@
 
 > HTTP contract between the FastAPI manager and the FastAPI host agents. Covers endpoint catalog, ack semantics, failure model, circuit breaker, auth surface, and idempotency.
 
-GridFleet has two HTTP-speaking processes per host: the centralised backend and the per-host agent. Most traffic flows backend to agent. The agent also registers itself, pulls desired driver-pack and Appium-node state, reports pack status, and downloads pack tarballs. All host-aware backend calls use the `agent_operations` typed wrapper (`backend/app/agent_comm/operations.py`, imported as `from app.agent_comm import operations as agent_operations`).
+GridFleet has two HTTP-speaking processes per host: the centralised backend and the per-host agent. Most traffic flows backend to agent. The agent also registers itself (periodic enrollment refresh), pulls desired driver-pack and Appium-node state, pushes one consolidated status report, and downloads pack tarballs. All host-aware backend calls use the `agent_operations` typed wrapper (`backend/app/agent_comm/operations.py`, imported as `from app.agent_comm import operations as agent_operations`).
 
 This doc specifies that contract.
 
@@ -39,7 +39,7 @@ The CI runner / test client speaks **only** to the WebDriver router for sessions
 The two directions are asymmetric today.
 
 - **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `build_agent_basic_auth` in `backend/app/agent_comm/http_pool.py`, applied per request by the pool. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
-- **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. The agent uses these credentials for desired-state polling, pack status, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
+- **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. The agent uses these credentials for desired-state polling, the consolidated status push, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
 There is no HMAC or message signing. When the optional backend→agent Basic-auth credentials are unset, transport security relies entirely on the network boundary documented in `docs/guides/security.md`.
@@ -50,7 +50,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 
 | Method | Path | Caller (backend) | Purpose | Ack semantics |
 | --- | --- | --- | --- | --- |
-| GET | `/agent/health` | `host_sweep_loop` | liveness, version, missing prerequisites, and Appium convergence snapshot | 200 → ok; non-200 → `None` (treated as missed heartbeat) |
+| GET | `/agent/health` | `host_sweep_loop` (cadence-gated reachability probe, `general.partition_probe_interval_sec`) | partition diagnostic + installer drain gate (local); metrics only, feeds no host-liveness or convergence state | 200 → ok; non-200 → `None`, logged as `agent_partition_suspected` |
 | GET | `/agent/host/telemetry` | `host_sweep` host-resource-telemetry stage | CPU/memory/disk numbers | 200 → snapshot; non-200 → `None` |
 | GET | `/agent/pack/devices` | `host_sweep` connectivity stage, intake/discovery | currently-visible devices per pack | 2xx required (raises on non-2xx) |
 | GET | `/agent/pack/devices/{ct}/properties` | `host_sweep` property-refresh stage | per-device props (OS version, model, etc.) | 200 → dict, 404 → `None`, other → raise |
@@ -86,15 +86,15 @@ The desired-node spec also carries `accepting_new_sessions`, `stop_pending`, and
 
 | Method | Path | Caller (agent) | Purpose | Ack semantics |
 | --- | --- | --- | --- | --- |
-| POST | `/api/hosts/register` | bootstrap | one-time host registration | 2xx, returns `Host` row id |
+| POST | `/api/hosts/register` | bootstrap, then periodic enrollment refresh (`RegistrationService.run`, `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC`, default 300 s) | host registration; refresh only touches enrollment fields (ip, os_type, agent_port, agent_version, capabilities, host_info) — it does not set `Host.status` or `last_heartbeat` | 2xx, returns `Host` row id |
 | GET | `/agent/driver-packs/desired` | `PackStateLoop` (~10 s) | desired pack list for this host | 200 → `{packs: [...]}` |
-| POST | `/agent/driver-packs/status` | `PackStateLoop` after each tick | report runtime/adapter state | 204 |
+| POST | `/agent/hosts/status` | consolidated status-push loop (`AGENT_STATUS_PUSH_INTERVAL_SEC`, default 10 s) | the one status-bearing channel: Appium nodes/processes, restart events, start failures, pack status, host telemetry, agent version/capabilities in a single envelope (`HostStatusPush`); stamps `Host.last_heartbeat` and flips a stale host back online | 204 |
 | GET | `/agent/appium-nodes/desired` | `NodeStateLoop` (5 s default) | desired Appium-node projection for this host | 200 → `{nodes: [...], generation_hint}` |
 | GET | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | `tarball_fetch` | download the sha256-pinned pack tarball | 2xx → tarball bytes |
 
 The node desired response contains `device_id`, `generation`, `desired_state`, `port`, drain flags, `grid_run_id`, and transition-token fields. A running node also receives `launch`, the complete payload built by `build_node_launch_payload`. If launch inputs are not runnable, the spec carries `launch: null` and `unrunnable_reason` instead of failing the whole host response.
 
-`NodeStateLoop` starts whenever the agent has a backend URL. It starts, stops, reconfigures, and reaps local orphan processes from the desired projection on every poll (5 s default, or immediately on a wake poke). An unexpired transition token forces one restart per agent process. The loop records applied generations and transition tokens in memory; `/agent/health` includes them on each running-node entry as `applied_generation` and `applied_transition_token`. The agent advertises `orchestration_contract_version: 3` unconditionally; the backend validates that contract at registration, then always writes desired state and pokes (see `docs/reference/architecture.md` for the contract-version floor).
+`NodeStateLoop` starts whenever the agent has a backend URL. It starts, stops, reconfigures, and reaps local orphan processes from the desired projection on every poll (5 s default, or immediately on a wake poke). A node's `restart_requested_at` watermark (`docs/design/02-node-lifecycle.md`) forces one respawn per agent process; the backend confirms the watermark is satisfied by comparing it against the `started_at` the agent reports on each running-node entry — both `/agent/health` and the consolidated status push carry that entry via `process_snapshot()`. The agent advertises `orchestration_contract_version: 5` unconditionally; the backend validates that contract at registration, then always writes desired state and pokes (see `docs/reference/architecture.md` for the contract-version floor).
 
 ## Node lifecycle: pull only
 
@@ -190,7 +190,7 @@ Per endpoint, a brief contract:
 | `/agent/appium/{port}/status` | yes | Read-only. |
 | `/agent/appium/{port}/logs` | yes | Read-only |
 | `/agent/driver-packs/desired` | yes | Read-only by host_id |
-| `/agent/driver-packs/status` | yes | Replaces previous status; full snapshot |
+| `/agent/hosts/status` | yes | Replaces previous snapshot; full consolidated status per push |
 | `/agent/appium-nodes/desired` | yes | Read-only projection by `host_id` |
 | `/agent/appium-nodes/refresh` | yes | Wake hint; a lost request costs at most one poll interval |
 
@@ -268,7 +268,7 @@ Operational note: pooled clients do not refresh DNS until they are closed. If a 
 
 ## Versioning
 
-One axis is hard-enforced; the rest is soft guidance. `orchestration_contract_version` (agent registration capabilities, checked against `MIN_ORCHESTRATION_CONTRACT_VERSION = 3` in `app/hosts/service.py`) is the hard gate: a pre-v3 agent is rejected at registration with HTTP 426, and any already-registered pre-v3 host is marked offline at scheduler startup — this is what guarantees every online host is running the node-pull agent. Beyond that floor, there is no formal endpoint-level API version. The backend separately records the agent's `version` from `/agent/health` on the `Host` row and computes `agent_version_status` against `agent.min_version` for operator visibility. The bootstrap installer and `/agent/health` `version_guidance` payload help keep agents within compatible ranges. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
+One axis is hard-enforced; the rest is soft guidance. `orchestration_contract_version` (agent registration capabilities, checked against `MIN_ORCHESTRATION_CONTRACT_VERSION = 5` in `app/hosts/service.py`) is the hard gate: a pre-v5 agent is rejected at registration with HTTP 426, and any already-registered pre-v5 host is marked offline at scheduler startup — this is what guarantees every online host pushes the consolidated status report. Beyond that floor, there is no formal endpoint-level API version. The backend separately records the agent's `version` (pushed on every consolidated status report, and on `/agent/health` for the local diagnostic) on the `Host` row and computes `agent_version_status` against `agent.min_version` for operator visibility. The bootstrap installer and `/agent/health` `version_guidance` payload help keep agents within compatible ranges. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
 
 `agent.min_version` is backend-enforced guidance for hosts that report to the current backend. It protects new backend expectations for old agents, but it cannot protect the opposite direction: an old backend calling an endpoint removed from a newer agent. Backend-called endpoint removals are safe only when the backend stops calling the endpoint before or at the same time the agent removes it. Roll those changes out backend-first, or deploy backend and agent together; do not roll newer agents across the fleet while an older backend still depends on the removed endpoint.
 

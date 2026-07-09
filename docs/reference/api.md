@@ -120,7 +120,7 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `POST` | `/api/hosts/register` | Host self-registration path used by the agent | `HostRegister` | `HostRead` |
+| `POST` | `/api/hosts/register` | Host self-registration, called by the agent at bootstrap and then periodically (`AGENT_REGISTRATION_REFRESH_INTERVAL_SEC`, default 300 s) to refresh enrollment fields (ip, os_type, agent_port, agent_version, capabilities, host_info). Enrollment-only — a re-register never touches `Host.status` or `last_heartbeat`, so it cannot resurrect an offline host. | `HostRegister` | `HostRead` |
 | `POST` | `/api/hosts` | Create a host manually | `HostCreate` | `HostRead` |
 | `GET` | `/api/hosts` | List hosts | none | `HostRead[]` |
 | `GET` | `/api/hosts/{host_id}` | Read host detail including current devices | path `host_id` | `HostDetail` |
@@ -163,7 +163,7 @@ Current validation rules:
 
 ## Agent Local API
 
-The agent exposes a local `/agent/health` endpoint. The response includes a `version_guidance` object with fields cached from the latest successful manager registration:
+The agent exposes a local `/agent/health` endpoint. It is now a network-partition diagnostic and the installer's self-update drain gate — the manager polls it on a cadence-gated basis (`general.partition_probe_interval_sec`) as a reachability probe only; it feeds no host-liveness or convergence state. The response includes a `version_guidance` object with fields cached from the latest successful manager registration:
 
 - `version_guidance.required_agent_version`: minimum supported agent version from the last successful manager registration.
 - `version_guidance.recommended_agent_version`: recommended agent version from the last successful manager registration.
@@ -181,14 +181,21 @@ Each `appium_processes.running_nodes` entry also includes `started_at`, the ISO-
 
 Running specs include the complete `launch` payload. Stopped specs use `launch: null`. A node whose launch inputs cannot be resolved also uses `launch: null` and includes `unrunnable_reason`; one blocked node does not fail the host response. The refresh endpoint returns `202` as a best-effort wake hint.
 
-Orchestration-contract-v3 agents run the pull loop whenever a backend URL is configured. Contract version 3 is the compatibility signal for pull-only node orchestration; there is no backend push path.
+Orchestration-contract-v5 agents run the pull loop whenever a backend URL is configured. Contract version 5 is the compatibility signal for pull-only node orchestration: the backend never pushes a node command to the agent — the only backend→agent node signal is the best-effort refresh poke. (This is a separate axis from the agent→backend status push below, which does exist.)
 
 ## Agent Driver-Pack State
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/agent/driver-packs/desired` | Agent fetches desired driver-pack runtime state | `host_id` | desired pack/runtime payload |
-| `POST` | `/agent/driver-packs/status` | Agent reports installed runtimes, pack status, and doctor checks | status payload | empty `204` |
+
+## Agent Consolidated Status Push
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `POST` | `/agent/hosts/status` | The one status-bearing channel from agent to backend, sent every `AGENT_STATUS_PUSH_INTERVAL_SEC` (default 10 s) | `HostStatusPush`: `host_id`, `appium_processes` (running nodes, restart events, start failures), `packs` (installed runtimes, pack status, doctor checks — replaces the old `POST /agent/driver-packs/status`), `host_telemetry`, `agent_version`, `capabilities`, `missing_prerequisites` | empty `204` |
+
+Stamps `Host.last_heartbeat` (recency drives liveness, see `general.host_offline_after_sec`) and flips a stale/offline host back online. Pack status has no separate channel — it rides inside this push's `packs` section.
 
 ## Driver Packs
 

@@ -22,9 +22,9 @@ describe('eventRegistry', () => {
       kind: 'text',
       text: 'Appium node for Pixel 7 crashed',
     });
-    expect(formatEventDetails('host.heartbeat_lost', { hostname: 'lab-linux-01', missed_count: 3 })).toEqual({
+    expect(formatEventDetails('host.heartbeat_lost', { hostname: 'lab-linux-01', stale_for_sec: 90 })).toEqual({
       kind: 'text',
-      text: 'lab-linux-01: 3 missed heartbeats',
+      text: 'lab-linux-01: no status push for 90s',
     });
   });
 

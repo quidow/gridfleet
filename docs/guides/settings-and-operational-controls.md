@@ -35,8 +35,8 @@ The `General` tab controls the manager's background loops and automatic recovery
 
 Most important settings:
 
-- `heartbeat_interval_sec` and `max_missed_heartbeats`
-  - together determine how quickly a quiet host becomes `offline`
+- `heartbeat_interval_sec`, `host_offline_after_sec`, and `partition_probe_interval_sec`
+  - together determine how host liveness is derived from agent status pushes (`host_offline_after_sec` since the last push) and how often the reachability probe checks for a network partition
 - `node_check_interval_sec` and `node_max_failures`
   - control how fast node-health failures trigger automatic restart behavior
 - `device_check_interval_sec`

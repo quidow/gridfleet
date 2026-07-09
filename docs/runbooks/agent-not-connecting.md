@@ -28,7 +28,20 @@ curl -s http://HOST_IP:5100/agent/health | python -m json.tool
 
 If this fails, the agent service, local firewall, host routing, or DNS/IP assignment is the first problem to solve.
 
-## 3. Check manager-to-agent reachability from inside the backend container
+## 3. Check whether the backend is actually seeing status pushes (forward direction)
+
+Host liveness is push-recency based, not probe-based: the agent pushes `POST /agent/hosts/status` every `AGENT_STATUS_PUSH_INTERVAL_SEC` (default 10 s), and `host_sweep` marks a host offline once `last_heartbeat` is older than `general.host_offline_after_sec` (default 45 s). Check this first — a healthy `curl` to `/agent/health` does not mean the backend is receiving pushes.
+
+```bash
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/hosts/HOST_ID | python -m json.tool   # check last_heartbeat recency
+curl -s http://localhost:8000/metrics | grep gridfleet_host_status_pushes_total                                                     # push counter, per host_id label
+```
+
+If `last_heartbeat` is stale and the push counter isn't advancing for this host, check the agent's own logs for `status push failed` (step 4) before assuming a network problem — the agent logs its own push failures.
+
+## 4. Check manager-to-agent reachability (reverse direction — partition-probe diagnostic only)
+
+This is the same check the backend's own `general.partition_probe_interval_sec`-gated `/agent/health` probe performs. It no longer drives host liveness — it is a network-partition diagnostic and the installer's self-update drain gate. A failure here explains *why* pushes might not be reaching the backend (if the network is down both ways), but a success here does not clear the agent — go back to step 3.
 
 ```bash
 cd docker
@@ -38,7 +51,7 @@ docker compose --env-file .env -f docker-compose.prod.yml exec backend \
 
 If this fails but step 2 succeeds, the problem is network reachability from the manager host to the agent host.
 
-## 4. Check the agent service manager on the host
+## 5. Check the agent service manager on the host
 
 Linux:
 
@@ -55,7 +68,7 @@ tail -n 200 ~/Library/Logs/gridfleet-agent/stdout.log
 tail -n 200 ~/Library/Logs/gridfleet-agent/stderr.log
 ```
 
-## 5. Verify the agent process configuration
+## 6. Verify the agent process configuration
 
 Linux:
 
@@ -74,7 +87,7 @@ Check that:
 - `AGENT_MANAGER_URL` points at the backend port
 - `AGENT_ADVERTISE_IP` (if set) is an address the backend and the WebDriver router can reach, since the router connects directly to this host's Appium ports
 
-## 6. Recover the host in the manager
+## 7. Recover the host in the manager
 
 If the host is still `pending` but expected:
 
@@ -88,10 +101,11 @@ After connectivity is restored, refresh discovery:
 curl -X POST -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/hosts/HOST_ID/discover | python -m json.tool
 ```
 
-## 7. When to escalate
+## 8. When to escalate
 
 Escalate beyond the manager if:
 
 - direct `curl` to `/agent/health` fails on the host itself
+- `last_heartbeat` is stale, the push counter isn't advancing, and the agent's own logs show no `status push failed` entries (the push loop itself may be wedged)
 - the service manager shows repeated process crashes
 - the manager host can reach the agent, but Grid URLs are wrong or blocked for all hosts
