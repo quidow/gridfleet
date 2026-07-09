@@ -26,16 +26,12 @@ def _host_identity(value: str) -> HostIdentity:
 class _StaticClient:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
-        self.posted: list[dict[str, Any]] = []
 
     def set_payload(self, payload: dict[str, Any]) -> None:
         self._payload = payload
 
     async def fetch_desired(self) -> dict[str, Any]:
         return self._payload
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
-        self.posted.append(payload)
 
 
 class _FakeRuntimeMgr:

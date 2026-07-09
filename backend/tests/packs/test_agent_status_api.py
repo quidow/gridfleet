@@ -16,8 +16,15 @@ _status_svc = PackStatusService()
 
 
 def _make_payload(host_id: str) -> dict:
+    """Consolidated status-push body carrying the pack section (Task 1 route)."""
     return {
         "host_id": host_id,
+        "packs": _pack_section(),
+    }
+
+
+def _pack_section() -> dict:
+    return {
         "runtimes": [
             {
                 "runtime_id": "abc123",
@@ -60,7 +67,7 @@ async def test_status_upsert_creates_runtime_and_installation(client: AsyncClien
 
     payload = _make_payload(host_id)
 
-    resp = await client.post("/agent/driver-packs/status", json=payload)
+    resp = await client.post("/agent/hosts/status", json=payload)
     assert resp.status_code == 204
 
     installs = (await db_session.execute(select(HostPackInstallation))).scalars().all()
@@ -83,20 +90,22 @@ async def test_agent_status_persists_blocked_reason(
     await seed_test_packs(db_session)
     payload = {
         "host_id": default_host_id,
-        "runtimes": [],
-        "packs": [
-            {
-                "pack_id": "appium-xcuitest",
-                "pack_release": "2026.04.0",
-                "runtime_id": None,
-                "status": "blocked",
-                "blocked_reason": "adapter_unavailable",
-            }
-        ],
-        "doctor": [],
+        "packs": {
+            "runtimes": [],
+            "packs": [
+                {
+                    "pack_id": "appium-xcuitest",
+                    "pack_release": "2026.04.0",
+                    "runtime_id": None,
+                    "status": "blocked",
+                    "blocked_reason": "adapter_unavailable",
+                }
+            ],
+            "doctor": [],
+        },
     }
 
-    response = await client.post("/agent/driver-packs/status", json=payload)
+    response = await client.post("/agent/hosts/status", json=payload)
 
     assert response.status_code == 204
     row = (
@@ -123,9 +132,9 @@ async def test_status_upsert_is_idempotent(client: AsyncClient, db_session: Asyn
     payload = _make_payload(host_id)
 
     # POST twice
-    resp1 = await client.post("/agent/driver-packs/status", json=payload)
+    resp1 = await client.post("/agent/hosts/status", json=payload)
     assert resp1.status_code == 204
-    resp2 = await client.post("/agent/driver-packs/status", json=payload)
+    resp2 = await client.post("/agent/hosts/status", json=payload)
     assert resp2.status_code == 204
 
     # Exactly 1 row each — upsert, not append

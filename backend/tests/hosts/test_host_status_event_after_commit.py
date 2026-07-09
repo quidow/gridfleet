@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import time
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
 from app.appium_nodes.services.heartbeat import HeartbeatService
-from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.core.timeutil import now_utc
 from tests.fakes import FakeSettingsReader
 from tests.helpers import run_one_heartbeat_cycle, seed_host_with_devices, settle_after_commit_tasks
 
@@ -17,46 +19,31 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
-_DEAD_RESULT = HeartbeatPingResult(
-    outcome=HeartbeatOutcome.connect_error,
-    payload=None,
-    duration_ms=0,
-    client_mode=ClientMode.pooled,
-    http_status=None,
-    error_category=None,
-)
-
 
 async def test_host_offline_cascade_queues_all_events(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="cascade")
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="cascade")
+    # Offline now derives from status-push recency: no push within the offline window.
+    host.last_heartbeat = now_utc() - timedelta(minutes=10)
+    await db_session.commit()
     event_bus_capture.clear()
 
-    monkeypatch.setattr("app.appium_nodes.services.heartbeat._ping_agent", AsyncMock(return_value=_DEAD_RESULT))
     from tests.helpers import test_event_bus as event_bus
 
-    # The resume guard uses _last_cycle_monotonic to detect a paused
-    # backend (>= max_missed * interval gap between cycles). On slow CI runners the
-    # gap between the last unrelated test that ran a host sweep and this one can
-    # exceed the threshold, causing the guard to swallow the offline cascade we are
-    # asserting. Reset to None so the guard treats this call as the first cycle.
     svc = HeartbeatService(
         publisher=event_bus,
-        settings=FakeSettingsReader(
-            {
-                "general.max_missed_heartbeats": 1,
-                "general.heartbeat_interval_sec": 60,
-            }
-        ),
+        settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
     )
-    svc._last_cycle_monotonic = None
+    # A recent prior-cycle marker makes this sweep's begin_cycle() unguarded (a
+    # small monotonic gap), so the stale host flips offline instead of being
+    # swallowed as a first-cycle-after-boot resume.
+    svc._last_cycle_monotonic = time.monotonic()
 
     await run_one_heartbeat_cycle(db_session, svc)
     await settle_after_commit_tasks()

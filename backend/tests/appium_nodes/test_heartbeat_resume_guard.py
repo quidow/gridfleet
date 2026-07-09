@@ -1,122 +1,46 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
-import pytest
-
-import app.appium_nodes.services.heartbeat as hb
-from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.appium_nodes.services.heartbeat import HeartbeatService
 from tests.fakes import FakeSettingsReader
-from tests.helpers import run_one_heartbeat_cycle
-
-if TYPE_CHECKING:
-    from app.hosts.models import Host
 
 
-def test_resume_guard_helper() -> None:
-    assert (
-        hb._resume_guard_active(
-            last_cycle_monotonic=100.0,
-            now_monotonic=350.0,
-            interval_sec=15.0,
-            max_missed=3,
-        )
-        is True
-    )
-    assert (
-        hb._resume_guard_active(
-            last_cycle_monotonic=300.0,
-            now_monotonic=320.0,
-            interval_sec=15.0,
-            max_missed=3,
-        )
-        is False
-    )
-    assert (
-        hb._resume_guard_active(
-            last_cycle_monotonic=None,
-            now_monotonic=100.0,
-            interval_sec=15.0,
-            max_missed=3,
-        )
-        is False
-    )
-    # Equality boundary: gap == interval * max_missed → guard NOT active (genuine miss).
-    assert (
-        hb._resume_guard_active(
-            last_cycle_monotonic=300.0,
-            now_monotonic=345.0,
-            interval_sec=15.0,
-            max_missed=3,
-        )
-        is False
-    )
-
-
-def _ok() -> HeartbeatPingResult:
-    return HeartbeatPingResult(
-        outcome=HeartbeatOutcome.success,
-        payload={"status": "ok"},
-        duration_ms=10,
-        client_mode=ClientMode.pooled,
-        http_status=200,
-        error_category=None,
-    )
-
-
-def _timeout() -> HeartbeatPingResult:
-    return HeartbeatPingResult(
-        outcome=HeartbeatOutcome.timeout,
-        payload=None,
-        duration_ms=4_000,
-        client_mode=ClientMode.pooled,
-        http_status=None,
-        error_category="ReadTimeout",
-    )
-
-
-@pytest.mark.asyncio
-async def test_long_gap_then_recovery_does_not_emit_offline(
-    monkeypatch: pytest.MonkeyPatch,
-    db_session: object,
-    db_session_maker: object,
-    db_host: Host,
-    event_bus_capture: list[tuple[str, dict[str, object]]],
-) -> None:
-    """Set _LAST_CYCLE_MONOTONIC to (now - 10*interval). Cycle 1: timeout; guard active.
-    Cycle 2: success. No host.status_changed online->offline event must appear."""
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    assert isinstance(db_session, AsyncSession)
-
-    # Pre-position the cycle counter as if we paused for 10 intervals (10 * 15 = 150s gap).
-    svc = hb.HeartbeatService(
+def _svc() -> HeartbeatService:
+    return HeartbeatService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        session_factory=db_session_maker,
+        session_factory=Mock(),
     )
-    svc._last_cycle_monotonic = time.monotonic() - 10 * 15.0
 
-    # Cycle 1: agent times out but guard is active — should NOT mark host offline.
-    with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_timeout())):
-        await run_one_heartbeat_cycle(db_session, svc)
 
-    # Cycle 2: agent comes back online.
-    with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
-        await run_one_heartbeat_cycle(db_session, svc)
+def test_begin_cycle_first_cycle_is_always_guarded() -> None:
+    """The first cycle after process start is guarded: last_heartbeat may be
+    stale from before a restart while agents are still (re)pushing."""
+    svc = _svc()
+    guard = svc.begin_cycle()
+    assert guard.active is True
+    assert guard.gap_sec is None
+    assert guard.threshold_sec == 45  # general.host_offline_after_sec default
 
-    # Yield to the event loop so any after-commit publish tasks can run.
-    import asyncio
 
-    await asyncio.sleep(0)
+def test_begin_cycle_quick_follow_up_is_unguarded() -> None:
+    svc = _svc()
+    svc.begin_cycle()  # first cycle -> guarded
+    guard = svc.begin_cycle()  # tiny real monotonic gap
+    assert guard.active is False
 
-    offline_events = [
-        (name, payload)
-        for name, payload in event_bus_capture
-        if name == "host.status_changed" and payload.get("new_status") == "offline"
-    ]
-    assert offline_events == [], f"Unexpected offline events: {offline_events}"
+
+def test_begin_cycle_reguards_after_a_long_backend_pause() -> None:
+    """A monotonic gap wider than host_offline_after_sec means the backend itself
+    was paused (preemption, debugger) — re-arm the guard so healthy hosts are not
+    flapped offline on the resume cycle."""
+    svc = _svc()
+    guard = svc.begin_cycle()
+    svc._last_cycle_monotonic = time.monotonic() - 10 * guard.threshold_sec
+    resumed = svc.begin_cycle()
+    assert resumed.active is True
+    assert resumed.gap_sec is not None and resumed.gap_sec > guard.threshold_sec

@@ -247,6 +247,29 @@ async def test_port_occupied_start_failure_is_recorded_as_port_conflict() -> Non
 
 
 @pytest.mark.asyncio
+async def test_notify_change_fires_on_start_and_stop() -> None:
+    notifications: list[None] = []
+    manager = _Manager([_Info(port=4723, connection_target="device-1")])
+    loop = NodeStateLoop(
+        client=_Client([_node(port=4723), _node(port=4724)]),
+        manager=manager,
+        notify_change=lambda: notifications.append(None),
+    )
+
+    # First run: port 4723 is already running and unchanged (no-op converge),
+    # port 4724 must be started. Only the start should notify.
+    await loop.run_once()
+    assert manager.started == [manager.started[0]]  # started exactly once
+    assert len(notifications) == 1
+
+    # Desired drops port 4724: it stops via the orphan path.
+    loop.client = _Client([_node(port=4723)])
+    await loop.run_once()
+    assert manager.stopped == [4724]
+    assert len(notifications) == 2
+
+
+@pytest.mark.asyncio
 async def test_other_start_failure_is_recorded_as_spawn_failed() -> None:
     manager = _Manager(fail_start_with=RuntimeMissingError("appium executable not found"))
     loop = NodeStateLoop(client=_Client([_node()]), manager=manager)

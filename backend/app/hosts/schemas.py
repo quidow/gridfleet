@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.schemas.device import DeviceRead
@@ -16,6 +16,21 @@ class HostCreate(BaseModel):
     ip: str
     os_type: OSType
     agent_port: int | None = None
+
+
+class HostStatusPush(BaseModel):
+    """Consolidated agent status push. Sections stay flexible dicts inside a
+    typed envelope; extra keys are ignored for forward compatibility."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    host_id: uuid.UUID
+    agent_version: str | None = None
+    capabilities: dict[str, Any] | None = None
+    missing_prerequisites: list[str] | None = None
+    appium_processes: dict[str, Any] = Field(default_factory=dict)
+    host_telemetry: dict[str, Any] | None = None
+    packs: dict[str, Any] | None = None
 
 
 class HostHardwareInfo(BaseModel):

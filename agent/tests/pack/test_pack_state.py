@@ -132,13 +132,9 @@ def _generic_pack(
 class _FakeClient:
     def __init__(self, desired_payload: dict[str, Any]) -> None:
         self._desired = desired_payload
-        self.posted: list[dict[str, Any]] = []
 
     async def fetch_desired(self) -> dict[str, Any]:
         return self._desired
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
-        self.posted.append(payload)
 
 
 class _FailingRuntimeMgr:
@@ -207,7 +203,8 @@ async def test_blocked_pack_has_blocked_reason_attached() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
     assert "appium-uiautomator2" in by_pack
     assert by_pack["appium-uiautomator2"]["status"] == "blocked"
@@ -230,7 +227,8 @@ async def test_blocked_runtime_does_not_contaminate_installed_pack() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
 
     # Android pack installed, iOS pack blocked
@@ -255,7 +253,8 @@ async def test_installed_packs_are_not_blocked_by_host_probe_support() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
 
     # Android pack installed normally
@@ -284,7 +283,8 @@ async def test_runtime_entry_includes_blocked_reason_key() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     for rt in payload["runtimes"]:
         assert "blocked_reason" in rt, f"runtime {rt.get('runtime_id')} missing blocked_reason"
         assert rt["blocked_reason"] is None  # installed runtimes have no blocked_reason
@@ -305,7 +305,8 @@ async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     assert payload["doctor"] == []
 
 
@@ -321,7 +322,8 @@ async def test_xcuitest_pack_with_no_adapter_posts_empty_doctor_list() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     assert payload["doctor"] == []
 
 
@@ -344,7 +346,8 @@ async def test_adapter_load_failure_surfaces_as_doctor_entry() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     assert payload["doctor"] == [
         {
             "pack_id": "appium-uiautomator2",
@@ -378,7 +381,8 @@ async def test_manual_pack_is_not_blocked_as_unsupported() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
     assert by_pack["local-manual"]["blocked_reason"] is None
 
@@ -404,7 +408,8 @@ async def test_network_endpoint_pack_is_not_blocked_as_unsupported() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
     assert by_pack["local-network"]["blocked_reason"] is None
 
@@ -427,7 +432,8 @@ async def test_doctor_runs_on_first_install() -> None:
     # First run: runtime is new, doctor should fire
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     assert payload["doctor"] == [
         {
             "pack_id": "appium-uiautomator2",
@@ -440,7 +446,8 @@ async def test_doctor_runs_on_first_install() -> None:
     # Second run: same runtime, doctor should NOT fire
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     assert payload["doctor"] == []
 
 
@@ -465,6 +472,26 @@ async def test_apple_devicectl_pack_is_not_blocked_as_unsupported() -> None:
 
     await loop.run_once()
 
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
     assert by_pack["local-apple-devicectl"]["blocked_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_once_calls_on_status_once_and_stores_status_without_host_id() -> None:
+    calls: list[None] = []
+    client = _FakeClient(_make_desired([_android_pack()]))
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        on_status=lambda: calls.append(None),
+    )
+
+    await loop.run_once()
+
+    assert len(calls) == 1
+    payload = loop.latest_status()
+    assert payload is not None
+    assert set(payload) == {"runtimes", "packs", "doctor"}

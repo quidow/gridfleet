@@ -107,24 +107,6 @@ async def test_agent_health_returns_none_on_invalid_json() -> None:
     assert result is None
 
 
-async def test_agent_host_telemetry_returns_none_on_invalid_json() -> None:
-    """agent_host_telemetry should return None when the body is not valid JSON."""
-    client = StrictAgentClient(
-        get_response=_text_response(
-            "GET", "http://10.0.0.5:5100/agent/host/telemetry", status_code=200, text=_INVALID_JSON_TEXT
-        ),
-    )
-    result = await agent_operations.agent_host_telemetry(
-        "10.0.0.5",
-        5100,
-        http_client_factory=_strict_client_factory(client),
-        timeout=5,
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-    assert result is None
-
-
 async def test_appium_status_returns_none_on_invalid_json() -> None:
     """appium_status should return None when the body is not valid JSON."""
     client = StrictAgentClient(

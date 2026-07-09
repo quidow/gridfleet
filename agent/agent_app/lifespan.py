@@ -30,6 +30,7 @@ from agent_app.pack.state import PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.registration import RegistrationService
 from agent_app.registration import manager_auth as _manager_auth  # tests patch agent_app.lifespan._manager_auth
+from agent_app.status_push import StatusPushClient, StatusPushLoop
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -95,12 +96,17 @@ class HttpPackStateClient(PackStateClient):
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 
+
+class HttpStatusPushClient(StatusPushClient):
+    def __init__(self, base_url: str) -> None:
+        self._base = base_url.rstrip("/")
+
     async def post_status(self, payload: dict[str, Any]) -> None:
         client = get_shared_http_client()
         kwargs: dict[str, Any] = {"json": payload, "timeout": 15.0}
         if (auth := _manager_auth()) is not None:
             kwargs["auth"] = auth
-        resp = await client.post(f"{self._base}/agent/driver-packs/status", **kwargs)
+        resp = await client.post(f"{self._base}/agent/hosts/status", **kwargs)
         resp.raise_for_status()
 
 
@@ -162,6 +168,7 @@ async def _start_pack_loop_when_ready(
     backend_url: str,
     runtime_registry: RuntimeRegistry,
     adapter_registry: AdapterRegistry,
+    on_status: Callable[[], None] | None,
 ) -> None:
     await host_identity.wait()
     app.state.pack_state_loop_enabled = True
@@ -175,19 +182,31 @@ async def _start_pack_loop_when_ready(
         runtime_registry=runtime_registry,
         adapter_registry=adapter_registry,
         adapter_loader=adapter_loader,
+        on_status=on_status,
     )
     app.state.pack_state_loop = loop
     await loop.run_forever()
 
 
-async def _start_node_loop_when_ready(app: FastAPI, host_identity: HostIdentity, backend_url: str) -> None:
+async def _start_node_loop_when_ready(
+    app: FastAPI,
+    host_identity: HostIdentity,
+    backend_url: str,
+    notify_change: Callable[[], None] | None,
+) -> None:
     await host_identity.wait()
     loop = NodeStateLoop(
         client=HttpNodeStateClient(backend_url, host_identity),
         manager=appium_mgr,
         poll_interval=agent_settings.runtime.node_poll_interval_sec,
+        notify_change=notify_change,
     )
     app.state.node_state_loop = loop
+    await loop.run_forever()
+
+
+async def _start_status_loop_when_ready(host_identity: HostIdentity, loop: StatusPushLoop) -> None:
+    await host_identity.wait()
     await loop.run_forever()
 
 
@@ -209,6 +228,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
     app.state.node_state_loop = None
+    app.state.status_push_loop = None
     version_guidance = VersionGuidanceStore()
     app.state.version_guidance = version_guidance
 
@@ -242,16 +262,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     appium_mgr.set_adapter_registry(adapter_registry)
     appium_mgr.start_log_maintenance()
 
+    status_loop: StatusPushLoop | None = None
+    status_task: asyncio.Task[None] | None = None
+    if backend_url:
+        status_loop = StatusPushLoop(
+            client=HttpStatusPushClient(backend_url),
+            manager=appium_mgr,
+            capabilities_cache=capabilities_cache,
+            host_identity=host_identity,
+            pack_status=lambda: app.state.pack_state_loop.latest_status() if app.state.pack_state_loop else None,
+            push_interval=agent_settings.core.status_push_interval_sec,
+        )
+        app.state.status_push_loop = status_loop
+        status_task = asyncio.create_task(_start_status_loop_when_ready(host_identity, status_loop))
+        status_task.add_done_callback(_watchdog("status_push_loop"))
+
     pack_task: asyncio.Task[None] | None = None
     if backend_url:
         pack_task = asyncio.create_task(
-            _start_pack_loop_when_ready(app, host_identity, backend_url, runtime_registry, adapter_registry)
+            _start_pack_loop_when_ready(
+                app,
+                host_identity,
+                backend_url,
+                runtime_registry,
+                adapter_registry,
+                status_loop.wake if status_loop else None,
+            )
         )
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
 
     node_task: asyncio.Task[None] | None = None
     if backend_url:
-        node_task = asyncio.create_task(_start_node_loop_when_ready(app, host_identity, backend_url))
+        node_task = asyncio.create_task(
+            _start_node_loop_when_ready(app, host_identity, backend_url, status_loop.wake if status_loop else None)
+        )
         node_task.add_done_callback(_watchdog("node_state_loop"))
 
     try:
@@ -261,6 +305,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             node_task.cancel()
         if pack_task is not None:
             pack_task.cancel()
+        if status_task is not None:
+            status_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
         await appium_mgr.shutdown()

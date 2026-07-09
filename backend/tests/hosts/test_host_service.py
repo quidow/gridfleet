@@ -18,12 +18,12 @@ from app.hosts.service import HostCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
-CAPS_V4 = {"orchestration_contract_version": 4}
+CAPS_V5 = {"orchestration_contract_version": 5}
 
 
 def test_validate_orchestration_contract_ignores_unknown_capability_keys() -> None:
     host_service.validate_orchestration_contract(
-        {"orchestration_contract_version": 4, "future_agent_capability": True},
+        {"orchestration_contract_version": 5, "future_agent_capability": True},
         host_label="newer-agent",
     )
 
@@ -84,7 +84,7 @@ async def test_delete_host_rejects_attached_devices(db_session: AsyncSession) ->
         await svc.delete_host(db_session, host.id)
 
 
-async def test_register_host_updates_existing_offline_host(db_session: AsyncSession) -> None:
+async def test_register_host_does_not_resurrect_offline_host(db_session: AsyncSession) -> None:
     host = Host(
         hostname="re-register",
         ip="10.0.0.1",
@@ -104,15 +104,16 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
             os_type=OSType.macos,
             agent_port=None,
             agent_version="2.0.0",
-            capabilities={**CAPS_V4, "missing_prerequisites": ["adb", 5]},
+            capabilities={**CAPS_V5, "missing_prerequisites": ["adb", 5]},
         ),
     )
 
     assert is_new is False
     assert registered.ip == "10.0.0.99"
     assert registered.os_type == OSType.macos
-    assert registered.status == HostStatus.online
-    assert registered.capabilities == {**CAPS_V4, "missing_prerequisites": ["adb"]}
+    # only a status push flips a host online
+    assert registered.status == HostStatus.offline
+    assert registered.capabilities == {**CAPS_V5, "missing_prerequisites": ["adb"]}
 
 
 async def test_register_host_creates_pending_or_online_host_based_on_setting(
@@ -129,7 +130,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             ip="10.0.0.20",
             os_type=OSType.linux,
             agent_port=None,
-            capabilities=CAPS_V4,
+            capabilities=CAPS_V5,
         ),
     )
 
@@ -148,7 +149,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             ip="10.0.0.21",
             os_type=OSType.linux,
             agent_port=None,
-            capabilities=CAPS_V4,
+            capabilities=CAPS_V5,
         ),
     )
     assert online_host.status == HostStatus.online
@@ -220,7 +221,7 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
             ip="10.0.0.51",
             os_type=OSType.linux,
             agent_port=5200,
-            capabilities=CAPS_V4,
+            capabilities=CAPS_V5,
         ),
     )
 
@@ -234,7 +235,7 @@ async def test_register_host_rejects_unsupported_agent_contract(db_session: Asyn
         None,
         {},
         {"orchestration_contract_version": 1},
-        {"orchestration_contract_version": 3},  # pre-4 agents are now rejected
+        {"orchestration_contract_version": 4},  # pre-5 agents are now rejected
         {"orchestration_contract_version": "bad"},
     )
     for capabilities in unsupported_values:

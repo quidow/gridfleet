@@ -10,7 +10,7 @@ from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover
-from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.conftest import test_circuit_breaker
 from tests.helpers import create_device_record
 
@@ -266,24 +266,28 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
     )
     await control_plane_state_store.set_value(
         db_session,
-        APPIUM_PROCESSES_NAMESPACE,
+        HOST_STATUS_NAMESPACE,
         host["id"],
         {
-            "reported_at": "2026-04-04T10:00:02+00:00",
-            "running_nodes": [
-                {
-                    "port": 4723,
-                    "pid": 2222,
-                    "connection_target": "dev-runtime-1",
-                    "platform_id": "android_mobile",
+            "received_at": "2026-04-04T10:00:02+00:00",
+            "payload": {
+                "appium_processes": {
+                    "running_nodes": [
+                        {
+                            "port": 4723,
+                            "pid": 2222,
+                            "connection_target": "dev-runtime-1",
+                            "platform_id": "android_mobile",
+                        },
+                        {
+                            "port": 4999,
+                            "pid": 9999,
+                            "connection_target": "mystery-runtime",
+                            "platform_id": "android_tv",
+                        },
+                    ],
                 },
-                {
-                    "port": 4999,
-                    "pid": 9999,
-                    "connection_target": "mystery-runtime",
-                    "platform_id": "android_tv",
-                },
-            ],
+            },
         },
     )
     await db_session.commit()
@@ -346,13 +350,17 @@ async def test_get_host_diagnostics_keeps_last_snapshot_visible_for_offline_host
     await db_session.flush()
     await control_plane_state_store.set_value(
         db_session,
-        APPIUM_PROCESSES_NAMESPACE,
+        HOST_STATUS_NAMESPACE,
         str(host.id),
         {
-            "reported_at": "2026-04-04T10:30:00+00:00",
-            "running_nodes": [
-                {"port": 4725, "pid": 5005, "connection_target": "stale-node", "platform_id": "roku_network"}
-            ],
+            "received_at": "2026-04-04T10:30:00+00:00",
+            "payload": {
+                "appium_processes": {
+                    "running_nodes": [
+                        {"port": 4725, "pid": 5005, "connection_target": "stale-node", "platform_id": "roku_network"}
+                    ],
+                },
+            },
         },
     )
     await db_session.commit()
@@ -462,7 +470,7 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.0.9",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
             },
         )
 
@@ -508,7 +516,7 @@ async def test_reregister_closes_open_circuit_breaker(client: AsyncClient) -> No
         "os_type": "linux",
         "agent_port": 5100,
         "agent_version": "0.3.0",
-        "capabilities": {"orchestration_contract_version": 4},
+        "capabilities": {"orchestration_contract_version": 5},
     }
     first = await client.post("/api/hosts/register", json=body)
     assert first.status_code in (200, 201)
@@ -538,7 +546,7 @@ async def test_hosts_list_and_detail_include_recommended_agent_version(client: A
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.2.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
             },
         )
 
@@ -567,7 +575,7 @@ async def test_agent_update_available_false_when_current(client: AsyncClient) ->
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.3.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
             },
         )
 
@@ -589,7 +597,7 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
                     "platforms": ["android_mobile", "roku"],
                     "tools": {"appium": "3.0.0"},
                     "missing_prerequisites": ["java"],
-                    "orchestration_contract_version": 4,
+                    "orchestration_contract_version": 5,
                 },
             },
         )
@@ -629,7 +637,7 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.1.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
             },
         )
         host_id = register_resp.json()["id"]
@@ -693,7 +701,7 @@ async def test_register_host_persists_hardware_info(client: AsyncClient) -> None
                 "os_type": "macos",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
                 "host_info": {
                     "os_version": "macOS 14.5",
                     "kernel_version": "Darwin 23.5.0",
@@ -727,7 +735,7 @@ async def test_register_host_without_host_info_keeps_columns_null(client: AsyncC
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
             },
         )
 
@@ -796,7 +804,7 @@ async def test_register_host_does_not_overwrite_hardware_info_with_null(client: 
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
                 "host_info": {
                     "os_version": "Ubuntu 22.04.3 LTS",
                     "cpu_cores": 8,
@@ -814,7 +822,7 @@ async def test_register_host_does_not_overwrite_hardware_info_with_null(client: 
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.11.0",
-                "capabilities": {"orchestration_contract_version": 4},
+                "capabilities": {"orchestration_contract_version": 5},
                 "host_info": {
                     "cpu_arch": "x86_64",
                 },

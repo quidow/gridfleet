@@ -19,6 +19,7 @@ from app.hosts.schemas import (
     HostDiagnosticsRead,
     HostRecoveryEventRead,
 )
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
 
-APPIUM_PROCESSES_NAMESPACE = "heartbeat.appium_processes"
 RECENT_RECOVERY_EVENT_FETCH_LIMIT = 50
 RECENT_RECOVERY_EVENT_LIMIT = 10
 
@@ -74,11 +74,16 @@ def _normalize_process_nodes(raw_nodes: object) -> list[ProcessNodePayload]:
 
 
 async def _build_appium_processes_snapshot(db: AsyncSession, host: Host) -> HostAppiumProcessesRead:
-    raw_snapshot = await control_plane_state_store.get_value(db, APPIUM_PROCESSES_NAMESPACE, str(host.id))
+    raw_snapshot = await control_plane_state_store.get_value(db, HOST_STATUS_NAMESPACE, str(host.id))
     if not isinstance(raw_snapshot, dict):
         return HostAppiumProcessesRead()
 
-    normalized_nodes = _normalize_process_nodes(raw_snapshot.get("running_nodes"))
+    payload = raw_snapshot.get("payload")
+    processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+    if not isinstance(processes, dict):
+        return HostAppiumProcessesRead()
+
+    normalized_nodes = _normalize_process_nodes(processes.get("running_nodes"))
     ports = [node["port"] for node in normalized_nodes]
     nodes_by_port: dict[int, AppiumNode] = {}
     if ports:
@@ -113,7 +118,7 @@ async def _build_appium_processes_snapshot(db: AsyncSession, host: Host) -> Host
             )
         )
 
-    reported_at = raw_snapshot.get("reported_at")
+    reported_at = raw_snapshot.get("received_at")
     normalized_reported_at: datetime | None = None
     if isinstance(reported_at, datetime):
         normalized_reported_at = reported_at

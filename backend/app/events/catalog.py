@@ -170,7 +170,7 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         description="Host missed enough heartbeats to be considered lost.",
         default_severity="critical",
         allowed_severities=frozenset({"critical", "warning"}),
-        typical_data_fields=("host_id", "hostname", "missed_count"),
+        typical_data_fields=("host_id", "hostname", "stale_for_sec", "last_push_at"),
     ),
     PublicEventDefinition(
         name="host.discovery_completed",

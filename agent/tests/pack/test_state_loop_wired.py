@@ -38,6 +38,8 @@ def test_pack_state_loop_enabled_when_host_id_env_set(monkeypatch: pytest.Monkey
     with ExitStack() as stack:
         for mock in _mock_lifespan_deps():
             stack.enter_context(mock)
+        status_loop_cls = stack.enter_context(patch("agent_app.lifespan.StatusPushLoop"))
+        status_loop_cls.return_value.run_forever = AsyncMock()
         with TestClient(app, raise_server_exceptions=True):
             assert app.state.pack_state_loop_enabled is True
 

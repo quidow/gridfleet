@@ -5,13 +5,16 @@ import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from agent_app.appium.exceptions import PortOccupiedError
 from agent_app.appium.schemas import AppiumStartRequest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ class NodeStateLoop:
     client: NodeStateClient
     manager: Any
     poll_interval: float = 5.0
+    notify_change: Callable[[], None] | None = None
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     async def run_once(self) -> None:
@@ -57,6 +61,7 @@ class NodeStateLoop:
         for port in sorted(set(running_by_port) - desired_ports):
             try:
                 await self.manager.stop(port)
+                self._notify()
             except Exception:
                 logger.exception("failed to stop orphan Appium process on port %d", port)
 
@@ -66,6 +71,7 @@ class NodeStateLoop:
             if local is not None:
                 await self.manager.stop(spec.port)
                 running_by_port.pop(spec.port, None)
+                self._notify()
             return
 
         if spec.desired_state != "running":
@@ -109,6 +115,7 @@ class NodeStateLoop:
                 )
                 raise
             running_by_port[spec.port] = started
+            self._notify()
         else:
             launch_specs = getattr(self.manager, "_launch_specs", {})
             current = launch_specs.get(spec.port)
@@ -124,10 +131,15 @@ class NodeStateLoop:
                     stop_pending=spec.stop_pending,
                     grid_run_id=spec.grid_run_id,
                 )
+                self._notify()
 
     @staticmethod
     def _launch_kwargs(launch: AppiumStartRequest) -> dict[str, Any]:
         return launch.model_dump(mode="python", exclude={"allocated_caps"})
+
+    def _notify(self) -> None:
+        if self.notify_change is not None:
+            self.notify_change()
 
     def wake(self) -> None:
         self._wake_event.set()

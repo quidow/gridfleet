@@ -16,8 +16,12 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
     {
       id: 'heartbeat-health',
       title: 'Heartbeat & Host Health',
-      description: 'How quickly hosts are checked and marked unhealthy.',
-      settingKeys: ['general.heartbeat_interval_sec', 'general.max_missed_heartbeats'],
+      description: 'How host liveness is derived from agent status pushes and verified by the reachability probe.',
+      settingKeys: [
+        'general.heartbeat_interval_sec',
+        'general.host_offline_after_sec',
+        'general.partition_probe_interval_sec',
+      ],
     },
     {
       id: 'node-health',

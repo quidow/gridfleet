@@ -299,47 +299,6 @@ async def test_agent_health_raises_response_error_for_non_200() -> None:
     assert caught.value.http_status == 503
 
 
-async def test_agent_host_telemetry_returns_payload() -> None:
-    client = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/host/telemetry",
-            payload={"cpu_percent": 71.2},
-        )
-    )
-
-    payload = await agent_operations.agent_host_telemetry(
-        "10.0.0.5",
-        5100,
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-    )
-
-    assert payload == {"cpu_percent": 71.2}
-
-
-async def test_agent_host_telemetry_returns_none_for_non_200() -> None:
-    client = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/host/telemetry",
-            status_code=404,
-            payload={"detail": "not found"},
-        )
-    )
-
-    payload = await agent_operations.agent_host_telemetry(
-        "10.0.0.5",
-        5100,
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-    )
-
-    assert payload is None
-
-
 async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> None:
     health_client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/pack/devices/demo/health", payload=["bad"])

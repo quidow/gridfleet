@@ -40,6 +40,8 @@ def test_node_state_loop_starts_when_backend_is_configured(monkeypatch: pytest.M
         loop_cls = stack.enter_context(patch("agent_app.lifespan.NodeStateLoop"))
         loop = loop_cls.return_value
         loop.run_forever = AsyncMock()
+        status_loop_cls = stack.enter_context(patch("agent_app.lifespan.StatusPushLoop"))
+        status_loop_cls.return_value.run_forever = AsyncMock()
         with TestClient(app, raise_server_exceptions=True):
             assert app.state.node_state_loop is loop
             assert loop_cls.call_args.kwargs["poll_interval"] == 1.25

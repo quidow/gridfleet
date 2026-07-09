@@ -7,7 +7,7 @@ import inspect
 import logging
 import time
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CAPABILITIES_REFRESH_INTERVAL_SEC = 600
-ORCHESTRATION_CONTRACT_VERSION = 4
+ORCHESTRATION_CONTRACT_VERSION = 5
 _DEFAULT_CAPABILITIES: dict[str, Any] = {
     "platforms": [],
     "tools": {},
@@ -27,6 +27,15 @@ _DEFAULT_CAPABILITIES: dict[str, Any] = {
 def default_capabilities() -> dict[str, Any]:
     """Capabilities payload used before the cache has run any detection."""
     return deepcopy(_DEFAULT_CAPABILITIES)
+
+
+def missing_prerequisites_from(capabilities: dict[str, Any]) -> list[str]:
+    """Extract missing_prerequisites from a capabilities snapshot.
+
+    Single source of truth for both ``GET /agent/health`` and the
+    consolidated status push, so the two never derive it differently.
+    """
+    return cast("list[str]", capabilities.get("missing_prerequisites", []))
 
 
 class CapabilitiesCache:

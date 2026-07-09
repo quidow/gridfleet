@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from app.hosts.schemas import HostCreate, HostHardwareInfo, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
-MIN_ORCHESTRATION_CONTRACT_VERSION = 4
+MIN_ORCHESTRATION_CONTRACT_VERSION = 5
 
 
 def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
@@ -140,8 +140,6 @@ class HostCrudService:
         host.agent_version = data.agent_version
         host.capabilities = normalize_capabilities(data.capabilities)
         _apply_host_info(host, data.host_info)
-        if host.status == HostStatus.offline:
-            host.status = HostStatus.online
         await db.commit()
         await db.refresh(host)
         return host

@@ -15,7 +15,7 @@ interface Props {
 
 const RANGES: Record<RangeKey, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 24 * 7 };
 
-const SUMMARY_PREFERRED_KEYS = ['old_status', 'new_status', 'pack_id', 'missed_count'];
+const SUMMARY_PREFERRED_KEYS = ['old_status', 'new_status', 'pack_id', 'stale_for_sec'];
 
 function summarize(data: Record<string, unknown>): string {
   const known = SUMMARY_PREFERRED_KEYS.filter((key) => key in data);

@@ -48,8 +48,7 @@ These are not the authoritative settings store. They only provide the initial se
 
 | Variable | Registry key | Default | Notes |
 | --- | --- | --- | --- |
-| `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Host-sweep cadence for shared agent health observation and convergence |
-| `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `general.max_missed_heartbeats` | `3` | Missed heartbeats before host becomes offline |
+| `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Host-sweep cadence: how often the latest pushed agent status is evaluated (base tick for the stage intervals) |
 | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
 | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |
 | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |
@@ -79,7 +78,8 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_MANAGER_URL` | `http://localhost:8000` | agent process | Backend base URL used for registration and manager-owned calls |
 | `AGENT_BACKEND_URL` | falls back to `AGENT_MANAGER_URL` | agent process | Override of the backend base URL used for driver-pack and Appium-node desired-state polling. |
 | `AGENT_HOST_ID` | unset | agent process | Pre-assigned host UUID. When set, the agent skips manager-issued identity and enables the pack state loop immediately. |
-| `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `30` | agent process | How often the agent re-registers to refresh mutable host fields such as IP address and capabilities |
+| `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `300` | agent process | How often the agent re-registers to refresh mutable enrollment fields such as IP address and capabilities. Enrollment-only: this refresh does not touch `Host.status` or `last_heartbeat` — it no longer resurrects an offline host |
+| `AGENT_STATUS_PUSH_INTERVAL_SEC` | `10` | agent process | How often the agent pushes the consolidated status report (`POST /agent/hosts/status`) — nodes, restart events, start failures, pack status, host telemetry, agent version/capabilities |
 | `AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC` | `630` | agent process | uvicorn keep-alive timeout for the agent API. Must stay above the backend's `agent.http_pool_idle_seconds` setting (max 600) so pooled backend→agent connections never outlive the server's keep-alive (otherwise non-idempotent calls fail with `RemoteProtocolError`). |
 | `AGENT_MANAGER_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username used for manager API calls when the backend auth gate is enabled |
 | `AGENT_MANAGER_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password used for manager API calls when the backend auth gate is enabled |

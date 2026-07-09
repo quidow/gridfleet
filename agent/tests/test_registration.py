@@ -151,7 +151,7 @@ async def test_registration_loop_retries_transport_failures_with_backoff() -> No
 
     async def fake_sleep(delay: float) -> None:
         sleeps.append(delay)
-        if delay == 30.0:
+        if delay == 300.0:
             raise asyncio.CancelledError
 
     service = RegistrationService(capabilities_cache=_fake_cache(), version_guidance=VersionGuidanceStore())
@@ -168,7 +168,7 @@ async def test_registration_loop_retries_transport_failures_with_backoff() -> No
         await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
-    assert sleeps == [2.0, 30.0]
+    assert sleeps == [2.0, 300.0]
 
 
 async def test_registration_loop_refreshes_successful_registration() -> None:
@@ -199,7 +199,7 @@ async def test_registration_loop_refreshes_successful_registration() -> None:
         await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
-    assert sleeps == [30.0, 30.0]
+    assert sleeps == [300.0, 300.0]
     assert host_identity.set.call_args_list == [call("host-1"), call("host-1")]
 
 

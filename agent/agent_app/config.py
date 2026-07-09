@@ -16,7 +16,8 @@ class CoreSettings(BaseSettings):
 
     environment: Literal["local", "dev", "staging", "prod"] = "local"
     agent_port: int = 5100
-    registration_refresh_interval_sec: int = 30
+    registration_refresh_interval_sec: int = 300
+    status_push_interval_sec: float = 10.0
     advertise_ip: str | None = None
     host_id: str | None = None
     # Must exceed the backend's largest pooled-connection idle time

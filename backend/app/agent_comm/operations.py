@@ -21,7 +21,6 @@ from app.agent_comm.generated import (
     AppiumLogsResponse,
     AppiumStatusResponse,
     HealthResponse,
-    HostTelemetryResponse,
     NormalizeDeviceResponse,
     PackDeviceHealthResponse,
     PackDeviceLifecycleResponse,
@@ -229,31 +228,6 @@ async def agent_health(
         circuit_breaker=circuit_breaker,
     )
     return decode_or_raise(response, host=host, action="health check", model=HealthResponse)
-
-
-async def agent_host_telemetry(
-    host: str,
-    agent_port: int,
-    *,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 5,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any] | None:
-    response = await _send_request(
-        "GET",
-        f"{agent_base_url(host, agent_port)}/agent/host/telemetry",
-        endpoint="agent_host_telemetry",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    return decode_or_none_unless_200(response, host=host, action="fetch host telemetry", model=HostTelemetryResponse)
 
 
 async def appium_logs(

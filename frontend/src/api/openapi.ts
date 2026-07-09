@@ -38,7 +38,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/agent/driver-packs/status": {
+    "/agent/hosts/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -48,7 +48,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Status */
-        post: operations["status_agent_driver_packs_status_post"];
+        post: operations["status_agent_hosts_status_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3824,6 +3824,38 @@ export interface components {
          * @enum {string}
          */
         HostStatus: "online" | "offline" | "pending";
+        /**
+         * HostStatusPush
+         * @description Consolidated agent status push. Sections stay flexible dicts inside a
+         *     typed envelope; extra keys are ignored for forward compatibility.
+         */
+        HostStatusPush: {
+            /** Agent Version */
+            agent_version?: string | null;
+            /** Appium Processes */
+            appium_processes?: {
+                [key: string]: unknown;
+            };
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /** Host Telemetry */
+            host_telemetry?: {
+                [key: string]: unknown;
+            } | null;
+            /** Missing Prerequisites */
+            missing_prerequisites?: string[] | null;
+            /** Packs */
+            packs?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** HostSuggestion */
         HostSuggestion: {
             /** Hostname */
@@ -4976,7 +5008,7 @@ export interface operations {
             };
         };
     };
-    status_agent_driver_packs_status_post: {
+    status_agent_hosts_status_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4985,9 +5017,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["HostStatusPush"];
             };
         };
         responses: {

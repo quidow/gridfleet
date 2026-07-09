@@ -65,13 +65,9 @@ class _FailingRuntimeMgr:
 class _FakeClient:
     def __init__(self, desired_payload: dict[str, Any]) -> None:
         self._desired = desired_payload
-        self.posted: list[dict[str, Any]] = []
 
     async def fetch_desired(self) -> dict[str, Any]:
         return self._desired
-
-    async def post_status(self, payload: dict[str, Any]) -> None:
-        self.posted.append(payload)
 
 
 @pytest.mark.asyncio
@@ -83,7 +79,8 @@ async def test_runtime_reconcile_exception_returns_empty_envs() -> None:
         host_identity=_host_identity("h"),
     )
     await loop.run_once()
-    payload = client.posted[-1]
+    payload = loop.latest_status()
+    assert payload is not None
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
     assert by_pack["appium-uiautomator2"]["status"] == "blocked"
     assert by_pack["appium-uiautomator2"]["blocked_reason"] == "runtime_install_failed"
@@ -94,9 +91,6 @@ async def test_run_forever_catches_exception_and_sleeps() -> None:
     class _BadClient:
         async def fetch_desired(self) -> dict[str, Any]:
             raise RuntimeError("fetch boom")
-
-        async def post_status(self, payload: dict[str, Any]) -> None:
-            pass
 
     loop = PackStateLoop(
         client=_BadClient(),

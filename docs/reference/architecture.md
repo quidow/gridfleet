@@ -9,7 +9,7 @@ The backend is a multi-worker stateless group of HTTP API servers. State is stor
 ### The Scheduler Process and Background Loops
 Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts 10 background loops (`host_sweep`, `appium_sweep`, `grid_allocation_reaper`, etc.) that:
 
-- Monitor missing Agent heartbeats.
+- Derive host liveness from the recency of the agent's consolidated status push.
 - Evaluate node health via direct-to-Appium probes.
 - Sync stray sessions on Appium that don't belong to the internal state.
 - Expire stale router allocation tickets (`grid_allocation_reaper`).
@@ -20,18 +20,26 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 Operator routes and lifecycle paths commit intent to `AppiumNode.desired_state`
 plus optional `desired_port` and the `restart_requested_at` restart watermark,
 then return in milliseconds; each write is followed by a fire-and-forget wake
-poke (`POST /agent/appium-nodes/refresh`). The scheduler's `host_sweep` fetches
-`/agent/health` once per host at `general.heartbeat_interval_sec`, applies the
-host-liveness verdict first, and passes that same payload to the reconciler for
-freshly alive hosts. The reconciler (`app/appium_nodes/services/reconciler*.py`)
-is observe-only: it matches the agent's self-reported Appium processes against
-desired rows and writes observed columns (`pid`, `active_connection_target`,
-health fields) — it never starts, stops, or restarts an agent process itself.
-The host agent's own `NodeStateLoop` pulls `GET /agent/appium-nodes/desired`,
-diffs it against its locally running processes, and owns start/stop/reconfigure
-for every host. The minimum orchestration contract is v3
-(`MIN_ORCHESTRATION_CONTRACT_VERSION`, `app/hosts/service.py`): a pre-v3 agent
-is rejected at registration with HTTP 426, and any already-registered pre-v3
+poke (`POST /agent/appium-nodes/refresh`). Agents push one consolidated
+`POST /agent/hosts/status` per host every `AGENT_STATUS_PUSH_INTERVAL_SEC`
+(default 10 s) carrying nodes, restart events, start failures, pack status,
+host telemetry, and agent version/capabilities — pack status has no separate
+channel. The scheduler's `host_sweep` evaluates each host's liveness from that
+push's recency (`general.host_offline_after_sec`, default 45 s) rather than
+dialing the agent, and passes the latest pushed snapshot to the reconciler for
+a host the recency check proved alive. A cadence-gated `GET /agent/health`
+reachability probe (`general.partition_probe_interval_sec`, default 60 s)
+still runs per host as a network-partition diagnostic, but it feeds no state —
+liveness and convergence are push-driven. The reconciler
+(`app/appium_nodes/services/reconciler*.py`) is observe-only: it matches the
+agent's self-reported Appium processes against desired rows and writes
+observed columns (`pid`, `active_connection_target`, health fields) — it never
+starts, stops, or restarts an agent process itself. The host agent's own
+`NodeStateLoop` pulls `GET /agent/appium-nodes/desired`, diffs it against its
+locally running processes, and owns start/stop/reconfigure for every host. The
+minimum orchestration contract is v5
+(`MIN_ORCHESTRATION_CONTRACT_VERSION`, `app/hosts/service.py`): a pre-v5 agent
+is rejected at registration with HTTP 426, and any already-registered pre-v5
 host is marked offline at scheduler startup. See
 `docs/design/04-backend-agent-contract.md` for the full contract.
 

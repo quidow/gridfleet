@@ -110,7 +110,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
     },
   },
   'host.heartbeat_lost': {
-    render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')}: ${numberValue(data.missed_count) ?? 0} missed heartbeats`,
+    render: (data) =>
+      `${firstString(data, ['hostname', 'host', 'name'], 'Host')}: no status push for ${numberValue(data.stale_for_sec) ?? '?'}s`,
   },
   'host.discovery_completed': {
     render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')}: discovery completed`,

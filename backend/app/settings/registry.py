@@ -46,10 +46,30 @@ _DEFINITIONS: list[SettingDefinition] = [
         category="general",
         setting_type="int",
         default=15,
-        description="How often the manager pings agents",
+        description=(
+            "Host-sweep cadence: how often pushed agent status is evaluated (base tick for the stage intervals)"
+        ),
         env_var="GRIDFLEET_HEARTBEAT_INTERVAL_SEC",
         min_value=5,
         max_value=300,
+    ),
+    SettingDefinition(
+        key="general.host_offline_after_sec",
+        category="general",
+        setting_type="int",
+        default=45,
+        description="Seconds without a status push before a host is marked offline",
+        min_value=15,
+        max_value=3600,
+    ),
+    SettingDefinition(
+        key="general.partition_probe_interval_sec",
+        category="general",
+        setting_type="int",
+        default=60,
+        description="How often the manager verifies it can reach each online agent (network-partition diagnostic)",
+        min_value=15,
+        max_value=3600,
     ),
     SettingDefinition(
         key="general.intent_reconcile_interval_sec",
@@ -59,16 +79,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Seconds between intent reconciler full-device scans.",
         min_value=1,
         max_value=300,
-    ),
-    SettingDefinition(
-        key="general.max_missed_heartbeats",
-        category="general",
-        setting_type="int",
-        default=3,
-        description="Missed pings before marking host offline",
-        env_var="GRIDFLEET_MAX_MISSED_HEARTBEATS",
-        min_value=1,
-        max_value=20,
     ),
     SettingDefinition(
         key="general.node_check_interval_sec",

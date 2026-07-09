@@ -49,6 +49,7 @@ from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
+from app.hosts.service_status_push import HostStatusPushService
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -313,11 +314,10 @@ def compose_app(
             hardware_telemetry=HardwareTelemetryService(
                 publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
             ),
-            resource_telemetry=HostResourceTelemetryService(
-                settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
-            ),
+            resource_telemetry=HostResourceTelemetryService(settings=settings_svc),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
+            status_push=HostStatusPushService(publisher=bus),
             settings=settings_svc,
             session_factory=session_factory,
         ),

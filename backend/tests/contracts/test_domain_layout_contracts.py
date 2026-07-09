@@ -29,11 +29,13 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "hosts": (
         "models",
         "router",
+        "router_agent",
         "schemas",
         "service",
         "service_diagnostics",
         "service_hardware_telemetry",
         "service_resource_telemetry",
+        "service_status_push",
         "service_versioning",
     ),
     "packs": (
