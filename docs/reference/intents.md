@@ -1,91 +1,105 @@
 # Device Intents
 
-The control plane drives every device's desired state through the axis arbiter in
-`app/devices/services/intent_evaluator.py`. For each device the reconciler
-(`reconcile_device`) gathers a list of `DeviceIntent` objects — each one says
-"this source wants axis X in state Y at priority P" — and the arbiter picks the
-highest-priority intent per axis (`node_process`, `grid_routing`, `recovery`),
-writing the derived state to the device row and its Appium node.
+The control plane drives every device's desired state through the explicit
+decision ladders in `app/devices/services/decision.py`. For each device the
+reconciler (`reconcile_device`) parses the stored `DeviceIntent` rows into typed
+**commands**, gathers domain **facts** once (`gather_decision_facts`), and calls
+three pure deciders — `decide_node_process`, `decide_grid_routing`,
+`decide_recovery` — that write the derived state to the device row and its Appium
+node.
 
 ## Model: commands + facts
 
-The intent list the arbiter evaluates comes from **two** places:
+`desired = f(stored_commands, facts)`. There are two inputs, kept strictly apart:
 
-1. **Stored rows** in the `device_intents` table. These are the genuine
-   **commands and leases** that cannot be recomputed from domain state:
-   `operator:start`, `operator:stop:node`, `operator:stop:recovery`,
-   `verification:{device}`, `auto_recovery:node/recovery:{device}`,
-   `forced_release:{run}`, `device_delete:*`, and `health_failure:node:{device}`.
+1. **Stored rows** in the `device_intents` table are the genuine **commands and
+   leases** that cannot be recomputed from domain state: `operator:start`,
+   `operator:stop:node`, `operator:stop:recovery`, `verification:{device}`,
+   `auto_recovery:node/recovery:{device}`, `forced_release:{run}`, and
+   `health_failure:node:{device}`. `parse_command` maps a row's `source` prefix
+   to a `CommandKind`; unknown sources are logged and ignored.
 
-2. **Synthesized rows** built in-memory each evaluation by
-   `app/devices/services/intent_synthesis.py` (`synthesize_fact_intents`) from
-   domain **facts** — the reservation row, `maintenance_reason`, and
-   `device_checks_healthy`. Synthesized intents are transient ORM objects; they
-   are never `db.add()`-ed. `baseline:idle` (a nodeless standing start) is
-   synthesized the same way, inline in `reconcile_device`.
+2. **Facts** are read directly from domain rows by `gather_decision_facts` — never
+   re-encoded as intent rows. They are: `in_maintenance` (maintenance_reason set),
+   `device_checks_unhealthy` (`device_checks_healthy IS FALSE`), `in_service`
+   (baseline eligibility, F-G1), and the single active `DeviceReservation` row
+   (which yields `reservation_run_id`, `cooldown_active`, `cooldown_reason`).
 
-If a desired-state effect can be recomputed from a durable fact, it is
-synthesized — not stored. This keeps `device_intents` small (real commands only),
-deletes the revoke-bookkeeping that stored twins required, and removes any chance
-of a stored row drifting out of sync with the fact it mirrored.
+Precedence is the **ordered code** in the deciders, not a numeric priority in the
+payload. Payloads carry only what a decider reads.
+
+## Precedence (node_process ladder)
+
+`decide_node_process` returns at the first rung that matches, mirroring the
+retired numeric ladder exactly:
+
+1. `operator:stop:node` command → hard stop.
+2. `forced_release` command → hard stop.
+3. `in_maintenance` **fact** → graceful stop (`maintenance hold`).
+4. `health_failure:node` command → graceful stop.
+5. `device_checks_unhealthy` **fact**, and no active start command → `running_blocked` (connectivity park).
+6. any start command (`operator:start`, `verification`, `auto_recovery:node`) → running. A token-bearing start (one-shot restart) beats a tokenless standing order; ties break lexicographically by source.
+7. `in_service` **fact** (no commands) → running (`baseline:idle` standing start).
+8. otherwise → stopped.
+
+`decide_grid_routing` is pure fact: no reservation → accept; active reservation →
+route the run; cooldown → keep the run bound but block new sessions.
+
+`decide_recovery`: `operator:stop:recovery` command denies; else `in_maintenance`
+denies (with `MAINTENANCE_HOLD_SUPPRESSION_REASON`); else `cooldown_active`
+denies (with the exclusion reason); else `auto_recovery:recovery` allows; else
+default-allow.
+
+## Per-source payload table
+
+Stored command payloads carry only the fields a decider reads. `action` (and
+`allowed` on the recovery axis) are kept so rows stay self-describing in the
+debug view at zero decision cost. Stop mode is implied by the command kind;
+`priority` and `desired_port` are not stored.
+
+| Source | Axis | Payload |
+|--------|------|---------|
+| `operator:start:{device_id}` | `node_process` | `{"action": "start"}` (restart variant adds `transition_token`, `transition_deadline`) |
+| `operator:stop:node:{device_id}` | `node_process` | `{"action": "stop"}` |
+| `operator:stop:recovery:{device_id}` | `recovery` | `{"allowed": false, "reason": "Operator stopped the node"}` |
+| `forced_release:{run_id}` | `node_process` | `{"action": "stop"}` |
+| `health_failure:node:{device_id}` | `node_process` | `{"action": "stop"}` |
+| `verification:{device_id}` | `node_process` | `{"action": "start"}` |
+| `auto_recovery:node:{device_id}` | `node_process` | `{"action": "start"}` (node_health restart adds `transition_token`, `transition_deadline`) |
+| `auto_recovery:recovery:{device_id}` | `recovery` | `{"allowed": true, "reason": <text>}` |
 
 ## Lifecycle
 
-A **stored** intent is deleted by exactly one of two mechanisms:
+A stored command is deleted by exactly one of two mechanisms:
 
 1. **Explicit revoke** via `revoke_intents_and_reconcile(...)` from the flow that
    drives the underlying state change (e.g. operator start revokes
-   `operator_stop_sources`).
+   `operator_stop_sources` and `failure_stop_sources`).
 2. **TTL** via the `expires_at` column, swept by `_gc_expired_intents` at the
    start of every reconciler tick (a bulk delete; the every-tick full scan
    re-derives the affected devices).
 
-There are no preconditions and no orphan sweeps. **Synthesized** intents have no
-lifecycle at all — they exist only for the duration of one evaluation and
-reappear (or don't) on the next tick as the underlying fact dictates.
-
-## Synthesis table
-
-`synthesize_fact_intents` emits one intent per satisfied fact predicate. Copy the
-predicates verbatim from `intent_synthesis.py`.
-
-| Source | Fact predicate | Axis | Payload |
-|--------|----------------|------|---------|
-| `run:{run_id}` | active reservation: `released_at IS NULL` and NOT indefinitely excluded (`not (excluded AND excluded_until IS NULL)`) | `grid_routing` | `{"accepting_new_sessions": true, "priority": 40}` |
-| `cooldown:grid:{run_id}` | timed exclusion: `excluded AND excluded_until > now` | `grid_routing` | `{"accepting_new_sessions": false, "priority": 70}` |
-| `cooldown:recovery:{run_id}` | timed exclusion (same) | `recovery` | `{"allowed": false, "priority": 70, "reason": entry.exclusion_reason}` |
-| `maintenance:node:{device_id}` | `in_maintenance(device)` (`maintenance_reason` set) | `node_process` | `{"action": "stop", "priority": 80, "stop_mode": "graceful"}` |
-| `maintenance:recovery:{device_id}` | `in_maintenance(device)` | `recovery` | `{"allowed": false, "priority": 80, "reason": MAINTENANCE_HOLD_SUPPRESSION_REASON}` |
-| `connectivity:{device_id}` | `device_checks_healthy IS FALSE` AND no active stored `node_process` start command | `node_process` | `{"action": "stop", "priority": 50, "stop_mode": "defer"}` |
-
-The reservation-derived intents (`run:`, `cooldown:grid`, `cooldown:recovery`)
-are all recomputed from the single active `DeviceReservation` row. The exclusion
-window is written **directly** on that row by the exclusion sites
-(`cooldown_device`, `exclude_device_from_run`) and cleared directly by
-`restore_device_to_run` / `release_device_from_run` / the
-`check_expired_cooldowns` legacy sweep — the reconciler no longer echoes it.
+There are no preconditions and no orphan sweeps. Facts have no lifecycle at all —
+they are read fresh each tick, so a decision reappears (or doesn't) as the
+underlying fact dictates.
 
 ## Semantic notes
-
-Three behaviors changed when the precondition DSL and the stored twins were
-removed:
 
 1. **Start commands retire by TTL, not by a `node_running` precondition.** An
    `operator:start` / `auto_recovery:node` row may linger a few minutes after the
    node is running; it is a no-op while the node runs (`baseline:idle` sustains
-   `running` anyway) and higher-priority stops still override it. Its TTL is
+   `running`) and stops higher on the ladder still override it. Its TTL is
    `appium.startup_timeout_sec` + `general.session_viability_timeout_sec` + 60 s
    (auto-recovery / forced-release use `appium_reconciler.restart_window_sec`).
 2. **`forced_release:{run}` retires by TTL, not a `run_active` precondition.**
-   Within its short TTL a hard stop outranks an operator start (priority 95 vs 20).
-3. **The synthesized `connectivity` stop is suppressed while any active stored
-   `node_process` start command exists** (operator start/restart, verification
-   lease, auto-recovery). This one rule replaces the old scattered "revoke
+   Within its short TTL a hard stop outranks an operator start on the ladder.
+3. **The connectivity park is suppressed while any active start command exists**
+   (operator start/restart, verification lease, auto-recovery). This structural
+   rule (rung 5 checks `not starts`) replaces the old scattered "revoke
    `connectivity:*` before starting" ritual.
 
 ## Out of scope
 
-The priority-based arbiter in `intent_evaluator.py` is unchanged — priorities
-still decide which active intent wins per axis. Recovery suppression is handled
-by `Device.review_required` and the lifecycle-policy backoff window, not by
-intents. See [device-lifecycle.md](./device-lifecycle.md).
+Recovery suppression is also governed by `Device.review_required` and the
+lifecycle-policy backoff window, not by intents. See
+[device-lifecycle.md](./device-lifecycle.md).

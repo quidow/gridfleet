@@ -315,7 +315,7 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
 ) -> None:
     """A dead session on a device with a held graceful-stop intent goes offline."""
     from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, IntentRegistration
+    from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 
     device = await _seed_device_with_node(
         db_session, db_host, identity_value="dead-stop", operational_state=DeviceOperationalState.busy
@@ -330,7 +330,7 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
+                payload={"action": "stop"},
             ),
         ],
     )

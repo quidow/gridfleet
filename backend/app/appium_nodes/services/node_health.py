@@ -30,7 +30,6 @@ from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_AUTO_RECOVERY,
     RECOVERY,
     IntentRegistration,
 )
@@ -199,7 +198,6 @@ class NodeHealthService:
                     axis=NODE_PROCESS,
                     payload={
                         "action": "start",
-                        "priority": PRIORITY_AUTO_RECOVERY,
                         "transition_token": str(uuid.uuid4()),
                         "transition_deadline": deadline.isoformat(),
                     },
@@ -208,7 +206,7 @@ class NodeHealthService:
                 IntentRegistration(
                     source=f"auto_recovery:recovery:{device.id}",
                     axis=RECOVERY,
-                    payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": "Node health restart"},
+                    payload={"allowed": True, "reason": "Node health restart"},
                     expires_at=deadline,
                 ),
             ],

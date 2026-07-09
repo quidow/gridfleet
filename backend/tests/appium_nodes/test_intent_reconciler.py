@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
@@ -18,6 +19,7 @@ from app.devices.services.intent_reconciler import (
     run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
+from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.fakes.review import build_review_service
@@ -53,6 +55,26 @@ async def test_baseline_eligible_device_derives_running(db_session: AsyncSession
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is True
     assert node.generation == 1
+
+
+async def test_reconcile_uses_facts_directly_for_maintenance(db_session: AsyncSession, db_host: Host) -> None:
+    """Maintenance must stop the node with NO intent row present — the fact is
+    read directly, not synthesized into a transient intent."""
+    device = await create_device(db_session, host_id=db_host.id, name="maint")
+    await _seed_node(db_session, device.id)
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    set_maintenance_reason(locked, "operator hold")
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True  # graceful: sets the stop-pending flag via map
+    intent_rows = (await db_session.execute(select(DeviceIntent))).scalars().all()
+    assert intent_rows == []  # no synthesized or stored rows involved
 
 
 async def test_review_required_device_gets_no_baseline_node(db_session: AsyncSession, db_host: Host) -> None:
@@ -147,9 +169,9 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="maintenance:node",
+                source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "stop_mode": "graceful", "priority": 80},
+                payload={"action": "stop", "stop_mode": "graceful"},
             ),
         ],
     )
@@ -191,9 +213,9 @@ async def test_hard_stop_on_idle_device_stages_agent_drain(
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="operator:node",
+                source=f"operator:stop:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "stop_mode": "hard", "priority": 90},
+                payload={"action": "stop", "stop_mode": "hard"},
             ),
         ],
     )

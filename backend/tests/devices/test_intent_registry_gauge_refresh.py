@@ -19,7 +19,7 @@ from app.devices.models import (
     DeviceOperationalState,
     DeviceType,
 )
-from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_IDLE
+from app.devices.services.intent_types import NODE_PROCESS
 from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ async def test_refresher_publishes_device_intent_count(db_session: AsyncSession)
                 device_id=device.id,
                 source=f"test:intent:{i}",
                 axis=NODE_PROCESS,
-                payload={"action": "start", "priority": PRIORITY_IDLE},
+                payload={"action": "start"},
             )
         )
     await db_session.commit()

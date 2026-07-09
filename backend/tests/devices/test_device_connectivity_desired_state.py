@@ -8,10 +8,8 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.timeutil import now_utc
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.intent_synthesis import synthesize_fact_intents
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -68,11 +66,6 @@ async def test_stop_disconnected_node_parks_node(
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
     assert node.stop_pending is True
-
-    # Connectivity defer-stop is no longer stored — it is synthesized from
-    # device_checks_healthy IS FALSE.
-    await db_session.refresh(device)
-    intents = await synthesize_fact_intents(db_session, device, None, [], now_utc())
-    intent = next(i for i in intents if i.source == f"connectivity:{device.id}")
-    assert intent.axis == "node_process"
-    assert intent.payload["stop_mode"] == "defer"
+    # The defer-stop park is derived directly from device_checks_healthy IS FALSE;
+    # the decider ladder is pinned by tests/devices/test_decision.py
+    # (test_connectivity_park_defers_without_start_command).

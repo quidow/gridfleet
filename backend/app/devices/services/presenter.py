@@ -15,12 +15,13 @@ from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy_summary
 from app.devices.services import readiness as device_readiness
 from app.devices.services.allocatability import unavailable_reason
-from app.devices.services.intent_evaluator import (
-    evaluate_grid_routing,
-    evaluate_node_process,
-    evaluate_recovery,
+from app.devices.services.decision import (
+    decide_grid_routing,
+    decide_node_process,
+    decide_recovery,
+    parse_command,
 )
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
+from app.devices.services.intent_reconciler import gather_decision_facts
 from app.devices.services.serialization_types import DeviceSerializationContext
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -256,9 +257,6 @@ def _dataclass_to_dict(value: object) -> dict[str, Any]:
 
 async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str, Any]:
     now = now_utc()
-    # Stored intents only. This debug view does not merge the fact-derived (synthesized)
-    # intents, so its "derived" decisions reflect stored commands/leases, not the full
-    # reconcile input. ponytail: accurate-debug-view merge deferred; add if operators need it.
     intents = (
         (
             await db.execute(
@@ -270,9 +268,8 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
         .scalars()
         .all()
     )
-    node_intents = [intent for intent in intents if intent.axis == NODE_PROCESS]
-    grid_intents = [intent for intent in intents if intent.axis == GRID_ROUTING]
-    recovery_intents = [intent for intent in intents if intent.axis == RECOVERY]
+    commands = [c for c in (parse_command(row, now) for row in intents) if c is not None]
+    facts = await gather_decision_facts(db, device, now)
     return {
         "intents": [
             {
@@ -285,8 +282,8 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
             for intent in intents
         ],
         "derived": {
-            "node_process": _dataclass_to_dict(evaluate_node_process(node_intents, now)),
-            "grid_routing": _dataclass_to_dict(evaluate_grid_routing(grid_intents, now)),
-            "recovery": _dataclass_to_dict(evaluate_recovery(recovery_intents, now)),
+            "node_process": _dataclass_to_dict(decide_node_process(commands, facts)),
+            "grid_routing": _dataclass_to_dict(decide_grid_routing(facts)),
+            "recovery": _dataclass_to_dict(decide_recovery(commands, facts)),
         },
     }

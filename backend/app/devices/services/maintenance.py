@@ -6,7 +6,6 @@ from app.core.timeutil import now_utc
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_AUTO_RECOVERY,
     IntentRegistration,
     verification_intent_source,
 )
@@ -91,7 +90,7 @@ class MaintenanceService:
                 IntentRegistration(
                     source=verification_intent_source(device.id),
                     axis=NODE_PROCESS,
-                    payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+                    payload={"action": "start"},
                     expires_at=verify_intent_deadline,
                 )
             ],

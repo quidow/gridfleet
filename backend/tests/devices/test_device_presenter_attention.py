@@ -131,11 +131,21 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
         def all(self) -> list[DeviceIntent]:
             return intents
 
+        def scalar_one_or_none(self) -> None:  # the reservation-facts query
+            return None
+
     class Session:
         async def execute(self, *_args: object, **_kwargs: object) -> Result:
             return Result()
 
-    payload = await device_presenter._serialize_orchestration(Session(), SimpleNamespace(id=uuid.uuid4()))  # type: ignore[arg-type]
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        lifecycle_policy_state={},
+        device_checks_healthy=None,
+        verified_at=None,
+        review_required=False,
+    )
+    payload = await device_presenter._serialize_orchestration(Session(), device)  # type: ignore[arg-type]
 
     assert [item["axis"] for item in payload["intents"]] == [
         "node_process",

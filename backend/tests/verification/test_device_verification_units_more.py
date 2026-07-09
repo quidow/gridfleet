@@ -17,7 +17,6 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_HEALTH_FAILURE,
     IntentRegistration,
     verification_intent_source,
 )
@@ -364,12 +363,12 @@ async def test_register_verification_node_intent_revokes_blocking_health_failure
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """An unverified device carrying a ``health_failure:node`` stop intent must
-    still be verifiable. That stop is ``PRIORITY_HEALTH_FAILURE`` (60) while the
-    verification node-start intent is only ``PRIORITY_AUTO_RECOVERY`` (20), so
-    unless verification revokes the stop the reconciler keeps the node stopped and
-    ``node_start`` times out forever (the device is stranded). Operator start-node
-    and the lifecycle policy already revoke this source; verification must too.
+    """An unverified device carrying a ``health_failure:node`` stop command must
+    still be verifiable. That stop outranks the verification node-start command in
+    the decision ladder, so unless verification revokes the stop the reconciler keeps
+    the node stopped and ``node_start`` times out forever (the device is stranded).
+    Operator start-node and the lifecycle policy already revoke this source;
+    verification must too.
     """
     device = await create_device_record(
         db_session,
@@ -386,7 +385,7 @@ async def test_register_verification_node_intent_revokes_blocking_health_failure
             IntentRegistration(
                 source=health_failure_source,
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE},
+                payload={"action": "stop"},
             )
         ],
         publisher=event_bus,

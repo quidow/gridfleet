@@ -128,7 +128,7 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
     intent_reconciler must drive ``node.desired_port == P2``, not P1.
     """
     from app.devices.services.intent_reconciler import reconcile_device
-    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY
+    from app.devices.services.intent_types import NODE_PROCESS
 
     device = await create_device(db_session, host_id=db_host.id, name="port-flap-repro", verified=True)
     node = AppiumNode(
@@ -146,7 +146,7 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
             device_id=device.id,
             source=f"auto_recovery:node:{device.id}",
             axis=NODE_PROCESS,
-            payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+            payload={"action": "start"},
         )
     )
     await db_session.commit()

@@ -17,10 +17,8 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
-from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceReservation
-from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
@@ -113,16 +111,10 @@ async def test_health_failure_intent_payload_shape(
     assert result == "stopped"
 
     intent = await _get_intent(db_session, device.id, prefix=f"health_failure:node:{device.id}")
-    payload = intent.payload
 
-    # Documented fields per intents.md "health_failure:node:{device_id}" row:
-    # stop_mode = "graceful" (intentional snapshot — policy fixed at detection time)
-    assert payload.get("stop_mode") == "graceful", (
-        f"health_failure:node intent stop_mode must be 'graceful'; got {payload!r}"
-    )
-    # Structural fields are always present
-    assert payload.get("action") == "stop"
-    assert "priority" in payload
+    # Slim payload per intents.md: graceful stop is implied by the command kind;
+    # no priority or stop_mode is stored.
+    assert intent.payload == {"action": "stop"}
 
 
 # ---------------------------------------------------------------------------
@@ -200,19 +192,12 @@ async def test_cooldown_intent_payload_shape(
         reason=cooldown_reason,
         ttl_seconds=120,
     )
-    assert not escalated  # non-escalation path registers the intents we want
+    assert not escalated  # non-escalation path records the cooldown we want
 
-    # --- cooldown:grid:{run_id} (the warm soft-gate lever, now synthesized in-memory) ---
-    synthesized = await synthesize_fact_intents(db_session, device, None, [], now_utc())
-    grid_intent = next(i for i in synthesized if i.source == f"cooldown:grid:{run.id}")
-    grid_payload = grid_intent.payload
-
-    assert grid_payload.get("accepting_new_sessions") is False, (
-        f"cooldown:grid intent must set accepting_new_sessions=False; got {grid_payload!r}"
-    )
-    assert "priority" in grid_payload
-
-    # --- cooldown_count + exclusion_reason now live on the DeviceReservation row ---
+    # Cooldown is now a fact read from the reservation row, not a synthesized intent.
+    # The grid-routing lever (accepting_new_sessions=False under cooldown) is proven by
+    # tests/devices/test_decision.py::test_grid_cooldown_keeps_run_but_blocks_sessions.
+    # --- cooldown_count + exclusion_reason live on the DeviceReservation row ---
     reservation = (
         await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
     ).scalar_one()
@@ -261,18 +246,11 @@ async def test_operator_start_intent_payload_shape(
     )
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")
-    payload = intent.payload
 
-    # Documented: desired_port is present (intentional snapshot)
-    assert "desired_port" in payload, f"operator:start intent must carry desired_port; got {payload!r}"
-    assert isinstance(payload["desired_port"], int)
-    assert payload.get("action") == "start"
-    assert "priority" in payload
-
-    # Verify the start variant does NOT carry transition_token or transition_deadline
-    # (those are restart-variant-only per the doc table).
-    assert "transition_token" not in payload, "operator:start (start variant) must not carry transition_token"
-    assert "transition_deadline" not in payload, "operator:start (start variant) must not carry transition_deadline"
+    # Slim payload per intents.md: the start variant carries only action. desired_port
+    # is gone (the applier pins the live node.port), as are priority and the
+    # restart-only transition_token/transition_deadline.
+    assert intent.payload == {"action": "start"}
 
 
 # ---------------------------------------------------------------------------
@@ -339,13 +317,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 
     intent = await _get_intent(db_session, device.id, prefix=f"auto_recovery:node:{device.id}")
-    payload = intent.payload
 
-    # Key invariant: desired_port MUST NOT be in the payload (Drop violation removed in 864e6feb)
-    assert "desired_port" not in payload, (
-        f"auto_recovery:node (lifecycle_policy path) must NOT carry desired_port; got {payload!r}"
-    )
-
-    # Structural fields only per the doc table
-    assert payload.get("action") == "start"
-    assert "priority" in payload
+    # Slim payload per intents.md: action only. desired_port must never appear (the
+    # Drop violation removed in 864e6feb); priority and stop_mode are gone too.
+    assert intent.payload == {"action": "start"}

@@ -18,8 +18,6 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_CONNECTIVITY_LOST,
-    PRIORITY_HEALTH_FAILURE,
     RECOVERY,
     IntentRegistration,
 )
@@ -101,17 +99,17 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             IntentRegistration(
                 source=f"connectivity:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
+                payload={"action": "stop", "stop_mode": "defer"},
             ),
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+                payload={"action": "stop", "stop_mode": "graceful"},
             ),
             IntentRegistration(
                 source=f"health_failure:recovery:{device.id}",
                 axis=RECOVERY,
-                payload={"allowed": False, "priority": PRIORITY_HEALTH_FAILURE, "reason": "Node health failure"},
+                payload={"allowed": False, "reason": "Node health failure"},
             ),
         ],
     )
@@ -119,7 +117,9 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     await db_session.commit()
     await db_session.refresh(device)
     assert device.session_viability_status == "failed"
-    assert device.recovery_allowed is False
+    # Health-failure no longer denies recovery (only operator-stop, maintenance, and
+    # cooldown facts do); the seeded connectivity/health_failure:recovery rows are inert
+    # here and exist only to prove reconnect revokes them below.
 
     mock_ra = AsyncMock()
     mock_ra.restart_node = AsyncMock(return_value=node)
