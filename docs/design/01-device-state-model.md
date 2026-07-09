@@ -142,8 +142,10 @@ Current fields:
 | `last_failure_source` / `last_failure_reason` | Most recent lifecycle-relevant failure signal |
 | `last_action` / `last_action_at` | Most recent lifecycle policy action |
 | `stop_pending` / `stop_pending_reason` / `stop_pending_since` | Deferred auto-stop intent while a client session is still running |
-| `recovery_suppressed_reason` | Why automatic recovery is currently blocked |
 | `backoff_until` / `recovery_backoff_attempts` | Automatic recovery backoff state |
+
+"Why automatic recovery is currently blocked" is no longer stored here — it is
+recomputed at read time by `app.devices.services.recovery_projection.recovery_availability`.
 
 ## Axis 5: Node state (desired vs observed)
 

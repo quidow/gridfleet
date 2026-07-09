@@ -277,11 +277,13 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Operator ``node/stop`` is sticky and must deny auto-recovery: the device's
-    ``recovery_allowed`` flips False so ``attempt_auto_recovery`` records a
-    suppression instead of registering a prio-20 start it can never make win
-    (N13). An explicit operator start lifts the deny.
+    """Operator ``node/stop`` is sticky and must deny auto-recovery: the recovery
+    availability projection reports blocked (operator kind) so
+    ``attempt_auto_recovery`` stands down instead of registering a prio-20 start it
+    can never make win (N13). An explicit operator start lifts the deny.
     """
+    from app.devices.services.recovery_projection import RecoveryBlockKind, recovery_availability
+
     device = await create_device(db_session, host_id=db_host.id, name="op-stop-denies-recovery", verified=True)
     node = AppiumNode(
         device_id=device.id,
@@ -294,7 +296,9 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
-    assert device.recovery_allowed is True, "baseline: a running device allows recovery"
+    assert (await recovery_availability(db_session, device)).allowed is True, (
+        "baseline: a running device allows recovery"
+    )
 
     svc = OperatorNodeLifecycleService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -302,12 +306,14 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
     await svc.request_stop(db_session, device, caller="operator_route", reason="operator stop")
     await db_session.commit()
     await db_session.refresh(device)
-    assert device.recovery_allowed is False, "operator stop must deny auto-recovery (sticky stop)"
+    denied = await recovery_availability(db_session, device)
+    assert denied.allowed is False, "operator stop must deny auto-recovery (sticky stop)"
+    assert denied.kind is RecoveryBlockKind.operator
 
     await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
     await db_session.refresh(device)
-    assert device.recovery_allowed is True, "operator start must re-allow recovery"
+    assert (await recovery_availability(db_session, device)).allowed is True, "operator start must re-allow recovery"
 
 
 async def test_operator_stop_active_tracks_sticky_stop(

@@ -11,7 +11,6 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.lifecycle_policy_state import (
     clear_maintenance_reason,
-    clear_maintenance_recovery_suppression,
     set_maintenance_reason,
     state,
 )
@@ -65,7 +64,6 @@ class MaintenanceService:
         if state(device).get("maintenance_reason") is None:
             raise ValueError("Device is not in maintenance")
 
-        clear_maintenance_recovery_suppression(device)
         clear_maintenance_reason(device)
         # Maintenance exit is a sanctioned "give it another chance" signal —
         # clear the review-shelving flag so the recovery loop picks the device

@@ -294,8 +294,7 @@ async def test_attempt_auto_recovery_records_skip_on_probe_collision(
         )
 
     probe_mock.assert_awaited_once()  # gates passed; we actually reached the probe + skip branch
-    actions.record_recovery_skipped.assert_awaited_once()
-    actions.record_recovery_suppressed.assert_not_awaited()
+    # A skip writes no state at all now — no auto-stop, no review, no backoff.
     actions.complete_auto_stop.assert_not_awaited()
     review.mark_review_required.assert_not_awaited()
 

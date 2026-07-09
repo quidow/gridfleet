@@ -15,10 +15,8 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
-    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
-    now_iso,
     set_action,
     write_state,
 )
@@ -250,95 +248,6 @@ class LifecyclePolicyActionsService:
             )
         return run, entry
 
-    async def record_recovery_suppressed(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        source: str,
-        reason: str,
-        suppression_reason: str,
-        run: TestRun | None,
-    ) -> bool:
-        device = await _lock_for_state_write(db, device)
-        # Re-derive the working state from the freshly-locked device so that
-        # fields written by concurrent committers (between our caller's read and
-        # our write) are not clobbered.  The caller is expected to either persist
-        # its intent eagerly (when an intermediate commit may release the row lock,
-        # e.g. handle_health_failure → complete_auto_stop) or hold the lock
-        # continuously through to this call (e.g. attempt_auto_recovery).
-        # Either way, by the time we re-lock here the row reflects the caller's
-        # intent plus any concurrent committers' updates.
-        fresh = policy_state(device)
-        # Dedup: a device parked in suppressed state with the same reason emits
-        # nothing new. ``device_connectivity_loop`` retries suppressed devices on
-        # every iteration; without this guard the events table and ``last_action_at``
-        # churn every few minutes for the lifetime of the suppression.
-        already_suppressed = (
-            fresh.get("last_action") == "recovery_suppressed"
-            and fresh.get("recovery_suppressed_reason") == suppression_reason
-        )
-        if already_suppressed:
-            # The suppression is re-asserted (still in force), not aged residue.
-            # Refresh the recency the self-heal staleness gate
-            # (``clear_self_heal_suppression``) reads — ``last_action_at`` — so it
-            # does not misread an in-force suppression as stale and clear it
-            # mid-scenario (live S10 evidence). Preserve the dedup intent: no new
-            # event, no incident row, no change to ``last_action`` semantics; just
-            # restamp the timestamp and return False.
-            fresh["last_action_at"] = now_iso()
-            write_state(device, fresh)
-            await db.commit()
-            return False
-        fresh["recovery_suppressed_reason"] = suppression_reason
-        set_action(fresh, "recovery_suppressed")
-        write_state(device, fresh)
-        await self._incidents.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_recovery_suppressed,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-                reason=suppression_reason,
-                detail=reason,
-                source=source,
-                run_id=run.id if run is not None else None,
-                run_name=run.name if run is not None else None,
-            ),
-        )
-        await db.commit()
-        return False
-
-    async def record_recovery_skipped(
-        self,
-        db: AsyncSession,
-        device: Device,
-    ) -> bool:
-        """Record that an auto-recovery attempt was *skipped* for a transient,
-        self-resolving reason — a concurrent viability probe held the device's
-        probe lock, or the device left a probeable state mid-attempt.
-
-        Unlike ``record_recovery_suppressed`` this records NO operator-actionable
-        state: a probe-lock collision is not a health signal, and the device is
-        already being recovered by the flow that won the lock (the exit-maintenance
-        verification lease, or the next ``device_connectivity`` tick). Clearing
-        ``recovery_suppressed_reason`` keeps the device out of the
-        ``suppressed`` badge derivation (the ex-N11 "Fix B" false
-        "Recovery Paused" badge). No ``lifecycle_recovery_suppressed`` incident is
-        emitted — the skip is logged by the caller and self-resolves.
-
-        Caller holds the device row lock through to here (like
-        ``record_recovery_suppressed``); we re-lock + re-derive so a concurrent
-        committer's fields are not clobbered.
-        """
-        device = await _lock_for_state_write(db, device)
-        fresh = policy_state(device)
-        fresh["recovery_suppressed_reason"] = None
-        set_action(fresh, "recovery_skipped")
-        write_state(device, fresh)
-        await db.commit()
-        return False
-
     async def record_auto_stopped_incident(
         self,
         db: AsyncSession,
@@ -385,17 +294,15 @@ class LifecyclePolicyActionsService:
         """Persist run-escalation failure context onto ``lifecycle_policy_state``.
 
         Records the failure source/reason and the triggering ``action`` label
-        (``ci_preparation_failed`` or ``cooldown_escalated``) and sets the
-        maintenance-hold recovery suppression. Called only when the escalation
-        enters maintenance — the suppression is correct only for a device heading
-        into maintenance.
+        (``ci_preparation_failed`` or ``cooldown_escalated``). Called only when
+        the escalation enters maintenance; the maintenance hold itself drives the
+        projected "Recovery Paused" badge, so no stored suppression is written.
         """
         device = await _lock_for_state_write(db, device)
         fresh = policy_state(device)
         fresh["last_failure_source"] = source
         fresh["last_failure_reason"] = reason
         clear_deferred_stop(fresh)
-        fresh["recovery_suppressed_reason"] = MAINTENANCE_HOLD_SUPPRESSION_REASON
         clear_backoff(fresh)
         set_action(fresh, action)
         write_state(device, fresh)

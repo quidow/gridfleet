@@ -25,10 +25,8 @@ from app.devices.models import (
 )
 from app.devices.services.decision import (
     DecisionFacts,
-    RecoveryDecision,
     decide_grid_routing,
     decide_node_process,
-    decide_recovery,
     map_node_process_decision,
     parse_command,
 )
@@ -195,9 +193,9 @@ async def reconcile_device(
     """Re-derive desired node state and operational_state for one device.
 
     Returns True when agent-visible node state changed (desired state/port,
-    grid run id, accepting_new_sessions, stop_pending, recovery fields) —
-    the caller uses this to gate the agent wake poke. Derivations that only
-    touch ``operational_state`` return False: the agent does not read it.
+    grid run id, accepting_new_sessions, stop_pending) — the caller uses this
+    to gate the agent wake poke. Derivations that only touch
+    ``operational_state`` return False: the agent does not read it.
     """
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     try:
@@ -235,7 +233,6 @@ async def reconcile_device(
 
     node_decision = decide_node_process(commands, facts)
     grid_decision = decide_grid_routing(facts)
-    recovery_decision = decide_recovery(commands, facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
     # Universal session-safety invariant: only an explicit hard stop
     # (``stop_mode == "hard"`` — operator force-release, bulk operator stop,
@@ -260,8 +257,6 @@ async def reconcile_device(
         "desired_grid_run_id": node.desired_grid_run_id,
         "accepting_new_sessions": node.accepting_new_sessions,
         "stop_pending": node.stop_pending,
-        "recovery_allowed": device.recovery_allowed,
-        "recovery_blocked_reason": device.recovery_blocked_reason,
     }
 
     # The node row is the single source of port truth: payload `desired_port` values are
@@ -305,17 +300,12 @@ async def reconcile_device(
         await _record_field_change(db, device_id, "stop_pending", node.stop_pending, stop_pending, node_decision.reason)
         node.stop_pending = stop_pending
 
-    await _apply_recovery_decision(db, device, device_id, recovery_decision)
-
     metadata_changed = (
         old["accepting_new_sessions"] != node.accepting_new_sessions
         or old["stop_pending"] != node.stop_pending
         or old["desired_grid_run_id"] != node.desired_grid_run_id
     )
-    changed = metadata_changed or any(
-        old[key] != getattr(node if key.startswith("desired") else device, key)
-        for key in ("desired_state", "desired_port", "recovery_allowed", "recovery_blocked_reason")
-    )
+    changed = metadata_changed or any(old[key] != getattr(node, key) for key in ("desired_state", "desired_port"))
     if changed:
         node.generation += 1
     await db.flush()
@@ -328,34 +318,6 @@ async def reconcile_device(
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 
     return changed
-
-
-async def _apply_recovery_decision(
-    db: AsyncSession,
-    device: Device,
-    device_id: uuid.UUID,
-    recovery_decision: RecoveryDecision,
-) -> None:
-    if device.recovery_allowed != recovery_decision.allowed:
-        await _record_field_change(
-            db,
-            device_id,
-            "recovery_allowed",
-            device.recovery_allowed,
-            recovery_decision.allowed,
-            recovery_decision.reason,
-        )
-        device.recovery_allowed = recovery_decision.allowed
-    if device.recovery_blocked_reason != recovery_decision.reason:
-        await _record_field_change(
-            db,
-            device_id,
-            "recovery_blocked_reason",
-            device.recovery_blocked_reason,
-            recovery_decision.reason,
-            recovery_decision.reason,
-        )
-        device.recovery_blocked_reason = recovery_decision.reason
 
 
 async def _record_field_change(

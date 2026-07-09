@@ -43,7 +43,6 @@ class DeviceRecoveryControl(Protocol):
         action: str,
         failure_source: str | None = None,
         failure_reason: str | None = None,
-        recovery_suppressed_reason: str | None = None,
     ) -> None: ...
 
     async def clear_pending_auto_stop_on_recovery(

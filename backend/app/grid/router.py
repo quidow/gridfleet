@@ -192,6 +192,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 transition_token=node.transition_token,
                 transition_deadline=node.transition_deadline,
                 lifecycle_policy_state=device.lifecycle_policy_state,
+                review_required=device.review_required,
                 now=now,
             )
 

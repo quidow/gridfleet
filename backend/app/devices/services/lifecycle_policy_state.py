@@ -44,7 +44,6 @@ def default_state() -> dict[str, Any]:
         "stop_pending": False,
         "stop_pending_reason": None,
         "stop_pending_since": None,
-        "recovery_suppressed_reason": None,
         "backoff_until": None,
         "recovery_backoff_attempts": 0,
         "maintenance_reason": None,
@@ -110,7 +109,6 @@ def clear_deferred_stop(next_state: dict[str, Any]) -> None:
 
 
 def record_recovery_started(next_state: dict[str, Any]) -> None:
-    next_state["recovery_suppressed_reason"] = None
     set_action(next_state, "recovery_started")
 
 
@@ -119,22 +117,14 @@ def record_recovery_failed(
     *,
     source: str,
     reason: str,
-    suppression_reason: str,
 ) -> None:
     next_state["last_failure_source"] = source
     next_state["last_failure_reason"] = reason
-    next_state["recovery_suppressed_reason"] = suppression_reason
     set_action(next_state, "recovery_failed")
-
-
-def record_backoff_suppressed(next_state: dict[str, Any], *, until_iso: str) -> None:
-    next_state["recovery_suppressed_reason"] = f"Backing off until {until_iso}"
-    set_action(next_state, "recovery_suppressed")
 
 
 def record_recovery_recovered(next_state: dict[str, Any]) -> None:
     clear_backoff(next_state)
-    next_state["recovery_suppressed_reason"] = None
     set_action(next_state, "auto_recovered")
 
 
@@ -148,110 +138,68 @@ MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
 CLIENT_SESSION_RUNNING_SUPPRESSION_REASON = "A client session is still running"
 
 
-def clear_maintenance_recovery_suppression(device: Device) -> None:
-    """Clear lifecycle suppression that ``handle_health_failure`` records when a
-    device fails a probe while held in maintenance.
-
-    Only clears the maintenance-tautology reason
-    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``). Other suppressions
-    (``"Node restart failed"``, ``"Recovery probe failed"``, an active
-    backoff window, etc.) describe a real condition that is independent of
-    the maintenance hold and must survive an operator-driven exit. No-op
-    when those are present.
-
-    Caller must hold the device row lock and is responsible for the commit;
-    this helper performs an in-memory read-modify-write through ``write_state``
-    and does not lock or touch the database directly.
-    """
-    next_state = state(device)
-    if next_state.get("recovery_suppressed_reason") != MAINTENANCE_HOLD_SUPPRESSION_REASON:
-        return
-    clear_backoff(next_state)
-    next_state["recovery_suppressed_reason"] = None
-    set_action(next_state, "maintenance_exited")
-    write_state(device, next_state)
-
-
 def clear_operator_start_suppression(device: Device) -> None:
-    """Clear recovery-suppression residue when an operator explicitly starts the node.
+    """Re-arm the escalation ladder when an operator explicitly starts the node.
 
-    An operator stop records ``recovery_suppressed_reason`` (e.g. "Operator stopped
-    the node") plus a sticky RECOVERY-axis deny intent. The start path revokes the
-    intents but leaves the JSON suppression in place, so the device keeps deriving
-    ``recovery_state="suppressed"`` (presenter "blocked" / "Recovery Paused") even
-    though it is running and available. An explicit operator start overrides any
-    prior failure/suppression, so clear the suppression reason, the backoff window,
-    and the stale failure trail, then stamp a coherent action.
+    An operator start overrides any prior automated-remediation failure, so it
+    clears the shared backoff window, the attempt counter, and the stale failure
+    trail, then stamps a coherent action. The "Recovery Paused" badge itself is
+    now projected at read time from live facts (the operator start already revoked
+    the deny intent), so there is no stored suppression reason to clear.
 
-    Leaves the maintenance-hold tautology
-    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched: a node cannot be started
-    while the device is held in maintenance, and that suppression is governed by
-    the maintenance-exit path instead. No-op when nothing is suppressed so an
-    already-clean device emits no spurious action churn.
+    No-op when nothing is armed so an already-clean device emits no action churn.
 
     Caller must hold the device row lock and is responsible for the commit; this
     helper performs an in-memory read-modify-write through ``write_state``.
     """
     next_state = state(device)
-    suppression = next_state.get("recovery_suppressed_reason")
-    if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
-        return
-    backoff_active = bool(next_state.get("backoff_until")) or bool(next_state.get("recovery_backoff_attempts"))
-    if not suppression and not backoff_active and not next_state.get("last_failure_reason"):
+    armed = bool(next_state.get("backoff_until")) or bool(next_state.get("recovery_backoff_attempts"))
+    if not armed and not next_state.get("last_failure_reason"):
         return
     clear_backoff(next_state)
-    next_state["recovery_suppressed_reason"] = None
     next_state["last_failure_source"] = None
     next_state["last_failure_reason"] = None
     set_action(next_state, "operator_started")
     write_state(device, next_state)
 
 
-def clear_self_heal_suppression(device: Device, *, min_age_seconds: float) -> bool:
-    """Clear recovery-suppression residue when a device self-heals naturally.
+def clear_stale_escalation_residue(device: Device, *, min_age_seconds: float) -> bool:
+    """Reset the shared escalation ladder when a device self-heals naturally.
 
     A device can recover without any recovery path firing: an agent restart →
     reconvergence leaves the node running, the device available, and the health
     checks green, but neither ``attempt_auto_recovery`` (which short-circuits
-    when the node is already running) nor an operator start ran. The
-    ``recovery_suppressed_reason`` recorded by the last failed recovery attempt
-    (e.g. "Recovery probe failed") therefore lingers on the JSON forever, so the
-    device keeps deriving ``recovery_state="suppressed"`` (presenter "Recovery
-    Paused" → ``needs_attention=true``) despite being healthy.
+    when the node is already running) nor an operator start ran. The backoff
+    window and attempt counter recorded by the last failed remediation therefore
+    linger on the JSON forever, keeping the node's effective-state ``blocked``
+    despite the device being healthy.
 
-    Clears the suppression reason, the backoff window, and the stale failure
-    trail, then stamps ``self_healed``. Returns True when residue was actually
-    cleared so callers can record the self-heal exactly once.
+    Clears the backoff window, the attempt counter, and the stale failure trail,
+    then stamps ``self_healed``. Returns True when residue was actually cleared so
+    callers can record the self-heal exactly once.
 
     Staleness gate (``min_age_seconds``): only clear residue whose recording
     (``last_action_at``) is older than the threshold. A failure sequence still
-    in flight — verify-failure records ``recovery_suppressed`` seconds before
-    the auto-stop lands, and a concurrent healthy connectivity tick can race
-    in between — must NOT be wiped (regression S10). Genuinely stale residue
-    (hours-old leftovers after a natural reconverge) is. A missing/unparseable
-    ``last_action_at`` is treated as not-yet-stale (returns False) so an
-    in-flight sequence is never cleared on a timestamp we cannot trust.
+    in flight — verify-failure arms the backoff seconds before the auto-stop
+    lands, and a concurrent healthy connectivity tick can race in between — must
+    NOT be wiped (regression S10). Genuinely stale residue (hours-old leftovers
+    after a natural reconverge) is. A missing/unparseable ``last_action_at`` is
+    treated as not-yet-stale (returns False) so an in-flight sequence is never
+    cleared on a timestamp we cannot trust.
 
-    Leaves the maintenance-hold tautology
-    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched — a device held in
-    maintenance is governed by the maintenance-exit path, not connectivity
-    self-heal. No-op (returns False) when nothing is suppressed so a clean
-    device emits no action churn on every connectivity cycle.
+    No-op (returns False) when nothing is armed so a clean device emits no action
+    churn on every connectivity cycle.
 
-    Caller must hold the device row lock, must gate on ``device.recovery_allowed``
-    (an active operator-stop deny intent makes the suppression legitimate and
-    sticky by design), and is responsible for the commit; this helper performs an
-    in-memory read-modify-write through ``write_state``.
+    Caller must hold the device row lock, must gate on ``operator_stop_active``
+    (an active operator-stop deny intent makes the hold legitimate and sticky by
+    design), and is responsible for the commit; this helper performs an in-memory
+    read-modify-write through ``write_state``.
     """
     next_state = state(device)
-    suppression = next_state.get("recovery_suppressed_reason")
-    if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
-        return False
     has_residue = (
-        bool(suppression)
-        or next_state.get("last_action") == "recovery_suppressed"
-        or bool(next_state.get("backoff_until"))
+        bool(next_state.get("backoff_until"))
         or bool(next_state.get("recovery_backoff_attempts"))
+        or bool(next_state.get("last_failure_reason"))
     )
     if not has_residue:
         return False
@@ -259,7 +207,6 @@ def clear_self_heal_suppression(device: Device, *, min_age_seconds: float) -> bo
     if recorded_at is None or (now() - recorded_at).total_seconds() < min_age_seconds:
         return False
     clear_backoff(next_state)
-    next_state["recovery_suppressed_reason"] = None
     next_state["last_failure_source"] = None
     next_state["last_failure_reason"] = None
     set_action(next_state, "self_healed")

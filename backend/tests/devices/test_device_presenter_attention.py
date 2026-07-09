@@ -167,6 +167,7 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: 
     device = SimpleNamespace(
         appium_node=_node,
         lifecycle_policy_state={"last_action": "recovery_started"},
+        review_required=False,
     )
     svc = DevicePresenterService(settings=FakeSettingsReader({}))
     monkeypatch.setattr(svc, "serialize_device", AsyncMock(return_value={"id": "device"}))

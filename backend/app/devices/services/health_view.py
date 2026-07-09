@@ -79,6 +79,7 @@ def _node_verdict(device: Device) -> dict[str, Any]:
         transition_token=node.transition_token,
         transition_deadline=node.transition_deadline,
         lifecycle_policy_state=device.lifecycle_policy_state,
+        review_required=device.review_required,
         now=now_utc(),
     )
     detail = node.health_state if node.health_state and node.health_state != effective else effective

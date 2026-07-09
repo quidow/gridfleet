@@ -117,10 +117,10 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
             axis=NODE_PROCESS,
             payload={"action": "stop"},
         ),
-        # An operator stop is sticky: deny auto-recovery so the device_connectivity
-        # loop suppresses recovery (recovery_allowed=False) instead of spinning a
-        # doomed prio-20 start it can never make win against this stop (N13). The
-        # operator-start path revokes this via operator_stop_sources.
+        # An operator stop is sticky: deny auto-recovery so the recovery availability
+        # projection reports blocked (operator kind) and attempt_auto_recovery stands
+        # down instead of spinning a doomed prio-20 start it can never make win against
+        # this stop (N13). The operator-start path revokes this via operator_stop_sources.
         IntentRegistration(
             source=f"operator:stop:recovery:{device_id}",
             axis=RECOVERY,

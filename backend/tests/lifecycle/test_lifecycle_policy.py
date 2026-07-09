@@ -27,8 +27,8 @@ from app.devices.services.intent_types import (
     NODE_PROCESS,
     IntentRegistration,
 )
+from app.devices.services.lifecycle_policy_state import set_maintenance_reason, write_state
 from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.lifecycle_policy_state import write_state
 from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
@@ -78,6 +78,14 @@ def _make_svc(
         viability=via,  # type: ignore[arg-type]
         node_manager=nm,  # type: ignore[arg-type]
     )
+
+
+def _allow_recovery() -> AsyncMock:
+    """AsyncMock replacing recovery_availability with an allowed verdict, for
+    unit tests that exercise the recovery execution path past the guard ladder."""
+    from app.devices.services.recovery_projection import RecoveryAvailability
+
+    return AsyncMock(return_value=RecoveryAvailability(True, None, None))
 
 
 @pytest.fixture(autouse=True)
@@ -1337,50 +1345,6 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
     assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
 
-async def test_handle_session_finished_clears_stale_session_running_suppression(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """``attempt_auto_recovery`` records ``recovery_suppressed_reason="A client
-    session is still running"`` when blocked by an active session but does NOT
-    set ``stop_pending``. Without an explicit clear on session end, the
-    suppression sticks forever and the dashboard renders the device as
-    ``Unhealthy: A client session is still running`` long after the session
-    finished. Regression test for that stale-state leak.
-    """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-session-suppression",
-        connection_target="lifecycle-session-suppression",
-        name="Session Suppression",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": False,
-            "last_action": "recovery_suppressed",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "probe timed out",
-            "recovery_suppressed_reason": "A client session is still running",
-        },
-    )
-    db_session.add(device)
-    await db_session.commit()
-
-    reloaded = await db_session.get(Device, device.id)
-    assert reloaded is not None
-    outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
-    assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
-
-    await db_session.refresh(reloaded)
-    assert reloaded.lifecycle_policy_state["recovery_suppressed_reason"] is None
-
-
 async def test_handle_session_finished_applies_held_graceful_stop_intent(
     db_session: AsyncSession,
     db_host: Host,
@@ -1606,69 +1570,92 @@ def test_lifecycle_run_import_order_is_acyclic() -> None:
     assert hasattr(run_service, "reservation_entry_is_excluded")
 
 
-async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_suppressed_attempt_writes_no_state_and_no_incident(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A recovery attempt on a maintenance-held device returns False without
+    writing lifecycle JSON or emitting a lifecycle_recovery_suppressed event —
+    the badge is projected, and maintenance_entered already evented the cause."""
+    device = await create_device(db_session, host_id=db_host.id, name="suppressed-attempt")
+    locked = await device_locking.lock_device(db_session, device.id)
+    set_maintenance_reason(locked, "hold")
+    await db_session.commit()
+    before = dict(locked.lifecycle_policy_state or {})
+
+    svc = _make_svc()
+    result = await svc.attempt_auto_recovery(db_session, locked, source="device_checks", reason="probe failed")
+    assert result is False
+
+    refreshed = await db_session.get(Device, device.id)
+    assert refreshed is not None
+    assert dict(refreshed.lifecycle_policy_state or {}) == before
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.lifecycle_recovery_suppressed,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert events == []
+
+
+async def test_attempt_auto_recovery_returns_false_when_projection_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the availability projection reports a block, attempt_auto_recovery
+    stands down (returns False) without starting a node or writing state."""
+    from app.devices.services.recovery_projection import RecoveryAvailability, RecoveryBlockKind
+
     db = AsyncMock()
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        lifecycle_policy_state={"maintenance_reason": "maintenance opened"},
-        recovery_allowed=True,
+        lifecycle_policy_state={},
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
         appium_node=None,
     )
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
-    )
-    suppressed = AsyncMock(return_value="suppressed")
-    monkeypatch.setattr(LifecyclePolicyActionsService, "record_recovery_suppressed", suppressed)
-
-    svc = _make_svc(publisher=event_bus)
-    assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
-
+    monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(None, None)),
     )
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
-    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
-    mock_has_running = AsyncMock(return_value=False)
-    monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", mock_has_running)
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "recovery_availability",
+        AsyncMock(
+            return_value=RecoveryAvailability(False, "Device is in maintenance mode", RecoveryBlockKind.maintenance)
+        ),
+    )
+    start_intents = AsyncMock()
+    monkeypatch.setattr(LifecyclePolicyService, "_register_recovery_start_intents", start_intents)
 
-    device.lifecycle_policy_state = {}
-    device.recovery_allowed = False
-    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
-
-    device.recovery_allowed = True
-    device.lifecycle_policy_state = {"maintenance_reason": "maintenance opened"}
-    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
-
-    device.lifecycle_policy_state = {}
-    mock_has_running.return_value = True
-    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
-
-    mock_has_running.return_value = False
-    device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
+    svc = _make_svc(publisher=event_bus)
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
-    db.commit.assert_awaited()
+    start_intents.assert_not_awaited()
 
 
 async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Recovery suppression triggers on the durable ``maintenance_reason`` signal
-    alone, without the device carrying a legacy maintenance hold."""
+    """A health failure on a maintenance-held device stands down as "suppressed"
+    and records no recovery-suppression incident — the maintenance fact already
+    drives the projected badge and was evented by maintenance_entered."""
     db = AsyncMock()
     device = SimpleNamespace(
         id=uuid.uuid4(),
         lifecycle_policy_state={"maintenance_reason": "operator opened maintenance"},
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
         appium_node=None,
     )
@@ -1676,12 +1663,14 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     monkeypatch.setattr(
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
-    suppressed = AsyncMock(return_value="suppressed")
-    monkeypatch.setattr(LifecyclePolicyActionsService, "record_recovery_suppressed", suppressed)
+    incident = AsyncMock()
+    monkeypatch.setattr(LifecycleIncidentService, "record_lifecycle_incident", incident)
 
     svc = _make_svc(publisher=event_bus)
     assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
-    suppressed.assert_awaited_once()
+    incident.assert_not_awaited()
+    # The failure trail is still written for observability.
+    assert device.lifecycle_policy_state["last_failure_reason"] == "bad"
 
 
 async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
@@ -1699,17 +1688,15 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
         lifecycle_policy_state={},
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
         appium_node=node,
     )
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: node)
     monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
-    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(lifecycle_policy_module, "recovery_availability", _allow_recovery())
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
         "get_device_reservation_with_entry",
@@ -1745,10 +1732,8 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
         lifecycle_policy_state={},
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.busy,
         appium_node=node,
     )
@@ -1778,10 +1763,8 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
 ) -> None:
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
         host_id=None,
@@ -1802,7 +1785,7 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
         lifecycle_policy_module.run_reservation_service, "reservation_entry_is_excluded", lambda _: False
     )
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
-    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(lifecycle_policy_module, "recovery_availability", _allow_recovery())
     mock_record_incident = AsyncMock()
     monkeypatch.setattr(
         LifecycleIncidentService,
@@ -1821,7 +1804,7 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     )
 
     assert device.state["last_action"] == "recovery_failed"
-    assert device.state["recovery_suppressed_reason"] == "Automatic restart failed"
+    assert device.state["last_failure_reason"].endswith("has no host assigned")
     assert mock_record_incident.await_count == 2
     db.commit.assert_awaited()
 
@@ -1846,10 +1829,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
 
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
         host_id=uuid.uuid4(),
@@ -1874,7 +1855,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         "reservation_entry_is_excluded",
         lambda _entry: False,
     )
-    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(lifecycle_policy_module, "recovery_availability", _allow_recovery())
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
@@ -1951,7 +1932,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         )
         is False
     )  # type: ignore[arg-type]
-    assert failing.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+    assert failing.lifecycle_policy_state["last_action"] == "recovery_failed"
     mock_complete_auto_stop.assert_awaited_once()
 
 
@@ -1984,148 +1965,6 @@ async def test_node_start_failure_promotes_to_review_at_threshold(db_session: As
     assert refreshed is not None
     assert refreshed.review_required is True
     assert policy_state(refreshed)["recovery_backoff_attempts"] == 5
-
-
-def _make_actions_service() -> LifecyclePolicyActionsService:
-    return LifecyclePolicyActionsService(
-        publisher=event_bus,
-        reservation=RunReservationService(review=build_review_service()),
-        incidents=LifecycleIncidentService(),
-    )
-
-
-async def _suppressed_device(
-    db_session: AsyncSession,
-    db_host: Host,
-    *,
-    identity: str,
-    last_action_at: str,
-    suppression_reason: str = "Recovery probe failed",
-) -> Device:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=identity,
-        connection_target=identity,
-        name=identity,
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "last_action": "recovery_suppressed",
-            "last_action_at": last_action_at,
-            "recovery_suppressed_reason": suppression_reason,
-        },
-    )
-    db_session.add(device)
-    await db_session.commit()
-    return device
-
-
-async def test_record_recovery_suppressed_dedup_refreshes_timestamp_keeps_fresh(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """A re-asserted same-reason suppression refreshes ``last_action_at`` (S10):
-    the self-heal staleness gate then treats it as fresh and does NOT clear it,
-    and no second incident row is emitted."""
-    from app.devices.services.lifecycle_policy_state import clear_self_heal_suppression
-
-    stale = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat()
-    device = await _suppressed_device(db_session, db_host, identity="s10-refresh", last_action_at=stale)
-
-    result = await _make_actions_service().record_recovery_suppressed(
-        db_session,
-        device,
-        source="device_connectivity",
-        reason="connectivity lost",
-        suppression_reason="Recovery probe failed",
-        run=None,
-    )
-    assert result is False
-
-    reloaded = await db_session.get(Device, device.id)
-    assert reloaded is not None
-    refreshed_at = reloaded.lifecycle_policy_state["last_action_at"]
-    assert refreshed_at != stale
-    assert (datetime.now(UTC) - datetime.fromisoformat(refreshed_at)).total_seconds() < 120
-
-    # Dedup still suppressed an incident: exactly zero lifecycle_recovery_suppressed
-    # events (the device was seeded with state directly, no prior incident).
-    incident_stmt = select(DeviceEvent).where(
-        DeviceEvent.device_id == device.id,
-        DeviceEvent.event_type == DeviceEventType.lifecycle_recovery_suppressed,
-    )
-    assert len(list((await db_session.execute(incident_stmt)).scalars().all())) == 0
-
-    # The refreshed timestamp means the staleness gate sees an in-force (fresh)
-    # suppression and leaves it intact.
-    locked = await lifecycle_policy_module.device_locking.lock_device(db_session, device.id)
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
-
-
-async def test_record_recovery_suppressed_dedup_emits_no_second_incident(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """The first suppression records one incident; a same-reason re-assertion
-    dedups (returns False) and emits no second incident."""
-    device = await _suppressed_device(
-        db_session,
-        db_host,
-        identity="s10-no-second-incident",
-        last_action_at=(datetime.now(UTC) - timedelta(seconds=3600)).isoformat(),
-        suppression_reason="brand new reason",
-    )
-    # Seed with a DIFFERENT prior reason so the first call writes (not dedup),
-    # then the second call dedups.
-    svc = _make_actions_service()
-    first = await svc.record_recovery_suppressed(
-        db_session,
-        device,
-        source="device_connectivity",
-        reason="connectivity lost",
-        suppression_reason="Recovery probe failed",
-        run=None,
-    )
-    assert first is False  # record_recovery_suppressed always returns False
-    second = await svc.record_recovery_suppressed(
-        db_session,
-        device,
-        source="device_connectivity",
-        reason="connectivity lost",
-        suppression_reason="Recovery probe failed",
-        run=None,
-    )
-    assert second is False
-
-    incident_stmt = select(DeviceEvent).where(
-        DeviceEvent.device_id == device.id,
-        DeviceEvent.event_type == DeviceEventType.lifecycle_recovery_suppressed,
-    )
-    assert len(list((await db_session.execute(incident_stmt)).scalars().all())) == 1
-
-
-async def test_clear_self_heal_clears_aged_residue_without_reassertion(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Genuinely aged residue (no re-assertion to refresh it) still clears —
-    Fix 2 must not break the legitimate self-heal path."""
-    from app.devices.services.lifecycle_policy_state import clear_self_heal_suppression
-
-    stale = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat()
-    device = await _suppressed_device(db_session, db_host, identity="s10-aged", last_action_at=stale)
-
-    locked = await lifecycle_policy_module.device_locking.lock_device(db_session, device.id)
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is True
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
-    assert locked.lifecycle_policy_state["last_action"] == "self_healed"
 
 
 # ---------------------------------------------------------------------------

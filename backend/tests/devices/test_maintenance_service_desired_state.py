@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
+from app.devices.services.recovery_projection import recovery_availability
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -104,8 +105,9 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     assert node.accepting_new_sessions is False
     assert node.stop_pending is True
     await db_session.refresh(device)
-    assert device.recovery_allowed is False
-    assert device.recovery_blocked_reason == MAINTENANCE_HOLD_SUPPRESSION_REASON
+    availability = await recovery_availability(db_session, device)
+    assert availability.allowed is False
+    assert availability.reason == MAINTENANCE_HOLD_SUPPRESSION_REASON
     assert node.observed_running
     # The graceful-stop + recovery-deny are derived directly from maintenance_reason
     # (no stored or synthesized intent); the ladder is pinned by

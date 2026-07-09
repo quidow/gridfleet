@@ -11,10 +11,11 @@ from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_policy_state import (
-    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_operator_start_suppression,
-    clear_self_heal_suppression,
+    clear_stale_escalation_residue,
     set_maintenance_reason,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -384,8 +385,11 @@ async def test_restart_node_clears_stale_recovery_suppression(
     assert resp.status_code == 200
     assert resp.json()["transition_token"] is not None
 
-    await db_session.refresh(locked)
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Node restart failed"
+    # recovery_suppressed_reason is no longer stored — the "Recovery Paused" badge
+    # is projected from live facts. With no review flag, backoff, or operator deny,
+    # the restarted device derives a clear (non-suppressed) lifecycle state.
+    detail = await client.get(f"/api/devices/{device_id}")
+    assert detail.json()["lifecycle_policy_summary"]["state"] != "suppressed"
 
 
 async def test_start_node_clears_operator_stop_suppression(
@@ -426,11 +430,23 @@ async def test_start_node_clears_operator_stop_suppression(
             "recovery_backoff_attempts": 0,
         },
     )
+    # The badge is projected from the sticky operator deny intent (the fact an
+    # operator stop leaves behind), not from the JSON residue above.
+    await IntentService(db_session).register_intents(
+        device_id=uuid.UUID(device_id),
+        intents=[
+            IntentRegistration(
+                source=f"operator:stop:recovery:{device_id}",
+                axis=RECOVERY,
+                payload={"allowed": False, "reason": "Operator stopped the node"},
+            )
+        ],
+    )
     await db_session.commit()
 
-    # Sanity: the residue derives a suppressed summary before the start. It no
+    # Sanity: the deny intent derives a suppressed summary before the start. It no
     # longer drives needs_attention — attention follows the operational axis,
-    # so suppression residue on an available device is not flagged.
+    # so suppression on an available device is not flagged.
     before = await client.get(f"/api/devices/{device_id}")
     assert before.json()["lifecycle_policy_summary"]["state"] == "suppressed"
     assert before.json()["needs_attention"] is False
@@ -439,7 +455,6 @@ async def test_start_node_clears_operator_stop_suppression(
     assert resp.status_code == 200
 
     await db_session.refresh(locked)
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
     assert locked.lifecycle_policy_state["last_action"] == "operator_started"
 
     after = await client.get(f"/api/devices/{device_id}")
@@ -450,27 +465,11 @@ async def test_start_node_clears_operator_stop_suppression(
     assert after.json()["lifecycle_policy_summary"]["state"] != "suppressed"
 
 
-async def test_clear_operator_start_suppression_preserves_maintenance_tautology(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """The maintenance-hold suppression is governed by the maintenance-exit path,
-    not by node start (start is blocked in maintenance), so it must survive."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(
-        locked,
-        {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
-    )
-    clear_operator_start_suppression(locked)
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
-
-
 async def test_clear_operator_start_suppression_noop_on_clean_state(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """A device with no suppression/backoff/failure residue emits no action churn."""
+    """A device with no backoff/attempt/failure residue emits no action churn."""
     device = await _create_device(db_session, default_host_id)
     locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
     write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
@@ -478,35 +477,19 @@ async def test_clear_operator_start_suppression_noop_on_clean_state(
     assert locked.lifecycle_policy_state["last_action"] == "sentinel"
 
 
-async def test_clear_self_heal_suppression_preserves_maintenance_tautology(
+async def test_clear_stale_escalation_residue_noop_on_clean_state(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """The maintenance-hold suppression is governed by the maintenance-exit path,
-    not by connectivity self-heal, so it must survive (returns False)."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(
-        locked,
-        {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
-    )
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
-
-
-async def test_clear_self_heal_suppression_noop_on_clean_state(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """A device with no suppression/backoff/failure residue emits no action churn."""
+    """A device with no backoff/attempt/failure residue emits no action churn."""
     device = await _create_device(db_session, default_host_id)
     locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
     write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is False
     assert locked.lifecycle_policy_state["last_action"] == "sentinel"
 
 
-async def test_clear_self_heal_suppression_skips_fresh_residue(
+async def test_clear_stale_escalation_residue_skips_fresh_residue(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
@@ -518,16 +501,16 @@ async def test_clear_self_heal_suppression_skips_fresh_residue(
         locked,
         {
             **locked.lifecycle_policy_state,
-            "recovery_suppressed_reason": "Recovery probe failed",
-            "last_action": "recovery_suppressed",
+            "last_failure_reason": "Recovery probe failed",
+            "last_action": "recovery_failed",
             "last_action_at": datetime.now(UTC).isoformat(),
         },
     )
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["last_failure_reason"] == "Recovery probe failed"
 
 
-async def test_clear_self_heal_suppression_clears_aged_residue(
+async def test_clear_stale_escalation_residue_clears_aged_residue(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
@@ -539,17 +522,17 @@ async def test_clear_self_heal_suppression_clears_aged_residue(
         locked,
         {
             **locked.lifecycle_policy_state,
-            "recovery_suppressed_reason": "Recovery probe failed",
-            "last_action": "recovery_suppressed",
+            "last_failure_reason": "Recovery probe failed",
+            "last_action": "recovery_failed",
             "last_action_at": (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(),
         },
     )
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is True
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is True
+    assert locked.lifecycle_policy_state["last_failure_reason"] is None
     assert locked.lifecycle_policy_state["last_action"] == "self_healed"
 
 
-async def test_clear_self_heal_suppression_skips_residue_without_timestamp(
+async def test_clear_stale_escalation_residue_skips_residue_without_timestamp(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
@@ -561,13 +544,13 @@ async def test_clear_self_heal_suppression_skips_residue_without_timestamp(
         locked,
         {
             **locked.lifecycle_policy_state,
-            "recovery_suppressed_reason": "Recovery probe failed",
-            "last_action": "recovery_suppressed",
+            "last_failure_reason": "Recovery probe failed",
+            "last_action": "recovery_failed",
             "last_action_at": None,
         },
     )
-    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["last_failure_reason"] == "Recovery probe failed"
 
 
 async def test_port_allocation_increments(

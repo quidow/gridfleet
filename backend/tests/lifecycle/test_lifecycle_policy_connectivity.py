@@ -8,6 +8,8 @@ import pytest
 
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import NODE_PROCESS, RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_policy_state import write_state
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -45,9 +47,7 @@ def _build_lifecycle_policy_service() -> LifecyclePolicyService:
     )
 
 
-async def _make_available_device(
-    db_session: AsyncSession, db_host: Host, *, identity: str, recovery_allowed: bool = True
-) -> Device:
+async def _make_available_device(db_session: AsyncSession, db_host: Host, *, identity: str) -> Device:
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -62,49 +62,69 @@ async def _make_available_device(
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
-        recovery_allowed=recovery_allowed,
     )
     db_session.add(device)
     await db_session.flush()
     return device
 
 
-def _seed_suppression_residue(device: Device, *, age_seconds: float = 3600.0) -> None:
+async def _register_operator_deny(db_session: AsyncSession, device: Device) -> None:
+    # A real operator stop registers both the node-process stop and the recovery
+    # deny; operator_stop_active (the N13 stickiness gate) keys on the node stop.
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=f"operator:stop:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop"},
+            ),
+            IntentRegistration(
+                source=f"operator:stop:recovery:{device.id}",
+                axis=RECOVERY,
+                payload={"allowed": False, "reason": "Operator stopped the node"},
+            ),
+        ],
+    )
+
+
+def _seed_escalation_residue(device: Device, *, age_seconds: float = 3600.0) -> None:
     fresh = policy_state(device)
     fresh["last_failure_source"] = "session_viability"
     fresh["last_failure_reason"] = "Recovery viability probe failed"
-    fresh["last_action"] = "recovery_suppressed"
+    fresh["last_action"] = "recovery_failed"
     fresh["last_action_at"] = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
-    fresh["recovery_suppressed_reason"] = "Recovery probe failed"
+    fresh["backoff_until"] = (datetime.now(UTC) + timedelta(seconds=600)).isoformat()
+    fresh["recovery_backoff_attempts"] = 2
     write_state(device, fresh)
 
 
-async def test_self_heal_clears_suppression_when_recovery_allowed(
+async def test_self_heal_clears_residue_without_operator_hold(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """A healthy device with stale suppression residue and no deny intent gets
+    """A healthy device with stale escalation residue and no deny intent gets
     the residue cleared in one cycle; a second cycle is a no-op (no churn)."""
     device = await _make_available_device(db_session, db_host, identity="self-heal-clear-1")
     locked = await device_locking.lock_device(db_session, device.id)
-    _seed_suppression_residue(locked)
+    _seed_escalation_residue(locked)
     await db_session.commit()
 
     svc = _build_lifecycle_policy_service()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    cleared = await svc.clear_escalation_residue_on_self_heal(db_session, locked, reason="self-heal")
     assert cleared is True
     await db_session.refresh(locked)
     state_after = policy_state(locked)
-    assert state_after["recovery_suppressed_reason"] is None
     assert state_after["last_action"] == "self_healed"
     assert state_after["last_failure_reason"] is None
     assert state_after["backoff_until"] is None
+    assert state_after["recovery_backoff_attempts"] == 0
 
     # Second cycle: nothing left to clear -> no-op, no action churn.
     locked = await device_locking.lock_device(db_session, device.id)
-    cleared_again = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    cleared_again = await svc.clear_escalation_residue_on_self_heal(db_session, locked, reason="self-heal")
     assert cleared_again is False
     await db_session.refresh(locked)
     assert policy_state(locked)["last_action"] == "self_healed"
@@ -115,19 +135,19 @@ async def test_self_heal_clear_does_not_commit_callers_transaction(
     db_host: Host,
 ) -> None:
     """Wave-5 #6: the connectivity loop is single-batch-commit — one commit at cycle
-    end owns the transaction boundary. clear_suppression_on_self_heal must not commit
-    the caller's session mid-cycle: a later exception in the same cycle could no
+    end owns the transaction boundary. clear_escalation_residue_on_self_heal must not
+    commit the caller's session mid-cycle: a later exception in the same cycle could no
     longer roll back the already-committed partial state. A rollback after the call
-    must restore the suppression residue."""
+    must restore the escalation residue."""
     device = await _make_available_device(db_session, db_host, identity="self-heal-no-commit")
     device_id = device.id
     locked = await device_locking.lock_device(db_session, device_id)
-    _seed_suppression_residue(locked)
+    _seed_escalation_residue(locked)
     await db_session.commit()
 
     svc = _build_lifecycle_policy_service()
     locked = await device_locking.lock_device(db_session, device_id)
-    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    cleared = await svc.clear_escalation_residue_on_self_heal(db_session, locked, reason="self-heal")
     assert cleared is True
 
     # Simulate a later failure in the same connectivity cycle.
@@ -135,52 +155,53 @@ async def test_self_heal_clear_does_not_commit_callers_transaction(
 
     locked = await device_locking.lock_device(db_session, device_id)
     state_after = policy_state(locked)
-    assert state_after["recovery_suppressed_reason"] == "Recovery probe failed"
+    assert state_after["last_failure_reason"] == "Recovery viability probe failed"
 
 
 async def test_self_heal_does_not_clear_under_operator_stop_deny(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """An active operator-stop deny intent (recovery_allowed=False) makes the
-    suppression a legitimate operator-owned hold — it must stay sticky (N13)."""
-    device = await _make_available_device(db_session, db_host, identity="self-heal-deny-1", recovery_allowed=False)
+    """An active operator-stop deny intent makes the hold a legitimate
+    operator-owned condition — it must stay sticky (N13)."""
+    device = await _make_available_device(db_session, db_host, identity="self-heal-deny-1")
+    await _register_operator_deny(db_session, device)
     locked = await device_locking.lock_device(db_session, device.id)
-    _seed_suppression_residue(locked)
+    _seed_escalation_residue(locked)
     await db_session.commit()
 
     svc = _build_lifecycle_policy_service()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    cleared = await svc.clear_escalation_residue_on_self_heal(db_session, locked, reason="self-heal")
     assert cleared is False
     await db_session.refresh(locked)
     state_after = policy_state(locked)
-    assert state_after["recovery_suppressed_reason"] == "Recovery probe failed"
-    assert state_after["last_action"] == "recovery_suppressed"
+    assert state_after["last_failure_reason"] == "Recovery viability probe failed"
+    assert state_after["last_action"] == "recovery_failed"
 
 
-async def test_self_heal_does_not_clear_in_flight_fresh_suppression(
+async def test_self_heal_does_not_clear_in_flight_fresh_residue(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression S10: a verify-failure records suppression seconds before its
+    """Regression S10: a verify-failure arms the backoff seconds before its
     auto-stop lands. A healthy connectivity tick racing in between must NOT wipe
     the in-flight residue — it is genuinely seconds old, not stale leftover."""
     device = await _make_available_device(db_session, db_host, identity="self-heal-fresh-1")
     locked = await device_locking.lock_device(db_session, device.id)
-    _seed_suppression_residue(locked, age_seconds=0.0)
+    _seed_escalation_residue(locked, age_seconds=0.0)
     await db_session.commit()
 
     svc = _build_lifecycle_policy_service()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    cleared = await svc.clear_escalation_residue_on_self_heal(db_session, locked, reason="self-heal")
     assert cleared is False
     await db_session.refresh(locked)
     state_after = policy_state(locked)
-    assert state_after["recovery_suppressed_reason"] == "Recovery probe failed"
-    assert state_after["last_action"] == "recovery_suppressed"
+    assert state_after["last_failure_reason"] == "Recovery viability probe failed"
+    assert state_after["last_action"] == "recovery_failed"
 
 
 async def test_connectivity_loss_keeps_device_in_run(

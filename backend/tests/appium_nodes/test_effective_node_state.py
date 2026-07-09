@@ -20,13 +20,49 @@ def test_restarting_when_transition_active() -> None:
             transition_token=uuid.uuid4(),
             transition_deadline=NOW + timedelta(seconds=30),
             lifecycle_policy_state=None,
+            review_required=False,
             now=NOW,
         )
         == "restarting"
     )
 
 
-def test_blocked_when_suppressed_without_backoff() -> None:
+def test_blocked_when_review_required() -> None:
+    assert (
+        compute_effective_state(
+            pid=None,
+            desired_state="running",
+            health_running=None,
+            health_state=None,
+            transition_token=None,
+            transition_deadline=None,
+            lifecycle_policy_state=None,
+            review_required=True,
+            now=NOW,
+        )
+        == "blocked"
+    )
+
+
+def test_blocked_when_backoff_active() -> None:
+    assert (
+        compute_effective_state(
+            pid=None,
+            desired_state="running",
+            health_running=None,
+            health_state=None,
+            transition_token=None,
+            transition_deadline=None,
+            lifecycle_policy_state={"backoff_until": (NOW + timedelta(seconds=120)).isoformat()},
+            review_required=False,
+            now=NOW,
+        )
+        == "blocked"
+    )
+
+
+def test_not_blocked_when_only_suppression() -> None:
+    """Stored suppression alone no longer pins blocked (behavior change #4)."""
     assert (
         compute_effective_state(
             pid=None,
@@ -36,9 +72,10 @@ def test_blocked_when_suppressed_without_backoff() -> None:
             transition_token=None,
             transition_deadline=None,
             lifecycle_policy_state={"recovery_suppressed_reason": "manual"},
+            review_required=False,
             now=NOW,
         )
-        == "blocked"
+        == "starting"
     )
 
 
@@ -52,6 +89,7 @@ def test_error_when_health_state_error() -> None:
             transition_token=None,
             transition_deadline=None,
             lifecycle_policy_state=None,
+            review_required=False,
             now=NOW,
         )
         == "error"
@@ -68,6 +106,7 @@ def test_error_when_health_running_false() -> None:
             transition_token=None,
             transition_deadline=None,
             lifecycle_policy_state=None,
+            review_required=False,
             now=NOW,
         )
         == "error"
@@ -81,6 +120,7 @@ def test_starting_running_stopping_stopped() -> None:
         "transition_token": None,
         "transition_deadline": None,
         "lifecycle_policy_state": None,
+        "review_required": False,
         "now": NOW,
     }
     assert compute_effective_state(pid=None, desired_state="running", **base) == "starting"

@@ -116,9 +116,11 @@ columns; the row-lock contract applies to application code only.
 ### Lifecycle JSON axis
 
 `Device.lifecycle_policy_state` (the JSON column for `stop_pending`,
-`backoff_until`, `maintenance_reason`, `recovery_suppressed_reason`, etc.) is NOT
+`backoff_until`, `maintenance_reason`, the `last_failure_*` trail, etc.) is NOT
 derived by the reconciler.  Helpers in `app.devices.services.lifecycle_policy_state`
-manage that column directly under the same row lock.
+manage that column directly under the same row lock.  It holds durable facts and the
+remediation trail only — the "Recovery Paused" badge is no longer stored here (see
+the recovery availability projection below).
 
 ### Adapter-recommended link repair
 
@@ -144,10 +146,37 @@ only decides when a failure event is real; the ladder owns what happens after.
 
 A successful node start clears only reconciler-sourced residue
 (`last_failure_source == "appium_reconciler"`). Backoff from failed recovery probes
-or node-health restarts survives until a verified recovery — a probe pass or the
-connectivity self-heal — clears it. Callers outside the lifecycle `write_state`
-allowlist escalate via
+or node-health restarts survives until a verified recovery — a probe pass, an
+operator start (`clear_operator_start_suppression`), or the connectivity self-heal
+(`LifecyclePolicyService.clear_escalation_residue_on_self_heal` →
+`clear_stale_escalation_residue`, gated on `operator_stop_active` so an operator
+hold stays sticky, S10 staleness gate preserved) — clears it. Callers outside the
+lifecycle `write_state` allowlist escalate via
 `app.lifecycle.services.actions.escalate_device_remediation_failure`.
+
+### Recovery availability projection
+
+"Why can automated recovery act on this device right now" is one recomputable
+projection, not a stored flag. `app.devices.services.recovery_projection.recovery_availability`
+folds, in order: `review_required` > recovery-deny (operator / maintenance /
+cooldown, via `decide_recovery`) > not-ready > `stop_pending` > live session >
+active backoff window, returning `(allowed, reason, kind)`. Both the write path
+(`attempt_auto_recovery` stands down when it reports blocked) and every read path
+consult the same ladder:
+
+- `lifecycle_policy_summary.build_lifecycle_policy` derives `recovery_state`
+  (`idle | eligible | suppressed | backoff | waiting_for_session_end`) and the
+  `recovery_suppressed_reason` API key **per read** — nothing is stored. The
+  "Recovery Paused" badge (`kind ∈ SUPPRESSED_KINDS` = review/operator/maintenance/
+  cooldown/session) appears and clears the instant the underlying fact does.
+- Node `effective_state` is `blocked` when `review_required` OR an active backoff
+  window is present (stored suppression is no longer consulted).
+
+Because the projection is recomputed, there is no stale-badge class: no GC helpers,
+no age-gate, no residue after self-heal or session end. Periodic recovery gating no
+longer emits `lifecycle_recovery_suppressed` incidents — the causes
+(maintenance_entered, operator stop, cooldown, review promotion) keep their own
+events.
 
 **Orphan systemPort cure.** When the control plane reports no live session or
 in-flight probe for a device, the android adapter connect-tests the node's claimed

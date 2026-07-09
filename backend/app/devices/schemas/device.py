@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from app.appium_nodes.services.effective_state import compute_effective_state
 from app.core.timeutil import now_utc
@@ -129,6 +130,9 @@ class AppiumNodeRead(BaseModel):
     health_running: bool | None = None
     health_state: str | None = None
     lifecycle_policy_state: dict[str, Any] | None = None
+    # Input to effective_state only — the device-level review_required is already
+    # exposed on DeviceRead, so keep this node-level copy out of the public schema.
+    review_required: SkipJsonSchema[bool] = False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -141,6 +145,7 @@ class AppiumNodeRead(BaseModel):
             transition_token=self.transition_token,
             transition_deadline=self.transition_deadline,
             lifecycle_policy_state=self.lifecycle_policy_state,
+            review_required=self.review_required,
             now=now_utc(),
         )
 
