@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -13,9 +13,20 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
+from app.devices import locking as device_locking
+from app.devices.models import (
+    ConnectionType,
+    Device,
+    DeviceEvent,
+    DeviceEventType,
+    DeviceIntent,
+    DeviceOperationalState,
+    DeviceType,
+)
 from app.devices.services import health as device_health
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.lifecycle_policy_state import now, write_state
+from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.hosts.models import Host, HostStatus
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -58,6 +69,73 @@ async def set_node_health_failure_count(db_session: AsyncSession, node_key: str,
 async def get_node_health_control_plane_state(db_session: AsyncSession) -> dict[str, int]:
     nodes = (await db_session.execute(select(AppiumNode))).scalars().all()
     return {str(node.id): node.consecutive_health_failures for node in nodes if node.consecutive_health_failures > 0}
+
+
+async def _seed_policy_state(db_session: AsyncSession, device_id: uuid.UUID, **keys: object) -> None:
+    locked = await device_locking.lock_device(db_session, device_id)
+    state = policy_state(locked)
+    state.update(keys)
+    write_state(locked, state)
+    await db_session.commit()
+
+
+async def _auto_recovery_intents(db_session: AsyncSession, device_id: uuid.UUID) -> list[DeviceIntent]:
+    rows = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device_id))).scalars().all()
+    return [row for row in rows if row.source.startswith("auto_recovery:")]
+
+
+async def _running_node_fixture(
+    db_session: AsyncSession,
+    db_host: Host,
+    *,
+    name: str,
+    identity: str,
+    port: int,
+) -> tuple[Device, AppiumNode]:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name=name,
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=port,
+        desired_state=AppiumDesiredState.running,
+        desired_port=port,
+        pid=1,
+        active_connection_target="target",
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await set_node_health_failure_count(db_session, str(node.id), 2)
+    return device, node
+
+
+async def _drive_refused_node_health(
+    db_session: AsyncSession, host_id: uuid.UUID, *, settings: FakeSettingsReader
+) -> None:
+    with patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="refused")):
+        await NodeHealthService(
+            publisher=Mock(),
+            settings=settings,
+            pool=Mock(),
+            circuit_breaker=Mock(),
+            recovery_control=AsyncMock(),
+            health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
+        ).check_host_nodes(db_session, host_id=host_id)
 
 
 async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_host: Host) -> None:
@@ -240,6 +318,80 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
     assert node.desired_state == AppiumDesiredState.running
     assert node.transition_token is not None
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
+
+
+async def test_restart_deferred_while_shared_backoff_armed(db_session: AsyncSession, db_host: Host) -> None:
+    """Reaching node_max_failures during an armed backoff must not restart."""
+    device, node = await _running_node_fixture(
+        db_session,
+        db_host,
+        name="Deferred Backoff Phone",
+        identity="nh-backoff-deferred",
+        port=4790,
+    )
+    await _seed_policy_state(
+        db_session,
+        device.id,
+        backoff_until=(now() + timedelta(seconds=600)).isoformat(),
+    )
+
+    await _drive_refused_node_health(
+        db_session,
+        device.host_id,
+        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300}),
+    )
+
+    assert await _auto_recovery_intents(db_session, device.id) == []
+    await db_session.refresh(node)
+    assert node.transition_token is None
+
+
+async def test_restart_counts_toward_shared_ladder(db_session: AsyncSession, db_host: Host) -> None:
+    """Each triggered restart records one remediation failure."""
+    device, _node = await _running_node_fixture(
+        db_session,
+        db_host,
+        name="Counted Restart Phone",
+        identity="nh-counted-restart",
+        port=4791,
+    )
+
+    await _drive_refused_node_health(
+        db_session,
+        device.host_id,
+        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300}),
+    )
+
+    assert len(await _auto_recovery_intents(db_session, device.id)) == 2
+    refreshed = await db_session.get(Device, device.id)
+    assert refreshed is not None
+    state = policy_state(refreshed)
+    assert state["recovery_backoff_attempts"] == 1
+    assert state["backoff_until"] is not None
+    assert state["last_failure_source"] == "node_health"
+
+
+async def test_restart_shelves_at_review_threshold(db_session: AsyncSession, db_host: Host) -> None:
+    """At the shared threshold the device is shelved instead of restarted."""
+    device, _node = await _running_node_fixture(
+        db_session,
+        db_host,
+        name="Shelved Restart Phone",
+        identity="nh-shelved-restart",
+        port=4792,
+    )
+    await _seed_policy_state(db_session, device.id, recovery_backoff_attempts=4)
+
+    await _drive_refused_node_health(
+        db_session,
+        device.host_id,
+        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300}),
+    )
+
+    refreshed = await db_session.get(Device, device.id)
+    assert refreshed is not None
+    assert refreshed.review_required is True
+    assert await _auto_recovery_intents(db_session, device.id) == []
 
 
 async def test_node_restart_intent_marks_device_offline_until_reconciler_recovers(db_session: AsyncSession) -> None:

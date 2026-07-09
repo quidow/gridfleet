@@ -34,6 +34,9 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
 )
+from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.lifecycle.services.actions import escalate_device_remediation_failure
+from app.lifecycle.services.escalation import backoff_active
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 if TYPE_CHECKING:
@@ -367,6 +370,30 @@ class NodeHealthService:
 
         if count >= max_failures:
             locked_node.consecutive_health_failures = 0
+
+            deadline = backoff_active(policy_state(device))
+            if deadline is not None:
+                logger.warning(
+                    "Node for device %s reached max failures; restart deferred by shared backoff until %s",
+                    device.name,
+                    deadline.isoformat(),
+                )
+                return
+
+            outcome = await escalate_device_remediation_failure(
+                db,
+                device,
+                settings=self._settings,
+                source="node_health",
+                reason="Node health checks kept failing; automated restart escalation",
+            )
+            if outcome.shelved:
+                logger.error(
+                    "Node for device %s exhausted automated restarts (%d attempts); shelved for operator review",
+                    device.name,
+                    outcome.attempts,
+                )
+                return
 
             logger.error("Node for device %s reached max failures, attempting restart", device.name)
             await self._attempt_node_restart(db, device=device)
