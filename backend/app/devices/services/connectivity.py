@@ -646,7 +646,7 @@ class ConnectivityService:
         """Concurrently probe every device's health (and, where the platform
         declares a ``state`` action, lifecycle state) across ALL hosts in one
         gather, bounded by a per-host semaphore so each host agent sees a
-        consistent concurrent load (mirrors node_health.check_host_nodes).
+        consistent concurrent load (mirrors the node-health fold's old fan-out).
 
         Pure agent I/O — NO DB access — so the shared session is untouched here and
         the caller's apply loop owns every write. ``Device.host`` must be
@@ -926,7 +926,7 @@ class ConnectivityService:
         prepass_sec = perf_counter() - prepass_started
 
         # Phase 2 — probe every device's health concurrently across ALL hosts in
-        # one gather, bounded per host (mirrors node_health.check_host_nodes). No DB
+        # one gather, bounded per host (mirrors the node-health fold's old fan-out). No DB
         # access inside the gather — the apply loop below performs all writes.
         probe_started = perf_counter()
         health_by_device_id = await self._probe_devices(

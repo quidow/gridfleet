@@ -42,15 +42,11 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from unittest.mock import Mock
-
     from app.appium_nodes.services.node_health import NodeHealthService
 
     svc = NodeHealthService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
@@ -115,15 +111,11 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from unittest.mock import Mock
-
     from app.appium_nodes.services.node_health import NodeHealthService
 
     svc = NodeHealthService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),

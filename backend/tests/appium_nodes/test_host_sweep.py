@@ -7,7 +7,13 @@ from app.appium_nodes.services import heartbeat as heartbeat_module
 from app.appium_nodes.services import reconciler as reconciler_module
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
-from app.appium_nodes.services.host_sweep import SweepStage, run_host_sweep_once, stage_due
+from app.appium_nodes.services.host_sweep import (
+    OBSERVATION_FOLD_NAMESPACE,
+    ObservationFold,
+    SweepStage,
+    run_host_sweep_once,
+    stage_due,
+)
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.core.leader import state_store as control_plane_state_store
 from app.core.timeutil import now_utc
@@ -101,7 +107,6 @@ async def test_sweep_converges_from_stored_snapshot_without_fetch(
         db_session,
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
-        node_health=Mock(check_host_nodes=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -131,7 +136,6 @@ async def test_sweep_skips_convergence_for_dead_host(
         db_session,
         heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
-        node_health=Mock(check_host_nodes=AsyncMock()),
         settings=settings,
         session_factory=db_session_maker,
     )
@@ -180,24 +184,30 @@ async def _run_sweep_with_recorders(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
-    calls: list[str],
+    calls: list[object],
     cycle_index: int,
     alive: bool = True,
     reconcile_raises: bool = False,
+    fold_raises: bool = False,
     connectivity_raises: bool = False,
+    include_node_health: bool = True,
+    node_health_reported_at: str = "2026-07-10T00:00:00+00:00",
 ) -> None:
-    """Drive one sweep with reconcile_host / check_host_nodes / connectivity recorders.
+    """Drive one sweep with convergence / observation-fold / connectivity recorders.
 
     Aliveness derives from status-push recency: an alive host gets a fresh stored
     snapshot (so convergence has a payload to consume); a dead host gets a stale
     ``last_heartbeat``.
     """
     if alive:
+        payload: dict[str, object] = {"appium_processes": {}, "host_telemetry": {}}
+        if include_node_health:
+            payload["node_health"] = {"reported_at": node_health_reported_at, "nodes": []}
         await control_plane_state_store.set_value(
             db_session,
             HOST_STATUS_NAMESPACE,
             str(db_host.id),
-            {"received_at": now_utc().isoformat(), "payload": {"appium_processes": {}, "host_telemetry": {}}},
+            {"received_at": now_utc().isoformat(), "payload": payload},
         )
     else:
         db_host.last_heartbeat = now_utc() - timedelta(minutes=10)
@@ -212,9 +222,10 @@ async def _run_sweep_with_recorders(
         if reconcile_raises:
             raise RuntimeError("convergence boom")
 
-    async def _record_health(_db: object, *, host_id: object) -> None:
-        _ = host_id
-        calls.append("check_host_nodes")
+    async def _record_fold(_db: object, _host_id: object, section: dict[str, object]) -> None:
+        calls.append(("fold", section["reported_at"]))
+        if fold_raises:
+            raise RuntimeError("fold boom")
 
     async def _record_connectivity(_db: object) -> None:
         calls.append("run_connectivity_pass")
@@ -222,8 +233,7 @@ async def _run_sweep_with_recorders(
             raise RuntimeError("connectivity boom")
 
     monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock(side_effect=_record_reconcile))
-    node_health = Mock()
-    node_health.check_host_nodes = AsyncMock(side_effect=_record_health)
+    fold = ObservationFold("node_health", _record_fold)
     connectivity_stage = SweepStage("connectivity", "general.device_check_interval_sec", _record_connectivity)
 
     await run_host_sweep_once(
@@ -232,39 +242,19 @@ async def _run_sweep_with_recorders(
         reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
         settings=settings,
         session_factory=db_session_maker,
-        node_health=node_health,
+        observation_folds=(fold,),
         global_stages=(connectivity_stage,),
         cycle_index=cycle_index,
     )
 
 
-async def test_node_health_stage_runs_on_due_cycle_after_convergence(
+async def test_fold_runs_once_per_stamp(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
-    # Cycle 2: node health due (divisor 2), connectivity not (divisor 4) — isolates node health.
-    await _run_sweep_with_recorders(
-        monkeypatch,
-        db_session=db_session,
-        db_session_maker=db_session_maker,
-        db_host=db_host,
-        calls=calls,
-        cycle_index=2,
-    )
-    assert calls == ["reconcile_host", "check_host_nodes"]
-
-
-async def test_node_health_stage_skipped_on_off_cycle(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    # Default 30s/15s settings → divisor 2 → node health only on even cycles.
+    calls: list[object] = []
     await _run_sweep_with_recorders(
         monkeypatch,
         db_session=db_session,
@@ -273,49 +263,129 @@ async def test_node_health_stage_skipped_on_off_cycle(
         calls=calls,
         cycle_index=1,
     )
-    assert "reconcile_host" in calls
-    assert "check_host_nodes" not in calls
-
-
-async def test_node_health_stage_skipped_for_dead_host(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    # Cycle 2: connectivity not due (divisor 4), so a dead host leaves calls empty.
     await _run_sweep_with_recorders(
         monkeypatch,
         db_session=db_session,
         db_session_maker=db_session_maker,
         db_host=db_host,
         calls=calls,
-        cycle_index=2,
+        cycle_index=1,
+    )
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
+        node_health_reported_at="2026-07-10T00:00:01+00:00",
+    )
+    assert calls == [
+        "reconcile_host",
+        ("fold", "2026-07-10T00:00:00+00:00"),
+        "reconcile_host",
+        "reconcile_host",
+        ("fold", "2026-07-10T00:00:01+00:00"),
+    ]
+    marks = await control_plane_state_store.get_value(db_session, OBSERVATION_FOLD_NAMESPACE, str(db_host.id))
+    assert marks == {"node_health": "2026-07-10T00:00:01+00:00"}
+
+
+async def test_fold_skipped_when_section_missing(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
+        include_node_health=False,
+    )
+    assert "reconcile_host" in calls
+    assert not any(call[0] == "fold" for call in calls if isinstance(call, tuple))
+    assert await control_plane_state_store.get_value(db_session, OBSERVATION_FOLD_NAMESPACE, str(db_host.id)) is None
+
+
+async def test_fold_skipped_for_dead_host(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    # A dead host leaves no per-host calls; connectivity is off-cycle.
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
         alive=False,
     )
     assert calls == []
 
 
-async def test_node_health_stage_runs_even_when_convergence_fails(
+async def test_fold_failure_does_not_advance_watermark(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
-    # Stage isolation: a convergence failure must not skip node health on an alive host.
-    # Cycle 2: node health due, connectivity not — isolates the node-health path.
+    calls: list[object] = []
+    # Stage isolation: a failed fold is retried on the next cycle while
+    # convergence continues to run.
     await _run_sweep_with_recorders(
         monkeypatch,
         db_session=db_session,
         db_session_maker=db_session_maker,
         db_host=db_host,
         calls=calls,
-        cycle_index=2,
-        reconcile_raises=True,
+        cycle_index=1,
+        fold_raises=True,
     )
-    assert calls == ["reconcile_host", "check_host_nodes"]
+    assert await control_plane_state_store.get_value(db_session, OBSERVATION_FOLD_NAMESPACE, str(db_host.id)) is None
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
+    )
+    assert calls == [
+        "reconcile_host",
+        ("fold", "2026-07-10T00:00:00+00:00"),
+        "reconcile_host",
+        ("fold", "2026-07-10T00:00:00+00:00"),
+    ]
+    assert await control_plane_state_store.get_value(db_session, OBSERVATION_FOLD_NAMESPACE, str(db_host.id)) == {
+        "node_health": "2026-07-10T00:00:00+00:00"
+    }
+
+
+async def test_fold_runs_after_convergence(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
+    )
+    assert calls == ["reconcile_host", ("fold", "2026-07-10T00:00:00+00:00")]
 
 
 async def test_connectivity_stage_runs_after_fanout_on_due_cycle(
@@ -324,7 +394,7 @@ async def test_connectivity_stage_runs_after_fanout_on_due_cycle(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
+    calls: list[object] = []
     await _run_sweep_with_recorders(
         monkeypatch,
         db_session=db_session,
@@ -386,7 +456,6 @@ async def test_telemetry_stage_divisors(
             db_session,
             heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
             reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
-            node_health=Mock(check_host_nodes=AsyncMock()),
             settings=settings,
             session_factory=db_session_maker,
             global_stages=stages,
@@ -445,7 +514,6 @@ async def test_probe_stage_gated_by_partition_probe_interval(
             db_session,
             heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
             reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
-            node_health=Mock(check_host_nodes=AsyncMock()),
             settings=settings,
             session_factory=db_session_maker,
             cycle_index=cycle_index,

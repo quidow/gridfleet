@@ -14,7 +14,7 @@ from app.agent_comm.config import agent_settings
 from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes.services.host_sweep import HostSweepLoop, SweepStage
+from app.appium_nodes.services.host_sweep import HostSweepLoop, ObservationFold, SweepStage
 from app.appium_nodes.services.node_viability import device_node_is_viable
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
@@ -185,6 +185,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(
         services=app_services.appium_nodes,
+        observation_folds=(ObservationFold("node_health", app_services.appium_nodes.node_health.fold_host_nodes),),
         global_stages=(
             SweepStage(
                 "connectivity",

@@ -8,7 +8,6 @@ import structlog.testing
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import (
     APPIUM_RESTART_SEQUENCE_NAMESPACE,
@@ -636,16 +635,28 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     ]
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
-    with patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="refused")):
-        await NodeHealthService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            pool=Mock(),
-            circuit_breaker=Mock(),
-            recovery_control=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-            incidents=AsyncMock(),
-        ).check_host_nodes(db_session, host_id=device.host_id)
+    await NodeHealthService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        recovery_control=AsyncMock(),
+        health=DeviceHealthService(publisher=Mock()),
+        incidents=AsyncMock(),
+    ).fold_host_nodes(
+        db_session,
+        device.host_id,
+        {
+            "reported_at": now_utc().isoformat(),
+            "nodes": [
+                {
+                    "port": node.port,
+                    "pid": node.pid,
+                    "connection_target": node.active_connection_target,
+                    "running": False,
+                    "observed_at": now_utc().isoformat(),
+                }
+            ],
+        },
+    )
 
     await db_session.refresh(node)
     assert node.observed_running is True

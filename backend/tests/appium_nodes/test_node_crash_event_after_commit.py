@@ -134,8 +134,6 @@ async def test_probe_failure_threshold_writes_restart_intent(
                 "appium_reconciler.restart_window_sec": 30,
             }
         ),
-        pool=Mock(),
-        circuit_breaker=Mock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=Mock()),
         incidents=AsyncMock(),

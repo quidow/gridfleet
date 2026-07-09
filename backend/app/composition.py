@@ -364,8 +364,6 @@ def compose_app(
             node_health=NodeHealthService(
                 publisher=bus,
                 settings=settings_svc,
-                pool=http_pool,
-                circuit_breaker=circuit_breaker,
                 recovery_control=lifecycle_policy_svc,
                 health=device_health_svc,
                 incidents=incidents_svc,

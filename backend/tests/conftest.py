@@ -643,8 +643,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             node_health=NodeHealthService(
                 publisher=test_event_bus,
                 settings=settings_service,
-                pool=test_http_pool,
-                circuit_breaker=test_circuit_breaker,
                 recovery_control=Mock(),
                 health=DeviceHealthService(publisher=test_event_bus),
                 incidents=LifecycleIncidentService(),
