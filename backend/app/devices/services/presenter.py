@@ -100,7 +100,7 @@ class DevicePresenterService:
             precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
         )
         policy = await lifecycle_policy_summary.build_lifecycle_policy(
-            db, device, reservation_context=reservation_context
+            db, device, reservation_context=reservation_context, ready=readiness.readiness_state == "verified"
         )
         lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
         if health_summary is None:
@@ -248,6 +248,7 @@ def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
         "health_running": node.health_running,
         "health_state": node.health_state,
         "lifecycle_policy_state": copy.deepcopy(device.lifecycle_policy_state or {}),
+        "review_required": device.review_required,
     }
 
 

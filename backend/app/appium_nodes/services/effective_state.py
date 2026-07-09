@@ -19,21 +19,17 @@ EffectiveNodeStateValue = Literal[
 ]
 
 
-def _is_recovery_blocked(lifecycle_state: dict[str, Any], now: datetime) -> bool:
-    suppression_reason = lifecycle_state.get("recovery_suppressed_reason")
-    if not (isinstance(suppression_reason, str) and suppression_reason):
-        return False
+def _backoff_active(lifecycle_state: dict[str, Any], now: datetime) -> bool:
     backoff_raw = lifecycle_state.get("backoff_until")
-    backoff_active = False
-    if isinstance(backoff_raw, str):
-        try:
-            backoff_until = datetime.fromisoformat(backoff_raw)
-            if backoff_until.tzinfo is None:
-                backoff_until = backoff_until.replace(tzinfo=UTC)
-            backoff_active = backoff_until > now
-        except ValueError:
-            backoff_active = False
-    return backoff_raw is None or backoff_active
+    if not isinstance(backoff_raw, str):
+        return False
+    try:
+        backoff_until = datetime.fromisoformat(backoff_raw)
+    except ValueError:
+        return False
+    if backoff_until.tzinfo is None:
+        backoff_until = backoff_until.replace(tzinfo=UTC)
+    return backoff_until > now
 
 
 def _desired_state_effective(*, desired_state: str, pid: int | None) -> EffectiveNodeStateValue:
@@ -46,7 +42,7 @@ def _desired_state_effective(*, desired_state: str, pid: int | None) -> Effectiv
     return "stopped"
 
 
-def compute_effective_state(
+def compute_effective_state(  # noqa: PLR0913 - keyword-only node observation fields folded into one verdict
     *,
     pid: int | None,
     desired_state: str,
@@ -55,13 +51,13 @@ def compute_effective_state(
     transition_token: uuid.UUID | None,
     transition_deadline: datetime | None,
     lifecycle_policy_state: dict[str, Any] | None,
+    review_required: bool,
     now: datetime,
 ) -> EffectiveNodeStateValue:
     if transition_token is not None and transition_deadline is not None and transition_deadline > now:
         return "restarting"
 
-    lifecycle_state = lifecycle_policy_state or {}
-    if _is_recovery_blocked(lifecycle_state, now):
+    if review_required or _backoff_active(lifecycle_policy_state or {}, now):
         return "blocked"
 
     if health_state == "error" or health_running is False:

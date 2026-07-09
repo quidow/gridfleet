@@ -129,6 +129,7 @@ class AppiumNodeRead(BaseModel):
     health_running: bool | None = None
     health_state: str | None = None
     lifecycle_policy_state: dict[str, Any] | None = None
+    review_required: bool = False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -141,6 +142,7 @@ class AppiumNodeRead(BaseModel):
             transition_token=self.transition_token,
             transition_deadline=self.transition_deadline,
             lifecycle_policy_state=self.lifecycle_policy_state,
+            review_required=self.review_required,
             now=now_utc(),
         )
 

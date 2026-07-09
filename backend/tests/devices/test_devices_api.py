@@ -1228,17 +1228,7 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    device.lifecycle_policy_state = {
-        "last_failure_reason": "Node restart failed",
-        "last_action": "recovery_failed",
-        "last_action_at": "2026-03-30T10:00:00+00:00",
-        "stop_pending": False,
-        "stop_pending_reason": None,
-        "stop_pending_since": None,
-        "recovery_suppressed_reason": "Auto recovery suppressed",
-        "backoff_until": None,
-        "recovery_backoff_attempts": 0,
-    }
+    device.review_required = True
     db_session.add(
         AppiumNode(
             device_id=device.id,
@@ -1253,7 +1243,6 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
 
     assert resp.status_code == 200
     node = resp.json()["appium_node"]
-    assert node["lifecycle_policy_state"]["recovery_suppressed_reason"] == "Auto recovery suppressed"
     assert node["effective_state"] == "blocked"
 
 

@@ -72,13 +72,13 @@ _ALLOWED = RecoveryAvailability(allowed=True, reason=None, kind=None)
 
 
 async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one return per rung
-    db: AsyncSession, device: Device, *, now: datetime | None = None
+    db: AsyncSession, device: Device, *, now: datetime | None = None, ready: bool | None = None
 ) -> RecoveryAvailability:
     # ponytail: consulted per-device in the device-list serializer (serialize_device),
     # so a list poll runs its handful of indexed queries once per row — the same N+1
-    # shape the surrounding serialize already has (reservation, readiness, assert_runnable).
-    # Fine at lab scale; if a large lab needs relief, prefetch facts/readiness in a batch
-    # and thread them in, or raise the dashboard poll interval.
+    # shape the surrounding serialize already has (reservation, assert_runnable). The
+    # list path passes ``ready`` from its batched readiness so the pack catalog is not
+    # reloaded per row; the remaining per-row queries are indexed and cheap at lab scale.
     now = now or now_utc()
     if device.review_required:
         return RecoveryAvailability(
@@ -98,7 +98,9 @@ async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one retu
             _deny_kind(decision.source),
         )
 
-    if not await is_ready_for_use_async(db, device):
+    if ready is None:
+        ready = await is_ready_for_use_async(db, device)
+    if not ready:
         return RecoveryAvailability(False, "Device setup or verification is incomplete", RecoveryBlockKind.not_ready)
 
     state = policy_state(device)

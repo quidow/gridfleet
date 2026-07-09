@@ -11,6 +11,8 @@ from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_operator_start_suppression,
@@ -426,11 +428,23 @@ async def test_start_node_clears_operator_stop_suppression(
             "recovery_backoff_attempts": 0,
         },
     )
+    # The badge is projected from the sticky operator deny intent (the fact an
+    # operator stop leaves behind), not from the JSON residue above.
+    await IntentService(db_session).register_intents(
+        device_id=uuid.UUID(device_id),
+        intents=[
+            IntentRegistration(
+                source=f"operator:stop:recovery:{device_id}",
+                axis=RECOVERY,
+                payload={"allowed": False, "reason": "Operator stopped the node"},
+            )
+        ],
+    )
     await db_session.commit()
 
-    # Sanity: the residue derives a suppressed summary before the start. It no
+    # Sanity: the deny intent derives a suppressed summary before the start. It no
     # longer drives needs_attention — attention follows the operational axis,
-    # so suppression residue on an available device is not flagged.
+    # so suppression on an available device is not flagged.
     before = await client.get(f"/api/devices/{device_id}")
     assert before.json()["lifecycle_policy_summary"]["state"] == "suppressed"
     assert before.json()["needs_attention"] is False

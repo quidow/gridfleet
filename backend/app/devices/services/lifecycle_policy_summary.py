@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, now, parse_iso, state
+from app.devices.services.recovery_projection import SUPPRESSED_KINDS, recovery_availability
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 
@@ -44,6 +45,8 @@ async def build_lifecycle_policy(
     db: AsyncSession,
     device: Device,
     reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
+    *,
+    ready: bool | None = None,
 ) -> dict[str, Any]:
     policy = state(device)
     if reservation_context is None:
@@ -51,12 +54,13 @@ async def build_lifecycle_policy(
     run, entry = reservation_context
     policy.update(derive_run_tracking(run, entry))
 
+    availability = await recovery_availability(db, device, ready=ready)
     backoff_until = parse_iso(policy.get("backoff_until"))
     if policy.get("stop_pending"):
         recovery_state = "waiting_for_session_end"
     elif backoff_until is not None and backoff_until > now():
         recovery_state = "backoff"
-    elif policy.get("recovery_suppressed_reason"):
+    elif availability.kind in SUPPRESSED_KINDS:
         recovery_state = "suppressed"
     elif policy.get("excluded_from_run") or device.operational_state == DeviceOperationalState.offline:
         recovery_state = "eligible"
@@ -64,6 +68,8 @@ async def build_lifecycle_policy(
         recovery_state = "idle"
 
     policy["recovery_state"] = recovery_state
+    # Computed, never stored: keeps the API dict key (frontend panel + harness read it).
+    policy["recovery_suppressed_reason"] = availability.reason if recovery_state == "suppressed" else None
     return policy
 
 
