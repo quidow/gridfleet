@@ -970,6 +970,82 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     assert (device.lifecycle_policy_state or {}).get("last_failure_source") is None
 
 
+async def test_disconnect_records_exactly_one_connectivity_lost_event(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PIN (plan 4b): one disconnect episode == exactly one connectivity_lost audit row.
+
+    Analytics reliability counts query this type; the row must survive the move from the
+    transition path to the observation site with identical cardinality. Fix the
+    implementation, never this pin.
+    """
+    from sqlalchemy import select
+
+    from app.devices.models import DeviceEvent, DeviceEventType
+    from app.devices.services import connectivity as device_connectivity
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="disconnect-pin",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+        device_checks_healthy=True,
+    )
+    await db_session.commit()
+
+    async def fake_get_agent_devices(
+        _host: Host, *, settings: object, circuit_breaker: object, pool: object = None
+    ) -> set[str]:
+        del settings, circuit_breaker, pool
+        return set()
+
+    monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
+    monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
+
+    async def fake_update_device_checks(
+        _db_session: AsyncSession, target: Device, *, healthy: bool, summary: str
+    ) -> None:
+        target.device_checks_healthy = healthy
+        target.device_checks_summary = summary
+
+    service = ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=SimpleNamespace(update_device_checks=fake_update_device_checks),
+    )
+    await service.check_connectivity(db_session)
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.offline
+
+    async def connectivity_lost_count() -> int:
+        rows = (
+            (
+                await db_session.execute(
+                    select(DeviceEvent).where(
+                        DeviceEvent.device_id == device.id,
+                        DeviceEvent.event_type == DeviceEventType.connectivity_lost,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return len(rows)
+
+    assert await connectivity_lost_count() == 1
+
+    # A second pass while the device stays disconnected must not add a row.
+    await service.check_connectivity(db_session)
+    assert await connectivity_lost_count() == 1
+
+
 # ---------------------------------------------------------------------------
 # Task 12: integration test helpers
 # ---------------------------------------------------------------------------
