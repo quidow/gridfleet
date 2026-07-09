@@ -215,7 +215,7 @@ sequenceDiagram
         Process->>Pg: apply_node_state_transition(health_running=False, mark_offline=True) → device offline
         Process->>Pg: reset consecutive_health_failures
         Process->>Process: _attempt_node_restart
-        Process->>Intent: register_intents_and_reconcile (NODE_PROCESS start + RECOVERY, PRIORITY_AUTO_RECOVERY, fresh transition_token/deadline)
+        Process->>Intent: register_intents_and_reconcile (NODE_PROCESS start + RECOVERY auto-recovery, fresh transition_token/deadline)
     end
     Note over NodeAgent: NodeStateLoop's next pull sees the fresh transition_token, forces one stop+start locally
     Note over Rec: A later host_sweep cycle ingests the agent's health report
@@ -229,7 +229,7 @@ Three things this flow gets right that earlier versions did not:
 2. **Node state transitions go through `DeviceHealthService.apply_node_state_transition`.** The helper writes transient health detail, last-check timestamp, the dirty-and-reconcile (or dirty-only, below threshold) signal that drives derived operational state, and the derived `device.health_changed` event under the correct locks. It does not write a node `state` column (none exists).
 3. **The agent probe is the authoritative health signal.** Post-cutover there is no Grid `/status` to defer to: the direct `/agent/appium/{port}/status` probe is the source of truth for "is this Appium up". An acked probe persists `health_running=True` truthfully rather than relying on a registration grace window.
 
-At the failure threshold `_process_node_health` resets `consecutive_health_failures` and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` intent plus a RECOVERY auto-recovery intent (`IntentService.register_intents_and_reconcile`, `PRIORITY_AUTO_RECOVERY`, fresh `transition_token`/`transition_deadline`, TTL-bounded via `expires_at`). It does **not** call the agent or rewrite node fields itself — the write goes through the same `write_desired_state` path as any other desired-state change. The agent applies the restart on its next pull; the observe-only reconciler (`reconciler.py`) performs the `mark_node_*` flips from the agent's next health report and, on exhaustion, records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
+At the failure threshold `_process_node_health` resets `consecutive_health_failures` and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` command plus a RECOVERY auto-recovery command (`IntentService.register_intents_and_reconcile`, fresh `transition_token`/`transition_deadline`, TTL-bounded via `expires_at`). It does **not** call the agent or rewrite node fields itself — the write goes through the same `write_desired_state` path as any other desired-state change. The agent applies the restart on its next pull; the observe-only reconciler (`reconciler.py`) performs the `mark_node_*` flips from the agent's next health report and, on exhaustion, records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
 
 ## The resource-claim + port allocation interaction
 

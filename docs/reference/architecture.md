@@ -54,7 +54,7 @@ Loop-level readiness and dashboard gauges now use `host_sweep`. The historical
 heartbeat ping metrics and `APPIUM_RECONCILER_*` concern metrics retain their names.
 
 > See [intents.md](./intents.md) for the commands-plus-facts intent model, the
-> stored-vs-synthesized split, and the fact-synthesis table.
+> decision ladder, and the per-source payload table.
 
 Migration history: Phase 1 added the orphan reconciler scaffold; Phase 2 added
 desired-state schema; Phase 3 dual-wrote intent beside legacy inline RPC; Phase
