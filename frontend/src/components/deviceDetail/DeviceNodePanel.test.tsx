@@ -77,15 +77,12 @@ function makeDevice(): DeviceDetail {
       id: 'node-1',
       port: 4723,
       pid: 36492,
-      container_id: null,
       active_connection_target: '192.168.1.254:5555',
       state: 'running',
       effective_state: 'running',
       started_at: '2026-04-28T13:51:00Z',
       desired_state: 'running',
       desired_port: 4723,
-      transition_token: null,
-      transition_deadline: null,
       last_observed_at: null,
     },
     sessions: [],
@@ -131,11 +128,10 @@ describe('DeviceNodePanel', () => {
     expect(screen.getByText(/Starting/i)).toBeInTheDocument();
   });
 
-  it('renders Restarting badge when transition_token is active', () => {
+  it('renders Restarting badge when effective_state is restarting', () => {
     const device = makeDevice();
     device.appium_node = {
       ...device.appium_node!,
-      transition_token: 'abc-token',
       effective_state: 'restarting',
     };
 

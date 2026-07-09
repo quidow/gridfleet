@@ -9,7 +9,7 @@ reservation gate uses, so the badge cannot contradict the allocator) — and the
 node viability signal.
 
 The node transition window the gate also enforces via ``node_viability``
-(``transition_token`` / ``active_connection_target``) IS modelled here (Stage 4 /
+(``restart_requested_at`` / ``active_connection_target``) IS modelled here (Stage 4 /
 P6): the caller passes ``node_viable`` and an ``available`` device whose node is
 mid-transition reports ``transitioning``. Crucially this is read-side only —
 ``operational_state`` is deliberately NOT made to model node transitions, because

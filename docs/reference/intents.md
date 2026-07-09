@@ -38,7 +38,7 @@ retired numeric ladder exactly:
 3. `in_maintenance` **fact** → graceful stop (`maintenance hold`).
 4. `health_failure:node` command → graceful stop.
 5. `device_checks_unhealthy` **fact**, and no active start command → `running_blocked` (connectivity park).
-6. any start command (`operator:start`, `verification`, `auto_recovery:node`) → running. A token-bearing start (one-shot restart) beats a tokenless standing order; ties break lexicographically by source.
+6. any start command (`operator:start`, `verification`, `auto_recovery:node`) → running. A restart-bearing start (one carrying `restart_requested_at`) beats a plain standing order; among restarts the newest watermark wins (a later request supersedes an earlier one), and ties break lexicographically by source.
 7. `in_service` **fact** (no commands) → running (`baseline:idle` standing start).
 8. otherwise → stopped.
 
@@ -67,13 +67,13 @@ debug view at zero decision cost. Stop mode is implied by the command kind;
 
 | Source | Axis | Payload |
 |--------|------|---------|
-| `operator:start:{device_id}` | `node_process` | `{"action": "start"}` (restart variant adds `transition_token`, `transition_deadline`) |
+| `operator:start:{device_id}` | `node_process` | `{"action": "start"}` (restart variant adds `restart_requested_at`) |
 | `operator:stop:node:{device_id}` | `node_process` | `{"action": "stop"}` |
 | `operator:stop:recovery:{device_id}` | `recovery` | `{"allowed": false, "reason": "Operator stopped the node"}` |
 | `forced_release:{run_id}` | `node_process` | `{"action": "stop"}` |
 | `health_failure:node:{device_id}` | `node_process` | `{"action": "stop"}` |
 | `verification:{device_id}` | `node_process` | `{"action": "start"}` |
-| `auto_recovery:node:{device_id}` | `node_process` | `{"action": "start"}` (node_health restart adds `transition_token`, `transition_deadline`) |
+| `auto_recovery:node:{device_id}` | `node_process` | `{"action": "start"}` (node_health restart adds `restart_requested_at`) |
 | `auto_recovery:recovery:{device_id}` | `recovery` | `{"allowed": true, "reason": <text>}` |
 
 ## Lifecycle

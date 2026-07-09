@@ -461,8 +461,8 @@ class ReconcilerAgentService:
     ) -> AppiumNode:
         """Operator-initiated single-device restart. Routes through
         ``self._operator.request_restart`` so the operator:start intent
-        payload is the single source of truth (with fresh transition_token and
-        expires_at on every restart).
+        payload is the single source of truth (with a fresh restart_requested_at
+        watermark and expires_at on every restart).
         """
         if not device.appium_node or not device.appium_node.observed_running:
             return await self.start_node(db, device, caller=caller)

@@ -52,7 +52,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       id: 'node-1',
       port: 4723,
       pid: 100,
-      container_id: null,
       active_connection_target: 'device-1',
       desired_state: 'running',
       effective_state: 'running',

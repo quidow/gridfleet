@@ -76,7 +76,7 @@ class IntentService:
         # Without this, a second upsert on a pre-existing row (e.g. a restart
         # overwriting a stale operator:start intent) would return the old payload
         # from the identity map, and the reconciler that runs immediately after
-        # would re-assert the stale desired_port/transition_token.
+        # would re-assert the stale desired_port/restart_requested_at.
         result = await self._db.execute(
             select(DeviceIntent)
             .where(DeviceIntent.id.in_(ids_by_source.values()))
