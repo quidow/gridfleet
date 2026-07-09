@@ -31,7 +31,7 @@ async def test_event_dispatches_after_commit(
     _, device = await seed_host_and_device(db_session, identity="after-commit-1")
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
-    await set_operational_state(locked, DeviceOperationalState.offline, reason="under-test", publisher=event_bus)
+    await set_operational_state(locked, DeviceOperationalState.offline, publisher=event_bus)
     # Pre-commit: nothing dispatched yet.
     await settle_after_commit_tasks()
     assert event_bus_capture == [], f"Helper must not dispatch before commit; got {event_bus_capture}"
@@ -43,7 +43,6 @@ async def test_event_dispatches_after_commit(
     avail = [(n, p) for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert len(avail) == 1, f"Expected one event after commit; got {avail}"
     assert avail[0][1]["new_operational_state"] == "offline"
-    assert avail[0][1]["reason"] == "under-test"
 
 
 async def test_event_dropped_on_rollback(
@@ -53,9 +52,7 @@ async def test_event_dropped_on_rollback(
     _, device = await seed_host_and_device(db_session, identity="rollback-1")
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
-    await set_operational_state(
-        locked, DeviceOperationalState.offline, reason="under-test-rollback", publisher=event_bus
-    )
+    await set_operational_state(locked, DeviceOperationalState.offline, publisher=event_bus)
 
     await db_session.rollback()
     await settle_after_commit_tasks()
@@ -74,7 +71,7 @@ async def test_multiple_events_dispatch_in_queue_order(
     event_bus_capture.clear()
     for d in (d1, d2):
         locked = await device_locking.lock_device(db_session, d.id)
-        await set_operational_state(locked, DeviceOperationalState.offline, reason="batch", publisher=event_bus)
+        await set_operational_state(locked, DeviceOperationalState.offline, publisher=event_bus)
 
     await db_session.commit()
     await settle_after_commit_tasks()

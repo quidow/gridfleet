@@ -33,21 +33,23 @@ async def test_set_operational_state_writes_and_queues_event(
     db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    captured: list[tuple[str, dict[str, object]]] = []
+    captured: list[tuple[str, dict[str, object], object]] = []
 
     def fake_queue(
         self: object, session: object, name: str, payload: dict[str, object], *, severity: object = None
     ) -> None:
-        captured.append((name, payload))
+        captured.append((name, payload, severity))
 
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", fake_queue)
 
-    changed = await device_state.set_operational_state(
-        device, DeviceOperationalState.available, reason="test", publisher=event_bus
-    )
+    changed = await device_state.set_operational_state(device, DeviceOperationalState.available, publisher=event_bus)
     assert changed is True
     assert device.operational_state == DeviceOperationalState.available
-    assert any(name == "device.operational_state_changed" for name, _ in captured)
+    assert any(name == "device.operational_state_changed" for name, _, _ in captured)
+    payload = captured[0][1]
+    assert payload["new_operational_state"] == DeviceOperationalState.available.value
+    assert "reason" not in payload
+    assert captured[0][2] == "success"
 
 
 @pytest.mark.db

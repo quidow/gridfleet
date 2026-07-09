@@ -29,7 +29,6 @@ from app.devices.services.intent_types import (
     failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
-from app.devices.services.observation_reason import ObservationReason
 from app.packs.services.platform_resolver import applicable_resource_ports, resolve_pack_platform
 
 if TYPE_CHECKING:
@@ -244,12 +243,9 @@ class OperatorNodeLifecycleService:
         await db.refresh(node)
         return node
 
-    async def request_stop(
-        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
-    ) -> AppiumNode:
+    async def request_stop(self, db: AsyncSession, device: Device, *, reason: str) -> AppiumNode:
         """Register operator:stop intents (node + grid). Returns the node row for the
-        convenience of route handlers; ``caller`` distinguishes genuine operator stops
-        (which record an audit row) from verification-driven stops (which do not).
+        convenience of route handlers.
 
         Invariant — callers must gate ``observed_running``: this helper only checks
         that an ``AppiumNode`` row exists. Wrappers in ``reconciler_agent.stop_node``
@@ -267,12 +263,6 @@ class OperatorNodeLifecycleService:
             device_id=device.id,
             intents=operator_stop_intents(device.id),
             publisher=self._publisher,
-            # Verification-driven stops carry their own reason via the verification
-            # flow; only label genuine operator calls (same caller set request_start
-            # uses for its operator-override branches).
-            observed_reason=(
-                ObservationReason.operator_stopped if caller in {"operator_route", "operator_restart"} else None
-            ),
         )
         await db.refresh(node)
         return node

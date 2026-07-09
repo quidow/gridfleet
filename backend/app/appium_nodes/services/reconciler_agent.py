@@ -451,7 +451,7 @@ class ReconcilerAgentService:
         if not node or not node.observed_running:
             raise NodeManagerError(f"No running node for device {device.id}")
 
-        node = await self._operator.request_stop(db, device, caller=caller, reason=f"{caller} stop requested")
+        node = await self._operator.request_stop(db, device, reason=f"{caller} stop requested")
         await db.commit()
         await db.refresh(node)
         return node

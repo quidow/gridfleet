@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
-    from app.devices.services.observation_reason import ObservationReason
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
     from app.packs.models import DriverPack
@@ -187,7 +186,6 @@ async def reconcile_device(
     device_id: uuid.UUID,
     *,
     publisher: EventPublisher,
-    observed_reason: ObservationReason | None = None,
     packs: dict[str, DriverPack] | None = None,
 ) -> bool:
     """Re-derive desired node state and operational_state for one device.
@@ -211,9 +209,7 @@ async def reconcile_device(
         # so operational_state / hold stay consistent with durable facts.
         try:
             now = now_utc()
-            await apply_derived_state(
-                db, device, now=now, publisher=publisher, observed_reason=observed_reason, packs=packs
-            )
+            await apply_derived_state(db, device, now=now, publisher=publisher, packs=packs)
         except Exception:  # noqa: BLE001 - state derivation must never break reconcile
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return False
@@ -311,9 +307,7 @@ async def reconcile_device(
     await db.flush()
 
     try:
-        await apply_derived_state(
-            db, device, now=now, publisher=publisher, observed_reason=observed_reason, packs=packs
-        )
+        await apply_derived_state(db, device, now=now, publisher=publisher, packs=packs)
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 

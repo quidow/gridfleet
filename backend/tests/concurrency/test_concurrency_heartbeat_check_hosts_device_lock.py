@@ -56,9 +56,7 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
         device: Device,
         operational_state: DeviceOperationalState,
         *,
-        reason: str | None = None,
         publish_event: bool = True,
-        severity: str | None = None,
         publisher: object = None,
     ) -> None:
         if device.id == device_id and operational_state == DeviceOperationalState.offline:
@@ -73,9 +71,7 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
         await original_set_operational_state(
             device,
             operational_state,
-            reason=reason,
             publish_event=publish_event,
-            severity=severity,
             publisher=publisher,
         )
 

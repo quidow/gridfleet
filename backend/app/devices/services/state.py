@@ -18,13 +18,11 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceEventType, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
-from app.devices.services.event import record_event
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.observation_reason import ObservationReason, map_transition_event
 from app.devices.services.readiness import is_ready_for_use_async
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
@@ -53,13 +51,24 @@ def _persistent_session(device: Device) -> OrmSession:
     return session
 
 
+def _transition_severity(old: DeviceOperationalState, new: DeviceOperationalState) -> EventSeverity:
+    """Severity of the operational bus event, derived from the transition alone.
+
+    Going offline warrants operator attention; recovering to available (from anything but a
+    session end) is good news; everything else is routine.
+    """
+    if new is DeviceOperationalState.offline:
+        return "warning"
+    if new is DeviceOperationalState.available and old is not DeviceOperationalState.busy:
+        return "success"
+    return "info"
+
+
 async def set_operational_state(
     device: Device,
     new_state: DeviceOperationalState,
     *,
-    reason: str | None = None,
     publish_event: bool = True,
-    severity: EventSeverity | None = None,
     publisher: EventPublisher,
 ) -> bool:
     session = _persistent_session(device)
@@ -68,19 +77,16 @@ async def set_operational_state(
         return False
     device.operational_state = new_state
     if publish_event:
-        payload = {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "old_operational_state": old.value,
-            "new_operational_state": new_state.value,
-        }
-        if reason is not None:
-            payload["reason"] = reason
         publisher.queue_for_session(
             session,
             "device.operational_state_changed",
-            payload,
-            severity=severity,
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "old_operational_state": old.value,
+                "new_operational_state": new_state.value,
+            },
+            severity=_transition_severity(old, new_state),
         )
     return True
 
@@ -206,70 +212,22 @@ async def gather_device_state_facts(
     )
 
 
-def _available_reason(prev_op: DeviceOperationalState) -> ObservationReason:
-    """Split the ``available`` destination by where it came from.
-
-    Leaving ``busy`` is a session end, anything else recovering to ``available``
-    is a recovery (so ``offline → available`` maps to ``connectivity_restored``,
-    not ``session_ended``).
-    """
-    if prev_op is DeviceOperationalState.busy:
-        return ObservationReason.session_ended
-    return ObservationReason.recovered
-
-
-def _reason_for(
-    prev_op: DeviceOperationalState,
-    facts: DeviceStateFacts,
-) -> ObservationReason:
-    """Map gathered facts to the closest ObservationReason for the derived transition.
-
-    Priority mirrors evaluate_operational_state: session > verification_lease >
-    stop_in_flight / not_ready, then split the ``available`` destination by where
-    it came from (see ``_available_reason``).
-    """
-    if facts.has_running_session:
-        return ObservationReason.session
-    if facts.has_verification_lease:
-        return ObservationReason.verification_started
-    if facts.in_maintenance:
-        # Mirror evaluate_operational_state's priority: maintenance outranks
-        # stop_in_flight / not-ready. Entering maintenance registers a node-stop
-        # intent (stop_in_flight=True) and may leave the device not-ready, so
-        # without this branch the bus event would report ``auto_stopped`` /
-        # ``disconnected`` — contradicting the ``maintenance_entered`` audit row.
-        return ObservationReason.maintenance_entered
-    if facts.stop_in_flight:
-        return ObservationReason.auto_stopped
-    if not facts.ready:
-        return ObservationReason.disconnected
-    return _available_reason(prev_op)
-
-
 async def apply_derived_state(
     db: AsyncSession,
     device: Device,
     *,
     now: datetime,
     publisher: EventPublisher,
-    observed_reason: ObservationReason | None = None,
     packs: dict[str, DriverPack] | None = None,
 ) -> bool:
     """Derive ``operational_state`` and write it when it differs from the persisted column.
 
-    Emits the mapped operational bus event when the axis changes and ``publisher`` is provided.
-
-    The typed DeviceEvent audit row is written only when the caller carries an ``observed_reason``
-    (§6: the cause rides on the observation, the reconciler maps ``(delta, reason) → event``). The
-    reconciler must NOT *guess* the cause from facts alone — a not-ready offline transition could be
-    a connectivity loss, a node crash, a health-probe failure or a verification failure, and each
-    has a different DeviceEventType. Mislabelling them all ``connectivity_lost`` would corrupt the
-    analytics reliability counts that query that type. Background reconciles (no carried reason)
-    still update state and emit the bus event, but record no audit row.
-
-    Maintenance enter/exit transitions on the operational axis are structurally unambiguous, so they
-    always record a ``maintenance_entered`` / ``maintenance_exited`` audit row regardless of a carried
-    reason.
+    Emits the operational bus event when the axis changes. Transitions are uncaused: causes
+    are recorded once, at the observation sites that know them (connectivity sweep, host
+    heartbeat loss, lifecycle escalation, maintenance service). The reconciler records no
+    DeviceEvent audit rows — a not-ready offline transition could be a connectivity loss, a
+    node crash, a health-probe failure or a verification failure, and guessing here would
+    corrupt the analytics reliability counts.
 
     Returns True if the operational axis was written.
     """
@@ -279,38 +237,5 @@ async def apply_derived_state(
     if derived_op is device.operational_state:
         return False
 
-    prev_op = device.operational_state
-    fact_reason = _reason_for(prev_op, facts)
-    reason = observed_reason if observed_reason is not None else fact_reason
-    event_type, severity = map_transition_event(derived_op, reason)
-    # Persist the typed audit row when the cause was
-    # explicitly carried in by the observation site — never from the fact-based heuristic, which
-    # cannot tell connectivity loss from a node crash / health failure.
-    if observed_reason is not None and event_type is not None:
-        await record_event(
-            db,
-            device.id,
-            event_type,
-            {"from": prev_op.value, "to": derived_op.value, "reason": reason.value},
-        )
-    elif observed_reason is not None:
-        # The carried observation maps to no transition event for this derived state
-        # (e.g. session_ended when the device derives to offline rather than available).
-        # Defer the bus-event reason/severity to the fact-based derivation; the heuristic
-        # cause is never recorded as an audit row (guarded above).
-        reason = fact_reason
-        event_type, severity = map_transition_event(derived_op, reason)
-    # Maintenance enter/exit are structurally unambiguous (the maintenance operational state has
-    # exactly one cause) so the audit row is always recorded, mirroring the old hold-axis behavior.
-    if derived_op is DeviceOperationalState.maintenance:
-        await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": "maintenance"})
-    elif prev_op is DeviceOperationalState.maintenance:
-        await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
-    await set_operational_state(
-        device,
-        derived_op,
-        reason=(event_type.value if event_type is not None else reason.value),
-        severity=severity,
-        publisher=publisher,
-    )
+    await set_operational_state(device, derived_op, publisher=publisher)
     return True

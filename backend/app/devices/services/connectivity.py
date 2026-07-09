@@ -25,7 +25,6 @@ from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host, HostStatus
@@ -699,7 +698,13 @@ class ConnectivityService:
         reserved). The durable writes are identical on both sides; the post-lock
         re-check only guards against acting on a stale classification (TOCTOU
         across the lock acquisition).
+
+        Writes the ``connectivity_lost`` audit row here — the observation site that
+        knows the cause — once per disconnect episode, edge-gated on
+        ``device_checks_healthy`` flipping to False (analytics reliability counts
+        this type; repeats would inflate it).
         """
+        first_detection = device.device_checks_healthy is not False
         await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
         locked_device = await device_locking.lock_device(db, device.id)
         held_after = await _is_held_or_reserved(db, locked_device)
@@ -711,10 +716,13 @@ class ConnectivityService:
                 _audit_label(locked_device),
             )
             return
+        if first_detection:
+            await record_event(
+                db, locked_device.id, DeviceEventType.connectivity_lost, {"reason": "Device disconnected"}
+            )
         await IntentService(db).reconcile_now(
             locked_device.id,
             publisher=self._publisher,
-            observed_reason=ObservationReason.disconnected,
         )
         await self._lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
         await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)

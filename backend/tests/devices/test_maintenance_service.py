@@ -9,6 +9,7 @@ from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalSt
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services.maintenance import MaintenanceService
 from app.events.protocols import EventPublisher
+from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -50,15 +51,13 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     assert any(r.event_type is DeviceEventType.maintenance_entered for r in rows)
 
 
-async def test_enter_maintenance_bus_event_reason_is_maintenance_entered(
+async def test_enter_maintenance_bus_event_is_uncaused(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """F4: the device.operational_state_changed bus event for a maintenance entry must carry a
-    ``maintenance_entered`` reason — not the stop-intent's ``auto_stopped`` (or a not-ready
-    ``disconnected``). The live SSE signal must agree with the durable
-    ``maintenance_entered`` audit row, otherwise real-time consumers see a node-stop where an
-    operator entered maintenance."""
+    """The device.operational_state_changed bus event for a maintenance entry carries the
+    from/to states only — transitions are uncaused; the durable maintenance_entered audit
+    row (written by the service) carries the cause."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -82,7 +81,118 @@ async def test_enter_maintenance_bus_event_reason_is_maintenance_entered(
     assert op_calls, "expected a device.operational_state_changed bus event for maintenance entry"
     payload = op_calls[-1].args[2]
     assert payload["new_operational_state"] == DeviceOperationalState.maintenance.value
-    assert payload.get("reason") == "maintenance_entered", payload
+    assert "reason" not in payload
+
+
+async def test_enter_maintenance_records_row_with_operator_reason_even_when_busy(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """The maintenance_entered row is written at fact-write time by the service — even while a
+    live session masks the operational axis (busy > maintenance) — and carries the operator's
+    actual reason. Previously the row was deferred until the busy mask cleared (and its details
+    were the literal 'maintenance')."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-busy-row",
+        operational_state=DeviceOperationalState.busy,
+    )
+    db_session.add(Session(session_id="maint-busy-1", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    await MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=AsyncMock(spec=EventPublisher)
+    ).enter_maintenance(db_session, locked, maintenance_reason="Battery swap")
+
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.maintenance_entered,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].details == {"reason": "Battery swap"}
+    await db_session.refresh(device)
+    assert device.operational_state is DeviceOperationalState.busy  # axis stays masked; row recorded anyway
+
+
+async def test_reenter_maintenance_updates_reason_without_second_row(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Calling enter_maintenance while already in maintenance updates the reason fact but must
+    not record a second maintenance_entered row (one row per episode)."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-reenter",
+        operational_state=DeviceOperationalState.available,
+    )
+    await db_session.commit()
+
+    svc = MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=AsyncMock(spec=EventPublisher)
+    )
+    locked = await device_locking.lock_device(db_session, device.id)
+    await svc.enter_maintenance(db_session, locked, maintenance_reason="First reason")
+    locked = await device_locking.lock_device(db_session, device.id)
+    await svc.enter_maintenance(db_session, locked, maintenance_reason="Second reason")
+
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.maintenance_entered,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+async def test_exit_maintenance_records_maintenance_exited_row(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-exit-row",
+        operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "test maintenance"},
+        verified=True,
+    )
+    await db_session.commit()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    await MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=AsyncMock(spec=EventPublisher)
+    ).exit_maintenance(db_session, locked)
+
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.maintenance_exited,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
 
 
 async def test_enter_maintenance_rejects_reserved_device_by_default(

@@ -303,7 +303,7 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
     svc = OperatorNodeLifecycleService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
     )
-    await svc.request_stop(db_session, device, caller="operator_route", reason="operator stop")
+    await svc.request_stop(db_session, device, reason="operator stop")
     await db_session.commit()
     await db_session.refresh(device)
     denied = await recovery_availability(db_session, device)
@@ -340,7 +340,7 @@ async def test_operator_stop_active_tracks_sticky_stop(
     svc = OperatorNodeLifecycleService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
     )
-    await svc.request_stop(db_session, device, caller="operator_route", reason="operator stop")
+    await svc.request_stop(db_session, device, reason="operator stop")
     await db_session.commit()
     assert await operator_stop_active(db_session, device.id) is True, "operator stop is active"
 

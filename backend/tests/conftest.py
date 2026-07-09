@@ -704,8 +704,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
 
     Captures ``(name, payload)``; the ``severity`` kwarg is accepted but dropped
     so existing destructure-by-position tests stay compatible. Tests that need
-    to assert severity should install their own monkeypatch (see
-    ``tests/test_observation_reason.py`` for the pattern).
+    to assert severity should install their own monkeypatch.
     """
     captured: list[tuple[str, dict[str, Any]]] = []
 
