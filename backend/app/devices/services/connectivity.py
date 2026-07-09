@@ -23,7 +23,7 @@ from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
+from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
@@ -1006,9 +1006,9 @@ class ConnectivityService:
 
     async def check_expired_cooldowns(self, db: AsyncSession) -> None:
         """Delegate expired cooldown cleanup to the intent reconciler."""
-        await _reconcile_expired_intents(
-            db, settings=self._settings, circuit_breaker=self._circuit_breaker, publisher=self._publisher
-        )
+        # Bulk-delete expired intent rows; the affected devices re-derive on the
+        # next intent reconciler scan tick (<= general.intent_reconcile_interval_sec).
+        await _gc_expired_intents(db)
         now = now_utc()
         # Transitional cleanup for pre-intent cooldown reservations. Remove once
         # all cooldown writes are guaranteed to flow through DeviceIntent rows.

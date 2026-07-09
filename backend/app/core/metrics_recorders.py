@@ -168,10 +168,6 @@ INTENT_RECONCILER_EVALUATIONS = Counter(
     "intent_reconciler_evaluations_total",
     "Total device intent reconciliation evaluations.",
 )
-INTENT_RECONCILER_DIRTY_QUEUE_SIZE = Gauge(
-    "intent_reconciler_dirty_queue_size",
-    "Current number of devices pending intent reconciliation.",
-)
 INTENT_RECONCILER_CONFLICTS = Counter(
     "intent_reconciler_conflicts_total",
     "Total same-priority device intent conflicts.",
