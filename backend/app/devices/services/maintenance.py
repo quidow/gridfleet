@@ -3,6 +3,8 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from app.core.timeutil import now_utc
+from app.devices.models import DeviceEventType
+from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
@@ -49,7 +51,10 @@ class MaintenanceService:
         if not allow_reserved and await device_is_reserved(db, device.id):
             raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
+        entering = state(device).get("maintenance_reason") is None
         set_maintenance_reason(device, maintenance_reason)
+        if entering:
+            await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": maintenance_reason})
 
         # set_maintenance_reason is the fact write; the inline reconcile derives the
         # maintenance:node graceful stop and maintenance:recovery deny from it.
@@ -65,6 +70,7 @@ class MaintenanceService:
             raise ValueError("Device is not in maintenance")
 
         clear_maintenance_reason(device)
+        await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
         # Maintenance exit is a sanctioned "give it another chance" signal —
         # clear the review-shelving flag so the recovery loop picks the device
         # back up.

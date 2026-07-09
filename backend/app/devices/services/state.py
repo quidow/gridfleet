@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceEventType, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
 from app.devices.services.event import record_event
 from app.devices.services.health_view import device_allows_allocation
@@ -267,10 +267,6 @@ async def apply_derived_state(
     analytics reliability counts that query that type. Background reconciles (no carried reason)
     still update state and emit the bus event, but record no audit row.
 
-    Maintenance enter/exit transitions on the operational axis are structurally unambiguous, so they
-    always record a ``maintenance_entered`` / ``maintenance_exited`` audit row regardless of a carried
-    reason.
-
     Returns True if the operational axis was written.
     """
     facts = await gather_device_state_facts(db, device, now=now, packs=packs)
@@ -300,12 +296,6 @@ async def apply_derived_state(
         # cause is never recorded as an audit row (guarded above).
         reason = fact_reason
         event_type, severity = map_transition_event(derived_op, reason)
-    # Maintenance enter/exit are structurally unambiguous (the maintenance operational state has
-    # exactly one cause) so the audit row is always recorded, mirroring the old hold-axis behavior.
-    if derived_op is DeviceOperationalState.maintenance:
-        await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": "maintenance"})
-    elif prev_op is DeviceOperationalState.maintenance:
-        await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
     await set_operational_state(
         device,
         derived_op,
