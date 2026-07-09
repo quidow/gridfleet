@@ -730,7 +730,7 @@ class ConnectivityService:
                 _audit_label(locked_device),
             )
             return
-        await IntentService(db).mark_dirty_and_reconcile(
+        await IntentService(db).reconcile_now(
             locked_device.id,
             publisher=self._publisher,
             observed_reason=ObservationReason.disconnected,

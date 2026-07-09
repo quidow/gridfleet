@@ -1,11 +1,11 @@
 """Regression: `reconcile_device` must tolerate a device row that vanished
-between the dirty-scan select and its own `lock_device`.
+between the scan select and its own `lock_device`.
 
 A concurrent operator delete (or any other deleter) can remove the Device row
-after the dirty-scan loop picked its id but before `reconcile_device` locks it.
+after the reconciler scan picked its id but before `reconcile_device` locks it.
 Pre-fix, `lock_device` raised `NoResultFound`, which propagated out of
 `reconcile_device` and aborted the *entire* reconcile cycle for every other
-dirty device in the batch. The vanished device must instead be a no-op.
+device in the scan. The vanished device must instead be a no-op.
 """
 
 from __future__ import annotations

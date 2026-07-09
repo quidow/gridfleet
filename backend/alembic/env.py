@@ -17,7 +17,6 @@ from app.devices.models import (  # noqa: F401
     DeviceGroup,
     DeviceGroupMembership,
     DeviceIntent,
-    DeviceIntentDirty,
     DeviceReservation,
     DeviceTestDataAuditLog,
 )

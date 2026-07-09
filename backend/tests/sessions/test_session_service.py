@@ -274,7 +274,7 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     """Regression: session-end must not emit offline with reason "Session ended".
 
     After Task 10 (reconciler-authoritative), session-end calls
-    mark_dirty_and_reconcile which derives the correct state from durable facts.
+    reconcile_now which derives the correct state from durable facts.
     A node with health_running=False is not available, so the reconciler derives
     offline — but the event reason must NOT be "Session ended" (the old flap
     reason). The reconciler uses an observation-based reason (e.g. "auto_stopped").

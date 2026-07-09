@@ -11,7 +11,6 @@ from app.devices.models.device import (
 from app.devices.models.event import DeviceEvent, DeviceEventType
 from app.devices.models.group import DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.models.intent import DeviceIntent
-from app.devices.models.intent_dirty import DeviceIntentDirty
 from app.devices.models.reservation import DeviceReservation
 from app.devices.models.test_data_audit import DeviceTestDataAuditLog
 
@@ -23,7 +22,6 @@ __all__ = [
     "DeviceGroup",
     "DeviceGroupMembership",
     "DeviceIntent",
-    "DeviceIntentDirty",
     "DeviceOperationalState",
     "DeviceReservation",
     "DeviceTestDataAuditLog",

@@ -218,7 +218,7 @@ async def close_running_session(
     if session.device_id is not None:
         # active_session intents no longer exist; reconcile so the device's node reflects
         # the post-session intent set (baseline/derived).
-        await IntentService(db).mark_dirty_and_reconcile(session.device_id, publisher=publisher)
+        await IntentService(db).reconcile_now(session.device_id, publisher=publisher)
 
 
 async def _has_session_rows(
@@ -424,7 +424,7 @@ class SessionCrudService:
             # Reconcile the device after the session ends. ``reconcile_device`` runs inside
             # the helper so ``node.stop_pending`` and ``node.desired_state`` reflect the
             # post-session intent set when the row lock is taken below.
-            await IntentService(db).mark_dirty_and_reconcile(
+            await IntentService(db).reconcile_now(
                 session.device_id,
                 publisher=self._publisher,
                 observed_reason=ObservationReason.session_ended,
@@ -445,7 +445,7 @@ class SessionCrudService:
                 # operational state (available or offline) from durable facts.
                 # The old state-machine branch (SESSION_ENDED / AUTO_STOP_EXECUTED)
                 # is replaced by reconciler-authoritative derivation.
-                await IntentService(db).mark_dirty_and_reconcile(
+                await IntentService(db).reconcile_now(
                     locked_device.id,
                     publisher=self._publisher,
                     observed_reason=ObservationReason.session_ended,

@@ -518,7 +518,7 @@ class LifecyclePolicyService:
                 {"recovered_from": source, "reason": reason},
             )
             if device.operational_state != DeviceOperationalState.available:
-                await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
 
         await db.commit()

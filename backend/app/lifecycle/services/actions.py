@@ -140,7 +140,7 @@ class LifecyclePolicyActionsService:
             # priority 50) from it. Mirrors the no-node fact-write path below.
             device.device_checks_healthy = False
             device.device_checks_summary = reason
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
             return
 
@@ -163,7 +163,7 @@ class LifecyclePolicyActionsService:
                 # derives offline (device_allows_allocation=False → ready=False).
                 device.device_checks_healthy = False
                 device.device_checks_summary = reason
-                await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
 
     async def exclude_run_if_needed(
@@ -196,7 +196,7 @@ class LifecyclePolicyActionsService:
             # exclude_device_from_run wrote the indefinite exclusion on the reservation
             # row; the run: grid-routing intent derives from that row, so reconcile here
             # to drop it (the health-failure exclusion has no stored intent twin anymore).
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
                 db,
@@ -235,7 +235,7 @@ class LifecyclePolicyActionsService:
         if run is not None:
             # restore_device_to_run un-excluded the reservation row above; reconcile so
             # the run: grid-routing intent is re-derived.
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await self._incidents.record_lifecycle_incident(
                 db,
                 device,

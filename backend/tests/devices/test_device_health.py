@@ -150,53 +150,28 @@ async def test_healthy_signal_does_not_change_busy_device(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_update_device_checks_healthy_steady_state_skips_mark_dirty(
+async def test_update_device_checks_healthy_success_skips_inline_reconcile(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Healthy → healthy with no verdict change must NOT re-enqueue the device."""
+    """A healthy device_checks signal must NOT reconcile inline — a healthy
+    signal alone does not restore an offline device (the node must also be
+    observed running), so it defers to the next reconciler scan tick."""
     db, device = db_with_device
     device.device_checks_healthy = True
     device.device_checks_summary = "Healthy"
     await db.commit()
 
     calls: list[str] = []
-    original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="Healthy")
     await db.commit()
-    assert calls == []  # steady-state healthy did not mark dirty
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_update_device_checks_healthy_transition_marks_dirty_once(
-    db_with_device: tuple[AsyncSession, Device],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """unknown → healthy is a verdict change and must mark dirty exactly once."""
-    db, device = db_with_device
-    # device_checks_healthy starts as None (verdict "unknown")
-    await db.commit()
-
-    calls: list[str] = []
-    original = svc.IntentService.mark_dirty
-
-    async def _spy(self: object, device_id: object) -> int:
-        calls.append("called")
-        return await original(self, device_id)
-
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
-
-    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="Healthy")
-    await db.commit()
-    assert calls == ["called"]
+    assert calls == []  # healthy success defers to the scan
 
 
 @pytest.mark.db
@@ -431,22 +406,22 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_update_session_viability_passed_steady_state_skips_mark_dirty(
+async def test_update_session_viability_passed_skips_inline_reconcile(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A passing session-viability signal must NOT reconcile inline (same
+    asymmetry as update_device_checks) — it defers to the next scan tick."""
     db, device = db_with_device
     device.session_viability_status = "passed"
     await db.commit()
 
     calls: list[str] = []
-    original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
     await DeviceHealthService(publisher=event_bus).update_session_viability(db, device, status="passed", error=None)
     await db.commit()
@@ -455,36 +430,12 @@ async def test_update_session_viability_passed_steady_state_skips_mark_dirty(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_update_session_viability_transition_marks_dirty_once(
-    db_with_device: tuple[AsyncSession, Device],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db, device = db_with_device
-    # session_viability_status starts None (verdict "unknown")
-    await db.commit()
-
-    calls: list[str] = []
-    original = svc.IntentService.mark_dirty
-
-    async def _spy(self: object, device_id: object) -> int:
-        calls.append("called")
-        return await original(self, device_id)
-
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
-
-    await DeviceHealthService(publisher=event_bus).update_session_viability(db, device, status="passed", error=None)
-    await db.commit()
-    assert calls == ["called"]
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_apply_node_state_transition_steady_healthy_skips_mark_dirty(
+async def test_apply_node_state_transition_steady_healthy_skips_reconcile(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """node_health re-asserts health_running=True/health_state=None every cycle for a
-    steady-running node. With no column change, that must NOT reconcile or mark dirty."""
+    steady-running node. With no column change, that must NOT reconcile inline."""
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
@@ -503,13 +454,11 @@ async def test_apply_node_state_transition_steady_healthy_skips_mark_dirty(
     await db.refresh(device, attribute_names=["appium_node"])
 
     calls: list[str] = []
-    original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db, device, health_running=True, health_state=None, mark_offline=False
@@ -520,7 +469,7 @@ async def test_apply_node_state_transition_steady_healthy_skips_mark_dirty(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_apply_node_state_transition_recovery_marks_dirty(
+async def test_apply_node_state_transition_recovery_reconciles(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -543,13 +492,11 @@ async def test_apply_node_state_transition_recovery_marks_dirty(
     await db.refresh(device, attribute_names=["appium_node"])
 
     calls: list[str] = []
-    original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db, device, health_running=True, health_state=None, mark_offline=False
@@ -584,13 +531,11 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
     await db.refresh(device, attribute_names=["appium_node"])
 
     calls: list[str] = []
-    original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
     # No health_running/health_state args → UNSET sentinel.
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(db, device, mark_offline=False)
@@ -623,13 +568,11 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
     await db.refresh(device, attribute_names=["appium_node"])
 
     calls: list[str] = []
-    original = svc.IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
     # Health columns are unchanged (True/None == True/None), but mark_offline=True
     # must still force reconcile regardless.

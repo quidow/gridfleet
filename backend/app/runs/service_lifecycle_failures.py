@@ -234,7 +234,7 @@ class RunFailureService:
 
         # Cooldown denies (cooldown:grid, cooldown:recovery) are derived from the
         # excluded_until row window written above; reconcile so they take effect inline.
-        await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
 
         await db.commit()
         await poke_node_refresh(

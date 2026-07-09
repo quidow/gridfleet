@@ -55,7 +55,7 @@ class MaintenanceService:
 
         # set_maintenance_reason is the fact write; the inline reconcile derives the
         # maintenance:node graceful stop and maintenance:recovery deny from it.
-        await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
 
         if commit:
             await db.commit()
