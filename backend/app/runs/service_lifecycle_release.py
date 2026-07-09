@@ -30,7 +30,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
+    CommandKind,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import in_maintenance
@@ -182,7 +182,7 @@ class RunReleaseService:
                     intents=[
                         IntentRegistration(
                             source=f"forced_release:{run.id}",
-                            axis=NODE_PROCESS,
+                            kind=CommandKind.forced_release,
                             run_id=run.id,
                             payload={"action": "stop"},
                             # TTL replaces the run_active precondition (semantic delta #2): a hard

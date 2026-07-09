@@ -17,11 +17,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
+from app.devices.services.intent_types import CommandKind
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 
 if TYPE_CHECKING:
@@ -35,20 +35,7 @@ NodeProcessState = str  # "running" | "running_blocked" | "stopping_graceful" | 
 StopMode = str  # "hard" | "graceful" | "defer"
 
 
-class CommandKind(StrEnum):
-    operator_stop = "operator:stop:node"
-    operator_recovery_deny = "operator:stop:recovery"
-    forced_release = "forced_release"
-    health_failure_stop = "health_failure:node"
-    operator_start = "operator:start"
-    verification_start = "verification"
-    auto_recovery_start = "auto_recovery:node"
-    auto_recovery_allow = "auto_recovery:recovery"
-
-
 _START_KINDS = frozenset({CommandKind.operator_start, CommandKind.verification_start, CommandKind.auto_recovery_start})
-# Longest prefix first so operator:stop:recovery is not shadowed by operator:stop:node.
-_PREFIX_ORDER = sorted(CommandKind, key=lambda kind: len(kind.value), reverse=True)
 
 
 @dataclass(frozen=True)
@@ -95,14 +82,15 @@ class RecoveryDecision:
 def parse_command(intent: DeviceIntent, now: datetime) -> Command | None:
     """Parse a stored row into a typed command; None for expired or unknown rows.
 
-    Unknown sources are logged and ignored (the retired arbiter ranked them at
+    Unknown kinds are logged and ignored (the retired arbiter ranked them at
     priority 0, where they could never win either).
     """
     if intent.expires_at is not None and intent.expires_at <= now:
         return None
-    kind = next((k for k in _PREFIX_ORDER if intent.source.startswith(k.value)), None)
-    if kind is None:
-        logger.warning("device_intent_unknown_source", source=intent.source, device_id=str(intent.device_id))
+    try:
+        kind = CommandKind(intent.kind)
+    except ValueError:
+        logger.warning("device_intent_unknown_kind", kind=intent.kind, device_id=str(intent.device_id))
         return None
     restart_requested_at = _optional_datetime(intent.payload.get("restart_requested_at"))
     reason_detail = intent.payload.get("reason")

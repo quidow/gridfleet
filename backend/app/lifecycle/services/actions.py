@@ -11,7 +11,7 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
+    CommandKind,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -378,7 +378,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
 
 
 def _crash_intents(device: Device) -> list[IntentRegistration]:
-    # Only the NODE_PROCESS stop intent is registered. The RECOVERY-axis
+    # Only the health_failure_stop intent is registered. The
     # ``health_failure:recovery`` deny intent used to live here too, but it
     # had no expiry and gated the only code path that revoked it, deadlocking
     # any device that hit a transient probe failure. Recovery throttling is
@@ -389,7 +389,7 @@ def _crash_intents(device: Device) -> list[IntentRegistration]:
     return [
         IntentRegistration(
             source=f"health_failure:node:{device.id}",
-            axis=NODE_PROCESS,
+            kind=CommandKind.health_failure_stop,
             payload={"action": "stop"},
         ),
     ]

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,10 +14,7 @@ from app.core.timeutil import now_utc
 
 class DeviceIntent(Base):
     __tablename__ = "device_intents"
-    __table_args__ = (
-        UniqueConstraint("device_id", "source", name="uq_device_intent_source"),
-        Index("ix_device_intents_device_axis", "device_id", "axis"),
-    )
+    __table_args__ = (UniqueConstraint("device_id", "source", name="uq_device_intent_source"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device_id: Mapped[uuid.UUID] = mapped_column(
@@ -26,7 +23,7 @@ class DeviceIntent(Base):
         nullable=False,
     )
     source: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    axis: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
     run_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("test_runs.id", ondelete="CASCADE"),

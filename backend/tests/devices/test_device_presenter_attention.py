@@ -117,11 +117,13 @@ def test_build_reservation_read_marks_escalated_cooldown() -> None:
     assert payload.cooldown_remaining_sec is not None
 
 
-async def test_serialize_orchestration_splits_intent_axes() -> None:
+async def test_serialize_orchestration_includes_intent_kinds() -> None:
     intents = [
-        DeviceIntent(device_id=uuid.uuid4(), source="node", axis="node_process", payload={"action": "start"}),
-        DeviceIntent(device_id=uuid.uuid4(), source="grid", axis="grid_routing", payload={"enabled": True}),
-        DeviceIntent(device_id=uuid.uuid4(), source="recovery", axis="recovery", payload={"allowed": True}),
+        DeviceIntent(device_id=uuid.uuid4(), source="node", kind="operator:start", payload={"action": "start"}),
+        DeviceIntent(device_id=uuid.uuid4(), source="stop", kind="operator:stop:node", payload={"action": "stop"}),
+        DeviceIntent(
+            device_id=uuid.uuid4(), source="recovery", kind="operator:stop:recovery", payload={"allowed": False}
+        ),
     ]
 
     class Result:
@@ -147,10 +149,10 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
     )
     payload = await device_presenter._serialize_orchestration(Session(), device)  # type: ignore[arg-type]
 
-    assert [item["axis"] for item in payload["intents"]] == [
-        "node_process",
-        "grid_routing",
-        "recovery",
+    assert [item["kind"] for item in payload["intents"]] == [
+        "operator:start",
+        "operator:stop:node",
+        "operator:stop:recovery",
     ]
     assert "node_process" in payload["derived"]
     assert "grid_routing" in payload["derived"]

@@ -7,7 +7,7 @@ from app.devices.models import DeviceEventType
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
+    CommandKind,
     IntentRegistration,
     verification_intent_source,
 )
@@ -93,7 +93,7 @@ class MaintenanceService:
             intents=[
                 IntentRegistration(
                     source=verification_intent_source(device.id),
-                    axis=NODE_PROCESS,
+                    kind=CommandKind.verification_start,
                     payload={"action": "start"},
                     expires_at=verify_intent_deadline,
                 )

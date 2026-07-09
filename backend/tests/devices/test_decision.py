@@ -205,13 +205,13 @@ def test_auto_recovery_allow_threads_reason_and_source() -> None:
 # --- parsing ---
 
 
-def test_parse_known_sources_and_ttl() -> None:
+def test_parse_known_kind_and_ttl() -> None:
     from app.devices.models import DeviceIntent
 
     row = DeviceIntent(
         device_id=DEVICE,
         source=f"operator:stop:node:{DEVICE}",
-        axis="node_process",
+        kind=CommandKind.operator_stop.value,
         payload={"action": "stop", "priority": 100, "stop_mode": "hard"},  # legacy keys ignored
         expires_at=None,
     )
@@ -225,15 +225,15 @@ def test_parse_expired_row_returns_none() -> None:
     row = DeviceIntent(
         device_id=DEVICE,
         source=f"operator:start:{DEVICE}",
-        axis="node_process",
+        kind=CommandKind.operator_start.value,
         payload={},
         expires_at=NOW - timedelta(seconds=1),
     )
     assert parse_command(row, NOW) is None
 
 
-def test_parse_unknown_source_returns_none() -> None:
+def test_parse_unknown_kind_returns_none() -> None:
     from app.devices.models import DeviceIntent
 
-    row = DeviceIntent(device_id=DEVICE, source="mystery:thing", axis="node_process", payload={})
+    row = DeviceIntent(device_id=DEVICE, source="mystery:thing", kind="mystery", payload={})
     assert parse_command(row, NOW) is None

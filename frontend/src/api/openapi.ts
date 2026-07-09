@@ -2401,10 +2401,10 @@ export interface components {
         };
         /** DeviceIntentSummaryRead */
         DeviceIntentSummaryRead: {
-            /** Axis */
-            axis: string;
             /** Expires At */
             expires_at?: string | null;
+            /** Kind */
+            kind: string;
             /** Payload */
             payload: {
                 [key: string]: unknown;

@@ -18,7 +18,7 @@ from app.devices.services.intent_reconciler import (
     reconcile_device,
     run_device_intent_reconciler_once,
 )
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
+from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
@@ -130,9 +130,9 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="expired",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 90},
+                source=f"operator:start:{device.id}",
+                kind=CommandKind.operator_start,
+                payload={"action": "start", "priority": 90},
                 expires_at=datetime.now(UTC) - timedelta(seconds=1),
             ),
         ],
@@ -169,7 +169,7 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "stop_mode": "graceful"},
             ),
         ],
@@ -213,7 +213,7 @@ async def test_hard_stop_on_idle_device_stages_agent_drain(
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.operator_stop,
                 payload={"action": "stop", "stop_mode": "hard"},
             ),
         ],
@@ -257,7 +257,7 @@ async def test_graceful_stop_holds_node_running_while_session_active(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
             ),
         ],
@@ -296,7 +296,7 @@ async def test_graceful_stop_holds_node_running_while_session_pending(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
             ),
         ],
@@ -335,7 +335,7 @@ async def test_graceful_stop_applies_once_session_ends(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
             ),
         ],
@@ -376,9 +376,9 @@ async def test_pull_host_metadata_change_pokes_instead_of_staging(
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="grid:block",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 80},
+                source=f"operator:start:{device.id}",
+                kind=CommandKind.operator_start,
+                payload={"action": "start", "priority": 20},
             ),
         ],
     )
@@ -411,7 +411,7 @@ async def test_pull_host_watermark_only_change_pokes_agent(
         intents=[
             IntentRegistration(
                 source=f"auto_recovery:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.auto_recovery_start,
                 payload={"action": "start", "restart_requested_at": requested_at.isoformat()},
             )
         ],
@@ -469,8 +469,8 @@ async def test_gc_expired_intents_deletes_rows_only(db_session: AsyncSession, db
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="operator:start",
-                axis=NODE_PROCESS,
+                source=f"operator:start:{device.id}",
+                kind=CommandKind.operator_start,
                 payload={"action": "start", "priority": 20},
                 expires_at=datetime.now(UTC) - timedelta(seconds=1),
             )
@@ -597,7 +597,7 @@ async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.operator_start,
                 payload={"action": "start", "priority": 20, "desired_port": 4723},
             )
         ],

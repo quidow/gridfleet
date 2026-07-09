@@ -31,7 +31,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.models.intent import DeviceIntent
-from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
+from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
@@ -83,7 +83,7 @@ async def _seed_verifying_device(db: AsyncSession, host_id: uuid.UUID, *, identi
         DeviceIntent(
             device_id=device.id,
             source=verification_intent_source(device.id),
-            axis=NODE_PROCESS,
+            kind=CommandKind.verification_start.value,
             payload={"action": "start"},
         )
     )

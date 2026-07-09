@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
+from app.devices.services.intent_types import CommandKind, IntentRegistration
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -36,14 +36,14 @@ async def test_register_intents_batches(db_session: AsyncSession, db_host: Host)
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="batch:node",
-                axis=NODE_PROCESS,
+                source=f"operator:stop:node:{device.id}",
+                kind=CommandKind.operator_stop,
                 payload={"action": "stop", "priority": 70},
             ),
             IntentRegistration(
-                source="batch:grid",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 70},
+                source=f"operator:stop:recovery:{device.id}",
+                kind=CommandKind.operator_recovery_deny,
+                payload={"allowed": False, "priority": 70},
             ),
         ],
     )
@@ -58,8 +58,14 @@ async def test_register_intents_batches(db_session: AsyncSession, db_host: Host)
         .scalars()
         .all()
     )
-    assert [intent.source for intent in registered] == ["batch:node", "batch:grid"]
-    assert [intent.source for intent in intents] == ["batch:grid", "batch:node"]
+    assert [intent.source for intent in registered] == [
+        f"operator:stop:node:{device.id}",
+        f"operator:stop:recovery:{device.id}",
+    ]
+    assert [intent.source for intent in intents] == [
+        f"operator:stop:node:{device.id}",
+        f"operator:stop:recovery:{device.id}",
+    ]
 
 
 async def test_register_intents_rejects_duplicate_sources_before_upsert(
@@ -74,13 +80,13 @@ async def test_register_intents_rejects_duplicate_sources_before_upsert(
             device_id=device.id,
             intents=[
                 IntentRegistration(
-                    source="batch:node",
-                    axis=NODE_PROCESS,
+                    source=f"operator:stop:node:{device.id}",
+                    kind=CommandKind.operator_stop,
                     payload={"action": "stop", "priority": 70},
                 ),
                 IntentRegistration(
-                    source="batch:node",
-                    axis=NODE_PROCESS,
+                    source=f"operator:stop:node:{device.id}",
+                    kind=CommandKind.operator_stop,
                     payload={"action": "start", "priority": 70},
                 ),
             ],
@@ -99,16 +105,17 @@ async def test_revoke_intent_deletes(db_session: AsyncSession, db_host: Host) ->
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source="connectivity",
-                axis=NODE_PROCESS,
+                source=f"health_failure:node:{device.id}",
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "priority": 50},
             ),
         ],
     )
     await db_session.commit()
 
-    revoked = await service.revoke_intent(device_id=device.id, source="connectivity")
-    missing = await service.revoke_intent(device_id=device.id, source="connectivity")
+    source = f"health_failure:node:{device.id}"
+    revoked = await service.revoke_intent(device_id=device.id, source=source)
+    missing = await service.revoke_intent(device_id=device.id, source=source)
     await db_session.commit()
 
     intents = (

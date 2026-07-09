@@ -9,7 +9,7 @@ import pytest
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import NODE_PROCESS, RECOVERY, IntentRegistration
+from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_policy_state import write_state
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -76,12 +76,12 @@ async def _register_operator_deny(db_session: AsyncSession, device: Device) -> N
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.operator_stop,
                 payload={"action": "stop"},
             ),
             IntentRegistration(
                 source=f"operator:stop:recovery:{device.id}",
-                axis=RECOVERY,
+                kind=CommandKind.operator_recovery_deny,
                 payload={"allowed": False, "reason": "Operator stopped the node"},
             ),
         ],

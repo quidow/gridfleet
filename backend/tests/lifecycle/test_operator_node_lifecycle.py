@@ -78,7 +78,7 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     stale_intent = DeviceIntent(
         device_id=device.id,
         source=f"operator:start:{device.id}",
-        axis="node_process",
+        kind="operator:start",
         payload={
             "action": "start",
             "priority": 20,
@@ -164,7 +164,7 @@ async def test_gc_expired_intents_deletes_expired_restart_intent(
     expired_intent = DeviceIntent(
         device_id=device.id,
         source=f"operator:start:{device.id}",
-        axis="node_process",
+        kind="operator:start",
         payload={
             "action": "start",
             "priority": 20,
@@ -250,21 +250,23 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
 
 
 def test_operator_stop_intents_and_sources_include_recovery_deny() -> None:
-    """Operator stop must register a RECOVERY-axis deny (so ``recovery_allowed``
+    """Operator stop must register an operator_recovery_deny command (so ``recovery_allowed``
     flips False and auto-recovery suppresses instead of spinning a doomed start —
     N13), and ``operator_stop_sources`` must list that source so an operator start
     revokes it.
     """
-    from app.devices.services.intent_types import RECOVERY
+    from app.devices.services.intent_types import CommandKind
     from app.lifecycle.services.operator_node import operator_stop_intents, operator_stop_sources
 
     device_id = uuid.uuid4()
-    recovery_intents = [intent for intent in operator_stop_intents(device_id) if intent.axis == RECOVERY]
-    assert len(recovery_intents) == 1, "operator stop must register exactly one RECOVERY-axis intent"
+    recovery_intents = [
+        intent for intent in operator_stop_intents(device_id) if intent.kind is CommandKind.operator_recovery_deny
+    ]
+    assert len(recovery_intents) == 1, "operator stop must register exactly one recovery-deny intent"
     deny = recovery_intents[0]
     assert deny.payload == {"allowed": False, "reason": "Operator stopped the node"}
     assert deny.source in operator_stop_sources(device_id), (
-        "the RECOVERY deny source must be revocable by the operator-start path"
+        "the recovery-deny source must be revocable by the operator-start path"
     )
 
 
@@ -355,7 +357,7 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     failure stop silently blocks the start and the node never comes up.
     """
     from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
+    from app.devices.services.intent_types import CommandKind, IntentRegistration
 
     device = await create_device(db_session, host_id=db_host.id, name="op-start-unblock", verified=True)
     node = AppiumNode(
@@ -372,7 +374,7 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop"},
             )
         ],

@@ -24,7 +24,7 @@ from app.devices.models import (
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
+    CommandKind,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason, write_state
@@ -439,7 +439,7 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop"},
             ),
         ],
@@ -600,7 +600,7 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop"},
             )
         ],
@@ -1400,7 +1400,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop"},
             ),
         ],

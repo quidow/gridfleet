@@ -17,7 +17,7 @@ from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
+    CommandKind,
     IntentRegistration,
     failure_stop_sources,
     verification_intent_source,
@@ -557,7 +557,7 @@ async def _register_verification_node_intent(
         intents=[
             IntentRegistration(
                 source=verification_intent_source(device.id),
-                axis=NODE_PROCESS,
+                kind=CommandKind.verification_start,
                 payload={"action": "start"},
                 expires_at=deadline,
             )

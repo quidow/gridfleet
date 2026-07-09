@@ -4,8 +4,7 @@ The control plane drives every device's desired state through the explicit
 decision ladders in `app/devices/services/decision.py`. For each device the
 reconciler (`reconcile_device`) parses the stored `DeviceIntent` rows into typed
 **commands**, gathers domain **facts** once (`gather_decision_facts`), and calls
-three pure deciders — `decide_node_process`, `decide_grid_routing`,
-`decide_recovery` — that write the derived state to the device row and its Appium
+three pure deciders — node process, grid routing, and recovery — that write the derived state to the device row and its Appium
 node.
 
 ## Model: commands + facts
@@ -13,11 +12,10 @@ node.
 `desired = f(stored_commands, facts)`. There are two inputs, kept strictly apart:
 
 1. **Stored rows** in the `device_intents` table are the genuine **commands and
-   leases** that cannot be recomputed from domain state: `operator:start`,
-   `operator:stop:node`, `operator:stop:recovery`, `verification:{device}`,
-   `auto_recovery:node/recovery:{device}`, `forced_release:{run}`, and
-   `health_failure:node:{device}`. `parse_command` maps a row's `source` prefix
-   to a `CommandKind`; unknown sources are logged and ignored.
+   leases** that cannot be recomputed from domain state. A row is `(source, kind,
+   payload, run_id, expires_at)`: `source` is the per-device deduplication and
+   revocation key, while `kind` is the `CommandKind` value that selects the
+   command. `parse_command` reads `kind`; unknown kinds are logged and ignored.
 
 2. **Facts** are read directly from domain rows by `gather_decision_facts` — never
    re-encoded as intent rows. They are: `in_maintenance` (maintenance_reason set),
@@ -42,7 +40,7 @@ retired numeric ladder exactly:
 7. `in_service` **fact** (no commands) → running (`baseline:idle` standing start).
 8. otherwise → stopped.
 
-`decide_grid_routing` is pure fact: no reservation → accept; active reservation →
+Grid routing is pure fact: no reservation → accept; active reservation →
 route the run; cooldown → keep the run bound but block new sessions.
 
 `decide_recovery`: `operator:stop:recovery` command denies; else `in_maintenance`
@@ -50,7 +48,7 @@ denies (with `MAINTENANCE_HOLD_SUPPRESSION_REASON`); else `cooldown_active`
 denies (with the exclusion reason); else `auto_recovery:recovery` allows; else
 default-allow.
 
-The recovery axis is consumed **read-side**, not cached by the reconciler: the
+The recovery decision is consumed **read-side**, not cached by the reconciler: the
 reconciler derives node-process and grid-routing state only. `decide_recovery` is
 folded into `app.devices.services.recovery_projection.recovery_availability` (the
 read-time "can recovery act now" projection consulted by the write path and the
@@ -61,20 +59,20 @@ decision is recomputed at read time (see `docs/reference/device-lifecycle.md`).
 ## Per-source payload table
 
 Stored command payloads carry only the fields a decider reads. `action` (and
-`allowed` on the recovery axis) are kept so rows stay self-describing in the
+`allowed` on recovery commands) are kept so rows stay self-describing in the
 debug view at zero decision cost. Stop mode is implied by the command kind;
 `priority` and `desired_port` are not stored.
 
-| Source | Axis | Payload |
-|--------|------|---------|
-| `operator:start:{device_id}` | `node_process` | `{"action": "start"}` (restart variant adds `restart_requested_at`) |
-| `operator:stop:node:{device_id}` | `node_process` | `{"action": "stop"}` |
-| `operator:stop:recovery:{device_id}` | `recovery` | `{"allowed": false, "reason": "Operator stopped the node"}` |
-| `forced_release:{run_id}` | `node_process` | `{"action": "stop"}` |
-| `health_failure:node:{device_id}` | `node_process` | `{"action": "stop"}` |
-| `verification:{device_id}` | `node_process` | `{"action": "start"}` |
-| `auto_recovery:node:{device_id}` | `node_process` | `{"action": "start"}` (node_health restart adds `restart_requested_at`) |
-| `auto_recovery:recovery:{device_id}` | `recovery` | `{"allowed": true, "reason": <text>}` |
+| Source | `CommandKind` / stored `kind` | Payload |
+|--------|-------------------------------|---------|
+| `operator:start:{device_id}` | `operator:start` | `{"action": "start"}` (restart variant adds `restart_requested_at`) |
+| `operator:stop:node:{device_id}` | `operator:stop:node` | `{"action": "stop"}` |
+| `operator:stop:recovery:{device_id}` | `operator:stop:recovery` | `{"allowed": false, "reason": "Operator stopped the node"}` |
+| `forced_release:{run_id}` | `forced_release` | `{"action": "stop"}` |
+| `health_failure:node:{device_id}` | `health_failure:node` | `{"action": "stop"}` |
+| `verification:{device_id}` | `verification` | `{"action": "start"}` |
+| `auto_recovery:node:{device_id}` | `auto_recovery:node` | `{"action": "start"}` (node_health restart adds `restart_requested_at`) |
+| `auto_recovery:recovery:{device_id}` | `auto_recovery:recovery` | `{"allowed": true, "reason": <text>}` |
 
 ## Lifecycle
 
