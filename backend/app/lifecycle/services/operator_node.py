@@ -24,8 +24,6 @@ from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_AUTO_RECOVERY,
-    PRIORITY_OPERATOR_STOP,
     RECOVERY,
     IntentRegistration,
     failure_stop_sources,
@@ -77,7 +75,7 @@ async def operator_stop_active(db: AsyncSession, device_id: uuid.UUID) -> bool:
     return found is not None
 
 
-def operator_start_intent(device: Device, desired_port: int, *, settings: SettingsReader) -> IntentRegistration:
+def operator_start_intent(device: Device, *, settings: SettingsReader) -> IntentRegistration:
     startup_timeout = settings.get_int("appium.startup_timeout_sec")
     viability_timeout = settings.get_int("general.session_viability_timeout_sec")
     # TTL replaces the node_running precondition (semantic delta #1): the row is a
@@ -86,12 +84,12 @@ def operator_start_intent(device: Device, desired_port: int, *, settings: Settin
     return IntentRegistration(
         source=operator_start_source(device.id),
         axis=NODE_PROCESS,
-        payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": desired_port},
+        payload={"action": "start"},
         expires_at=expires_at,
     )
 
 
-def operator_restart_intent(device: Device, desired_port: int, *, settings: SettingsReader) -> IntentRegistration:
+def operator_restart_intent(device: Device, *, settings: SettingsReader) -> IntentRegistration:
     window_sec = settings.get_int("appium_reconciler.restart_window_sec")
     deadline = now_utc() + timedelta(seconds=window_sec)
     return IntentRegistration(
@@ -99,8 +97,6 @@ def operator_restart_intent(device: Device, desired_port: int, *, settings: Sett
         axis=NODE_PROCESS,
         payload={
             "action": "start",
-            "priority": PRIORITY_AUTO_RECOVERY,
-            "desired_port": desired_port,
             "transition_token": str(uuid.uuid4()),
             "transition_deadline": deadline.isoformat(),
         },
@@ -119,7 +115,7 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
         IntentRegistration(
             source=f"operator:stop:node:{device_id}",
             axis=NODE_PROCESS,
-            payload={"action": "stop", "priority": PRIORITY_OPERATOR_STOP, "stop_mode": "hard"},
+            payload={"action": "stop"},
         ),
         # An operator stop is sticky: deny auto-recovery so the device_connectivity
         # loop suppresses recovery (recovery_allowed=False) instead of spinning a
@@ -128,7 +124,7 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
         IntentRegistration(
             source=f"operator:stop:recovery:{device_id}",
             axis=RECOVERY,
-            payload={"allowed": False, "priority": PRIORITY_OPERATOR_STOP, "reason": "Operator stopped the node"},
+            payload={"allowed": False, "reason": "Operator stopped the node"},
         ),
     ]
 
@@ -205,23 +201,16 @@ class OperatorNodeLifecycleService:
         node: AppiumNode | None = device.appium_node
         if node is None:
             # First-time allocation: no node row yet. candidate_ports()[0] picks
-            # the lowest free port for the host.
-            desired_port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
+            # the lowest free port for the host. Existing nodes keep their pinned
+            # port — the reconciler applier pins the live node.port on start.
+            port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
             node = AppiumNode(
                 device_id=device.id,
-                port=desired_port,
+                port=port,
             )
             db.add(node)
             await db.flush()
             device.appium_node = node
-        else:
-            # Existing node: pin its current port. candidate_ports re-offers the
-            # node's own port as "free" during the pid-NULL gap (e.g. after a
-            # kill -9 while the agent death-watcher respawns on the NEXT free
-            # port), so taking candidate_ports()[0] reallocates the node onto a
-            # different port and induces a two-supervisor oscillation. Pinning
-            # node.port keeps desired_port stable across the gap.
-            desired_port = node.port
 
         await _reserve_parallel_resources(db, device, node=node)
 
@@ -239,7 +228,7 @@ class OperatorNodeLifecycleService:
         )
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
-            intents=[operator_start_intent(device, desired_port, settings=self._settings)],
+            intents=[operator_start_intent(device, settings=self._settings)],
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
@@ -302,7 +291,7 @@ class OperatorNodeLifecycleService:
 
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
-            intents=[operator_restart_intent(device, node.port, settings=self._settings)],
+            intents=[operator_restart_intent(device, settings=self._settings)],
             publisher=self._publisher,
         )
         if caller == "operator_restart":

@@ -35,7 +35,7 @@ def test_lifecycle_policy_action_small_branch_helpers() -> None:
     device = Device(id=__import__("uuid").uuid4())
     intents = actions._crash_intents(device)
     assert intents[0].source == f"health_failure:node:{device.id}"
-    assert intents[0].payload["stop_mode"] == "graceful"
+    assert intents[0].payload == {"action": "stop"}
 
 
 async def test_restore_run_if_needed_early_return_branches() -> None:

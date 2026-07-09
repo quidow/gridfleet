@@ -31,7 +31,6 @@ from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_FORCED_RELEASE,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import in_maintenance
@@ -185,7 +184,7 @@ class RunReleaseService:
                             source=f"forced_release:{run.id}",
                             axis=NODE_PROCESS,
                             run_id=run.id,
-                            payload={"action": "stop", "priority": PRIORITY_FORCED_RELEASE, "stop_mode": "hard"},
+                            payload={"action": "stop"},
                             # TTL replaces the run_active precondition (semantic delta #2): a hard
                             # stop within the short restart window; the run going terminal no longer
                             # reaps it, but it self-expires.

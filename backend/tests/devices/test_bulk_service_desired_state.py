@@ -29,17 +29,16 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression: with an auto_recovery:node intent already registered at
-    PRIORITY_AUTO_RECOVERY, the operator restart intent (same priority) used
-    to lose the lex-by-source tie-break, dropping its transition_token before
-    write_desired_state ran. Convergence then emitted `confirm_running` and
-    the node never restarted. The evaluator now prefers tokenized intents on
-    same-priority `start` ties.
+    """Regression: with an auto_recovery:node start command already registered,
+    the operator restart command used to lose the lex-by-source tie-break,
+    dropping its transition_token before write_desired_state ran. Convergence
+    then emitted `confirm_running` and the node never restarted. The decision
+    ladder now prefers token-bearing starts on same-tier `start` ties.
     """
     from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
     from app.devices.services import bulk as bulk_service
     from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
+    from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 
     device = await create_device(db_session, host_id=db_host.id, name="bk-restart", verified=True)
     node = AppiumNode(
@@ -66,7 +65,7 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
             IntentRegistration(
                 source=f"auto_recovery:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": 4723},
+                payload={"action": "start"},
             ),
         ],
     )

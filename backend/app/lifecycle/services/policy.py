@@ -19,7 +19,6 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_AUTO_RECOVERY,
     RECOVERY,
     IntentRegistration,
     failure_stop_sources,
@@ -319,16 +318,13 @@ class LifecyclePolicyService:
                 IntentRegistration(
                     source=f"auto_recovery:node:{device.id}",
                     axis=NODE_PROCESS,
-                    payload={
-                        "action": "start",
-                        "priority": PRIORITY_AUTO_RECOVERY,
-                    },
+                    payload={"action": "start"},
                     expires_at=recovery_intent_expiry,
                 ),
                 IntentRegistration(
                     source=f"auto_recovery:recovery:{device.id}",
                     axis=RECOVERY,
-                    payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": reason},
+                    payload={"allowed": True, "reason": reason},
                     expires_at=recovery_intent_expiry,
                 ),
             ],

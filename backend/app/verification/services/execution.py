@@ -18,7 +18,6 @@ from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_AUTO_RECOVERY,
     IntentRegistration,
     failure_stop_sources,
     verification_intent_source,
@@ -520,7 +519,7 @@ async def _register_verification_node_intent(
     injected by ``reconcile_device``. Without this guard, once the
     ``operator:start:{device_id}`` intent registered by ``start_node`` expires
     (it is TTL-bounded), the device is left with zero active node_process
-    intents, so ``evaluate_node_process`` derives ``desired_state=stopped`` and
+    intents, so ``decide_node_process`` derives ``desired_state=stopped`` and
     the appium reconciler kills the verification node mid session-probe.
     ``expires_at`` is a safety net for crashed verifications; the normal path
     revokes the intent inside
@@ -542,9 +541,9 @@ async def _register_verification_node_intent(
     await device_locking.lock_device(db, device.id)
     # Verification is an explicit re-qualification of the device. Like the operator
     # start-node path (lifecycle/services/operator_node.request_start) and the
-    # lifecycle recovery policy, revoke any failure-driven stop intents first: they
-    # carry PRIORITY_HEALTH_FAILURE/PRIORITY_CONNECTIVITY_LOST (60/50), which outrank
-    # the verification node-start intent (PRIORITY_AUTO_RECOVERY, 20). Left in place,
+    # lifecycle recovery policy, revoke any failure-driven stop intents first: a
+    # health-failure stop command outranks the verification node-start command in the
+    # decision ladder. Left in place,
     # the reconciler resolves desired_state=stopped, the node never spawns, and
     # node_start times out forever — stranding any device that is both unverified and
     # carrying a health-failure stop (e.g. after an operator config edit clears
@@ -559,7 +558,7 @@ async def _register_verification_node_intent(
             IntentRegistration(
                 source=verification_intent_source(device.id),
                 axis=NODE_PROCESS,
-                payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+                payload={"action": "start"},
                 expires_at=deadline,
             )
         ],

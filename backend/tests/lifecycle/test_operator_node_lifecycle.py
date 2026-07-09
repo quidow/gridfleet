@@ -146,9 +146,7 @@ def test_operator_restart_intent_sets_expires_at(
     device_id = uuid.uuid4()
     device = _FakeDevice(device_id)
 
-    intent = operator_restart_intent(
-        device, desired_port=4725, settings=FakeSettingsReader({"appium_reconciler.restart_window_sec": 120})
-    )  # type: ignore[arg-type]
+    intent = operator_restart_intent(device, settings=FakeSettingsReader({"appium_reconciler.restart_window_sec": 120}))  # type: ignore[arg-type]
 
     expected_deadline = fixed_now + timedelta(seconds=120)
 
@@ -262,15 +260,14 @@ def test_operator_stop_intents_and_sources_include_recovery_deny() -> None:
     N13), and ``operator_stop_sources`` must list that source so an operator start
     revokes it.
     """
-    from app.devices.services.intent_types import PRIORITY_OPERATOR_STOP, RECOVERY
+    from app.devices.services.intent_types import RECOVERY
     from app.lifecycle.services.operator_node import operator_stop_intents, operator_stop_sources
 
     device_id = uuid.uuid4()
     recovery_intents = [intent for intent in operator_stop_intents(device_id) if intent.axis == RECOVERY]
     assert len(recovery_intents) == 1, "operator stop must register exactly one RECOVERY-axis intent"
     deny = recovery_intents[0]
-    assert deny.payload["allowed"] is False
-    assert deny.payload["priority"] == PRIORITY_OPERATOR_STOP
+    assert deny.payload == {"allowed": False, "reason": "Operator stopped the node"}
     assert deny.source in operator_stop_sources(device_id), (
         "the RECOVERY deny source must be revocable by the operator-start path"
     )
@@ -357,7 +354,7 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     failure stop silently blocks the start and the node never comes up.
     """
     from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, IntentRegistration
+    from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 
     device = await create_device(db_session, host_id=db_host.id, name="op-start-unblock", verified=True)
     node = AppiumNode(
@@ -375,7 +372,7 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+                payload={"action": "stop"},
             )
         ],
         publisher=event_bus,
@@ -440,16 +437,6 @@ async def test_request_start_pins_existing_node_port(
         f"got {node.desired_port}"
     )
 
-    intent = (
-        await db_session.execute(
-            select(DeviceIntent).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"operator:start:{device.id}",
-            )
-        )
-    ).scalar_one()
-    assert intent.payload["desired_port"] == 4725, "operator:start intent must carry the pinned port"
-
 
 async def test_request_start_first_allocation_uses_candidate_ports(
     db_session: AsyncSession,
@@ -509,15 +496,6 @@ async def test_request_restart_moved_port_node_converges_without_oscillation(
     assert node.desired_port == 4725, (
         f"restart must converge on the running port (4725), not reallocate; got {node.desired_port}"
     )
-    intent = (
-        await db_session.execute(
-            select(DeviceIntent).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"operator:start:{device.id}",
-            )
-        )
-    ).scalar_one()
-    assert intent.payload["desired_port"] == 4725
 
 
 # ---------------------------------------------------------------------------

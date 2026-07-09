@@ -348,7 +348,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     busy→available restore.
     """
     from app.devices.models import DeviceIntent
-    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE
+    from app.devices.services.intent_types import NODE_PROCESS
 
     device = await create_device_record(
         db_session,
@@ -382,11 +382,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
             device_id=device.id,
             source=f"health_failure:node:{device.id}",
             axis=NODE_PROCESS,
-            payload={
-                "action": "stop",
-                "priority": PRIORITY_HEALTH_FAILURE,
-                "stop_mode": "graceful",
-            },
+            payload={"action": "stop"},
         )
     )
     await db_session.commit()

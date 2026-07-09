@@ -12,7 +12,6 @@ from app.devices.services.event import build_device_crashed_payload, record_even
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_HEALTH_FAILURE,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -484,6 +483,6 @@ def _crash_intents(device: Device) -> list[IntentRegistration]:
         IntentRegistration(
             source=f"health_failure:node:{device.id}",
             axis=NODE_PROCESS,
-            payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+            payload={"action": "stop"},
         ),
     ]

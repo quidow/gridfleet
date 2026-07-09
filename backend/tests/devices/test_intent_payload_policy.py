@@ -111,16 +111,10 @@ async def test_health_failure_intent_payload_shape(
     assert result == "stopped"
 
     intent = await _get_intent(db_session, device.id, prefix=f"health_failure:node:{device.id}")
-    payload = intent.payload
 
-    # Documented fields per intents.md "health_failure:node:{device_id}" row:
-    # stop_mode = "graceful" (intentional snapshot — policy fixed at detection time)
-    assert payload.get("stop_mode") == "graceful", (
-        f"health_failure:node intent stop_mode must be 'graceful'; got {payload!r}"
-    )
-    # Structural fields are always present
-    assert payload.get("action") == "stop"
-    assert "priority" in payload
+    # Slim payload per intents.md: graceful stop is implied by the command kind;
+    # no priority or stop_mode is stored.
+    assert intent.payload == {"action": "stop"}
 
 
 # ---------------------------------------------------------------------------
@@ -252,18 +246,11 @@ async def test_operator_start_intent_payload_shape(
     )
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")
-    payload = intent.payload
 
-    # Documented: desired_port is present (intentional snapshot)
-    assert "desired_port" in payload, f"operator:start intent must carry desired_port; got {payload!r}"
-    assert isinstance(payload["desired_port"], int)
-    assert payload.get("action") == "start"
-    assert "priority" in payload
-
-    # Verify the start variant does NOT carry transition_token or transition_deadline
-    # (those are restart-variant-only per the doc table).
-    assert "transition_token" not in payload, "operator:start (start variant) must not carry transition_token"
-    assert "transition_deadline" not in payload, "operator:start (start variant) must not carry transition_deadline"
+    # Slim payload per intents.md: the start variant carries only action. desired_port
+    # is gone (the applier pins the live node.port), as are priority and the
+    # restart-only transition_token/transition_deadline.
+    assert intent.payload == {"action": "start"}
 
 
 # ---------------------------------------------------------------------------
@@ -330,13 +317,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 
     intent = await _get_intent(db_session, device.id, prefix=f"auto_recovery:node:{device.id}")
-    payload = intent.payload
 
-    # Key invariant: desired_port MUST NOT be in the payload (Drop violation removed in 864e6feb)
-    assert "desired_port" not in payload, (
-        f"auto_recovery:node (lifecycle_policy path) must NOT carry desired_port; got {payload!r}"
-    )
-
-    # Structural fields only per the doc table
-    assert payload.get("action") == "start"
-    assert "priority" in payload
+    # Slim payload per intents.md: action only. desired_port must never appear (the
+    # Drop violation removed in 864e6feb); priority and stop_mode are gone too.
+    assert intent.payload == {"action": "start"}

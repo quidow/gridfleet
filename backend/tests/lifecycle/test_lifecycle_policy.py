@@ -25,8 +25,6 @@ from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
-    PRIORITY_HEALTH_FAILURE,
-    RECOVERY,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
@@ -434,12 +432,7 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
-            ),
-            IntentRegistration(
-                source=f"health_failure:recovery:{device.id}",
-                axis=RECOVERY,
-                payload={"allowed": False, "priority": PRIORITY_HEALTH_FAILURE, "reason": "Node health failure"},
+                payload={"action": "stop"},
             ),
         ],
     )
@@ -470,7 +463,6 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
         .all()
     )
     assert f"health_failure:node:{device.id}" not in sources
-    assert f"health_failure:recovery:{device.id}" not in sources
     assert f"auto_recovery:node:{device.id}" in sources
     assert f"auto_recovery:recovery:{device.id}" in sources
 
@@ -594,14 +586,14 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
     )
     await db_session.commit()
 
-    # The blocking stop intent the crash handler leaves behind (priority 60).
+    # The blocking stop command the crash handler leaves behind.
     await IntentService(db_session).register_intents_and_reconcile(
         device_id=device.id,
         intents=[
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+                payload={"action": "stop"},
             )
         ],
         publisher=event_bus,
@@ -1445,7 +1437,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
-                payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
+                payload={"action": "stop"},
             ),
         ],
     )
