@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
@@ -79,6 +80,7 @@ class NodeStartDetails:
 
     active_connection_target: str | None = None
     allocated_caps: dict[str, Any] | None = None
+    started_at: datetime | None = None
     clear_transition: bool = False
 
 
@@ -153,6 +155,8 @@ async def mark_node_started(
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     active_connection_target = details.active_connection_target or appium_connection_target(device)
     node = upsert_node(db, device, port, pid, active_connection_target, settings=settings)
+    if details.started_at is not None:
+        node.started_at = details.started_at
     await db.flush()
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot promote Appium resource claims")

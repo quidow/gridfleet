@@ -96,6 +96,25 @@ def test_desired_running_observed_but_db_lacks_pid_repairs_observed_state() -> N
     assert action.active_connection_target == row.connection_target
 
 
+def test_desired_running_observed_with_new_spawn_time_repairs_observed_state() -> None:
+    old_spawn = datetime(2026, 7, 9, 14, 0, tzinfo=UTC)
+    new_spawn = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+        started_at=old_spawn,
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, started_at=new_spawn)
+
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+
+    assert action.kind == "db_mark_running"
+    assert action.started_at == new_spawn
+
+
 def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry() -> None:
     row = _row(desired_state="running", desired_port=4723)
     obs = ObservedEntry(port=4999, pid=12345, connection_target=row.connection_target)
@@ -350,6 +369,7 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         state="running",
         port=4723,
         pid=12345,
+        started_at=None,
         active_connection_target=row.connection_target,
     )
 

@@ -92,6 +92,7 @@ def _desired_select() -> Select[Any]:
         AppiumNode.transition_deadline,
         AppiumNode.port,
         AppiumNode.pid,
+        AppiumNode.started_at,
         AppiumNode.active_connection_target,
         AppiumNode.stop_pending,
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
@@ -109,6 +110,7 @@ def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
         transition_deadline=row.transition_deadline,
         port=row.port,
         pid=row.pid,
+        started_at=row.started_at,
         active_connection_target=row.active_connection_target,
         stop_pending=row.stop_pending,
         lifecycle_policy_state=row.lifecycle_policy_state,
@@ -369,6 +371,7 @@ class ReconcilerService:
                     port=entry.port,
                     pid=entry.pid,
                     connection_target=entry.connection_target,
+                    started_at=entry.started_at,
                 )
                 for entry in running
             ]
@@ -576,13 +579,14 @@ class ReconcilerService:
     ) -> Callable[..., Awaitable[None]]:
         resolved_session_scope = session_scope or self._session_factory
 
-        async def _write(
+        async def _write(  # noqa: PLR0913 - Task 4 removes token-era arguments from this internal callback.
             *,
             row: DesiredRow,
             state: str,
             port: int | None,
             pid: int | None,
             active_connection_target: str | None,
+            started_at: datetime | None = None,
             clear_desired_port: bool = False,
             clear_transition: bool = False,
             allocated_caps: object = None,
@@ -599,6 +603,7 @@ class ReconcilerService:
                         pid=pid,
                         details=NodeStartDetails(
                             active_connection_target=active_connection_target,
+                            started_at=started_at,
                             allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
                             clear_transition=clear_transition,
                         ),

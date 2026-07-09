@@ -31,6 +31,7 @@ class DesiredRow:
     pid: int | None
     active_connection_target: str | None
     stop_pending: bool
+    started_at: datetime | None = None
     # Carried lock-free from the desired-rows SELECT for the confirm_running pre-check.
     lifecycle_policy_state: dict[str, Any] | None = field(default=None)
 
@@ -40,6 +41,7 @@ class ObservedEntry:
     port: int
     pid: int | None
     connection_target: str
+    started_at: datetime | None = None
 
 
 ActionKind = Literal[
@@ -61,6 +63,7 @@ class ConvergenceAction:
     stop_port: int | None = None
     start_port: int | None = None
     pid: int | None = None
+    started_at: datetime | None = None
     active_connection_target: str | None = None
     clear_desired_port: bool = False
 
@@ -92,12 +95,14 @@ def _decide_running_action(
         if (
             row.port != observed.port
             or row.pid != observed.pid
+            or (observed.started_at is not None and row.started_at != observed.started_at)
             or row.active_connection_target != observed.connection_target
         ):
             return ConvergenceAction(
                 kind="db_mark_running",
                 port=observed.port,
                 pid=observed.pid,
+                started_at=observed.started_at,
                 active_connection_target=observed.connection_target,
             )
         return ConvergenceAction(kind="confirm_running")
@@ -247,6 +252,7 @@ async def _execute_action(
             state="running",
             port=action.port,
             pid=action.pid,
+            started_at=action.started_at,
             active_connection_target=action.active_connection_target,
         )
         return
