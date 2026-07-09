@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -14,7 +13,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
 from app.appium_nodes.services import resource_service
 from app.devices.models import DeviceIntent
-from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
+from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_active
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
@@ -158,11 +157,11 @@ def test_operator_restart_intent_sets_expires_at(
     assert intent.payload["transition_deadline"] == expected_deadline.isoformat()
 
 
-async def test_reconcile_expired_intents_deletes_expired_restart_intent(
+async def test_gc_expired_intents_deletes_expired_restart_intent(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """_reconcile_expired_intents must delete DeviceIntent rows whose expires_at
+    """_gc_expired_intents must delete DeviceIntent rows whose expires_at
     has passed, even when expires_at is explicitly set (as opposed to the Task 1
     regression where expires_at was NULL).
     """
@@ -186,10 +185,7 @@ async def test_reconcile_expired_intents_deletes_expired_restart_intent(
     db_session.add(expired_intent)
     await db_session.commit()
 
-    await _reconcile_expired_intents(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
-    await db_session.commit()
+    await _gc_expired_intents(db_session)
 
     remaining = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()

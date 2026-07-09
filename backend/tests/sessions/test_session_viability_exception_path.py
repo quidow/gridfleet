@@ -1,7 +1,7 @@
 """Regression: when the viability probe raises mid-run, the exception path must
 mark the device dirty and reconcile, not use projection-based state writes.
 
-After Task 10, the exception path calls IntentService.mark_dirty_and_reconcile
+After Task 10, the exception path calls IntentService.reconcile_now
 which derives state from durable facts (no running session → available/offline).
 """
 
@@ -28,12 +28,12 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_exception_path_calls_mark_dirty_and_reconcile(
+async def test_exception_path_calls_reconcile_now(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """After Task 10: exception path calls mark_dirty_and_reconcile instead of
+    """After Task 10: exception path calls reconcile_now instead of
     set_operational_state directly. No projection-as-write antipattern.
     """
     device_id = uuid.uuid4()
@@ -54,7 +54,7 @@ async def test_exception_path_calls_mark_dirty_and_reconcile(
     mark_dirty = AsyncMock()
     monkeypatch.setattr(
         "app.sessions.service_viability.IntentService",
-        MagicMock(return_value=MagicMock(mark_dirty_and_reconcile=mark_dirty)),
+        MagicMock(return_value=MagicMock(reconcile_now=mark_dirty)),
     )
 
     monkeypatch.setattr(
@@ -77,7 +77,7 @@ async def test_exception_path_calls_mark_dirty_and_reconcile(
             checked_by=service_viability.SessionViabilityCheckedBy.manual,
         )
 
-    # Exception path must have called mark_dirty_and_reconcile (not set_operational_state directly)
+    # Exception path must have called reconcile_now (not set_operational_state directly)
     mark_dirty.assert_awaited()
 
 
@@ -86,7 +86,7 @@ async def test_exception_path_from_offline_calls_mark_dirty(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exception path from offline state also calls mark_dirty_and_reconcile."""
+    """Exception path from offline state also calls reconcile_now."""
     device_id = uuid.uuid4()
     offline_device = MagicMock(
         id=device_id,
@@ -105,7 +105,7 @@ async def test_exception_path_from_offline_calls_mark_dirty(
     mark_dirty = AsyncMock()
     monkeypatch.setattr(
         "app.sessions.service_viability.IntentService",
-        MagicMock(return_value=MagicMock(mark_dirty_and_reconcile=mark_dirty)),
+        MagicMock(return_value=MagicMock(reconcile_now=mark_dirty)),
     )
 
     monkeypatch.setattr(

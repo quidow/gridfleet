@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceIntent, DeviceIntentDirty
+from app.devices.models import DeviceIntent
 from app.devices.services.intent_reconciler import reconcile_device
 
 if TYPE_CHECKING:
@@ -70,7 +70,6 @@ class IntentService:
             },
         ).returning(DeviceIntent.id, DeviceIntent.source)
         rows = (await self._db.execute(upsert)).all()
-        await self.mark_dirty(device_id)
         ids_by_source = {source: intent_id for intent_id, source in rows}
         # Use populate_existing=True so that the SQLAlchemy identity map is
         # refreshed from the upserted DB row rather than the cached stale object.
@@ -93,10 +92,7 @@ class IntentService:
             .returning(DeviceIntent.id)
         )
         intent_id = (await self._db.execute(stmt)).scalar_one_or_none()
-        if intent_id is None:
-            return False
-        await self.mark_dirty(device_id)
-        return True
+        return intent_id is not None
 
     async def revoke_intents(self, *, device_id: UUID, sources: list[str]) -> int:
         revoked = 0
@@ -105,28 +101,11 @@ class IntentService:
                 revoked += 1
         return revoked
 
-    async def mark_dirty(self, device_id: UUID) -> int:
-        now = now_utc()
-        dirty_update_values = {
-            "dirty_at": now,
-            "generation": DeviceIntentDirty.generation + 1,
-        }
-        stmt = (
-            insert(DeviceIntentDirty)
-            .values(device_id=device_id, dirty_at=now, generation=1)
-            .on_conflict_do_update(
-                index_elements=[DeviceIntentDirty.device_id],
-                set_=dirty_update_values,
-            )
-            .returning(DeviceIntentDirty.generation)
-        )
-        return int((await self._db.execute(stmt)).scalar_one())
-
     async def _lock_mutate_reconcile(
         self,
         device_id: UUID,
         *,
-        mutate: Callable[[], Awaitable[object]],
+        mutate: Callable[[], Awaitable[object]] | None = None,
         publisher: EventPublisher,
         observed_reason: ObservationReason | None,
         flush_first: bool = False,
@@ -136,40 +115,32 @@ class IntentService:
             # observation columns instead of the stale DB snapshot the
             # lock_device(populate_existing=True) re-read would return.
             await self._db.flush()
-        # Lock the Device row before touching DeviceIntent/DeviceIntentDirty so this
-        # inline path acquires locks in the same order as the background dirty-scan
-        # reconciler (Device -> dirty). The reverse order deadlocks under concurrent
-        # reconcile of the same device (see test_concurrency_intent_reconcile_dirty_deadlock).
+        # Lock the Device row before mutating DeviceIntent so this inline path
+        # and the background scan serialize on the same single lock.
         await device_locking.lock_device(self._db, device_id)
-        await mutate()
+        if mutate is not None:
+            await mutate()
         await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
 
-    async def mark_dirty_and_reconcile(
+    async def reconcile_now(
         self,
         device_id: UUID,
         *,
         publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
-        """Mark device dirty and immediately reconcile.
+        """Inline re-derivation for read-your-writes at operator/observation
+        sites. The every-tick reconciler scan is the backstop for anything
+        that skips this.
 
-        Use for observation paths that need the derived state to be written
-        inline (e.g. session-end, health-check write) rather than deferred to
-        the next background reconciler tick.
-
-        Flushes pending session changes to the DB buffer first so the inline
-        reconciler sees the updated observation columns (e.g. device_checks_healthy)
-        instead of the stale DB snapshot that would otherwise be returned by the
-        lock_device(populate_existing=True) re-read inside reconcile_device.
-
-        Pass ``observed_reason`` to carry the known cause of the transition so the
-        reconciler records the matching typed DeviceEvent audit row (§6). Omit it
-        when the cause is not known at this site — the reconciler then derives state
-        and emits the bus event but records no audit row (it must not guess the cause).
+        Flushes pending session changes first so the reconciler sees the
+        updated observation columns (e.g. device_checks_healthy) instead of a
+        stale DB snapshot. Pass ``observed_reason`` to carry the known cause
+        so the reconciler records the matching typed DeviceEvent audit row
+        (§6); omit it when the cause is unknown at this site.
         """
         await self._lock_mutate_reconcile(
             device_id,
-            mutate=lambda: self.mark_dirty(device_id),
             publisher=publisher,
             observed_reason=observed_reason,
             flush_first=True,

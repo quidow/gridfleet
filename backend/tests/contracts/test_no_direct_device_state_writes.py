@@ -128,6 +128,6 @@ def test_set_operational_state_called_only_from_state_module() -> None:
     assert not findings, (
         "set_operational_state must only be called by apply_derived_state in "
         "app/devices/services/state.py. Write the durable fact and call "
-        "IntentService.mark_dirty_and_reconcile (or register/revoke intents) instead:\n"
+        "IntentService.reconcile_now (or register/revoke intents) instead:\n"
         f"{formatted}"
     )

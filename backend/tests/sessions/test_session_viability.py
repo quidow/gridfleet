@@ -873,7 +873,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     db_session.add_all([device, node])
     await db_session.commit()
 
-    # After Task 10: no SESSION_STARTED/SESSION_ENDED transitions; mark_dirty_and_reconcile
+    # After Task 10: no SESSION_STARTED/SESSION_ENDED transitions; reconcile_now
     # calls reconcile_device which calls lock_device again. Provide extra mocks.
     locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available, hold=None)
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
@@ -886,7 +886,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         "IntentService",
         MagicMock(
             return_value=MagicMock(
-                mark_dirty_and_reconcile=AsyncMock(),
+                reconcile_now=AsyncMock(),
                 mark_dirty=AsyncMock(),
             )
         ),
@@ -958,14 +958,14 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
-    # After Task 10: no _MACHINE; exception path calls mark_dirty_and_reconcile. Patch IntentService.
+    # After Task 10: no _MACHINE; exception path calls reconcile_now. Patch IntentService.
     mark_dirty = AsyncMock()
     monkeypatch.setattr(
         session_viability,
         "IntentService",
         MagicMock(
             return_value=MagicMock(
-                mark_dirty_and_reconcile=mark_dirty,
+                reconcile_now=mark_dirty,
                 mark_dirty=AsyncMock(),
             )
         ),
@@ -983,7 +983,7 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    # Exception path calls mark_dirty_and_reconcile (not set_operational_state).
+    # Exception path calls reconcile_now (not set_operational_state).
     mark_dirty.assert_awaited()
 
 
@@ -1023,14 +1023,14 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     available.appium_node = MagicMock(observed_running=True)
     locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
-    # After Task 10: no _MACHINE; exception path calls mark_dirty_and_reconcile.
+    # After Task 10: no _MACHINE; exception path calls reconcile_now.
     mark_dirty2 = AsyncMock()
     monkeypatch.setattr(
         session_viability,
         "IntentService",
         MagicMock(
             return_value=MagicMock(
-                mark_dirty_and_reconcile=mark_dirty2,
+                reconcile_now=mark_dirty2,
                 mark_dirty=AsyncMock(),
             )
         ),
@@ -1048,7 +1048,7 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    # Exception path calls mark_dirty_and_reconcile (not set_operational_state).
+    # Exception path calls reconcile_now (not set_operational_state).
     mark_dirty2.assert_awaited()
 
 

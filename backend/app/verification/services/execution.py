@@ -535,12 +535,10 @@ async def _register_verification_node_intent(
     viability_timeout = settings.get_int("general.session_viability_timeout_sec")
     deadline = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
     intent_service = IntentService(db)
-    # Lock the Device row before the revoke below touches DeviceIntent/DeviceIntentDirty.
-    # revoke_intents -> mark_dirty upserts the dirty row; without the Device lock first
-    # this path would acquire locks in dirty->Device order while the background dirty-scan
-    # reconciler takes Device->dirty, deadlocking under concurrent reconcile of the same
-    # device (see test_concurrency_intent_reconcile_dirty_deadlock). register_intents_and_reconcile
-    # re-locks idempotently in the same transaction.
+    # Lock the Device row so the revoke + register + inline reconcile below all run
+    # under one consistently-ordered lock (the same single Device-row lock the
+    # background scan takes). register_intents_and_reconcile re-locks idempotently in
+    # the same transaction.
     await device_locking.lock_device(db, device.id)
     # Verification is an explicit re-qualification of the device. Like the operator
     # start-node path (lifecycle/services/operator_node.request_start) and the

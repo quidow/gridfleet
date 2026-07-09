@@ -145,7 +145,7 @@ class RunReleaseService:
             if has_live_session or not was_reserved:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            await IntentService(db).mark_dirty_and_reconcile(
+            await IntentService(db).reconcile_now(
                 device.id,
                 publisher=self._publisher,
             )
@@ -198,7 +198,7 @@ class RunReleaseService:
                 metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL.inc()
             # run: routing / cooldown denies derive from the reservation row; reconcile
             # to tear them down as the run releases (no stored release intents now).
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
 
     async def complete_deferred_stops_post_commit(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> None:
         """Run ``complete_deferred_stop_if_session_ended`` for each device after

@@ -15,8 +15,9 @@ column.
 1. **Observation loops** (`device_connectivity`, `node_health`, `session_sync`,
    `session_viability`) write durable facts — health flags, session rows,
    `maintenance_reason` in `lifecycle_policy_state` — then call
-   `IntentService.mark_dirty_and_reconcile` (or `mark_dirty`) to signal that the
-   reconciler should re-derive state on its next tick.
+   `IntentService.reconcile_now` for read-your-writes. Anything that skips the
+   inline reconcile is re-derived by the reconciler's full scan, which runs every
+   `general.intent_reconcile_interval_sec` tick as the backstop.
 2. **Reconciler tick** calls `apply_derived_state` in
    `app/devices/services/state.py`, which:
    - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
@@ -27,12 +28,12 @@ column.
      persisted column.
    - Emits the mapped event if the value actually changed.
 
-`apply_derived_state` (invoked by `reconcile_device` / `IntentService.*_and_reconcile`)
-is the **only** runtime writer of `operational_state`. There are no direct
-(non-reconciler) callers of `set_operational_state` left: observation and lifecycle
-sites — host-offline cascade, run release, session registration, verification entry —
-write durable facts (health flags, session rows, `maintenance_reason`, verification-lease
-intents) and trigger an inline reconcile via `IntentService.mark_dirty_and_reconcile` /
+`apply_derived_state` (invoked by `reconcile_device` / `IntentService.reconcile_now` /
+`IntentService.*_and_reconcile`) is the **only** runtime writer of `operational_state`.
+There are no direct (non-reconciler) callers of `set_operational_state` left: observation
+and lifecycle sites — host-offline cascade, run release, session registration, verification
+entry — write durable facts (health flags, session rows, `maintenance_reason`,
+verification-lease intents) and trigger an inline reconcile via `IntentService.reconcile_now` /
 `register_intents_and_reconcile`, so the state is still written synchronously before
 commit, just via derivation. Device-creation paths still set the initial value at
 construction time (`app.devices.services.write`). The static test
@@ -62,7 +63,8 @@ fact. A busy device can therefore still be in maintenance.
 ### Key rules
 
 - **Observation loops MUST NOT write `operational_state` directly.**
-  Instead they write facts and call `mark_dirty` so the reconciler re-derives state.
+  Instead they write facts and call `reconcile_now` (or let the every-tick
+  reconciler scan re-derive) so the reconciler owns the state write.
 - **Maintenance mode** is driven by the `maintenance_reason` signal in
   `lifecycle_policy_state`.  `enter_maintenance` / `exit_maintenance` write to that
   JSON column; the reconciler derives `operational_state=maintenance` from that flag.

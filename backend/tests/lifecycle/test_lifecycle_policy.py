@@ -1769,11 +1769,11 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         lambda _entry: True,
     )
     # After Task 10: _MACHINE and ready_operational_state removed from lifecycle_policy.
-    # The code now calls IntentService(db).mark_dirty_and_reconcile(device.id, ...).
+    # The code now calls IntentService(db).reconcile_now(device.id, ...).
     mark_dirty = AsyncMock()
     monkeypatch.setattr(
         lifecycle_policy_module.IntentService,
-        "mark_dirty_and_reconcile",
+        "reconcile_now",
         mark_dirty,
     )
 
@@ -1888,9 +1888,9 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
     # After Task 10: ready_operational_state and _MACHINE removed from lifecycle_policy.
-    # mark_dirty_and_reconcile is called instead.
+    # reconcile_now is called instead.
     mark_dirty2 = AsyncMock()
-    monkeypatch.setattr(lifecycle_policy_module.IntentService, "mark_dirty_and_reconcile", mark_dirty2)
+    monkeypatch.setattr(lifecycle_policy_module.IntentService, "reconcile_now", mark_dirty2)
     monkeypatch.setattr(LifecycleIncidentService, "record_lifecycle_incident", AsyncMock())
     probe_order: list[str] = []
 
@@ -1929,7 +1929,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )  # type: ignore[arg-type]
     assert db.added
     IntentService.register_intents_and_reconcile.assert_awaited()
-    # After Task 10: _MACHINE removed; mark_dirty_and_reconcile is called instead.
+    # After Task 10: _MACHINE removed; reconcile_now is called instead.
     mark_dirty2.assert_awaited()
     # wait_for_node_running must fire before run_session_viability_probe; probing
     # before agent start-up yields false negatives.

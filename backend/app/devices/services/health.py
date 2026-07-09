@@ -47,15 +47,6 @@ def _status_snapshot(summary: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _verdict_changed(previous: dict[str, Any], device: Device) -> bool:
-    """True if the device's public health verdict differs from ``previous``.
-
-    Reuses the same per-verdict snapshot that drives ``_maybe_emit_health_changed``
-    so the dirty-mark gate and the event-emission gate stay in lockstep.
-    """
-    return _status_snapshot(previous) != _status_snapshot(build_public_summary(device))
-
-
 def _maybe_emit_health_changed(
     db: AsyncSession,
     device: Device,
@@ -91,18 +82,12 @@ class DeviceHealthService:
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
         locked.device_checks_checked_at = now_utc()
-        # Reconcile immediately only on failure so the device goes offline right
-        # away. On success, defer to apply_node_state_transition (which reconciles
-        # on state transitions) or the background reconciler. This preserves the old
-        # behavior: a healthy device_checks signal alone does not restore an
-        # offline device — the node must also be observed running.
         if not healthy:
-            await IntentService(db).mark_dirty_and_reconcile(locked.id, publisher=self._publisher)
-        elif _verdict_changed(previous, locked):
-            # Steady-state healthy re-marks are the dominant reconciler churn — only
-            # enqueue when the public verdict actually transitions. The full scan is
-            # the backstop for any drift that has no observation transition.
-            await IntentService(db).mark_dirty(locked.id)
+            await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
+        # On success, defer to apply_node_state_transition (which reconciles on
+        # state transitions) or the next reconciler scan tick (≤ one
+        # intent_reconcile_interval): a healthy device_checks signal alone does
+        # not restore an offline device — the node must also be observed running.
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_session_viability(
@@ -116,11 +101,10 @@ class DeviceHealthService:
         locked.session_viability_error = error
         locked.session_viability_checked_at = now_utc()
         # Same asymmetry as update_device_checks: reconcile immediately on failure
-        # (device goes offline), defer on success (rely on apply_node_state_transition).
+        # (device goes offline), defer on success (rely on apply_node_state_transition
+        # or the next reconciler scan tick).
         if status == "failed":
-            await IntentService(db).mark_dirty_and_reconcile(locked.id, publisher=self._publisher)
-        elif _verdict_changed(previous, locked):
-            await IntentService(db).mark_dirty(locked.id)
+            await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
 
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
@@ -179,14 +163,13 @@ class DeviceHealthService:
         # let the threshold be reached before offline derivation).
         should_reconcile = mark_offline or health_running is not False
         if should_act and should_reconcile:
-            await IntentService(db).mark_dirty_and_reconcile(
+            await IntentService(db).reconcile_now(
                 locked.id,
                 publisher=self._publisher,
             )
-        elif should_act:
-            await IntentService(db).mark_dirty(
-                locked.id,
-            )
+        # Otherwise defer to the next reconciler scan tick (≤ one
+        # intent_reconcile_interval): a below-threshold failure recording that
+        # must not derive offline yet still gets re-derived by the backstop scan.
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:

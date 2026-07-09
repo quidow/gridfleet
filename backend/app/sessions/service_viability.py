@@ -366,7 +366,7 @@ class SessionViabilityService:
             # The probe created and deleted a Grid session but left no running
             # Session row; reconciler sees no running session and derives
             # available or offline based on health signals and stop_in_flight.
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
             if config_changed:
                 await db.commit()
@@ -374,7 +374,7 @@ class SessionViabilityService:
             return state
         except Exception:
             if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
-                await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
                 await db.commit()
             raise
         finally:

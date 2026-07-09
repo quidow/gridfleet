@@ -457,7 +457,7 @@ class SessionSyncService:
         locked_device = await device_locking.lock_device(db, device.id)
         # Mark dirty either way: the reconciler derives available/offline from
         # durable facts when no session remains, or restores busy when one does.
-        await intent_service.IntentService(db).mark_dirty_and_reconcile(locked_device.id, publisher=self._publisher)
+        await intent_service.IntentService(db).reconcile_now(locked_device.id, publisher=self._publisher)
 
     async def _kill_orphans(self, db: AsyncSession) -> None:
         """Terminate Appium sessions with no tracking DB row, per running node."""

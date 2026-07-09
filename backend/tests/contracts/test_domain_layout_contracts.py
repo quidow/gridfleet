@@ -92,7 +92,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "models.event",
         "models.group",
         "models.intent",
-        "models.intent_dirty",
         "models.reservation",
         "models.test_data_audit",
         "routers",

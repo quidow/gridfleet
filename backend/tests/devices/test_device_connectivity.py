@@ -2221,13 +2221,11 @@ async def test_disconnected_already_recorded_device_skips_reconcile(
     from app.devices.services.intent import IntentService
 
     calls: list[str] = []
-    original = IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(IntentService, "reconcile_now", _spy)
 
     with (
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
@@ -2261,13 +2259,11 @@ async def test_disconnected_first_observation_still_reconciles(
     from app.devices.services.intent import IntentService
 
     calls: list[str] = []
-    original = IntentService.mark_dirty
 
-    async def _spy(self: object, device_id: object) -> int:
+    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
         calls.append("called")
-        return await original(self, device_id)
 
-    monkeypatch.setattr(IntentService, "mark_dirty", _spy)
+    monkeypatch.setattr(IntentService, "reconcile_now", _spy)
 
     with (
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),

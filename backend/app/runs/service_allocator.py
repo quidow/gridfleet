@@ -443,6 +443,6 @@ class RunAllocatorService:
         # Reconcile each allocated device so its node picks up the run: grid-routing
         # intent now synthesized from the reservation row just written.
         for device in all_matched:
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=self._publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
 
         return run, device_infos

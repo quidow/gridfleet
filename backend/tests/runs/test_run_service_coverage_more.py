@@ -353,7 +353,7 @@ async def test_cooldown_device_guard_paths(
         reservation=RunReservationService(review=build_review_service()),
         incidents=LifecycleIncidentService(),
     )
-    monkeypatch.setattr(IntentService, "mark_dirty_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "reconcile_now", AsyncMock())
     failure_svc._incidents = AsyncMock()  # type: ignore[assignment]
 
     with pytest.raises(ValueError, match="ttl_seconds"):
@@ -766,13 +766,13 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     )
 
     reconciled: list[uuid.UUID] = []
-    orig_reconcile = sessions_service.IntentService.mark_dirty_and_reconcile
+    orig_reconcile = sessions_service.IntentService.reconcile_now
 
     async def _spy_reconcile(self: object, device_id: uuid.UUID, **kwargs: object) -> object:
         reconciled.append(device_id)
         return await orig_reconcile(self, device_id, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(sessions_service.IntentService, "mark_dirty_and_reconcile", _spy_reconcile)
+    monkeypatch.setattr(sessions_service.IntentService, "reconcile_now", _spy_reconcile)
 
     svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
     await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
@@ -1203,7 +1203,7 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="prep-release-run", devices=[device], state=RunState.active)
-    monkeypatch.setattr(IntentService, "mark_dirty_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "reconcile_now", AsyncMock())
 
     maintenance = AsyncMock()
     lifecycle_actions = AsyncMock()

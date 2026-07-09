@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import NoResultFound
 
 from app.agent_comm.node_poke import poke_node_refresh
@@ -21,8 +21,6 @@ from app.devices.models import (
     Device,
     DeviceEventType,
     DeviceIntent,
-    DeviceIntentDirty,
-    DeviceOperationalState,
 )
 from app.devices.services.event import record_event
 from app.devices.services.intent_evaluator import (
@@ -64,7 +62,6 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
 
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services
-        self._cycle = 0
 
     @property
     def _session_factory(self) -> SessionFactory:
@@ -76,15 +73,11 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
     async def _run_cycle(self, db: AsyncSession) -> None:
         await run_device_intent_reconciler_once(
             db,
-            cycle=self._cycle,
             settings=self._services.settings,
             circuit_breaker=self._services.circuit_breaker,
             publisher=self._services.publisher,
             pool=self._services.pool,
         )
-
-    def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
-        self._cycle += 1
 
 
 async def _reconcile_commit_deliver(
@@ -98,39 +91,38 @@ async def _reconcile_commit_deliver(
     packs: dict[str, DriverPack] | None = None,
 ) -> None:
     if packs is not None:
-        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
+        changed = await reconcile_device(db, device_id, publisher=publisher, packs=packs)
     else:
-        await reconcile_device(db, device_id, publisher=publisher)
+        changed = await reconcile_device(db, device_id, publisher=publisher)
     await db.commit()
-    await poke_node_refresh(
-        db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-    )
+    if changed:
+        await poke_node_refresh(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def run_device_intent_reconciler_once(
     db: AsyncSession,
     *,
-    cycle: int,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
-    full_scan_every = settings.get_int("general.intent_reconcile_full_scan_every_cycles")
-    await _reconcile_expired_intents(
-        db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-    )
-    if cycle % full_scan_every == 0:
-        await _reconcile_all_devices_once(
-            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
-    else:
-        await _reconcile_dirty_devices(
-            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
+    await _gc_expired_intents(db)
+    await _reconcile_all_devices(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool)
 
 
-async def _reconcile_all_devices_once(
+async def _gc_expired_intents(db: AsyncSession) -> None:
+    """Bulk-delete expired intent rows. Pure hygiene: the evaluator already
+    ignores rows past ``expires_at``, and this same tick's full scan
+    re-derives every device — no per-device reconcile is needed here."""
+    now = now_utc()
+    await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
+    await db.commit()
+
+
+async def _reconcile_all_devices(
     db: AsyncSession,
     *,
     settings: SettingsReader,
@@ -138,27 +130,16 @@ async def _reconcile_all_devices_once(
     publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
-    intent_device_ids = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
-    # The reconciler is authoritative for operational_state, but a device with no
-    # intents would otherwise be invisible to this scan — so a state pushed without
-    # its backing intent (e.g. a bare `verifying`/`offline` push stranded by a crash
-    # before the lease was registered; spec §14.5: every state must be backed by a
-    # durable fact) could stick forever. Also re-derive any device not in the steady
-    # `available` state so orphaned non-available states always self-heal. Steady
-    # `available` devices with no intents stay skipped (the original optimization).
-    orphan_device_ids = (
-        (await db.execute(select(Device.id).where(Device.operational_state != DeviceOperationalState.available)))
-        .scalars()
-        .all()
-    )
-    scan_ids = list(dict.fromkeys([*intent_device_ids, *orphan_device_ids]))
-    # Prefetch the pack catalog once for the whole scan so each reconcile_device skips
-    # its per-device pack load (see _reconcile_dirty_devices for the same pattern).
+    # ponytail: full scan every tick — no dirty queue, no work-avoidance. At lab
+    # scale (hundreds of devices, ~8 short indexed queries each) a scan is cheap,
+    # and it structurally removes the missed-mark_dirty staleness class. If a
+    # very large lab ever needs relief, raise general.intent_reconcile_interval_sec.
+    device_ids = (await db.execute(select(Device.id).order_by(Device.id))).scalars().all()
     packs: dict[str, DriverPack] = {}
-    if scan_ids:
-        pack_ids = (await db.execute(select(Device.pack_id).where(Device.id.in_(scan_ids)))).scalars().all()
+    if device_ids:
+        pack_ids = (await db.execute(select(Device.pack_id).distinct())).scalars().all()
         packs = await load_packs_by_ids(db, {pid for pid in pack_ids if pid})
-    for device_id in scan_ids:
+    for device_id in device_ids:
         await _reconcile_commit_deliver(
             db,
             device_id,
@@ -167,70 +148,6 @@ async def _reconcile_all_devices_once(
             publisher=publisher,
             pool=pool,
             packs=packs,
-        )
-
-
-async def _reconcile_dirty_devices(
-    db: AsyncSession,
-    *,
-    settings: SettingsReader,
-    limit: int = 100,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-    pool: AgentHttpPool | None = None,
-) -> None:
-    queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
-    metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
-    rows = (
-        (await db.execute(select(DeviceIntentDirty).order_by(DeviceIntentDirty.dirty_at).limit(limit))).scalars().all()
-    )
-    # Prefetch the driver-pack catalog once for the whole dirty batch so each
-    # reconcile_device skips its own per-device pack load (readiness check).
-    # expire_on_commit=False keeps these objects usable across the per-device commits below.
-    device_ids = [row.device_id for row in rows]
-    packs: dict[str, DriverPack] = {}
-    if device_ids:
-        pack_ids = (await db.execute(select(Device.pack_id).where(Device.id.in_(device_ids)))).scalars().all()
-        packs = await load_packs_by_ids(db, {pid for pid in pack_ids if pid})
-    for row in rows:
-        device_id = row.device_id
-        generation = row.generation
-        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
-        current = await db.get(DeviceIntentDirty, device_id, populate_existing=True)
-        if current is not None and current.generation == generation:
-            await db.delete(current)
-        await db.commit()
-        await poke_node_refresh(
-            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
-
-
-async def _reconcile_expired_intents(
-    db: AsyncSession,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-    pool: AgentHttpPool | None = None,
-) -> None:
-    now = now_utc()
-    device_ids = (
-        (
-            await db.execute(
-                select(DeviceIntent.device_id).where(
-                    DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not device_ids:
-        return
-    await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
-    for device_id in sorted(set(device_ids)):
-        await _reconcile_commit_deliver(
-            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
         )
 
 
@@ -257,15 +174,22 @@ async def reconcile_device(
     publisher: EventPublisher,
     observed_reason: ObservationReason | None = None,
     packs: dict[str, DriverPack] | None = None,
-) -> None:
+) -> bool:
+    """Re-derive desired node state and operational_state for one device.
+
+    Returns True when agent-visible node state changed (desired state/port,
+    grid run id, accepting_new_sessions, stop_pending, recovery fields) —
+    the caller uses this to gate the agent wake poke. Derivations that only
+    touch ``operational_state`` return False: the agent does not read it.
+    """
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     try:
         device = await device_locking.lock_device(db, device_id)
     except NoResultFound:
         # The device row was deleted concurrently (e.g. an operator delete
-        # between the dirty-scan select and this lock). Nothing to reconcile —
+        # between the scan select and this lock). Nothing to reconcile —
         # skip without failing the whole reconcile cycle.
-        return
+        return False
     node = device.appium_node
     if node is None:
         # No Appium node — skip intent evaluation but still derive device state
@@ -277,7 +201,7 @@ async def reconcile_device(
             )
         except Exception:  # noqa: BLE001 - state derivation must never break reconcile
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
-        return
+        return False
 
     now = now_utc()
     intents = await _load_intents_for_evaluation(db, device, node, now)
@@ -390,6 +314,8 @@ async def reconcile_device(
         )
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
+
+    return changed
 
 
 async def _apply_recovery_decision(

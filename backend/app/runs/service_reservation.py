@@ -270,7 +270,7 @@ class RunReservationService:
         if device is not None:
             # released_at written above; run: routing and cooldown denies derive from the
             # reservation row, so reconcile to tear them down (no stored release intents now).
-            await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=publisher)
+            await IntentService(db).reconcile_now(device.id, publisher=publisher)
         if commit:
             await db.commit()
             run = await get_run(db, run.id)

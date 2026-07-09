@@ -13,7 +13,7 @@ This doc is the contract for those axes: what each one means, where it lives, wh
 | Axis | Source of truth | Type | Writers |
 | --- | --- | --- | --- |
 | Readiness | derived from `Device.verified_at` + setup gates | computed | `app.devices.services.readiness.is_ready_for_use_async` |
-| Operational state | `Device.operational_state` | 5-value enum | `device_intent_reconciler` loop via `apply_derived_state`, the sole caller of `app.devices.services.state.set_operational_state`; other paths record durable facts and call `IntentService.mark_dirty` / `mark_dirty_and_reconcile` |
+| Operational state | `Device.operational_state` | 5-value enum | `device_intent_reconciler` loop via `apply_derived_state`, the sole caller of `app.devices.services.state.set_operational_state`; other paths record durable facts and call `IntentService.reconcile_now` |
 | Reservation | `device_reservations` rows | computed flag (`is_reserved`) | run/reservation logic via inserts into the `device_reservations` table |
 | Hardware health | `Device.hardware_health_status` | enum | `hardware_telemetry` loop |
 | Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy` / `lifecycle_policy_actions` through `app.devices.services.lifecycle_policy_state.write_state` |
@@ -66,11 +66,11 @@ async def set_operational_state(
 ) -> bool
 ```
 
-It publishes `device.operational_state_changed` via `publisher.queue_for_session` (queued for commit) unless `publish_event=False`, and returns `False` when the value is unchanged. A row-level lock is required before calling it. `set_operational_state` has **no production callers outside `apply_derived_state`**. Every other code path records the durable fact instead and calls `IntentService.mark_dirty` or `mark_dirty_and_reconcile` to trigger a reconcile:
+It publishes `device.operational_state_changed` via `publisher.queue_for_session` (queued for commit) unless `publish_event=False`, and returns `False` when the value is unchanged. A row-level lock is required before calling it. `set_operational_state` has **no production callers outside `apply_derived_state`**. Every other code path records the durable fact instead and calls `IntentService.reconcile_now` to trigger a reconcile:
 
 - `app.verification.services.execution` registers a `DeviceIntent` (`verification_intent_source`) when a verification job starts and revokes it via `IntentService.revoke_intents_and_reconcile` on pass/fail; the reconciler derives `verifying` from the active lease rather than a direct write.
 - `app.appium_nodes.services.heartbeat` records the host-offline fact via `DeviceHealthService.update_device_checks(healthy=False)` for every device on a downed host; the reconciler derives `offline` from the resulting not-ready fact.
-- `app.runs.service_lifecycle_release` (`RunReleaseService.release_devices`) calls `IntentService.mark_dirty_and_reconcile` after releasing a device's reservation; the reconciler derives the ready state.
+- `app.runs.service_lifecycle_release` (`RunReleaseService.release_devices`) calls `IntentService.reconcile_now` after releasing a device's reservation; the reconciler derives the ready state.
 
 Run allocation does not write `operational_state` to reserve; it inserts rows into the `device_reservations` table. Its matching query uses a `SELECT ... FOR UPDATE SKIP LOCKED` window (`with_for_update(of=Device, skip_locked=True)` in `app.runs.service_allocator._find_matching_devices`) to lock allocatable rows before reserving them. `backend/tests/contracts/test_no_direct_device_state_writes.py` enforces the single-writer rule, including that `set_operational_state` is called only from `app/devices/services/state.py`.
 
@@ -168,7 +168,7 @@ Sanctioned writers (defer to `PROTECTED_COLUMN_WRITERS` in
 | `health_running`, `health_state`, `last_health_checked_at` | `app.devices.services.health.apply_node_state_transition` and the reconciler/heartbeat health writers listed in `PROTECTED_COLUMN_WRITERS` |
 | `last_observed_at` | the reconciler's Core bulk update (`_touch_last_observed`) |
 
-The intent-vs-observation split mirrors the operational-state axis. Operator routes and lifecycle flows write **desired state only** (`mark_node_started` / `mark_node_stopped` / `restart_node` live in `app.appium_nodes.services.reconciler_agent`). `apply_node_state_transition` (`app.devices.services.health`) writes only `health_running` / `health_state` / `last_health_checked_at` and then delegates state derivation to `IntentService.mark_dirty_and_reconcile`; it does not write a node `state` enum. Observation loops live at `app.appium_nodes.services.node_health` (`_process_node_health`), `app.devices.services.connectivity` (`_stop_disconnected_node`), and `app.appium_nodes.services.heartbeat` (`_ingest_appium_restart_events`).
+The intent-vs-observation split mirrors the operational-state axis. Operator routes and lifecycle flows write **desired state only** (`mark_node_started` / `mark_node_stopped` / `restart_node` live in `app.appium_nodes.services.reconciler_agent`). `apply_node_state_transition` (`app.devices.services.health`) writes only `health_running` / `health_state` / `last_health_checked_at` and then delegates state derivation to `IntentService.reconcile_now`; it does not write a node `state` enum. Observation loops live at `app.appium_nodes.services.node_health` (`_process_node_health`), `app.devices.services.connectivity` (`_stop_disconnected_node`), and `app.appium_nodes.services.heartbeat` (`_ingest_appium_restart_events`).
 
 Doc 2 covers the full transition graph and the agent-acknowledgement contract that gates `running → stopped`.
 
@@ -200,7 +200,7 @@ The public summary returned by `/api/devices` is computed by `app.devices.servic
 
 The cross-link is reconciler-mediated, not a pair of direct flip helpers:
 
-- On a definitive failure the observation writer records the durable health fact (e.g. `apply_node_state_transition` / `update_session_viability` in `app.devices.services.health`, or the connectivity loop) and calls `IntentService.mark_dirty_and_reconcile` / `mark_dirty`. The reconciler then drops an `available` device to `offline` so the UI does not advertise an unhealthy device for allocation.
+- On a definitive failure the observation writer records the durable health fact (e.g. `apply_node_state_transition` / `update_session_viability` in `app.devices.services.health`, or the connectivity loop) and calls `IntentService.reconcile_now`. The reconciler then drops an `available` device to `offline` so the UI does not advertise an unhealthy device for allocation.
 - On recovery (node running + checks healthy + readiness OK) the same path marks the device dirty and the reconciler lifts it back to `available`.
 
 The `device_intent_reconciler` loop (`app.devices.services.intent_reconciler`, the sole production caller of `apply_derived_state`) owns the `available` ↔ `offline` derivation under the device row lock. Operator/run intent (`maintenance_reason`, `device_reservations` rows) is preserved because it lives in durable facts the reconciler folds in, not in a column the observation writers touch.
@@ -263,7 +263,7 @@ The UI health chip reads the derived public summary, not a stored health documen
 | "Offline + healthy" rendered together | Derived health writer bypassed `apply_node_state_transition` | Route node health/lifecycle transitions through `device_health` |
 | Device flaps `available -> offline -> available` every minute | Loop coerced indeterminate probe result to refused | Use `ProbeResult` and short-circuit `indeterminate` (commit `a58c8e5`) |
 | Device shows `stopped` in DB but Grid still routes to it | `mark_node_stopped` ran without agent ack | Gate node-state flip on agent ack returning `True` (commits `4171847`, `bdfae85`) |
-| Operator sets `maintenance` and a loop reverts it to `available` | A loop wrote `operational_state` directly instead of recording a durable fact and letting the reconciler derive it | Observation loops must record durable facts and call `IntentService.mark_dirty` / `mark_dirty_and_reconcile`; only `apply_derived_state` (the reconciler's sole writer) writes `operational_state` |
+| Operator sets `maintenance` and a loop reverts it to `available` | A loop wrote `operational_state` directly instead of recording a durable fact and letting the reconciler derive it | Observation loops must record durable facts and call `IntentService.reconcile_now`; only `apply_derived_state` (the reconciler's sole writer) writes `operational_state` |
 | Two workers race on the same device | Mutator skipped the row lock | Acquire row lock before any device-state/lifecycle write |
 
 ## What this doc does NOT cover

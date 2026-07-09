@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import ANY, AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
 
 from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
-    _reconcile_all_devices_once,
-    _reconcile_dirty_devices,
-    _reconcile_expired_intents,
+    _gc_expired_intents,
+    _reconcile_commit_deliver,
     reconcile_device,
+    run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
 from app.sessions.models import Session, SessionStatus
@@ -118,7 +118,7 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(
+    await run_device_intent_reconciler_once(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
     )
 
@@ -374,103 +374,56 @@ async def test_pull_host_metadata_change_pokes_instead_of_staging(
     poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
 
 
-async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_scan_rederives_stale_available_device_without_intents(
+    db_session: AsyncSession, db_host: Host, seeded_driver_packs: None
 ) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="dirty")
-    await _seed_node(db_session, device.id)
-    dirty = DeviceIntentDirty(device_id=device.id, generation=1)
-    db_session.add(dirty)
+    """The case the old dirty queue existed for: a fact changes on a steady
+    `available` device with no intent rows and nobody calls an inline
+    reconcile. The every-tick scan must re-derive it."""
+    device = await create_device(db_session, host_id=db_host.id, name="scan-rederive")
+    node = await _seed_node(db_session, device.id)
+    node.pid = 1
+    node.active_connection_target = "target"
+    node.health_running = True
+    device.device_checks_healthy = True
+    await db_session.commit()
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+    await db_session.refresh(device)
+    assert device.operational_state != DeviceOperationalState.offline  # settled healthy
+
+    device.device_checks_healthy = False  # simulate an unswept fact flip
     await db_session.commit()
 
-    async def fake_reconcile(
-        db: AsyncSession, device_id: object, *, publisher: object = None, packs: object = None
-    ) -> None:
-        row = await db.get(DeviceIntentDirty, device_id)
-        assert row is not None
-        row.generation += 1
-        await db.flush()
+    await run_device_intent_reconciler_once(
+        db_session,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        publisher=event_bus,
+    )
+    refreshed = await db_session.get(Device, device.id)
+    assert refreshed is not None
+    assert refreshed.operational_state == DeviceOperationalState.offline
 
-    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
 
-    await _reconcile_dirty_devices(
-        db_session, limit=10, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+async def test_gc_expired_intents_deletes_rows_only(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="gc-expired")
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source="operator:start",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20},
+                expires_at=datetime.now(UTC) - timedelta(seconds=1),
+            )
+        ],
     )
     await db_session.commit()
 
-    assert await db_session.get(DeviceIntentDirty, device.id) is not None
-
-
-async def test_full_scan_reconciles_each_intent_device(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = await create_device(db_session, host_id=db_host.id, name="full-scan-a")
-    second = await create_device(db_session, host_id=db_host.id, name="full-scan-b")
-    db_session.add_all(
-        [
-            DeviceIntent(device_id=first.id, source="test-a", axis=NODE_PROCESS, payload={}),
-            DeviceIntent(device_id=second.id, source="test-b", axis=NODE_PROCESS, payload={}),
-        ]
-    )
-    await db_session.commit()
-    reconciled: list[object] = []
-    deliver = AsyncMock()
-
-    async def fake_reconcile(
-        _db: AsyncSession, device_id: object, *, publisher: object = None, packs: object = None
-    ) -> None:
-        reconciled.append(device_id)
-
-    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
-    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", deliver)
-
-    await _reconcile_all_devices_once(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
-
-    assert set(reconciled) == {first.id, second.id}
-    assert deliver.await_count == 2
-
-
-async def test_full_scan_recovers_non_available_device_without_intents(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A device stranded in a non-``available`` state with NO backing intent — the
-    state a worker crash can leave between the bare ``verifying`` push and lease
-    registration (spec §14.5: every state must be backed by a durable fact). The
-    authoritative full scan must re-derive it even though it has no DeviceIntent
-    rows, while a steady-state ``available`` device with no intents stays skipped.
-    """
-    orphan = await create_device(db_session, host_id=db_host.id, name="orphan-verifying")
-    idle = await create_device(db_session, host_id=db_host.id, name="idle-available")
-    orphan.operational_state = DeviceOperationalState.verifying
-    idle.operational_state = DeviceOperationalState.available
-    await db_session.commit()
-    # Neither device has any intents — the pre-fix scan would skip both.
-    assert not (await db_session.execute(select(DeviceIntent))).first()
-
-    reconciled: list[object] = []
-
-    async def fake_reconcile(
-        _db: AsyncSession, device_id: object, *, publisher: object = None, packs: object = None
-    ) -> None:
-        reconciled.append(device_id)
-
-    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
-    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", AsyncMock())
-
-    await _reconcile_all_devices_once(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
-
-    assert orphan.id in reconciled  # re-derived despite having no intents
-    assert idle.id not in reconciled  # steady-state available is still skipped
+    await _gc_expired_intents(db_session)
+    remaining = (await db_session.execute(select(DeviceIntent))).scalars().all()
+    assert remaining == []
 
 
 async def test_maintenance_signal_suppresses_baseline_idle_injection(
@@ -625,8 +578,38 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", AsyncMock())
 
-    await _reconcile_all_devices_once(
+    await run_device_intent_reconciler_once(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
     )
     await db_session.refresh(device)
     assert device.operational_state != DeviceOperationalState.offline  # drift corrected
+
+
+async def test_steady_state_reconcile_does_not_poke(db_session: AsyncSession, db_host: Host) -> None:
+    """A reconcile that changes nothing must not wake the agent."""
+    device = await create_device(db_session, host_id=db_host.id, name="steady-state")
+    await _seed_node(db_session, device.id)
+    settings = FakeSettingsReader()
+    # First reconcile settles initial derivation; the second is steady-state.
+    await _reconcile_commit_deliver(
+        db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+    )
+    poke = AsyncMock()
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
+        await _reconcile_commit_deliver(
+            db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+        )
+    poke.assert_not_awaited()
+
+
+async def test_desired_state_change_pokes_agent(db_session: AsyncSession, db_host: Host) -> None:
+    """A reconcile that flips desired node state must wake the agent."""
+    device = await create_device(db_session, host_id=db_host.id, name="pokes-agent")
+    await _seed_node(db_session, device.id)
+
+    poke = AsyncMock()
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
+        await _reconcile_commit_deliver(
+            db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+        )
+    poke.assert_awaited_once()

@@ -212,7 +212,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
     # (offline when the node stops, unless a running session holds it busy).
     # Skip the write-through state machine that used to route AUTO_STOP_EXECUTED
     # here: the reconciler's apply_derived_state is now authoritative.
-    await IntentService(db).mark_dirty_and_reconcile(device.id, publisher=publisher)
+    await IntentService(db).reconcile_now(device.id, publisher=publisher)
     await DeviceHealthService(publisher=publisher).apply_node_state_transition(
         db,
         device,
