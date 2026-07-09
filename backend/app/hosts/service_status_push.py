@@ -63,6 +63,10 @@ class HostStatusPushService:
                 "payload": {
                     "appium_processes": push.appium_processes,
                     "host_telemetry": push.host_telemetry,
+                    "node_health": push.node_health,
+                    "device_health": push.device_health,
+                    "device_telemetry": push.device_telemetry,
+                    "device_properties": push.device_properties,
                 },
             },
         )
