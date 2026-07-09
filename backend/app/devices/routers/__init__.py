@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 __all__ = [
+    "agent_probe_targets",
     "bulk",
     "catalog",
     "control",

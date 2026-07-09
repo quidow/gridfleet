@@ -336,6 +336,9 @@ app.include_router(appium_node_routers.agent_state.router, dependencies=[Depends
 app.include_router(
     device_routers.bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
+app.include_router(
+    device_routers.agent_probe_targets.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
+)
 app.include_router(portability_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

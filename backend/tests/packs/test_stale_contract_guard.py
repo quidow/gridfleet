@@ -21,7 +21,7 @@ FORBIDDEN = {
     re.compile(r"\bidentity_kind\b"): "legacy identity_kind",
     re.compile(r"\brequested_platform\b(?!_id)"): "legacy requested_platform",
     re.compile(r"\bDM_[A-Z0-9_]+"): "legacy DM_ env var",
-    re.compile(r"/agent/devices"): "deleted legacy agent devices route",
+    re.compile(r"/agent/devices/(?!probe-targets\b)"): "deleted legacy agent devices route",
     re.compile(r"/api/devices/health/all"): "deleted fleet health route",
     re.compile(r"""requirements:\s*\[\s*\{\s*platform:"""): "legacy run requirement platform key",
     re.compile(r"""["']platform["']\s*:\s*["']android_mobile"""): "legacy bare platform payload key",

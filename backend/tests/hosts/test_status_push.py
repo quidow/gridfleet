@@ -53,6 +53,10 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
         "missing_prerequisites": ["adb"],
         "appium_processes": {"running_nodes": [{"port": 4723, "pid": 111}]},
         "host_telemetry": {"recorded_at": "2026-07-09T00:00:00+00:00", "cpu_percent": 1.0},
+        "node_health": {"reported_at": "2026-07-09T00:00:01+00:00", "nodes": []},
+        "device_health": {"reported_at": "2026-07-09T00:00:02+00:00", "devices": {}},
+        "device_telemetry": {"reported_at": "2026-07-09T00:00:03+00:00", "devices": {}},
+        "device_properties": {"reported_at": "2026-07-09T00:00:04+00:00", "devices": {}},
     }
     resp = await client.post("/agent/hosts/status", json=body)
     assert resp.status_code == 204
@@ -63,6 +67,10 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
     assert "adb" in online_host.missing_prerequisites
     stored = await control_plane_state_store.get_value(db_session, HOST_STATUS_NAMESPACE, str(online_host.id))
     assert stored["payload"]["appium_processes"]["running_nodes"][0]["port"] == 4723
+    assert stored["payload"]["node_health"]["reported_at"] == "2026-07-09T00:00:01+00:00"
+    assert stored["payload"]["device_health"]["reported_at"] == "2026-07-09T00:00:02+00:00"
+    assert stored["payload"]["device_telemetry"]["reported_at"] == "2026-07-09T00:00:03+00:00"
+    assert stored["payload"]["device_properties"]["reported_at"] == "2026-07-09T00:00:04+00:00"
 
 
 async def test_status_push_flips_offline_host_online(client: AsyncClient, db_session: AsyncSession) -> None:

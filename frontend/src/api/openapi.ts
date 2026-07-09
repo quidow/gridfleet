@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/devices/probe-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Probe Targets */
+        get: operations["probe_targets_agent_devices_probe_targets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent/driver-packs/desired": {
         parameters: {
             query?: never;
@@ -3840,6 +3857,18 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            /** Device Health */
+            device_health?: {
+                [key: string]: unknown;
+            } | null;
+            /** Device Properties */
+            device_properties?: {
+                [key: string]: unknown;
+            } | null;
+            /** Device Telemetry */
+            device_telemetry?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Host Id
              * Format: uuid
@@ -3851,6 +3880,10 @@ export interface components {
             } | null;
             /** Missing Prerequisites */
             missing_prerequisites?: string[] | null;
+            /** Node Health */
+            node_health?: {
+                [key: string]: unknown;
+            } | null;
             /** Packs */
             packs?: {
                 [key: string]: unknown;
@@ -4346,6 +4379,53 @@ export interface components {
             parallel_resources?: {
                 [key: string]: unknown;
             };
+        };
+        /** ProbeTargetOut */
+        ProbeTargetOut: {
+            /**
+             * Allow Boot
+             * @default false
+             */
+            allow_boot: boolean;
+            /** Claimed Ports */
+            claimed_ports?: {
+                [key: string]: number;
+            };
+            /** Connection Target */
+            connection_target: string;
+            /** Connection Type */
+            connection_type?: string | null;
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            /** Device Type */
+            device_type: string;
+            /** Headless */
+            headless?: boolean | null;
+            /** Identity Value */
+            identity_value?: string | null;
+            /** Ip Address */
+            ip_address?: string | null;
+            /** Ip Ping Count */
+            ip_ping_count?: number | null;
+            /** Ip Ping Timeout Sec */
+            ip_ping_timeout_sec?: number | null;
+            /** Pack Id */
+            pack_id: string;
+            /** Platform Id */
+            platform_id: string;
+        };
+        /** ProbeTargetsOut */
+        ProbeTargetsOut: {
+            /** Devices */
+            devices: components["schemas"]["ProbeTargetOut"][];
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
         };
         /** ReservedDeviceInfo */
         ReservedDeviceInfo: {
@@ -4962,6 +5042,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NodesDesiredOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    probe_targets_agent_devices_probe_targets_get: {
+        parameters: {
+            query: {
+                host_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeTargetsOut"];
                 };
             };
             /** @description Validation Error */

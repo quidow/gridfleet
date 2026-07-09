@@ -31,6 +31,10 @@ class HostStatusPush(BaseModel):
     appium_processes: dict[str, Any] = Field(default_factory=dict)
     host_telemetry: dict[str, Any] | None = None
     packs: dict[str, Any] | None = None
+    node_health: dict[str, Any] | None = None
+    device_health: dict[str, Any] | None = None
+    device_telemetry: dict[str, Any] | None = None
+    device_properties: dict[str, Any] | None = None
 
 
 class HostHardwareInfo(BaseModel):

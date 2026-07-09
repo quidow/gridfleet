@@ -34,7 +34,7 @@ async def test_detect_capabilities_works_without_adapter_registry() -> None:
 async def test_detect_capabilities_uses_contract_version_without_pull_marker() -> None:
     capabilities = await _cache(None).detect()
 
-    assert capabilities["orchestration_contract_version"] == 5
+    assert capabilities["orchestration_contract_version"] == 6
     assert set(capabilities) == {"platforms", "tools", "missing_prerequisites", "orchestration_contract_version"}
 
 
@@ -95,19 +95,19 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         "platforms": ["roku"],
         "tools": {"adb": "1.0.41"},
         "missing_prerequisites": ["java"],
-        "orchestration_contract_version": 5,
+        "orchestration_contract_version": 6,
     }
     second_snapshot = {
         "platforms": ["roku"],
         "tools": {"adb": "1.0.42"},
         "missing_prerequisites": [],
-        "orchestration_contract_version": 5,
+        "orchestration_contract_version": 6,
     }
     default_snapshot = {
         "platforms": [],
         "tools": {},
         "missing_prerequisites": [],
-        "orchestration_contract_version": 5,
+        "orchestration_contract_version": 6,
     }
 
     with patch.object(
@@ -117,9 +117,9 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         side_effect=[first_snapshot, second_snapshot],
     ) as detect:
         assert cache.get() == default_snapshot
-        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 5}
-        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 5}
-        assert await cache.get_or_refresh(force=True) == {**second_snapshot, "orchestration_contract_version": 5}
+        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 6}
+        assert await cache.get_or_refresh() == {**first_snapshot, "orchestration_contract_version": 6}
+        assert await cache.get_or_refresh(force=True) == {**second_snapshot, "orchestration_contract_version": 6}
 
     assert detect.await_count == 2
 
