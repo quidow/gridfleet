@@ -90,18 +90,6 @@ class _FakeRuntimeMgr:
         return out, {}
 
 
-class _FakeVersionCatalog:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def versions(self, package: str) -> list[str]:
-        self.calls.append(package)
-        return {
-            "appium": ["2.11.5", "2.11.9"],
-            "appium-uiautomator2-driver": ["3.6.0", "3.6.3"],
-        }.get(package, [])
-
-
 @pytest.mark.asyncio
 async def test_loop_posts_installed_status_after_reconcile() -> None:
     client = _FakeClient()
@@ -134,26 +122,6 @@ async def test_loop_two_iterations_reuse_runtime() -> None:
     await loop.run_once()
     assert len(runtime_mgr.reconcile_calls) == 2
     assert runtime_mgr.reconcile_calls[0] == runtime_mgr.reconcile_calls[1]
-
-
-@pytest.mark.asyncio
-async def test_state_loop_resolves_latest_patch_with_version_catalog() -> None:
-    client = _FakeClient(runtime_policy={"strategy": "latest_patch"})
-    runtime_mgr = _FakeRuntimeMgr()
-    catalog = _FakeVersionCatalog()
-    loop = PackStateLoop(
-        client=client,
-        runtime_mgr=runtime_mgr,
-        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
-        version_catalog=catalog,
-    )
-
-    await loop.run_once()
-
-    assert catalog.calls == ["appium", "appium-uiautomator2-driver"]
-    payload = client.posted[-1]
-    assert payload["packs"][0]["status"] == "installed"
-    assert payload["packs"][0]["blocked_reason"] is None
 
 
 class FakeClient(PackStateClient):

@@ -34,7 +34,6 @@ EXPECTED_HTTP_ROUTES = {
     ("GET", "/agent/pack/devices/{connection_target}/telemetry"),
     ("POST", "/agent/pack/devices/{connection_target}/lifecycle/{action}"),
     ("POST", "/agent/pack/devices/normalize"),
-    ("POST", "/agent/pack/features/{feature_id}/actions/{action_id}"),
     ("POST", "/agent/pack/{pack_id}/doctor"),
     ("GET", "/agent/tools/status"),
 }

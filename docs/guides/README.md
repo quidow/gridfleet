@@ -42,8 +42,6 @@ Guide pages should explain:
   - Stack bring-up plus host install/setup instructions.
 - `ci-integration.md`
   - Reservation and CI orchestration guidance.
-- `driver-pack-features-and-sidecars.md`
-  - Driver pack feature declarations and sidecar service lifecycle.
 - `driver-pack-tarball-upload.md`
   - Building and uploading custom driver pack tarballs.
 - `frontend-development.md`

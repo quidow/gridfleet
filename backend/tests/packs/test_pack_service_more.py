@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease, PackState
 from app.packs.services import service as pack_service
 from app.packs.services.driver_version import desired_driver_version, installed_driver_version
 from app.packs.services.lifecycle import PackLifecycleService
@@ -85,16 +85,6 @@ def _release() -> DriverPackRelease:
             "insecure_features": ["adb_shell"],
         },
         platforms=[_platform()],
-        features=[
-            DriverPackFeature(
-                manifest_feature_id="screen-record",
-                data={
-                    "display_name": "Screen Record",
-                    "description_md": "Record screen",
-                    "actions": [{"id": "start"}, {"id": "stop", "label": "Stop"}],
-                },
-            )
-        ],
     )
     return release
 
@@ -124,7 +114,6 @@ def test_pack_service_builds_pack_outputs_from_manifest_helpers() -> None:
     assert out.appium_env[0].env == {"A": "1"}
     assert out.doctor[0].adapter_hook == "doctor_adb"
     assert out.platforms[0].identity_scheme == "serial"
-    assert out.features["screen-record"].actions[1].label == "Stop"
 
     empty_pack = DriverPack(
         id="local/empty",

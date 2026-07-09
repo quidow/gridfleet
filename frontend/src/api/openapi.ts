@@ -1313,29 +1313,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/hosts/{host_id}/driver-packs/{pack_id}/features/{feature_id}/actions/{action_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Invoke a driver-pack feature action on a host
-         * @description Dispatch a feature action to the agent owning ``host_id``.
-         *
-         *     Returns 404 when the host, pack, or feature can't be resolved, and 502
-         *     when the agent fails to respond — both raised by the dispatcher.
-         */
-        post: operations["invoke_feature_action_api_hosts__host_id__driver_packs__pack_id__features__feature_id__actions__action_id__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/hosts/{host_id}/events": {
         parameters: {
             query?: never;
@@ -3136,52 +3113,6 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** FeatureActionOut */
-        FeatureActionOut: {
-            /** Id */
-            id: string;
-            /** Label */
-            label: string;
-        };
-        /**
-         * FeatureActionRequest
-         * @description Body for the feature-action route — only ``args`` for the adapter.
-         */
-        FeatureActionRequest: {
-            /** Args */
-            args?: {
-                [key: string]: unknown;
-            };
-        };
-        /**
-         * FeatureActionResultOut
-         * @description HTTP-shaped response mirroring :class:`app.packs.adapter.FeatureActionResult`.
-         */
-        FeatureActionResultOut: {
-            /** Data */
-            data?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Detail
-             * @default
-             */
-            detail: string;
-            /** Ok */
-            ok: boolean;
-        };
-        /** FeatureOut */
-        FeatureOut: {
-            /** Actions */
-            actions?: components["schemas"]["FeatureActionOut"][];
-            /**
-             * Description Md
-             * @default
-             */
-            description_md: string;
-            /** Display Name */
-            display_name: string;
-        };
         /** FieldSchemaOut */
         FieldSchemaOut: {
             /** Capability Name */
@@ -3449,11 +3380,6 @@ export interface components {
         /** HealthCheckLabelOut */
         HealthCheckLabelOut: {
             applies_when?: components["schemas"]["HealthCheckAppliesWhenOut"] | null;
-            /**
-             * Debounce
-             * @default false
-             */
-            debounce: boolean;
             /** Id */
             id: string;
             /** Label */
@@ -3635,8 +3561,6 @@ export interface components {
         HostDriverPacksOut: {
             /** Doctor */
             doctor: components["schemas"]["HostPackDoctorOut"][];
-            /** Features */
-            features?: components["schemas"]["HostPackFeatureStatusOut"][];
             /**
              * Host Id
              * Format: uuid
@@ -3698,17 +3622,6 @@ export interface components {
             check_id: string;
             /** Message */
             message: string;
-            /** Ok */
-            ok: boolean;
-            /** Pack Id */
-            pack_id: string;
-        };
-        /** HostPackFeatureStatusOut */
-        HostPackFeatureStatusOut: {
-            /** Detail */
-            detail: string;
-            /** Feature Id */
-            feature_id: string;
             /** Ok */
             ok: boolean;
             /** Pack Id */
@@ -4299,10 +4212,6 @@ export interface components {
             display_name: string;
             /** Doctor */
             doctor?: components["schemas"]["ManifestDoctorCheckOut"][];
-            /** Features */
-            features?: {
-                [key: string]: components["schemas"]["FeatureOut"];
-            };
             /** Id */
             id: string;
             /** Insecure Features */
@@ -4692,16 +4601,12 @@ export interface components {
         RunState: "pending" | "preparing" | "active" | "completed" | "failed" | "expired" | "cancelled";
         /** RuntimePolicy */
         RuntimePolicy: {
-            /** Appium Driver Version */
-            appium_driver_version?: string | null;
-            /** Appium Server Version */
-            appium_server_version?: string | null;
             /**
              * Strategy
              * @default recommended
-             * @enum {string}
+             * @constant
              */
-            strategy: "recommended" | "latest_patch" | "exact";
+            strategy: "recommended";
         };
         /** RuntimePolicyPatch */
         RuntimePolicyPatch: {
@@ -9736,44 +9641,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    invoke_feature_action_api_hosts__host_id__driver_packs__pack_id__features__feature_id__actions__action_id__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                host_id: string;
-                pack_id: string;
-                feature_id: string;
-                action_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeatureActionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeatureActionResultOut"];
                 };
             };
             /** @description Validation Error */

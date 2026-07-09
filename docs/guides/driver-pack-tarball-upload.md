@@ -20,16 +20,10 @@ Use the upload path when:
 | Scenario | Upload needed? |
 |----------|---------------|
 | Custom device discovery that needs an adapter `discover` hook | Yes |
-| Any `*_hook` field in the manifest (`sidecar.adapter_hook`, `actions[].adapter_hook`, `doctor[].adapter_hook`) | Yes |
+| Any adapter-backed manifest hook field, such as `doctor[].adapter_hook` | Yes |
 | Imperative pre-session capability logic (capability values computed at session-request time) | Yes |
-| Long-running sidecar service alongside the Appium node | Yes |
 | Portable distribution across GridFleet instances | Yes |
 | Simple discovery config, static capabilities, no custom code | Usually no — use a curated pack instead |
-
-Sidecar CI coverage verifies manifest upload, feature persistence,
-desired-state serialization, and agent dispatch contracts. It does not start
-an arbitrary long-running host process in unit tests; live-agent validation
-remains part of release smoke testing.
 
 ## Security Warning
 
@@ -161,12 +155,6 @@ class DriverPackAdapter(Protocol):
     ) -> LifecycleActionResult: ...
     async def pre_session(self, spec: SessionSpec) -> dict[str, Any]: ...
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None: ...
-    async def feature_action(
-        self, feature_id: str, action_id: str, args: dict[str, Any], ctx: LifecycleContext
-    ) -> FeatureActionResult: ...
-    async def sidecar_lifecycle(
-        self, feature_id: str, action: Literal["start", "stop", "status"]
-    ) -> SidecarStatus: ...
     async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice: ...
     async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry: ...
     def subprocess_env(self) -> SubprocessEnvContribution: ...
@@ -180,8 +168,8 @@ The hooks are `async` and take typed dataclass/Protocol context objects (not a `
 A pack scales its adapter surface to what it actually needs. There are three supported shapes, smallest first:
 
 1. **Manifest-only (no adapter).** A `manifest.yaml` with platforms and static capabilities, and no `adapter/` wheel. Every adapter hook is treated as "no adapter loaded". Use this when static config is enough.
-2. **Core two-hook adapter.** An `Adapter` implementing exactly the required core — `discover` and `normalize_device` — and nothing else. The pack gets custom device enumeration and canonicalization while every optional hook (health, lifecycle, sessions, features, telemetry) transparently degrades to the no-adapter branch. The end-to-end example is the agent test `agent/tests/pack/test_adapter_loader.py::test_minimal_two_hook_adapter_loads_and_dispatches`, which loads a real two-hook wheel and drives it through discover + normalize.
-3. **Capability add-ons.** Start from the core two hooks and add optional hooks as the pack needs them — `health_check`/`doctor`, `lifecycle_action`, `pre_session`/`post_session`, `feature_action`/`sidecar_lifecycle`, `telemetry`. The curated Roku adapter (`driver-packs/adapters/roku/adapter/`) implements the full optional surface and is the living example of this tier.
+2. **Core two-hook adapter.** An `Adapter` implementing exactly the required core — `discover` and `normalize_device` — and nothing else. The pack gets custom device enumeration and canonicalization while every optional hook (health, lifecycle, sessions, telemetry) transparently degrades to the no-adapter branch. The end-to-end example is the agent test `agent/tests/pack/test_adapter_loader.py::test_minimal_two_hook_adapter_loads_and_dispatches`, which loads a real two-hook wheel and drives it through discover + normalize.
+3. **Capability add-ons.** Start from the core two hooks and add optional hooks as the pack needs them — `health_check`/`doctor`, `lifecycle_action`, `pre_session`/`post_session`, `telemetry`. The curated adapters under `driver-packs/adapters/` are living examples of this tier.
 
 ### The declare-it-then-implement-it rule
 
@@ -190,8 +178,6 @@ If the manifest **declares** a capability, the adapter **must** carry its hook, 
 | Manifest declaration | Required adapter hook |
 |----------------------|-----------------------|
 | a platform `lifecycle_actions` entry | `lifecycle_action` |
-| a feature with an `actions` entry | `feature_action` |
-| a feature with a `sidecar` block | `sidecar_lifecycle` |
 
 At adapter load the agent cross-checks these declarations against the loaded `Adapter` (`missing_declared_hooks`). A pack that declares a capability its adapter does not implement is reported `blocked`, with the missing hook named in `blocked_reason` — the same status pathway a runtime-resolution failure uses. (`health_check` has no manifest declaration, so it is never cross-checked: it is dispatched whenever an adapter is present and skipped when absent.)
 
@@ -212,17 +198,10 @@ Return-value contracts:
 
 - `discover` — returns `list[DiscoveryCandidate]`; the agent diffs against the current device registry.
 - `doctor` — returns `list[DoctorCheckResult]` (fields `check_id`, `ok`, `message`).
-- `health_check` — returns `list[HealthCheckResult]` (fields `check_id`, `ok`, `detail`).
+- `health_check` — returns `list[HealthCheckResult]` (fields `check_id`, `ok`, `detail`, `recommended_action`, `debounce`).
 - `lifecycle_action` — returns a `LifecycleActionResult` (fields `ok`, `state`, `detail`, `resolved_connection_target`).
 - `pre_session` — returns a capabilities dict (merged over the incoming caps; keys from the adapter take precedence).
 - `post_session` — return value is ignored.
-
-## Feature and Sidecar Hooks
-
-The `feature_action` and `sidecar_lifecycle` hooks are also dispatched end to end:
-
-- `feature_action` — the backend route `POST /api/hosts/{host_id}/driver-packs/{pack_id}/features/{feature_id}/actions/{action_id}` dispatches through `PackFeatureService.dispatch_feature_action` to the agent `feature_action_route`, which calls `dispatch_feature_action`. The frontend renders a feature action button (`HostFeatureActionButton`).
-- `sidecar_lifecycle` — the agent `SidecarSupervisor` (`agent_app/pack/sidecar_supervisor.py`) is created and started/shut down in the agent lifespan, and dispatches `sidecar_lifecycle` start/stop/status via `dispatch_sidecar_lifecycle`.
 
 ## Step-by-Step: Building and Uploading a Pack
 

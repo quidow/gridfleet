@@ -94,30 +94,12 @@ class ErrorEnvelopeDetail(BaseModel):
     message: Annotated[str, Field(title="Message")]
 
 
-class FeatureActionRequest(BaseModel):
-    args: Annotated[dict[str, Any] | None, Field(title="Args")] = {}
-    device_identity_value: Annotated[str | None, Field(title="Device Identity Value")] = None
-    pack_id: Annotated[
-        str,
-        Field(
-            min_length=1,
-            pattern="^(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,})(?:/(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,}))*$",
-            title="Pack Id",
-        ),
-    ]
-
-
-class FeatureActionResponse(BaseModel):
-    data: Annotated[dict[str, Any] | None, Field(title="Data")] = None
-    detail: Annotated[str | None, Field(title="Detail")] = None
-    ok: Annotated[bool, Field(title="Ok")]
-
-
 class HealthCheckResult(BaseModel):
     model_config = ConfigDict(
         extra="allow",
     )
     check_id: Annotated[str, Field(title="Check Id")]
+    debounce: Annotated[bool | None, Field(title="Debounce")] = False
     message: Annotated[str | None, Field(title="Message")] = None
     ok: Annotated[bool, Field(title="Ok")]
 

@@ -6,8 +6,7 @@ import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverP
 import { triggerDriverDoctor } from '../../api/driverPacks';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
-import type { HostPackDoctorStatus, HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
-import { HostFeatureActionButton } from './HostFeatureActionButton';
+import type { HostPackDoctorStatus, HostPackStatus } from '../../types/driverPacks';
 import { qk } from '../../lib/queryKeys';
 
 function PackStatusBadge({ status, blockedReason }: { status: string; blockedReason: string | null }) {
@@ -30,22 +29,6 @@ function PackStatusBadge({ status, blockedReason }: { status: string; blockedRea
   );
 }
 
-function FeatureStatusBadge({ status }: { status: HostPackFeatureStatus | undefined }) {
-  if (!status) return null;
-  const healthy = status.ok;
-  return (
-    <span
-      className={`inline-flex w-fit items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${
-        healthy ? 'bg-success-soft text-success-foreground' : 'bg-danger-soft text-danger-foreground'
-      }`}
-      title={status.detail}
-    >
-      {healthy ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-      {status.detail || (healthy ? 'healthy' : 'degraded')}
-    </span>
-  );
-}
-
 type Props = {
   hostId: string;
   hostOnline: boolean;
@@ -58,12 +41,6 @@ export function HostDriversPanel({ hostId }: Props) {
   const rows = hostPacks?.packs ?? [];
   const runtimeById = new Map((hostPacks?.runtimes ?? []).map((runtime) => [runtime.runtime_id, runtime]));
   const catalogById = new Map((catalog ?? []).map((pack) => [pack.id, pack]));
-  const featureStatusByPack = new Map<string, Map<string, HostPackFeatureStatus>>();
-  for (const status of hostPacks?.features ?? []) {
-    const byFeature = featureStatusByPack.get(status.pack_id) ?? new Map<string, HostPackFeatureStatus>();
-    byFeature.set(status.feature_id, status);
-    featureStatusByPack.set(status.pack_id, byFeature);
-  }
 
   const queryClient = useQueryClient();
 
@@ -108,32 +85,11 @@ export function HostDriversPanel({ hostId }: Props) {
       header: 'Driver',
       render: (p) => {
         const catalogPack = catalogById.get(p.pack_id);
-        const features = catalogPack?.features ?? {};
-        const featureEntries = Object.entries(features);
         return (
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-text-1">{p.pack_id}</span>
-            {featureEntries.length > 0 && p.status === 'installed' ? (
-              <div className="flex flex-col gap-1">
-                {featureEntries.map(([featureId, feature]) => {
-                  const status = featureStatusByPack.get(p.pack_id)?.get(featureId);
-                  return (
-                    <div key={featureId} className="flex flex-wrap items-center gap-1">
-                      <span className="text-xs font-medium text-text-2">{feature.display_name}</span>
-                      <FeatureStatusBadge status={status} />
-                      {feature.actions.map((action) => (
-                        <HostFeatureActionButton
-                          key={`${featureId}-${action.id}`}
-                          hostId={hostId}
-                          packId={p.pack_id}
-                          featureId={featureId}
-                          action={action}
-                        />
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
+            {catalogPack?.display_name ? (
+              <span className="text-xs text-text-3">{catalogPack.display_name}</span>
             ) : null}
           </div>
         );

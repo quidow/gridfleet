@@ -18,11 +18,9 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import type { DriverPack } from '../types/driverPacks';
 import { DriverDetailStatusPills } from './driverDetail/DriverDetailStatusPills';
 import { DriverHostsPanel } from './driverDetail/DriverHostsPanel';
-import { DriverOperationsPanel } from './driverDetail/DriverOperationsPanel';
 import { DriverOverviewPanel } from './driverDetail/DriverOverviewPanel';
 import { DriverPlatformCards } from './driverDetail/DriverPlatformCards';
 import { DriverRuntimePanel } from './driverDetail/DriverRuntimePanel';
-import { hasPackOperations } from './driverDetail/driverDetailFormat';
 
 const BASE_TABS = [
   { id: 'overview', label: 'Overview' },
@@ -34,8 +32,6 @@ const BASE_TABS = [
 ] as const;
 
 function ManifestPanel({ pack }: { pack: DriverPack }) {
-  const operationCount = Object.keys(pack.features ?? {}).length;
-
   return (
     <Card padding="md">
       <h2 className="mb-3 text-sm font-semibold text-text-1">Manifest Snapshot</h2>
@@ -50,8 +46,6 @@ function ManifestPanel({ pack }: { pack: DriverPack }) {
         <dd className="text-text-1">{pack.license || 'None'}</dd>
         <dt className="text-text-3">Platforms</dt>
         <dd className="text-text-1">{pack.platforms?.length ?? 0}</dd>
-        <dt className="text-text-3">Operations</dt>
-        <dd className="text-text-1">{operationCount}</dd>
         <dt className="text-text-3">Appium env</dt>
         <dd className="text-text-1">{pack.appium_env?.length ?? 0}</dd>
         <dt className="text-text-3">Doctor Checks</dt>
@@ -159,7 +153,7 @@ export function DriverDetail() {
   const deleteMutation = useDeleteDriverPack();
   const [exporting, setExporting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const tabs = pack && hasPackOperations(pack) ? [...BASE_TABS, { id: 'operations', label: 'Operations' }] : BASE_TABS;
+  const tabs = BASE_TABS;
   const tabIds = tabs.map((tabItem) => tabItem.id);
   const [tab, setTab] = useTabParam('tab', tabIds, 'overview');
   usePageTitle(pack?.display_name ?? 'Driver Pack');
@@ -229,7 +223,6 @@ export function DriverDetail() {
         {tab === 'releases' && <SectionErrorBoundary scope="driver-releases"><ReleasesPanel packId={pack.id} /></SectionErrorBoundary>}
         {tab === 'hosts' && <SectionErrorBoundary scope="driver-hosts"><DriverHostsPanel packId={pack.id} /></SectionErrorBoundary>}
         {tab === 'manifest' && <ManifestPanel pack={pack} />}
-        {tab === 'operations' && <DriverOperationsPanel pack={pack} />}
       </div>
 
       <ConfirmDialog

@@ -9,9 +9,9 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Query, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
-from agent_app.pack.adapter_dispatch import adapter_supports, dispatch_doctor, dispatch_feature_action
+from agent_app.pack.adapter_dispatch import adapter_supports, dispatch_doctor
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
-from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx
+from agent_app.pack.contexts import DoctorCtx, HealthCtx
 from agent_app.pack.dependencies import (
     DesiredPlatformDep,
     HostIdDep,
@@ -26,8 +26,6 @@ from agent_app.pack.dispatch import (
     adapter_telemetry,
 )
 from agent_app.pack.schemas import (
-    FeatureActionRequest,
-    FeatureActionResponse,
     NormalizeDeviceRequest,
     NormalizeDeviceResponse,
     PackDeviceHealthResponse,
@@ -250,38 +248,6 @@ async def pack_device_lifecycle_route(
         "success": False,
         "detail": f"Adapter not loaded for pack {pack_id}:{platform_id}",
     }
-
-
-@router.post(
-    "/features/{feature_id}/actions/{action_id}",
-    response_model=FeatureActionResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Dispatch a feature action through the adapter",
-    responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "NO_ADAPTER"},
-    },
-)
-async def feature_action_route(
-    feature_id: str,
-    action_id: str,
-    body: FeatureActionRequest,
-    adapter_registry: OptionalAdapterRegistryDep,
-    host_id: HostIdDep,
-) -> dict[str, Any]:
-    adapter = adapter_registry.get_current(body.pack_id) if adapter_registry is not None else None
-    if adapter is None or not adapter_supports(adapter, "feature_action"):
-        raise http_exc(
-            status_code=404,
-            code=AgentErrorCode.NO_ADAPTER,
-            message=f"No adapter loaded for pack {body.pack_id!r}",
-        )
-
-    ctx = LifecycleCtx(
-        host_id=host_id,
-        device_identity_value=body.device_identity_value or "",
-    )
-    result = await dispatch_feature_action(adapter, feature_id, action_id, body.args, ctx)
-    return {"ok": result.ok, "detail": result.detail, "data": result.data}
 
 
 @router.post(

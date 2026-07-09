@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.packs.manifest import (
     ConnectionBehavior,
@@ -49,27 +49,7 @@ class PlatformDeviceTypeOverrideOut(PlatformDeviceTypeOverride):
 
 
 class RuntimePolicy(BaseModel):
-    strategy: Literal["recommended", "latest_patch", "exact"] = "recommended"
-    appium_server_version: str | None = None
-    appium_driver_version: str | None = None
-
-    @model_validator(mode="after")
-    def validate_exact_pins(self) -> RuntimePolicy:
-        if self.strategy == "exact":
-            missing = [
-                name
-                for name, value in (
-                    ("appium_server_version", self.appium_server_version),
-                    ("appium_driver_version", self.appium_driver_version),
-                )
-                if not value
-            ]
-            if missing:
-                joined = ", ".join(missing)
-                raise ValueError(f"exact runtime policy requires {joined}")
-        elif self.appium_server_version is not None or self.appium_driver_version is not None:
-            raise ValueError("version pins are only valid for exact runtime policy")
-        return self
+    strategy: Literal["recommended"] = "recommended"
 
 
 class RuntimePolicyPatch(BaseModel):
@@ -121,17 +101,6 @@ class ManifestDoctorCheckOut(BaseModel):
     adapter_hook: str | None = None
 
 
-class FeatureActionOut(BaseModel):
-    id: str
-    label: str
-
-
-class FeatureOut(BaseModel):
-    display_name: str
-    description_md: str = ""
-    actions: list[FeatureActionOut] = Field(default_factory=list)
-
-
 class PackRuntimeSummaryOut(BaseModel):
     installed_hosts: int = 0
     blocked_hosts: int = 0
@@ -153,7 +122,6 @@ class PackOut(BaseModel):
     appium_env: list[ManifestAppiumEnvOut] = Field(default_factory=list)
     doctor: list[ManifestDoctorCheckOut] = Field(default_factory=list)
     insecure_features: list[str] = Field(default_factory=list)
-    features: dict[str, FeatureOut] = Field(default_factory=dict)
     runtime_policy: RuntimePolicy = Field(default_factory=RuntimePolicy)
     active_runs: int = 0
     live_sessions: int = 0
@@ -198,13 +166,6 @@ class HostPackDoctorOut(BaseModel):
     message: str
 
 
-class HostPackFeatureStatusOut(BaseModel):
-    pack_id: str
-    feature_id: str
-    ok: bool
-    detail: str
-
-
 class HostPackStatusOut(BaseModel):
     pack_id: str
     pack_release: str
@@ -225,7 +186,6 @@ class HostDriverPacksOut(BaseModel):
     packs: list[HostPackStatusOut]
     runtimes: list[HostRuntimeStatusOut]
     doctor: list[HostPackDoctorOut]
-    features: list[HostPackFeatureStatusOut] = Field(default_factory=list)
 
 
 class DriverPackHostDoctorOut(BaseModel):

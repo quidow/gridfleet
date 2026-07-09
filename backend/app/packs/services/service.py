@@ -15,18 +15,14 @@ if TYPE_CHECKING:
 from app.devices.models import Device
 from app.packs.models import (
     DriverPack,
-    DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
     HostPackDoctorResult,
-    HostPackFeatureStatus,
     HostPackInstallation,
     PackState,
 )
 from app.packs.schemas import (
     AppiumInstallableOut,
-    FeatureActionOut,
-    FeatureOut,
     ManifestAppiumEnvOut,
     ManifestDoctorCheckOut,
     PackCatalog,
@@ -70,26 +66,11 @@ def build_pack_out(
         appium_env=_appium_env_out(manifest.get("appium_env", [])),
         doctor=_doctor_out(manifest.get("doctor", [])),
         insecure_features=manifest.get("insecure_features", []),
-        features=_features_out(latest) if latest else {},
         runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
         active_runs=active_runs,
         live_sessions=live_sessions,
         runtime_summary=runtime_summary or PackRuntimeSummaryOut(),
     )
-
-
-def _feature_out(feature: DriverPackFeature) -> FeatureOut:
-    data = feature.data
-    actions = [FeatureActionOut(id=a["id"], label=a.get("label", a["id"])) for a in data.get("actions", [])]
-    return FeatureOut(
-        display_name=data.get("display_name", feature.manifest_feature_id),
-        description_md=data.get("description_md", ""),
-        actions=actions,
-    )
-
-
-def _features_out(release: DriverPackRelease) -> dict[str, FeatureOut]:
-    return {f.manifest_feature_id: _feature_out(f) for f in release.features}
 
 
 def _installable_out(data: object) -> AppiumInstallableOut | None:
@@ -164,10 +145,7 @@ class PackCatalogService:
             (
                 await db.execute(
                     select(DriverPack)
-                    .options(
-                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                    )
+                    .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
                     .order_by(DriverPack.id)
                 )
             )
@@ -202,7 +180,6 @@ class PackCatalogService:
                 select(DriverPack)
                 .options(
                     selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
                 )
                 .where(DriverPack.id == pack_id)
             )
@@ -223,7 +200,6 @@ class PackCatalogService:
                 select(DriverPack)
                 .options(
                     selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
                 )
                 .where(DriverPack.id == pack_id)
             )
@@ -235,10 +211,7 @@ class PackCatalogService:
             await db.execute(
                 select(DriverPack)
                 .where(DriverPack.id == pack_id)
-                .options(
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                )
+                .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
             )
         ).scalar_one_or_none()
         if pack is None:
@@ -260,7 +233,6 @@ class PackCatalogService:
 
         artifact_paths = [Path(release.artifact_path) for release in pack.releases if release.artifact_path]
 
-        await db.execute(delete(HostPackFeatureStatus).where(HostPackFeatureStatus.pack_id == pack_id))
         await db.execute(delete(HostPackDoctorResult).where(HostPackDoctorResult.pack_id == pack_id))
         await db.execute(delete(HostPackInstallation).where(HostPackInstallation.pack_id == pack_id))
         await db.delete(pack)

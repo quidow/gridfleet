@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.lifespan import lifespan
 from agent_app.main import app
-from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.registration import RegistrationService
 
@@ -138,20 +137,6 @@ async def test_normalize_device_route_no_adapter_registry() -> None:
         resp = await client.post(
             "/agent/pack/devices/normalize",
             json={"pack_id": "p", "pack_release": "1", "platform_id": "x", "raw_input": {}},
-        )
-    assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == "NO_ADAPTER"
-    assert "No adapter loaded" in resp.json()["detail"]["message"]
-
-
-async def test_feature_action_route_no_adapter() -> None:
-    from httpx2 import ASGITransport, AsyncClient
-
-    app.state.adapter_registry = AdapterRegistry()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/agent/pack/features/fid/actions/aid",
-            json={"pack_id": "unknown", "args": {}, "device_identity_value": None},
         )
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "NO_ADAPTER"

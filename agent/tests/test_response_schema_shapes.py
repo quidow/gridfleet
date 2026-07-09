@@ -11,7 +11,6 @@ from agent_app.appium.schemas import (
 )
 from agent_app.host.schemas import HealthResponse, HostTelemetryResponse
 from agent_app.pack.schemas import (
-    FeatureActionResponse,
     PackDeviceHealthResponse,
     PackDeviceLifecycleResponse,
     PackDevicePropertiesResponse,
@@ -98,10 +97,6 @@ def test_pack_device_telemetry_response_accepts_route_shape() -> None:
 
 def test_pack_device_lifecycle_response_accepts_route_shape() -> None:
     PackDeviceLifecycleResponse.model_validate({"success": False, "detail": "no adapter", "extras": {}})
-
-
-def test_feature_action_response_accepts_route_shape() -> None:
-    FeatureActionResponse.model_validate({"ok": True, "detail": "done", "data": {}})
 
 
 def test_tools_status_response_accepts_structured_dict() -> None:

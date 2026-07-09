@@ -147,7 +147,6 @@ async def discover_roku_devices(ctx: DiscoveryContext) -> list[DiscoveryCandidat
                             message=f"Unable to query Roku ECP device-info: {info}",
                         )
                     ],
-                    feature_status=[],
                 )
             )
             continue
@@ -162,7 +161,6 @@ async def discover_roku_devices(ctx: DiscoveryContext) -> list[DiscoveryCandidat
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             )
         )
     return candidates

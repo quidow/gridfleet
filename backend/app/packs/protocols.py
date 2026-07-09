@@ -15,12 +15,6 @@ if TYPE_CHECKING:
     from app.hosts.schemas import DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
 
 
-class FeatureStatusRecorder(Protocol):
-    async def record_feature_status(
-        self, db: AsyncSession, *, host_id: uuid.UUID, pack_id: str, feature_id: str, ok: bool, detail: str
-    ) -> bool: ...
-
-
 class PackDiscoveryProtocol(Protocol):
     async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]: ...
     async def discover_devices(self, session: AsyncSession, host: Host) -> DiscoveryResult: ...

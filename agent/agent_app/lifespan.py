@@ -26,10 +26,8 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager
 from agent_app.pack.runtime_registry import RuntimeRegistry
-from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 from agent_app.pack.state import PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
-from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.registration import RegistrationService
 from agent_app.registration import manager_auth as _manager_auth  # tests patch agent_app.lifespan._manager_auth
 
@@ -164,7 +162,6 @@ async def _start_pack_loop_when_ready(
     backend_url: str,
     runtime_registry: RuntimeRegistry,
     adapter_registry: AdapterRegistry,
-    sidecar_supervisor: SidecarSupervisor,
 ) -> None:
     await host_identity.wait()
     app.state.pack_state_loop_enabled = True
@@ -178,8 +175,6 @@ async def _start_pack_loop_when_ready(
         runtime_registry=runtime_registry,
         adapter_registry=adapter_registry,
         adapter_loader=adapter_loader,
-        sidecar_supervisor=sidecar_supervisor,
-        version_catalog=NpmVersionCatalog(),
     )
     app.state.pack_state_loop = loop
     await loop.run_forever()
@@ -207,12 +202,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await capabilities_cache.refresh()
     capabilities_task = asyncio.create_task(capabilities_cache.run_refresh_loop(refresh_immediately=False))
     capabilities_task.add_done_callback(_watchdog("capabilities_refresh"))
-    sidecar_supervisor = SidecarSupervisor()
     boot_id = uuid4()
     app.state.host_identity = host_identity
     app.state.runtime_registry = runtime_registry
     app.state.adapter_registry = adapter_registry
-    app.state.sidecar_supervisor = sidecar_supervisor
     app.state.boot_id = boot_id
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
@@ -253,9 +246,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pack_task: asyncio.Task[None] | None = None
     if backend_url:
         pack_task = asyncio.create_task(
-            _start_pack_loop_when_ready(
-                app, host_identity, backend_url, runtime_registry, adapter_registry, sidecar_supervisor
-            )
+            _start_pack_loop_when_ready(app, host_identity, backend_url, runtime_registry, adapter_registry)
         )
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
 
@@ -274,5 +265,4 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         reg_task.cancel()
         capabilities_task.cancel()
         await appium_mgr.shutdown()
-        await sidecar_supervisor.shutdown()
         await close_shared_http_client()

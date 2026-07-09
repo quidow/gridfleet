@@ -32,7 +32,6 @@ EXPECTED_TABLES = {
     "driver_packs",
     "driver_pack_releases",
     "driver_pack_platforms",
-    "driver_pack_features",
     "host_pack_installations",
     "host_pack_doctor_results",
 }

@@ -10,7 +10,7 @@ Each wrapper:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
@@ -18,7 +18,6 @@ from agent_app.pack.adapter_types import (
     DoctorCheckResult,
     DoctorContext,
     DriverPackAdapter,
-    FeatureActionResult,
     HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
@@ -28,7 +27,6 @@ from agent_app.pack.adapter_types import (
     NormalizeDeviceContext,
     SessionOutcome,
     SessionSpec,
-    SidecarStatus,
     TelemetryContext,
 )
 
@@ -55,11 +53,7 @@ def adapter_supports(adapter: object, hook: str) -> bool:
 # (manifest declaration that implies a hook, required adapter hook). health_check
 # is intentionally absent: the agent manifest carries no health-check declaration,
 # so it cannot be cross-checked at load time.
-_DECLARATION_HOOKS: tuple[tuple[str, str], ...] = (
-    ("lifecycle_actions", "lifecycle_action"),
-    ("feature_actions", "feature_action"),
-    ("sidecar_feature_ids", "sidecar_lifecycle"),
-)
+_DECLARATION_HOOKS: tuple[tuple[str, str], ...] = (("lifecycle_actions", "lifecycle_action"),)
 
 
 def missing_declared_hooks(pack: DesiredPack, adapter: object) -> list[str]:
@@ -71,8 +65,6 @@ def missing_declared_hooks(pack: DesiredPack, adapter: object) -> list[str]:
     """
     declares = {
         "lifecycle_actions": any(platform.lifecycle_actions for platform in pack.platforms),
-        "feature_actions": any(feature.actions for feature in pack.features),
-        "sidecar_feature_ids": bool(pack.sidecar_feature_ids),
     }
     return [
         hook
@@ -198,36 +190,6 @@ async def dispatch_post_session(
 ) -> None:
     """Call ``adapter.post_session`` with timeout + contract enforcement."""
     await _call_hook(adapter, "post_session", lambda: adapter.post_session(spec, outcome), object)
-
-
-async def dispatch_feature_action(
-    adapter: DriverPackAdapter,
-    feature_id: str,
-    action_id: str,
-    args: dict[str, Any],
-    ctx: LifecycleContext,
-) -> FeatureActionResult:
-    """Call ``adapter.feature_action`` with timeout + contract enforcement."""
-    return await _call_hook(
-        adapter,
-        "feature_action",
-        lambda: adapter.feature_action(feature_id, action_id, args, ctx),
-        FeatureActionResult,
-    )
-
-
-async def dispatch_sidecar_lifecycle(
-    adapter: DriverPackAdapter,
-    feature_id: str,
-    action: Literal["start", "stop", "status"],
-) -> SidecarStatus:
-    """Call ``adapter.sidecar_lifecycle`` with timeout + contract enforcement."""
-    return await _call_hook(
-        adapter,
-        "sidecar_lifecycle",
-        lambda: adapter.sidecar_lifecycle(feature_id, action),
-        SidecarStatus,
-    )
 
 
 async def dispatch_normalize_device(

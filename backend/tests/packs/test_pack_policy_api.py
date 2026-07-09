@@ -13,35 +13,23 @@ async def test_catalog_includes_runtime_policy(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     pack = response.json()["packs"][0]
-    assert pack["runtime_policy"] == {
-        "strategy": "recommended",
-        "appium_server_version": None,
-        "appium_driver_version": None,
-    }
+    assert pack["runtime_policy"] == {"strategy": "recommended"}
 
 
-async def test_patch_runtime_policy_exact(client: AsyncClient) -> None:
+async def test_patch_runtime_policy_recommended(client: AsyncClient) -> None:
     response = await client.patch(
         "/api/driver-packs/appium-uiautomator2/policy",
-        json={
-            "runtime_policy": {
-                "strategy": "exact",
-                "appium_server_version": "2.11.5",
-                "appium_driver_version": "3.6.0",
-            }
-        },
+        json={"runtime_policy": {"strategy": "recommended"}},
     )
 
     assert response.status_code == 200
-    assert response.json()["runtime_policy"]["strategy"] == "exact"
-    assert response.json()["runtime_policy"]["appium_server_version"] == "2.11.5"
-    assert response.json()["runtime_policy"]["appium_driver_version"] == "3.6.0"
+    assert response.json()["runtime_policy"] == {"strategy": "recommended"}
 
 
-async def test_patch_runtime_policy_rejects_incomplete_exact(client: AsyncClient) -> None:
+async def test_policy_rejects_removed_strategies(client: AsyncClient) -> None:
     response = await client.patch(
         "/api/driver-packs/appium-uiautomator2/policy",
-        json={"runtime_policy": {"strategy": "exact", "appium_server_version": "2.11.5"}},
+        json={"runtime_policy": {"strategy": "latest_patch"}},
     )
 
     assert response.status_code == 422

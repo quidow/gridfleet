@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from agent_app.pack.manifest import DesiredPayload
     from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
     from agent_app.pack.runtime_registry import RuntimeRegistry
-    from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +40,6 @@ class AdapterLoaderFn(Protocol):
         raise NotImplementedError
 
 
-class VersionCatalog(Protocol):
-    async def versions(self, package: str) -> list[str]:
-        raise NotImplementedError
-
-
 @dataclass
 class PackStateLoop:
     client: PackStateClient
@@ -55,8 +49,6 @@ class PackStateLoop:
     runtime_registry: RuntimeRegistry | None = None
     adapter_registry: AdapterRegistry | None = None
     adapter_loader: AdapterLoaderFn | None = None
-    sidecar_supervisor: SidecarSupervisor | None = None
-    version_catalog: VersionCatalog | None = None
     _latest_desired: list[DesiredPack] | None = field(default=None, init=False, repr=False)
 
     @property
@@ -74,23 +66,11 @@ class PackStateLoop:
         resolver_blocked_packs: dict[str, str] = {}
         desired_by_pack: dict[str, RuntimeSpec] = {}
         for pack in parsed.packs:
-            available_versions: dict[str, list[str]] = {}
-            if pack.runtime_policy.strategy == "latest_patch":
-                for installable in (pack.appium_server, pack.appium_driver):
-                    if installable.source != "npm":
-                        continue
-                    if installable.available_versions:
-                        available_versions[installable.package] = list(installable.available_versions)
-                    elif self.version_catalog is not None:
-                        available_versions[installable.package] = await self.version_catalog.versions(
-                            installable.package
-                        )
             resolution = resolve_runtime_spec(
                 pack_id=pack.id,
                 appium_server=pack.appium_server,
                 appium_driver=pack.appium_driver,
                 policy=pack.runtime_policy,
-                available_versions=available_versions,
             )
             if resolution.error is not None:
                 resolver_blocked_packs[pack.id] = resolution.error
@@ -101,87 +81,6 @@ class PackStateLoop:
                 runtime_packages=tuple((rp.package, rp.version) for rp in pack.runtime_packages),
             )
         return desired_by_pack, resolver_blocked_packs
-
-    async def _start_pack_sidecars(self, pack: DesiredPack) -> list[dict[str, Any]]:
-        """Start desired sidecars for *pack*; failures become doctor entries.
-
-        A sidecar start failure must not bring down the whole reconcile
-        iteration: post_status still has to run so the backend reconciler can
-        see the bad state and decide what to do (restart, disable, alert).
-        """
-        entries: list[dict[str, Any]] = []
-        if self.sidecar_supervisor is None or self.adapter_registry is None:
-            return entries
-        adapter = self.adapter_registry.get(pack.id, pack.release)
-        if adapter is None:
-            return entries
-        for feature_id in pack.sidecar_feature_ids:
-            try:
-                await self.sidecar_supervisor.start(
-                    pack_id=pack.id,
-                    release=pack.release,
-                    feature_id=feature_id,
-                    adapter=adapter,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "sidecar start failed for pack %s@%s feature %s",
-                    pack.id,
-                    pack.release,
-                    feature_id,
-                )
-                entries.append(
-                    {
-                        "pack_id": pack.id,
-                        "check_id": f"sidecar_start:{feature_id}",
-                        "ok": False,
-                        "message": f"sidecar start failed: {exc}",
-                    }
-                )
-        return entries
-
-    async def _stop_stale_sidecars(self, desired_sidecars: set[tuple[str, str, str]]) -> list[dict[str, Any]]:
-        """Stop sidecars no longer desired; failures become doctor entries.
-
-        Same invariant as sidecar start: post_status must still run so the
-        backend reconciler can see the failed teardown.
-        """
-        entries: list[dict[str, Any]] = []
-        if self.sidecar_supervisor is None or self.adapter_registry is None:
-            return entries
-        stale_sidecars = sorted(self.sidecar_supervisor.tracked_keys() - desired_sidecars)
-        for pack_id, release, feature_id in stale_sidecars:
-            adapter = self.adapter_registry.get(pack_id, release)
-            try:
-                if adapter is not None:
-                    await self.sidecar_supervisor.stop(
-                        pack_id=pack_id,
-                        release=release,
-                        feature_id=feature_id,
-                        adapter=adapter,
-                    )
-                else:
-                    await self.sidecar_supervisor.drop(
-                        pack_id=pack_id,
-                        release=release,
-                        feature_id=feature_id,
-                    )
-            except Exception as exc:
-                logger.exception(
-                    "sidecar stop failed for pack %s@%s feature %s",
-                    pack_id,
-                    release,
-                    feature_id,
-                )
-                entries.append(
-                    {
-                        "pack_id": pack_id,
-                        "check_id": f"sidecar_stop:{feature_id}",
-                        "ok": False,
-                        "message": f"sidecar stop failed: {exc}",
-                    }
-                )
-        return entries
 
     async def run_once(self) -> None:
         host_id = self._resolve_host_id()
@@ -301,8 +200,6 @@ class PackStateLoop:
                     )
                     continue
 
-            doctor_entries.extend(await self._start_pack_sidecars(pack))
-
             pack_entries.append(
                 {
                     "pack_id": pack.id,
@@ -328,23 +225,11 @@ class PackStateLoop:
             # for packs the backend still wants.
             self.runtime_registry.purge_except({pack.id for pack in parsed.packs})
 
-        desired_sidecars = {
-            (pack.id, pack.release, feature_id)
-            for pack in parsed.packs
-            for feature_id in pack.sidecar_feature_ids
-            if pack.id in env_by_pack
-        }
-        doctor_entries.extend(await self._stop_stale_sidecars(desired_sidecars))
-
-        sidecars: list[dict[str, Any]] = (
-            self.sidecar_supervisor.status_snapshot() if self.sidecar_supervisor is not None else []
-        )
         payload = {
             "host_id": host_id,
             "runtimes": runtime_entries,
             "packs": pack_entries,
             "doctor": doctor_entries,
-            "sidecars": sidecars,
         }
         await self.client.post_status(payload)
 

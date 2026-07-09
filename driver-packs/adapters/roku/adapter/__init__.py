@@ -10,7 +10,6 @@ from agent_app.pack.adapter_types import (
     DiscoveryContext,
     DoctorCheckResult,
     DoctorContext,
-    FeatureActionResult,
     HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
@@ -20,7 +19,6 @@ from agent_app.pack.adapter_types import (
     NormalizeDeviceContext,
     SessionOutcome,
     SessionSpec,
-    SidecarStatus,
     TelemetryContext,
 )
 from agent_app.pack.adapter_utils import tcp_reachable
@@ -83,11 +81,13 @@ class Adapter:
                 check_id="ping",
                 ok=reachable,
                 detail="" if reachable else "Roku ECP port 8060 unreachable",
+                debounce=True,
             ),
             HealthCheckResult(
                 check_id="ecp",
                 ok=reachable,
                 detail="" if reachable else "Roku ECP port 8060 unreachable",
+                debounce=True,
             ),
         ]
         expected = getattr(ctx, "expected_identity_value", None)
@@ -121,19 +121,3 @@ class Adapter:
 
     async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
         return HardwareTelemetry(supported=False)
-
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
-        ctx: LifecycleContext,
-    ) -> FeatureActionResult:
-        return FeatureActionResult(ok=False, detail="No feature actions")
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
-        return SidecarStatus(ok=False, detail="No sidecars")

@@ -1,21 +1,18 @@
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, InstallStatus
-from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
-from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
+_status_svc = PackStatusService()
 
 
 def _make_payload(host_id: str) -> dict:

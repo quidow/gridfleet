@@ -150,10 +150,7 @@ class PackReleaseService:
             await db.execute(
                 select(DriverPack)
                 .where(DriverPack.id == pack_id)
-                .options(
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                )
+                .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
             )
         ).scalar_one_or_none()
         if pack is None:

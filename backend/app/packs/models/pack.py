@@ -20,7 +20,6 @@ from app.core.database import Base
 
 
 class PackState(enum.StrEnum):
-    draft = "draft"
     enabled = "enabled"
     draining = "draining"
     disabled = "disabled"
@@ -74,9 +73,6 @@ class DriverPackRelease(Base):
     platforms: Mapped[list[DriverPackPlatform]] = relationship(
         "DriverPackPlatform", back_populates="release", cascade="all, delete-orphan"
     )
-    features: Mapped[list[DriverPackFeature]] = relationship(
-        "DriverPackFeature", back_populates="release", cascade="all, delete-orphan"
-    )
 
 
 class DriverPackPlatform(Base):
@@ -104,25 +100,3 @@ class DriverPackPlatform(Base):
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     release: Mapped[DriverPackRelease] = relationship("DriverPackRelease", back_populates="platforms")
-
-
-class DriverPackFeature(Base):
-    __tablename__ = "driver_pack_features"
-    __table_args__ = (
-        UniqueConstraint(
-            "pack_release_id",
-            "manifest_feature_id",
-            name="driver_pack_features_release_feature_uq",
-        ),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    pack_release_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("driver_pack_releases.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    manifest_feature_id: Mapped[str] = mapped_column(String, nullable=False)
-    data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-
-    release: Mapped[DriverPackRelease] = relationship("DriverPackRelease", back_populates="features")

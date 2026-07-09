@@ -22,20 +22,17 @@ from agent_app.pack.adapter_dispatch import (
     adapter_supports,
     dispatch_discover,
     dispatch_doctor,
-    dispatch_feature_action,
     dispatch_health_check,
     dispatch_lifecycle_action,
     dispatch_normalize_device,
     dispatch_post_session,
     dispatch_pre_session,
-    dispatch_sidecar_lifecycle,
     dispatch_telemetry,
     missing_declared_hooks,
 )
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DoctorCheckResult,
-    FeatureActionResult,
     FieldError,
     HardwareTelemetry,
     HealthCheckResult,
@@ -43,9 +40,8 @@ from agent_app.pack.adapter_types import (
     NormalizedDevice,
     SessionOutcome,
     SessionSpec,
-    SidecarStatus,
 )
-from agent_app.pack.manifest import DesiredFeature, DesiredPack, DesiredPlatform
+from agent_app.pack.manifest import DesiredPack, DesiredPlatform
 from agent_app.pack.runtime_types import AppiumInstallable
 
 # ---------------------------------------------------------------------------
@@ -104,7 +100,6 @@ class _GoodAdapter:
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             )
         ]
 
@@ -127,22 +122,6 @@ class _GoodAdapter:
 
     async def post_session(self, spec: object, outcome: object) -> None:
         return None
-
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, object],
-        ctx: object,
-    ) -> FeatureActionResult:
-        return FeatureActionResult(ok=True, detail="done", data={"feature": feature_id})
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
-        return SidecarStatus(ok=True, detail="running", state="active")
 
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         return NormalizedDevice(
@@ -195,24 +174,6 @@ class _TimeoutAdapter:
     async def post_session(self, spec: object, outcome: object) -> None:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
 
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, object],
-        ctx: object,
-    ) -> FeatureActionResult:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return FeatureActionResult(ok=False)
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return SidecarStatus(ok=False)
-
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
         return NormalizedDevice(
@@ -261,22 +222,6 @@ class _RaisingAdapter:
     async def post_session(self, spec: object, outcome: object) -> None:
         raise RuntimeError("post_session exploded")
 
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, object],
-        ctx: object,
-    ) -> FeatureActionResult:
-        raise RuntimeError("feature_action exploded")
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
-        raise RuntimeError("sidecar_lifecycle exploded")
-
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         raise RuntimeError("normalize_device exploded")
 
@@ -312,22 +257,6 @@ class _WrongTypeAdapter:
 
     async def post_session(self, spec: object, outcome: object) -> None:
         pass  # post_session returns None — no contract error possible
-
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, object],
-        ctx: object,
-    ) -> FeatureActionResult:
-        return {"wrong": "type"}  # type: ignore[return-value]
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
-        return ["bad", "value"]  # type: ignore[return-value]
 
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         return {"bad": "type"}  # type: ignore[return-value]
@@ -662,136 +591,6 @@ async def test_execution_error_chained_cause() -> None:
 
 
 # ---------------------------------------------------------------------------
-# dispatch_feature_action — happy / timeout / execution-error / contract-error
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_dispatch_feature_action_returns_result() -> None:
-    adapter = _GoodAdapter()
-    result = await dispatch_feature_action(
-        adapter,
-        "tunnel",
-        "start",
-        {},
-        _LifecycleCtx(),  # type: ignore[arg-type]
-    )
-    assert isinstance(result, FeatureActionResult)
-    assert result.ok is True
-    assert result.detail == "done"
-    assert result.data["feature"] == "tunnel"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_feature_action_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_feature_action(
-            adapter,
-            "tunnel",
-            "start",
-            {},
-            _LifecycleCtx(),  # type: ignore[arg-type]
-        )
-    assert exc_info.value.hook == "feature_action"
-    assert exc_info.value.pack_id == "vendor-slow"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_feature_action_execution_error() -> None:
-    adapter = _RaisingAdapter()
-    with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_feature_action(
-            adapter,
-            "tunnel",
-            "start",
-            {},
-            _LifecycleCtx(),  # type: ignore[arg-type]
-        )
-    assert exc_info.value.hook == "feature_action"
-    assert "feature_action exploded" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_dispatch_feature_action_contract_error() -> None:
-    adapter = _WrongTypeAdapter()
-    with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_feature_action(
-            adapter,
-            "tunnel",
-            "start",
-            {},
-            _LifecycleCtx(),  # type: ignore[arg-type]
-        )
-    assert exc_info.value.hook == "feature_action"
-    assert "FeatureActionResult" in str(exc_info.value)
-
-
-# ---------------------------------------------------------------------------
-# dispatch_sidecar_lifecycle — happy / timeout / execution-error / contract-error
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sidecar_lifecycle_returns_status() -> None:
-    adapter = _GoodAdapter()
-    result = await dispatch_sidecar_lifecycle(adapter, "tunnel", "start")
-    assert isinstance(result, SidecarStatus)
-    assert result.ok is True
-    assert result.state == "active"
-    assert result.detail == "running"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sidecar_lifecycle_stop_action() -> None:
-    adapter = _GoodAdapter()
-    result = await dispatch_sidecar_lifecycle(adapter, "tunnel", "stop")
-    assert isinstance(result, SidecarStatus)
-    assert result.ok is True
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sidecar_lifecycle_status_action() -> None:
-    adapter = _GoodAdapter()
-    result = await dispatch_sidecar_lifecycle(adapter, "tunnel", "status")
-    assert isinstance(result, SidecarStatus)
-    assert result.ok is True
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sidecar_lifecycle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_sidecar_lifecycle(adapter, "tunnel", "start")
-    assert exc_info.value.hook == "sidecar_lifecycle"
-    assert exc_info.value.pack_id == "vendor-slow"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sidecar_lifecycle_execution_error() -> None:
-    adapter = _RaisingAdapter()
-    with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_sidecar_lifecycle(adapter, "tunnel", "status")
-    assert exc_info.value.hook == "sidecar_lifecycle"
-    assert "sidecar_lifecycle exploded" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sidecar_lifecycle_contract_error() -> None:
-    adapter = _WrongTypeAdapter()
-    with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_sidecar_lifecycle(adapter, "tunnel", "stop")
-    assert exc_info.value.hook == "sidecar_lifecycle"
-    assert "SidecarStatus" in str(exc_info.value)
-
-
-# ---------------------------------------------------------------------------
 # dispatch_normalize_device / dispatch_telemetry
 # ---------------------------------------------------------------------------
 
@@ -908,7 +707,6 @@ def _pack_declaring_capabilities() -> DesiredPack:
                 lifecycle_actions=[{"id": "reconnect"}],
             )
         ],
-        features=[DesiredFeature(id="tunnel", actions=[{"id": "restart"}], sidecar={"cmd": "run"})],
     )
 
 
@@ -922,7 +720,7 @@ def test_adapter_supports_probes_real_methods() -> None:
 
 def test_missing_declared_hooks_reports_unimplemented() -> None:
     missing = missing_declared_hooks(_pack_declaring_capabilities(), _MinimalAdapter())
-    assert missing == ["lifecycle_action", "feature_action", "sidecar_lifecycle"]
+    assert missing == ["lifecycle_action"]
 
 
 def test_missing_declared_hooks_empty_when_adapter_implements_them() -> None:

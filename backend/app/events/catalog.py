@@ -327,22 +327,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
             "host_resource_samples_deleted",
         ),
     ),
-    PublicEventDefinition(
-        name="pack_feature.degraded",
-        category="operations_and_settings",
-        description="A driver pack feature transitioned to a not-ok state on a host.",
-        default_severity="warning",
-        allowed_severities=frozenset({"warning", "critical"}),
-        typical_data_fields=("host_id", "pack_id", "feature_id", "ok", "detail"),
-    ),
-    PublicEventDefinition(
-        name="pack_feature.recovered",
-        category="operations_and_settings",
-        description="A driver pack feature transitioned back to ok on a host.",
-        default_severity="success",
-        allowed_severities=frozenset({"success"}),
-        typical_data_fields=("host_id", "pack_id", "feature_id", "ok", "detail"),
-    ),
 )
 
 PUBLIC_EVENT_NAMES: tuple[str, ...] = tuple(event.name for event in PUBLIC_EVENT_CATALOG)

@@ -1323,7 +1323,7 @@ async def test_ip_ping_other_check_failure_no_hysteresis(
 
 
 # ---------------------------------------------------------------------------
-# Debounceable (manifest-declared) health-check hysteresis — e.g. Roku ECP.
+# Debounceable health-check hysteresis — e.g. Roku ECP.
 # A transient blip on a debounceable check must not flip the device unhealthy
 # (and so must not auto-stop / exclude it from a run) on the first cycle.
 # ---------------------------------------------------------------------------
@@ -1335,26 +1335,10 @@ def _roku_payload(*, reachable: bool) -> dict[str, object]:
     return {
         "healthy": reachable,
         "checks": [
-            {"check_id": "ping", "ok": reachable, "message": detail},
-            {"check_id": "ecp", "ok": reachable, "message": detail},
+            {"check_id": "ping", "ok": reachable, "message": detail, "debounce": True},
+            {"check_id": "ecp", "ok": reachable, "message": detail, "debounce": True},
         ],
     }
-
-
-class _ResolvedPlatformStub:
-    def __init__(self, health_checks: list[dict[str, object]]) -> None:
-        self.health_checks = health_checks
-        self.lifecycle_actions: list[dict[str, object]] = []
-
-
-def _patch_debounceable(monkeypatch: pytest.MonkeyPatch, ids: set[str]) -> None:
-    """Make resolve_pack_platform report ``ids`` as debounce=true health checks."""
-
-    async def _f(_db: object, *, pack_id: str, platform_id: str, device_type: object = None) -> _ResolvedPlatformStub:
-        del pack_id, platform_id, device_type
-        return _ResolvedPlatformStub([{"id": i, "label": i, "debounce": True} for i in ids])
-
-    monkeypatch.setattr("app.devices.services.connectivity.resolve_pack_platform", _f)
 
 
 def _debounce_settings(threshold: int = 3) -> FakeSettingsReader:
@@ -1380,7 +1364,6 @@ async def test_debounceable_check_blip_first_miss_keeps_healthy(
     device = await make_device(connection_type="network", ip_address="10.0.0.50")
     _stub_agent_devices(monkeypatch, {device.identity_value})
     _stub_get_health(monkeypatch, _roku_payload(reachable=False))
-    _patch_debounceable(monkeypatch, {"ping", "ecp"})
     handler_calls: list[str] = []
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
@@ -1410,7 +1393,6 @@ async def test_debounceable_check_flips_unhealthy_at_threshold(
     device = await make_device(connection_type="network", ip_address="10.0.0.50")
     _stub_agent_devices(monkeypatch, {device.identity_value})
     _stub_get_health(monkeypatch, _roku_payload(reachable=False))
-    _patch_debounceable(monkeypatch, {"ping", "ecp"})
     handler_calls: list[str] = []
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
@@ -1443,7 +1425,6 @@ async def test_debounceable_check_recovery_clears_counter(
 
     device = await make_device(connection_type="network", ip_address="10.0.0.50")
     _stub_agent_devices(monkeypatch, {device.identity_value})
-    _patch_debounceable(monkeypatch, {"ping", "ecp"})
     _stub_get_health_sequence(
         monkeypatch,
         [_roku_payload(reachable=False), _roku_payload(reachable=False), _roku_payload(reachable=True)],
@@ -1485,12 +1466,11 @@ async def test_hard_check_failure_flips_immediately_despite_debounceable_sibling
         {
             "healthy": False,
             "checks": [
-                {"check_id": "ecp", "ok": False, "message": "Roku ECP port 8060 unreachable"},
+                {"check_id": "ecp", "ok": False, "message": "Roku ECP port 8060 unreachable", "debounce": True},
                 {"check_id": "adb", "ok": False, "message": "adb dead"},
             ],
         },
     )
-    _patch_debounceable(monkeypatch, {"ping", "ecp"})
     handler_calls: list[str] = []
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)

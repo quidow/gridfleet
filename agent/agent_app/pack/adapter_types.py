@@ -19,13 +19,6 @@ class FieldError:
 
 
 @dataclass
-class FeatureStatus:
-    feature_id: str
-    ok: bool
-    detail: str = ""
-
-
-@dataclass
 class DiscoveryCandidate:
     identity_scheme: str
     identity_value: str
@@ -34,7 +27,6 @@ class DiscoveryCandidate:
     runnable: bool
     missing_requirements: list[str]
     field_errors: list[FieldError]
-    feature_status: list[FeatureStatus]
 
 
 @dataclass
@@ -45,6 +37,8 @@ class HealthCheckResult:
     # Optional name of a manifest-declared lifecycle action the adapter
     # recommends as remediation (generic; core dispatches without interpreting).
     recommended_action: str | None = None
+    # Transient failures of this check are hysteresis-debounced by the backend.
+    debounce: bool = False
 
 
 @dataclass
@@ -60,20 +54,6 @@ class LifecycleActionResult:
     state: str = ""
     detail: str = ""
     resolved_connection_target: str | None = None
-
-
-@dataclass
-class FeatureActionResult:
-    ok: bool
-    detail: str = ""
-    data: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class SidecarStatus:
-    ok: bool
-    detail: str = ""
-    state: str = ""
 
 
 @dataclass
@@ -195,7 +175,6 @@ class DriverPackAdapter(Protocol):
       - health:            ``health_check``, ``doctor``
       - lifecycle:         ``lifecycle_action``
       - sessions:          ``pre_session``, ``post_session``
-      - features/sidecars: ``feature_action``, ``sidecar_lifecycle``
       - telemetry:         ``telemetry``
       - environment:       ``subprocess_env``, ``tool_versions``
     """
@@ -231,23 +210,6 @@ class DriverPackAdapter(Protocol):
         raise NotImplementedError
 
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
-        raise NotImplementedError
-
-    # --- Optional: features / sidecars ------------------------------------
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
-        ctx: LifecycleContext,
-    ) -> FeatureActionResult:
-        raise NotImplementedError
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
         raise NotImplementedError
 
     # --- Optional: telemetry ----------------------------------------------

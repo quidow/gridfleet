@@ -58,15 +58,7 @@ export type DriverPackPlatform = Omit<
   };
 };
 
-export type PackState = 'draft' | 'enabled' | 'draining' | 'disabled';
-
-export type PackFeatureAction = Schemas['FeatureActionOut'];
-export type PackFeature = Omit<Schemas['FeatureOut'], 'actions'> & {
-  actions: PackFeatureAction[];
-};
-export type FeatureActionResult = Omit<Schemas['FeatureActionResultOut'], 'data'> & {
-  data: Record<string, unknown>;
-};
+export type PackState = 'enabled' | 'draining' | 'disabled';
 
 export type RuntimePolicy = Schemas['RuntimePolicy'];
 
@@ -84,7 +76,6 @@ export type DriverPack = Omit<
   | 'appium_driver'
   | 'appium_server'
   | 'doctor'
-  | 'features'
   | 'platforms'
   | 'runtime_policy'
   | 'state'
@@ -95,7 +86,6 @@ export type DriverPack = Omit<
   appium_driver?: AppiumInstallable | null;
   appium_env?: ManifestAppiumEnvRule[];
   doctor?: ManifestDoctorCheck[];
-  features?: Record<string, PackFeature>;
   runtime_policy: RuntimePolicy;
   platforms?: DriverPackPlatform[];
 };
@@ -108,7 +98,6 @@ export type DriverPackReleasesResponse = Omit<Schemas['PackReleasesOut'], 'relea
 };
 
 export type HostPackDoctorStatus = Schemas['HostPackDoctorOut'];
-export type HostPackFeatureStatus = Schemas['HostPackFeatureStatusOut'];
 export type HostPackStatus = Schemas['HostPackStatusOut'];
 export type HostDriverPacksStatus = Schemas['HostDriverPacksOut'];
 

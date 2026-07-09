@@ -56,9 +56,6 @@ class Adapter:
     async def health_check(self, ctx: Any) -> list[Any]:
         return []
 
-    async def feature_action(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
     async def lifecycle_action(self, *args: Any, **kwargs: Any) -> None:
         return None
 
@@ -66,9 +63,6 @@ class Adapter:
         return {"appium:vendorMagic": "set"}
 
     async def post_session(self, spec: Any, outcome: Any) -> None:
-        return None
-
-    async def sidecar_lifecycle(self, *args: Any, **kwargs: Any) -> None:
         return None
 """
 
@@ -506,7 +500,7 @@ async def test_minimal_two_hook_adapter_loads_and_dispatches(tmp_path: Path) -> 
 
     assert adapter_supports(adapter, "discover") is True
     assert adapter_supports(adapter, "normalize_device") is True
-    for optional in ("health_check", "doctor", "lifecycle_action", "feature_action", "sidecar_lifecycle", "telemetry"):
+    for optional in ("health_check", "doctor", "lifecycle_action", "telemetry"):
         assert adapter_supports(adapter, optional) is False
 
     # A bare-platform manifest declares no optional capabilities → clean cross-check.

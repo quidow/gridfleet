@@ -12,7 +12,6 @@ from app.packs.models import (
     DriverPack,
     DriverPackRelease,
     HostPackDoctorResult,
-    HostPackFeatureStatus,
     HostPackInstallation,
     InstallStatus,
     PackState,
@@ -24,14 +23,9 @@ from app.packs.services.release_ordering import selected_release
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.packs.protocols import FeatureStatusRecorder
-
 
 class PackStatusService:
     """Service class for pack status reporting and desired-state computation."""
-
-    def __init__(self, *, feature: FeatureStatusRecorder) -> None:
-        self._feature = feature
 
     async def persist_doctor_results(
         self,
@@ -116,16 +110,6 @@ class PackStatusService:
         for scope_pack_id in doctor_scope_pack_ids:
             await self.persist_doctor_results(db, host_id, scope_pack_id, doctor_by_pack.get(scope_pack_id, []))
 
-        for sidecar in payload.get("sidecars", []):
-            await self._feature.record_feature_status(
-                db,
-                host_id=host_id,
-                pack_id=sidecar["pack_id"],
-                feature_id=sidecar["feature_id"],
-                ok=bool(sidecar["ok"]),
-                detail=str(sidecar.get("detail") or sidecar.get("last_error") or sidecar.get("state") or ""),
-            )
-
     async def get_host_driver_pack_status(self, db: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
         host = await db.get(Host, host_id)
         all_pack_rows = (
@@ -174,23 +158,6 @@ class PackStatusService:
             doctor = [
                 row for row in doctor if row.pack_id not in reported_pack_ids or row.pack_id in compatible_pack_ids
             ]
-        feature_rows = (
-            (
-                await db.execute(
-                    select(HostPackFeatureStatus)
-                    .where(HostPackFeatureStatus.host_id == host_id)
-                    .order_by(HostPackFeatureStatus.pack_id, HostPackFeatureStatus.feature_id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if host is not None:
-            feature_rows = [
-                row
-                for row in feature_rows
-                if row.pack_id not in reported_pack_ids or row.pack_id in compatible_pack_ids
-            ]
         return {
             "host_id": host_id,
             "packs": [
@@ -235,15 +202,6 @@ class PackStatusService:
                     "message": row.message,
                 }
                 for row in doctor
-            ],
-            "features": [
-                {
-                    "pack_id": row.pack_id,
-                    "feature_id": row.feature_id,
-                    "ok": row.ok,
-                    "detail": row.detail,
-                }
-                for row in feature_rows
             ],
         }
 
@@ -348,7 +306,6 @@ class PackStatusService:
                     "appium_driver": manifest["appium_driver"],
                     "runtime_packages": manifest.get("runtime_packages", []),
                     "platforms": manifest["platforms"],
-                    "features": manifest.get("features", {}),
                     "requires": manifest.get("requires", {}),
                     "runtime_policy": pack.runtime_policy or {"strategy": "recommended"},
                     "tarball_sha256": latest.artifact_sha256,

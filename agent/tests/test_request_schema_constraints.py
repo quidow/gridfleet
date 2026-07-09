@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent_app.appium.schemas import AppiumStartRequest, AppiumStopRequest
-from agent_app.pack.schemas import FeatureActionRequest, NormalizeDeviceRequest
+from agent_app.pack.schemas import NormalizeDeviceRequest
 
 
 def _valid_start_payload() -> dict[str, object]:
@@ -150,44 +150,6 @@ def test_normalize_device_accepts_valid_payload() -> None:
         platform_id="android",
         raw_input={},
     )
-
-
-def test_feature_action_rejects_blank_pack_id() -> None:
-    with pytest.raises(ValidationError):
-        FeatureActionRequest(pack_id="", args={})
-
-
-def test_feature_action_rejects_pack_id_with_path_traversal() -> None:
-    with pytest.raises(ValidationError):
-        FeatureActionRequest(pack_id="../etc/passwd", args={})
-
-
-def test_feature_action_accepts_valid_pack_id() -> None:
-    FeatureActionRequest(pack_id="appium-uiautomator2", args={})
-
-
-def test_feature_action_accepts_namespaced_pack_id() -> None:
-    FeatureActionRequest(pack_id="local/uiautomator2-android-real", args={})
-
-
-def test_feature_action_rejects_pack_id_with_double_dot_segment() -> None:
-    with pytest.raises(ValidationError):
-        FeatureActionRequest(pack_id="local/../etc", args={})
-
-
-def test_feature_action_rejects_pack_id_with_trailing_slash() -> None:
-    with pytest.raises(ValidationError):
-        FeatureActionRequest(pack_id="foo/", args={})
-
-
-def test_feature_action_rejects_pack_id_with_leading_slash() -> None:
-    with pytest.raises(ValidationError):
-        FeatureActionRequest(pack_id="/foo", args={})
-
-
-def test_feature_action_rejects_pack_id_with_double_slash() -> None:
-    with pytest.raises(ValidationError):
-        FeatureActionRequest(pack_id="foo//bar", args={})
 
 
 def test_appium_start_accepts_three_dot_pack_id_segment() -> None:

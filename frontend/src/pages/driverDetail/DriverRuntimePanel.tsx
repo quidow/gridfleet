@@ -1,40 +1,29 @@
 import { useState } from 'react';
 import { Card } from '../../components/ui/Card';
-import { Badge, Button, DefinitionList, Field, Select, TextField } from '../../components/ui';
+import { Badge, Button, DefinitionList, Field, Select } from '../../components/ui';
 import type { AppiumInstallable, DriverPack, RuntimePolicy } from '../../types/driverPacks';
 import { installableSummary, objectEntries, recommendedValue, scalarValue } from './driverDetailFormat';
 import { useUpdateRuntimePolicy } from '../../hooks/useDriverDetail';
 
 const STRATEGY_OPTIONS = [
   { value: 'recommended', label: 'Recommended' },
-  { value: 'latest_patch', label: 'Latest Patch' },
-  { value: 'exact', label: 'Exact' },
 ];
 
 function policyEquals(a: RuntimePolicy, b: RuntimePolicy): boolean {
-  if (a.strategy !== b.strategy) return false;
-  if (a.strategy === 'exact') {
-    return (a.appium_server_version ?? null) === (b.appium_server_version ?? null)
-      && (a.appium_driver_version ?? null) === (b.appium_driver_version ?? null);
-  }
-  return true;
+  return a.strategy === b.strategy;
 }
 
 function RuntimePolicyEditor({ pack }: { pack: DriverPack }) {
   const current = pack.runtime_policy;
   const [strategy, setStrategy] = useState(current.strategy);
-  const [serverVersion, setServerVersion] = useState(current.appium_server_version ?? '');
-  const [driverVersion, setDriverVersion] = useState(current.appium_driver_version ?? '');
   const [error, setError] = useState<string | null>(null);
   const mutation = useUpdateRuntimePolicy();
 
   const draft: RuntimePolicy = {
     strategy,
-    appium_server_version: strategy === 'exact' ? serverVersion || null : null,
-    appium_driver_version: strategy === 'exact' ? driverVersion || null : null,
   };
   const isDirty = !policyEquals(current, draft);
-  const canSave = isDirty && (strategy !== 'exact' || (serverVersion.length > 0 && driverVersion.length > 0));
+  const canSave = isDirty;
 
   function handleSave() {
     setError(null);
@@ -66,29 +55,6 @@ function RuntimePolicyEditor({ pack }: { pack: DriverPack }) {
           size="sm"
         />
       </Field>
-
-      {strategy === 'exact' && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Appium Server Version" htmlFor="server-version" required>
-            <TextField
-              id="server-version"
-              value={serverVersion}
-              onChange={setServerVersion}
-              size="sm"
-              placeholder="e.g. 2.11.5"
-            />
-          </Field>
-          <Field label="Appium Driver Version" htmlFor="driver-version" required>
-            <TextField
-              id="driver-version"
-              value={driverVersion}
-              onChange={setDriverVersion}
-              size="sm"
-              placeholder="e.g. 3.6.0"
-            />
-          </Field>
-        </div>
-      )}
 
       {error !== null && (
         <p role="alert" className="rounded border border-danger-foreground bg-danger-soft px-3 py-2 text-sm text-danger-foreground">

@@ -26,11 +26,9 @@ from app.hosts.models import Host, HostResourceSample  # noqa: F401
 from app.jobs.models import Job  # noqa: F401
 from app.packs.models import (  # noqa: F401
     DriverPack,
-    DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
     HostPackDoctorResult,
-    HostPackFeatureStatus,
     HostPackInstallation,
 )
 from app.runs.models import RunState, TestRun  # noqa: F401

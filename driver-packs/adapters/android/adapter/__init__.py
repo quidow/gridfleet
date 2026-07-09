@@ -10,7 +10,6 @@ from agent_app.pack.adapter_types import (
     DiscoveryContext,
     DoctorCheckResult,
     DoctorContext,
-    FeatureActionResult,
     HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
@@ -20,7 +19,6 @@ from agent_app.pack.adapter_types import (
     NormalizeDeviceContext,
     SessionOutcome,
     SessionSpec,
-    SidecarStatus,
     SubprocessEnvContribution,
     TelemetryContext,
 )
@@ -83,26 +81,6 @@ class Adapter:
         from .telemetry import collect_telemetry
 
         return await collect_telemetry(ctx)
-
-    async def feature_action(
-        self,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
-        ctx: LifecycleContext,
-    ) -> FeatureActionResult:
-        return FeatureActionResult(ok=False, detail="No feature actions supported")
-
-    async def sidecar_lifecycle(
-        self,
-        feature_id: str,
-        action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus:
-        if feature_id == "adb_monitor":
-            from .sidecar import sidecar_lifecycle
-
-            return await sidecar_lifecycle(action)
-        return SidecarStatus(ok=False, detail=f"Unknown feature: {feature_id}")
 
     def tool_versions(self) -> dict[str, str | None]:
         import re

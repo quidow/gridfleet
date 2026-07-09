@@ -14,7 +14,6 @@ from app.packs.models import (
     DriverPack,
     DriverPackRelease,
     HostPackDoctorResult,
-    HostPackFeatureStatus,
     HostPackInstallation,
 )
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
@@ -331,13 +330,6 @@ async def test_delete_driver_pack_removes_installed_pack_and_artifacts(
                 ok=True,
                 message="ok",
             ),
-            HostPackFeatureStatus(
-                host_id=db_host.id,
-                pack_id="vendor-foo",
-                feature_id="feature",
-                ok=True,
-                detail="ok",
-            ),
         ]
     )
     await db_session.commit()
@@ -351,9 +343,6 @@ async def test_delete_driver_pack_removes_installed_pack_and_artifacts(
     ) is None
     assert (
         await db_session.scalar(select(HostPackDoctorResult).where(HostPackDoctorResult.pack_id == "vendor-foo"))
-    ) is None
-    assert (
-        await db_session.scalar(select(HostPackFeatureStatus).where(HostPackFeatureStatus.pack_id == "vendor-foo"))
     ) is None
     assert not Path(artifact_path).exists()
 

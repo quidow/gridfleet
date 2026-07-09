@@ -17,14 +17,10 @@ if TYPE_CHECKING:
 
 
 def _pack_with_releases_options() -> tuple[Any, ...]:
-    return (
-        selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-        selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-    )
+    return (selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),)
 
 
 VALID_TRANSITIONS: dict[PackState, set[PackState]] = {
-    PackState.draft: {PackState.enabled},
     PackState.enabled: {PackState.draining, PackState.disabled},
     PackState.draining: {PackState.enabled, PackState.disabled},
     PackState.disabled: {PackState.enabled},

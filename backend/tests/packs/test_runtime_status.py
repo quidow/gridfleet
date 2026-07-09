@@ -8,21 +8,17 @@ contaminate unrelated installed runtimes.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
 
 import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import DriverPack, HostPackInstallation
-from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
-from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_status_svc = PackStatusService(feature=_feature_svc)
+_status_svc = PackStatusService()
 
 
 @pytest.mark.asyncio

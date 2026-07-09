@@ -13,13 +13,10 @@ const STATE_TONES: Record<string, 'success' | 'warning' | 'neutral'> = {
   enabled: 'success',
   draining: 'warning',
   disabled: 'neutral',
-  draft: 'neutral',
 };
 
 function runtimePolicyLabel(policy: RuntimePolicy | undefined): string {
-  if (!policy || policy.strategy === 'recommended') return 'recommended';
-  if (policy.strategy === 'latest_patch') return 'latest patch';
-  return `exact ${policy.appium_server_version}/${policy.appium_driver_version}`;
+  return policy?.strategy ?? 'recommended';
 }
 
 function versionList(versions: string[] | undefined): string {

@@ -59,7 +59,6 @@ from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.lifecycle.services_container import LifecycleServices
 from app.packs import packs_settings
 from app.packs.services.discovery import PackDiscoveryService
-from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.release import PackReleaseService
 from app.packs.services.service import PackCatalogService
@@ -139,11 +138,10 @@ def compose_app(
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
-    pack_feature = FeatureService(publisher=bus, circuit_breaker=circuit_breaker)
     pack_lifecycle = PackLifecycleService()
     pack_catalog = PackCatalogService(lifecycle=pack_lifecycle)
     pack_release = PackReleaseService(storage=pack_storage)
-    pack_status = PackStatusService(feature=pack_feature)
+    pack_status = PackStatusService()
     pack_discovery_svc = PackDiscoveryService(
         agent_get_pack_devices=get_pack_devices,
         agent_get_pack_device_properties=get_pack_device_properties,
@@ -356,7 +354,6 @@ def compose_app(
             release=pack_release,
             status=pack_status,
             lifecycle=pack_lifecycle,
-            feature=pack_feature,
             discovery=pack_discovery_svc,
             storage=pack_storage,
             session_factory=session_factory,

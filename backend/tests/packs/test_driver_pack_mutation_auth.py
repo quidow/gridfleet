@@ -35,6 +35,6 @@ async def test_anonymous_cannot_toggle_pack_state(client: AsyncClient, auth_sett
 async def test_anonymous_cannot_update_runtime_policy(client: AsyncClient, auth_settings: None) -> None:
     res = await client.patch(
         "/api/driver-packs/appium-uiautomator2/policy",
-        json={"runtime_policy": {"strategy": "latest_patch"}},
+        json={"runtime_policy": {"strategy": "recommended"}},
     )
     assert res.status_code in (401, 403)

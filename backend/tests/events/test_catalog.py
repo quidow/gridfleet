@@ -70,8 +70,6 @@ def test_helpers_raise_for_unknown_event() -> None:
         ("settings.changed", "neutral"),
         ("config.updated", "neutral"),
         ("system.cleanup_completed", "neutral"),
-        ("pack_feature.degraded", "warning"),
-        ("pack_feature.recovered", "success"),
     ],
 )
 def test_default_severity_spec(event_name: str, expected_default: str) -> None:

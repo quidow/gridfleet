@@ -10,7 +10,6 @@ __all__ = [
     "agent_state",
     "catalog",
     "export",
-    "host_features",
     "uploads",
 ]
 
