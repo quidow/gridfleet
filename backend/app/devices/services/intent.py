@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.services.intent_types import IntentRegistration
-    from app.devices.services.observation_reason import ObservationReason
     from app.events.protocols import EventPublisher
 
 
@@ -107,7 +106,6 @@ class IntentService:
         *,
         mutate: Callable[[], Awaitable[object]] | None = None,
         publisher: EventPublisher,
-        observed_reason: ObservationReason | None,
         flush_first: bool = False,
     ) -> None:
         if flush_first:
@@ -120,14 +118,13 @@ class IntentService:
         await device_locking.lock_device(self._db, device_id)
         if mutate is not None:
             await mutate()
-        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
+        await reconcile_device(self._db, device_id, publisher=publisher)
 
     async def reconcile_now(
         self,
         device_id: UUID,
         *,
         publisher: EventPublisher,
-        observed_reason: ObservationReason | None = None,
     ) -> None:
         """Inline re-derivation for read-your-writes at operator/observation
         sites. The every-tick reconciler scan is the backstop for anything
@@ -135,14 +132,11 @@ class IntentService:
 
         Flushes pending session changes first so the reconciler sees the
         updated observation columns (e.g. device_checks_healthy) instead of a
-        stale DB snapshot. Pass ``observed_reason`` to carry the known cause
-        so the reconciler records the matching typed DeviceEvent audit row
-        (§6); omit it when the cause is unknown at this site.
+        stale DB snapshot.
         """
         await self._lock_mutate_reconcile(
             device_id,
             publisher=publisher,
-            observed_reason=observed_reason,
             flush_first=True,
         )
 
@@ -152,13 +146,11 @@ class IntentService:
         device_id: UUID,
         intents: list[IntentRegistration],
         publisher: EventPublisher,
-        observed_reason: ObservationReason | None = None,
     ) -> None:
         await self._lock_mutate_reconcile(
             device_id,
             mutate=lambda: self.register_intents(device_id=device_id, intents=intents),
             publisher=publisher,
-            observed_reason=observed_reason,
         )
 
     async def revoke_intents_and_reconcile(
@@ -167,11 +159,9 @@ class IntentService:
         device_id: UUID,
         sources: list[str],
         publisher: EventPublisher,
-        observed_reason: ObservationReason | None = None,
     ) -> None:
         await self._lock_mutate_reconcile(
             device_id,
             mutate=lambda: self.revoke_intents(device_id=device_id, sources=sources),
             publisher=publisher,
-            observed_reason=observed_reason,
         )

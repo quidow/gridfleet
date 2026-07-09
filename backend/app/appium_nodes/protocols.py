@@ -62,9 +62,7 @@ class OperatorNodeManager(Protocol):
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
     ) -> AppiumNode: ...
 
-    async def request_stop(
-        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
-    ) -> AppiumNode: ...
+    async def request_stop(self, db: AsyncSession, device: Device, *, reason: str) -> AppiumNode: ...
 
     async def request_restart(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str

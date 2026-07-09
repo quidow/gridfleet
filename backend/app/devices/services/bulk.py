@@ -93,9 +93,7 @@ async def _bulk_stop_one(
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    return await operator.request_stop(
-        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested"
-    )
+    return await operator.request_stop(db, device, reason=f"{caller} stop requested")
 
 
 async def _bulk_restart_one(

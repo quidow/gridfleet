@@ -59,13 +59,12 @@ async def test_stop_disconnected_node_locks_device_and_node(
         device_id: object,
         *,
         publisher: object,
-        observed_reason: object = None,
     ) -> None:
         # Runs inside _lock_mutate_reconcile while the Device AND AppiumNode rows are
         # locked, so the stomper's concurrent AppiumNode UPDATE blocks until we commit.
         stomper_can_go.set()
         await asyncio.sleep(0.15)
-        await real_reconcile_device(db, device_id, publisher=publisher, observed_reason=observed_reason)
+        await real_reconcile_device(db, device_id, publisher=publisher)
 
     async def runner() -> None:
         async with db_session_maker() as session:

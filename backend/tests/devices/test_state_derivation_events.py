@@ -1,12 +1,9 @@
-"""apply_derived_state persists the typed DeviceEvent audit row on a transition — but
-only when the observation site carries the cause (§6: the cause rides on the observation).
+"""apply_derived_state records NO DeviceEvent audit rows — transitions are uncaused (plan 4b).
 
-The reconciler must NOT guess the cause from facts: a not-ready offline transition could be a
-connectivity loss, a node crash, a health-probe failure or a verification failure, each with a
-different DeviceEventType. Guessing would corrupt the analytics reliability counts that query
-``connectivity_lost``. So a carried ``observed_reason`` produces a row; an uncarried reconcile
-updates state + emits the bus event but records no row.
-
+Causes are recorded once, at the observation sites that know them: the connectivity sweep and
+host heartbeat loss record connectivity_lost, lifecycle escalation records node_crash /
+health_check_fail, the maintenance service records maintenance_entered / maintenance_exited.
+The reconciler only flips the axis and emits the device.operational_state_changed bus event.
 """
 
 from datetime import UTC, datetime
@@ -16,7 +13,6 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
-from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.state import apply_derived_state
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
@@ -33,10 +29,11 @@ async def _event_types(db: AsyncSession, device_id: object) -> list[DeviceEventT
 
 
 @pytest.mark.db
-async def test_carried_reason_writes_connectivity_lost_row(client: AsyncClient, db_session: AsyncSession) -> None:
-    """available → offline with observed_reason=disconnected records a connectivity_lost row.
+async def test_offline_transition_records_no_audit_row(client: AsyncClient, db_session: AsyncSession) -> None:
+    """available → offline flips the axis and emits the bus event but records no DeviceEvent.
 
-    This is the analytics-critical path: analytics/service.py counts connectivity_lost.
+    The cause (connectivity loss vs node crash vs health failure) is recorded by the
+    observation site that saw it, not by the reconciler.
     """
     await seed_test_packs(db_session)
     host = await create_host(client)
@@ -50,36 +47,31 @@ async def test_carried_reason_writes_connectivity_lost_row(client: AsyncClient, 
         device_checks_healthy=False,
     )
 
-    changed = await apply_derived_state(
-        db_session, device, now=datetime.now(UTC), observed_reason=ObservationReason.disconnected, publisher=event_bus
-    )
+    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     assert device.operational_state is DeviceOperationalState.offline
-    assert DeviceEventType.connectivity_lost in await _event_types(db_session, device.id)
+    assert await _event_types(db_session, device.id) == []
 
 
 @pytest.mark.db
-async def test_no_carried_reason_writes_no_operational_row(client: AsyncClient, db_session: AsyncSession) -> None:
-    """Without observed_reason the transition still derives + flips state but records no audit row.
-
-    Prevents the reconciler from mislabelling fact-derived offline transitions (e.g. a node crash)
-    as connectivity_lost, which would inflate analytics reliability counts.
-    """
+async def test_maintenance_transition_records_no_audit_row(client: AsyncClient, db_session: AsyncSession) -> None:
+    """available → maintenance flips the axis but records nothing — the maintenance service is
+    the sole writer of maintenance_entered/exited rows (at fact-write time)."""
     await seed_test_packs(db_session)
     host = await create_host(client)
     device = await create_device_record(
         db_session,
         host_id=host["id"],
-        identity_value="evt-offline-02",
-        name="OfflineNoReason",
+        identity_value="evt-maint-01",
+        name="MaintEnter",
         operational_state=DeviceOperationalState.available,
         verified=True,
-        device_checks_healthy=False,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
     changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
-    assert device.operational_state is DeviceOperationalState.offline
+    assert device.operational_state is DeviceOperationalState.maintenance
     assert await _event_types(db_session, device.id) == []

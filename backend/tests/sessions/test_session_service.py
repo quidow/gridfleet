@@ -403,7 +403,6 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     )
     assert op_events[0]["old_operational_state"] == "busy"
     assert op_events[0]["new_operational_state"] == "offline"
-    # After Task 10: reason is derived by the reconciler (auto_stopped signal).
     assert op_events[0]["reason"] in ("Session ended with pending node stop", "auto_stopped")
 
     await db_session.refresh(device)
@@ -435,10 +434,13 @@ async def test_device_has_running_session_counts_pending(
     assert await device_has_running_session(db_session, device.id) is True
 
 
-async def test_update_session_status_records_session_ended_event(
+async def test_update_session_status_records_no_session_ended_event(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
+    """Session end no longer writes a session_ended DeviceEvent — the Session row
+    (started_at/ended_at) is the durable record and the session.ended bus event covers
+    real-time consumers (plan 4b behavior change #2)."""
     device = await create_device_record(
         db_session,
         host_id=default_host_id,
@@ -469,8 +471,7 @@ async def test_update_session_status_records_session_ended_event(
         .scalars()
         .all()
     )
-    assert len(events) == 1
-    assert events[0].details["reason"] == "session_ended"
+    assert events == []
 
 
 @pytest.mark.parametrize(

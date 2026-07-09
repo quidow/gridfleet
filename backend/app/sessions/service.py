@@ -15,7 +15,6 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.intent import IntentService
-from app.devices.services.observation_reason import ObservationReason
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.filters import SessionFilters, exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.live_session_predicate import live_session_predicate
@@ -427,7 +426,6 @@ class SessionCrudService:
             await IntentService(db).reconcile_now(
                 session.device_id,
                 publisher=self._publisher,
-                observed_reason=ObservationReason.session_ended,
             )
 
             locked_device = await device_locking.lock_device(db, session.device_id)
@@ -448,7 +446,6 @@ class SessionCrudService:
                 await IntentService(db).reconcile_now(
                     locked_device.id,
                     publisher=self._publisher,
-                    observed_reason=ObservationReason.session_ended,
                 )
                 deferred_stop_target = locked_device
 

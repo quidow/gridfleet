@@ -74,9 +74,10 @@ def test_operator_stopped_maps_to_auto_stopped_event() -> None:
     assert severity == "info"
 
 
-async def test_operator_stop_records_auto_stopped_device_event(db_session: AsyncSession, db_host: Host) -> None:
+async def test_operator_stop_records_no_auto_stopped_device_event(db_session: AsyncSession, db_host: Host) -> None:
+    """Operator stops no longer write an auto_stopped DeviceEvent — the stop is already
+    visible as desired_state_changed rows from the reconciler (plan 4b behavior change #2)."""
     from app.devices.models import DeviceOperationalState
-    from app.devices.services.observation_reason import ObservationReason
     from app.lifecycle.services.operator_node import operator_stop_intents
 
     device = await create_device(db_session, host_id=db_host.id, name="op-stop-events")
@@ -88,7 +89,6 @@ async def test_operator_stop_records_auto_stopped_device_event(db_session: Async
         device_id=device.id,
         intents=operator_stop_intents(device.id),
         publisher=event_bus,
-        observed_reason=ObservationReason.operator_stopped,
     )
     await db_session.commit()
 
@@ -104,5 +104,4 @@ async def test_operator_stop_records_auto_stopped_device_event(db_session: Async
         .scalars()
         .all()
     )
-    assert len(events) == 1
-    assert events[0].details["reason"] == "operator_stopped"
+    assert events == []

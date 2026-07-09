@@ -1046,6 +1046,67 @@ async def test_disconnect_records_exactly_one_connectivity_lost_event(
     assert await connectivity_lost_count() == 1
 
 
+async def test_disconnect_of_busy_device_records_connectivity_lost(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disconnect detected while a session keeps the device busy records connectivity_lost
+    at detection time. Previously the busy mask suppressed the axis flip and no row was ever
+    written for these episodes (plan 4b behavior change #3)."""
+    from sqlalchemy import select
+
+    from app.devices.models import DeviceEvent, DeviceEventType
+    from app.devices.services import connectivity as device_connectivity
+    from app.sessions.models import Session, SessionStatus
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="disconnect-busy",
+        operational_state=DeviceOperationalState.busy,
+        verified=True,
+        device_checks_healthy=True,
+    )
+    db_session.add(Session(session_id="disc-busy-1", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+
+    async def fake_get_agent_devices(
+        _host: Host, *, settings: object, circuit_breaker: object, pool: object = None
+    ) -> set[str]:
+        del settings, circuit_breaker, pool
+        return set()
+
+    monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
+    monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=DeviceHealthService(publisher=Mock()),
+    ).check_connectivity(db_session)
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.busy  # session mask holds
+
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.connectivity_lost,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
 # ---------------------------------------------------------------------------
 # Task 12: integration test helpers
 # ---------------------------------------------------------------------------

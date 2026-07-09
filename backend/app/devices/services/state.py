@@ -20,7 +20,6 @@ from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
-from app.devices.services.event import record_event
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
 from app.devices.services.lifecycle_policy_state import in_maintenance
@@ -252,20 +251,16 @@ async def apply_derived_state(
     *,
     now: datetime,
     publisher: EventPublisher,
-    observed_reason: ObservationReason | None = None,
     packs: dict[str, DriverPack] | None = None,
 ) -> bool:
     """Derive ``operational_state`` and write it when it differs from the persisted column.
 
-    Emits the mapped operational bus event when the axis changes and ``publisher`` is provided.
-
-    The typed DeviceEvent audit row is written only when the caller carries an ``observed_reason``
-    (§6: the cause rides on the observation, the reconciler maps ``(delta, reason) → event``). The
-    reconciler must NOT *guess* the cause from facts alone — a not-ready offline transition could be
-    a connectivity loss, a node crash, a health-probe failure or a verification failure, and each
-    has a different DeviceEventType. Mislabelling them all ``connectivity_lost`` would corrupt the
-    analytics reliability counts that query that type. Background reconciles (no carried reason)
-    still update state and emit the bus event, but record no audit row.
+    Emits the operational bus event when the axis changes. Transitions are uncaused: causes
+    are recorded once, at the observation sites that know them (connectivity sweep, host
+    heartbeat loss, lifecycle escalation, maintenance service). The reconciler records no
+    DeviceEvent audit rows — a not-ready offline transition could be a connectivity loss, a
+    node crash, a health-probe failure or a verification failure, and guessing here would
+    corrupt the analytics reliability counts.
 
     Returns True if the operational axis was written.
     """
@@ -277,25 +272,8 @@ async def apply_derived_state(
 
     prev_op = device.operational_state
     fact_reason = _reason_for(prev_op, facts)
-    reason = observed_reason if observed_reason is not None else fact_reason
+    reason = fact_reason
     event_type, severity = map_transition_event(derived_op, reason)
-    # Persist the typed audit row when the cause was
-    # explicitly carried in by the observation site — never from the fact-based heuristic, which
-    # cannot tell connectivity loss from a node crash / health failure.
-    if observed_reason is not None and event_type is not None:
-        await record_event(
-            db,
-            device.id,
-            event_type,
-            {"from": prev_op.value, "to": derived_op.value, "reason": reason.value},
-        )
-    elif observed_reason is not None:
-        # The carried observation maps to no transition event for this derived state
-        # (e.g. session_ended when the device derives to offline rather than available).
-        # Defer the bus-event reason/severity to the fact-based derivation; the heuristic
-        # cause is never recorded as an audit row (guarded above).
-        reason = fact_reason
-        event_type, severity = map_transition_event(derived_op, reason)
     await set_operational_state(
         device,
         derived_op,
