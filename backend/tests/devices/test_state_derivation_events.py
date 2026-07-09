@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
-from app.devices.services.state import apply_derived_state
+from app.devices.services.state import _transition_severity, apply_derived_state
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -75,3 +75,19 @@ async def test_maintenance_transition_records_no_audit_row(client: AsyncClient, 
     assert changed is True
     assert device.operational_state is DeviceOperationalState.maintenance
     assert await _event_types(db_session, device.id) == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        (DeviceOperationalState.available, DeviceOperationalState.offline, "warning"),
+        (DeviceOperationalState.busy, DeviceOperationalState.offline, "warning"),
+        (DeviceOperationalState.offline, DeviceOperationalState.available, "success"),
+        (DeviceOperationalState.verifying, DeviceOperationalState.available, "success"),
+        (DeviceOperationalState.busy, DeviceOperationalState.available, "info"),
+        (DeviceOperationalState.available, DeviceOperationalState.busy, "info"),
+        (DeviceOperationalState.available, DeviceOperationalState.maintenance, "info"),
+    ],
+)
+def test_transition_severity(old: DeviceOperationalState, new: DeviceOperationalState, expected: str) -> None:
+    assert _transition_severity(old, new) == expected

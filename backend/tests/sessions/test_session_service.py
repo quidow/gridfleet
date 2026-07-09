@@ -403,7 +403,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     )
     assert op_events[0]["old_operational_state"] == "busy"
     assert op_events[0]["new_operational_state"] == "offline"
-    assert op_events[0]["reason"] in ("Session ended with pending node stop", "auto_stopped")
+    assert "reason" not in op_events[0]
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline

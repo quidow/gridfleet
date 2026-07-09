@@ -37,7 +37,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
             "device_name",
             "old_operational_state",
             "new_operational_state",
-            "reason",
         ),
     ),
     PublicEventDefinition(

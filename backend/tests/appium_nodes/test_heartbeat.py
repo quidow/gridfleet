@@ -194,10 +194,10 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: list[tuple[str, dict[str, object]]] = []
+    captured: list[tuple[str, dict[str, object], str | None]] = []
 
     async def fake_publish(name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
-        captured.append((name, payload))
+        captured.append((name, payload, severity))
 
     from tests.helpers import test_event_bus as _event_bus
 
@@ -235,20 +235,22 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
         await run_one_heartbeat_cycle(db_session, svc)
         await run_one_heartbeat_cycle(db_session, svc)
 
-    availability_events = [payload for name, payload in captured if name == "device.operational_state_changed"]
+    availability_events = [
+        (payload, severity) for name, payload, severity in captured if name == "device.operational_state_changed"
+    ]
     cascade_events = [
-        e
-        for e in availability_events
-        if e.get("device_id") == str(device.id) and e.get("new_operational_state") == "offline"
+        event
+        for event in availability_events
+        if event[0].get("device_id") == str(device.id) and event[0].get("new_operational_state") == "offline"
     ]
     assert len(cascade_events) == 1, (
         f"Expected exactly one cascade event for device, got {len(cascade_events)}: {cascade_events}"
     )
-    payload = cascade_events[0]
+    payload, severity = cascade_events[0]
     assert payload["old_operational_state"] == "available"
     assert payload["new_operational_state"] == "offline"
-    # After Task 10: reason is derived by the reconciler (connectivity_lost signal).
-    assert payload["reason"] in (f"Host {host.hostname} offline", "connectivity_lost")
+    assert "reason" not in payload
+    assert severity == "warning"
 
 
 async def test_heartbeat_recovery(db_session: AsyncSession) -> None:

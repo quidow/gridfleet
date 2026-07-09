@@ -65,15 +65,6 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
     assert not any(detail.get("field") == "recovery_allowed" for detail in details)
 
 
-def test_operator_stopped_maps_to_auto_stopped_event() -> None:
-    from app.devices.models import DeviceOperationalState
-    from app.devices.services.observation_reason import ObservationReason, map_transition_event
-
-    event_type, severity = map_transition_event(DeviceOperationalState.offline, ObservationReason.operator_stopped)
-    assert event_type is DeviceEventType.auto_stopped
-    assert severity == "info"
-
-
 async def test_operator_stop_records_no_auto_stopped_device_event(db_session: AsyncSession, db_host: Host) -> None:
     """Operator stops no longer write an auto_stopped DeviceEvent — the stop is already
     visible as desired_state_changed rows from the reconciler (plan 4b behavior change #2)."""

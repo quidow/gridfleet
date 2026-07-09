@@ -51,15 +51,13 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     assert any(r.event_type is DeviceEventType.maintenance_entered for r in rows)
 
 
-async def test_enter_maintenance_bus_event_reason_is_maintenance_entered(
+async def test_enter_maintenance_bus_event_is_uncaused(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """F4: the device.operational_state_changed bus event for a maintenance entry must carry a
-    ``maintenance_entered`` reason — not the stop-intent's ``auto_stopped`` (or a not-ready
-    ``disconnected``). The live SSE signal must agree with the durable
-    ``maintenance_entered`` audit row, otherwise real-time consumers see a node-stop where an
-    operator entered maintenance."""
+    """The device.operational_state_changed bus event for a maintenance entry carries the
+    from/to states only — transitions are uncaused; the durable maintenance_entered audit
+    row (written by the service) carries the cause."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -83,7 +81,7 @@ async def test_enter_maintenance_bus_event_reason_is_maintenance_entered(
     assert op_calls, "expected a device.operational_state_changed bus event for maintenance entry"
     payload = op_calls[-1].args[2]
     assert payload["new_operational_state"] == DeviceOperationalState.maintenance.value
-    assert payload.get("reason") == "maintenance_entered", payload
+    assert "reason" not in payload
 
 
 async def test_enter_maintenance_records_row_with_operator_reason_even_when_busy(
