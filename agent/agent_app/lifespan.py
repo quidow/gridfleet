@@ -11,7 +11,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from agent_app.appium import appium_mgr
@@ -23,11 +23,15 @@ from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.pack.adapter_loader import load_adapter
 from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.discovery import pack_device_properties
 from agent_app.pack.host_identity import HostIdentity
+from agent_app.pack.manifest import resolve_desired_platform
+from agent_app.pack.router import run_device_health_probe, run_device_telemetry_probe
 from agent_app.pack.runtime import AppiumRuntimeManager
 from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
+from agent_app.probes import ProbeLoop
 from agent_app.registration import RegistrationService
 from agent_app.registration import manager_auth as _manager_auth  # tests patch agent_app.lifespan._manager_auth
 from agent_app.status_push import StatusPushClient, StatusPushLoop
@@ -127,6 +131,20 @@ class HttpNodeStateClient(NodeStateClient):
         return resp.json()  # type: ignore[no-any-return]
 
 
+class HttpProbeTargetsClient:
+    def __init__(self, base_url: str, host_identity: HostIdentity) -> None:
+        self._base = base_url.rstrip("/")
+        self._host_identity = host_identity
+
+    async def fetch(self, host_id: str) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"params": {"host_id": host_id}, "timeout": 15.0}
+        if (auth := _manager_auth()) is not None:
+            kwargs["auth"] = auth
+        resp = await get_shared_http_client().get(f"{self._base}/agent/devices/probe-targets", **kwargs)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+
 def _build_adapter_loader(
     backend_url: str,
     adapter_registry: AdapterRegistry,
@@ -210,6 +228,11 @@ async def _start_status_loop_when_ready(host_identity: HostIdentity, loop: Statu
     await loop.run_forever()
 
 
+async def _start_probe_loop_when_ready(host_identity: HostIdentity, loop: ProbeLoop) -> None:
+    await host_identity.wait()
+    await loop.run_forever()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     host_identity = HostIdentity()
@@ -229,6 +252,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pack_state_loop = None
     app.state.node_state_loop = None
     app.state.status_push_loop = None
+    app.state.probe_loop = None
     version_guidance = VersionGuidanceStore()
     app.state.version_guidance = version_guidance
 
@@ -264,6 +288,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     status_loop: StatusPushLoop | None = None
     status_task: asyncio.Task[None] | None = None
+    probe_loop: ProbeLoop | None = None
+    probe_task: asyncio.Task[None] | None = None
     if backend_url:
         status_loop = StatusPushLoop(
             client=HttpStatusPushClient(backend_url),
@@ -271,11 +297,75 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             capabilities_cache=capabilities_cache,
             host_identity=host_identity,
             pack_status=lambda: app.state.pack_state_loop.latest_status() if app.state.pack_state_loop else None,
+            probe_results=lambda: probe_loop.latest_results() if probe_loop else None,
             push_interval=agent_settings.core.status_push_interval_sec,
         )
         app.state.status_push_loop = status_loop
         status_task = asyncio.create_task(_start_status_loop_when_ready(host_identity, status_loop))
         status_task.add_done_callback(_watchdog("status_push_loop"))
+
+        async def _resolve_probe_context(pack_id: str, platform_id: str) -> tuple[Any, str] | None:
+            pack_state_loop = app.state.pack_state_loop
+            desired = pack_state_loop.latest_desired_packs if pack_state_loop else None
+            if desired is None:
+                return None
+            platform = resolve_desired_platform(desired, pack_id=pack_id, platform_id=platform_id)
+            release = next((pack.release for pack in desired if pack.id == pack_id), None)
+            if platform is None or release is None:
+                return None
+            return platform, release
+
+        async def _health_probe(**kwargs: object) -> dict[str, Any] | None:
+            probe_kwargs = cast("dict[str, Any]", kwargs)
+            context = await _resolve_probe_context(probe_kwargs["pack_id"], probe_kwargs["platform_id"])
+            if context is None:
+                return None
+            platform, release = context
+            return await run_device_health_probe(
+                adapter_registry=adapter_registry,
+                platform=platform,
+                release=release,
+                **probe_kwargs,
+            )
+
+        async def _telemetry_probe(**kwargs: object) -> dict[str, Any] | None:
+            probe_kwargs = cast("dict[str, Any]", kwargs)
+            context = await _resolve_probe_context(probe_kwargs["pack_id"], probe_kwargs["platform_id"])
+            if context is None:
+                return None
+            _platform, release = context
+            return await run_device_telemetry_probe(
+                adapter_registry=adapter_registry,
+                pack_id=probe_kwargs["pack_id"],
+                release=release,
+                identity_value=probe_kwargs["identity_value"],
+                connection_target=probe_kwargs["connection_target"],
+            )
+
+        async def _properties_probe(**kwargs: object) -> dict[str, Any] | None:
+            probe_kwargs = cast("dict[str, Any]", kwargs)
+            desired = app.state.pack_state_loop.latest_desired_packs if app.state.pack_state_loop else None
+            return await pack_device_properties(
+                probe_kwargs["connection_target"],
+                probe_kwargs["pack_id"],
+                desired,
+                adapter_registry=adapter_registry,
+                host_id=host_identity.get() or "",
+                identity_value=probe_kwargs.get("identity_value"),
+            )
+
+        probe_loop = ProbeLoop(
+            roster_client=HttpProbeTargetsClient(backend_url, host_identity),
+            manager=appium_mgr,
+            host_identity=host_identity,
+            health_probe=_health_probe,
+            telemetry_probe=_telemetry_probe,
+            properties_probe=_properties_probe,
+            on_results=status_loop.wake,
+        )
+        app.state.probe_loop = probe_loop
+        probe_task = asyncio.create_task(_start_probe_loop_when_ready(host_identity, probe_loop))
+        probe_task.add_done_callback(_watchdog("probe_loop"))
 
     pack_task: asyncio.Task[None] | None = None
     if backend_url:
@@ -307,6 +397,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             pack_task.cancel()
         if status_task is not None:
             status_task.cancel()
+        if probe_task is not None:
+            probe_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
         await appium_mgr.shutdown()

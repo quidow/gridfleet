@@ -38,6 +38,7 @@ class StatusPushLoop:
     capabilities_cache: CapabilitiesCache
     host_identity: HostIdentity
     pack_status: Callable[[], dict[str, Any] | None]
+    probe_results: Callable[[], dict[str, Any] | None] = lambda: None
     push_interval: float = 10.0
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
@@ -46,7 +47,7 @@ class StatusPushLoop:
         if host_id is None:
             raise RuntimeError("StatusPushLoop iteration ran before host identity was assigned")
         capabilities = await self.capabilities_cache.get_or_refresh()
-        return {
+        payload = {
             "host_id": host_id,
             "agent_version": __version__,
             "capabilities": capabilities,  # same snapshot registration sends
@@ -55,6 +56,10 @@ class StatusPushLoop:
             "host_telemetry": await get_host_telemetry(),
             "packs": self.pack_status(),
         }
+        sections = self.probe_results()
+        if sections:
+            payload.update(sections)
+        return payload
 
     def wake(self) -> None:
         self._wake_event.set()

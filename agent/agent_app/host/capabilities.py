@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CAPABILITIES_REFRESH_INTERVAL_SEC = 600
-ORCHESTRATION_CONTRACT_VERSION = 5
+ORCHESTRATION_CONTRACT_VERSION = 6
 _DEFAULT_CAPABILITIES: dict[str, Any] = {
     "platforms": [],
     "tools": {},

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Body, Query, status
 
@@ -36,12 +36,90 @@ from agent_app.pack.schemas import (
     PackDoctorResponse,
 )
 
+if TYPE_CHECKING:
+    from agent_app.pack.adapter_registry import AdapterRegistry
+    from agent_app.pack.manifest import DesiredPlatform
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
 PackIdQuery = Annotated[str, Query(min_length=1, pattern=PACK_ID_PATTERN)]
 PlatformIdQuery = Annotated[str, Query(min_length=1, pattern=PLATFORM_ID_PATTERN)]
+
+
+async def run_device_health_probe(
+    *,
+    adapter_registry: AdapterRegistry | None,
+    platform: DesiredPlatform,
+    release: str,
+    pack_id: str,
+    platform_id: str,
+    connection_target: str,
+    device_type: str,
+    connection_type: str | None = None,
+    ip_address: str | None = None,
+    allow_boot: bool = False,
+    headless: bool | None = None,
+    ip_ping_timeout_sec: float | None = None,
+    ip_ping_count: int | None = None,
+    identity_value: str | None = None,
+    claimed_ports: dict[str, int] | None = None,
+    has_live_session: bool | None = None,
+) -> dict[str, Any]:
+    """Run the pack health hook with the same context used by the HTTP route."""
+    del platform, headless
+    if adapter_registry is not None:
+        payload = await adapter_health_check(
+            adapter_registry=adapter_registry,
+            pack_id=pack_id,
+            pack_release=release,
+            ctx=HealthCtx(
+                device_identity_value=connection_target,
+                allow_boot=allow_boot,
+                platform_id=platform_id,
+                device_type=device_type,
+                connection_type=connection_type,
+                ip_address=ip_address,
+                ip_ping_timeout_sec=ip_ping_timeout_sec,
+                ip_ping_count=ip_ping_count,
+                expected_identity_value=identity_value,
+                claimed_ports=claimed_ports,
+                has_live_session=has_live_session,
+            ),
+        )
+        if payload is not None:
+            return payload
+    return {
+        "healthy": None,
+        "checks": [
+            {
+                "check_id": "adapter_unavailable",
+                "ok": False,
+                "message": f"Adapter not loaded for pack {pack_id}:{platform_id}",
+            }
+        ],
+    }
+
+
+async def run_device_telemetry_probe(
+    *,
+    adapter_registry: AdapterRegistry | None,
+    pack_id: str,
+    release: str,
+    identity_value: str,
+    connection_target: str,
+) -> dict[str, Any] | None:
+    """Run the pack telemetry hook with the same dispatch as the HTTP route."""
+    if adapter_registry is None:
+        return None
+    return await adapter_telemetry(
+        adapter_registry=adapter_registry,
+        pack_id=pack_id,
+        pack_release=release,
+        identity_value=identity_value,
+        connection_target=connection_target,
+    )
 
 
 def _parse_claimed_ports(raw: str | None) -> dict[str, int] | None:
@@ -139,37 +217,24 @@ async def pack_device_health_route(
     has_live_session: Annotated[bool | None, Query()] = None,
 ) -> dict[str, Any]:
     _platform_def, release = platform
-    if adapter_registry is not None:
-        payload = await adapter_health_check(
-            adapter_registry=adapter_registry,
-            pack_id=pack_id,
-            pack_release=release,
-            ctx=HealthCtx(
-                device_identity_value=connection_target,
-                allow_boot=allow_boot,
-                platform_id=platform_id,
-                device_type=device_type,
-                connection_type=connection_type,
-                ip_address=ip_address,
-                ip_ping_timeout_sec=ip_ping_timeout_sec,
-                ip_ping_count=ip_ping_count,
-                expected_identity_value=identity_value,
-                claimed_ports=_parse_claimed_ports(claimed_ports),
-                has_live_session=has_live_session,
-            ),
-        )
-        if payload is not None:
-            return payload
-    return {
-        "healthy": None,
-        "checks": [
-            {
-                "check_id": "adapter_unavailable",
-                "ok": False,
-                "message": f"Adapter not loaded for pack {pack_id}:{platform_id}",
-            }
-        ],
-    }
+    return await run_device_health_probe(
+        adapter_registry=adapter_registry,
+        platform=_platform_def,
+        release=release,
+        pack_id=pack_id,
+        platform_id=platform_id,
+        connection_target=connection_target,
+        device_type=device_type,
+        connection_type=connection_type,
+        ip_address=ip_address,
+        allow_boot=allow_boot,
+        headless=headless,
+        ip_ping_timeout_sec=ip_ping_timeout_sec,
+        ip_ping_count=ip_ping_count,
+        identity_value=identity_value,
+        claimed_ports=_parse_claimed_ports(claimed_ports),
+        has_live_session=has_live_session,
+    )
 
 
 @router.get(
@@ -192,16 +257,12 @@ async def pack_device_telemetry_route(
     ip_address: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     _platform_def, release = platform
-    telemetry = (
-        await adapter_telemetry(
-            adapter_registry=adapter_registry,
-            pack_id=pack_id,
-            pack_release=release,
-            identity_value=connection_target,
-            connection_target=connection_target,
-        )
-        if adapter_registry is not None
-        else None
+    telemetry = await run_device_telemetry_probe(
+        adapter_registry=adapter_registry,
+        pack_id=pack_id,
+        release=release,
+        identity_value=connection_target,
+        connection_target=connection_target,
     )
     if telemetry is None:
         raise http_exc(
