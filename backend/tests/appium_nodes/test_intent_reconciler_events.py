@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState
-from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.intent_types import GRID_ROUTING, RECOVERY, IntentRegistration
 from tests.appium_nodes.test_intent_reconciler import _seed_node
-from tests.helpers import create_device
+from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -20,32 +20,20 @@ if TYPE_CHECKING:
 
 
 async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_host: Host) -> None:
+    """A cooldown fact flips accepting_new_sessions and recovery_allowed; the
+    reconciler must emit desired_state_changed events with the decider reasons."""
     device = await create_device(db_session, host_id=db_host.id, name="events")
     node = await _seed_node(db_session, device.id)
     node.desired_state = AppiumDesiredState.running
     node.desired_port = 4723
-    await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source="grid:block",
-                axis=GRID_ROUTING,
-                payload={"accepting_new_sessions": False, "priority": 80},
-            ),
-        ],
-    )
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source="recovery:block",
-                axis=RECOVERY,
-                payload={"allowed": False, "priority": 80, "reason": "blocked by test"},
-            ),
-        ],
-    )
+    await create_reserved_run(db_session, name="events run", devices=[device])
+    reservation = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    reservation.excluded = True
+    reservation.exclusion_reason = "blocked by test"
+    reservation.excluded_at = datetime.now(UTC)
+    reservation.excluded_until = datetime.now(UTC) + timedelta(minutes=5)
     await db_session.commit()
 
     await reconcile_device(db_session, device.id, publisher=event_bus)
@@ -69,7 +57,7 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
         "old_value": True,
         "new_value": False,
         "caller": "intent_reconciler",
-        "reason": "grid:block intent (priority 80)",
+        "reason": "reservation cooldown",
     } in details
     assert {
         "field": "recovery_allowed",

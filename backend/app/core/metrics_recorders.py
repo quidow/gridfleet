@@ -168,10 +168,6 @@ INTENT_RECONCILER_EVALUATIONS = Counter(
     "intent_reconciler_evaluations_total",
     "Total device intent reconciliation evaluations.",
 )
-INTENT_RECONCILER_CONFLICTS = Counter(
-    "intent_reconciler_conflicts_total",
-    "Total same-priority device intent conflicts.",
-)
 
 
 def record_http_request(

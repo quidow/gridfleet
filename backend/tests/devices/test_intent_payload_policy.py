@@ -17,10 +17,8 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
-from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceReservation
-from app.devices.services.intent_synthesis import synthesize_fact_intents
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
@@ -200,19 +198,12 @@ async def test_cooldown_intent_payload_shape(
         reason=cooldown_reason,
         ttl_seconds=120,
     )
-    assert not escalated  # non-escalation path registers the intents we want
+    assert not escalated  # non-escalation path records the cooldown we want
 
-    # --- cooldown:grid:{run_id} (the warm soft-gate lever, now synthesized in-memory) ---
-    synthesized = await synthesize_fact_intents(db_session, device, None, [], now_utc())
-    grid_intent = next(i for i in synthesized if i.source == f"cooldown:grid:{run.id}")
-    grid_payload = grid_intent.payload
-
-    assert grid_payload.get("accepting_new_sessions") is False, (
-        f"cooldown:grid intent must set accepting_new_sessions=False; got {grid_payload!r}"
-    )
-    assert "priority" in grid_payload
-
-    # --- cooldown_count + exclusion_reason now live on the DeviceReservation row ---
+    # Cooldown is now a fact read from the reservation row, not a synthesized intent.
+    # The grid-routing lever (accepting_new_sessions=False under cooldown) is proven by
+    # tests/devices/test_decision.py::test_grid_cooldown_keeps_run_but_blocks_sessions.
+    # --- cooldown_count + exclusion_reason live on the DeviceReservation row ---
     reservation = (
         await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
     ).scalar_one()

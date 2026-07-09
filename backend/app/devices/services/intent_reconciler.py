@@ -21,17 +21,19 @@ from app.devices.models import (
     Device,
     DeviceEventType,
     DeviceIntent,
+    DeviceReservation,
+)
+from app.devices.services.decision import (
+    DecisionFacts,
+    RecoveryDecision,
+    decide_grid_routing,
+    decide_node_process,
+    decide_recovery,
+    map_node_process_decision,
+    parse_command,
 )
 from app.devices.services.event import record_event
-from app.devices.services.intent_evaluator import (
-    RecoveryDecision,
-    evaluate_grid_routing,
-    evaluate_node_process,
-    evaluate_recovery,
-    map_node_process_decision,
-)
-from app.devices.services.intent_synthesis import synthesize_fact_intents
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY
+from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
 from app.sessions.live_session_predicate import device_has_live_session
@@ -44,7 +46,6 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.appium_nodes.models import AppiumNode
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.devices.services.observation_reason import ObservationReason
@@ -151,20 +152,36 @@ async def _reconcile_all_devices(
         )
 
 
-async def _load_intents_for_evaluation(
-    db: AsyncSession, device: Device, node: AppiumNode, now: datetime
-) -> list[DeviceIntent]:
-    """Stored intents merged with the fact-derived intents synthesized for this device."""
-    stored = (
-        (
-            await db.execute(
-                select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
-            )
+async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime) -> DecisionFacts:
+    """Facts the desired-state deciders fold in. One query (reservation); the
+    rest reads the already-locked device row."""
+    entry = (
+        await db.execute(
+            select(DeviceReservation)
+            .where(DeviceReservation.device_id == device.id, DeviceReservation.released_at.is_(None))
+            .order_by(DeviceReservation.created_at.desc())
+            .limit(1)
         )
-        .scalars()
-        .all()
+    ).scalar_one_or_none()
+    reservation_run_id = None
+    cooldown_active = False
+    cooldown_reason: str | None = None
+    if entry is not None and not (entry.excluded and entry.excluded_until is None):
+        # An indefinite (health-failure) exclusion removes the device from run
+        # routing entirely; a timed exclusion (cooldown) keeps the run bound
+        # but blocks new sessions — both verbatim from the retired synthesis.
+        reservation_run_id = entry.run_id
+        if entry.excluded and entry.excluded_until is not None and entry.excluded_until > now:
+            cooldown_active = True
+            cooldown_reason = entry.exclusion_reason
+    return DecisionFacts(
+        in_maintenance=in_maintenance(device),
+        device_checks_unhealthy=device.device_checks_healthy is False,
+        in_service=device_in_service(device),
+        reservation_run_id=reservation_run_id,
+        cooldown_active=cooldown_active,
+        cooldown_reason=cooldown_reason,
     )
-    return [*stored, *(await synthesize_fact_intents(db, device, node, list(stored), now))]
 
 
 async def reconcile_device(
@@ -204,26 +221,21 @@ async def reconcile_device(
         return False
 
     now = now_utc()
-    intents = await _load_intents_for_evaluation(db, device, node, now)
-    active_node_intents = [
-        intent
-        for intent in intents
-        if intent.axis == NODE_PROCESS and (intent.expires_at is None or intent.expires_at > now)
-    ]
-    if not active_node_intents and device_in_service(device):
-        intents = [
-            *intents,
-            DeviceIntent(
-                device_id=device_id,
-                source="baseline:idle",
-                axis=NODE_PROCESS,
-                payload={"action": "start", "priority": PRIORITY_IDLE, "desired_port": node.port},
-            ),
-        ]
+    stored = (
+        (
+            await db.execute(
+                select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    commands = [c for c in (parse_command(row, now) for row in stored) if c is not None]
+    facts = await gather_decision_facts(db, device, now)
 
-    node_decision = evaluate_node_process([intent for intent in intents if intent.axis == NODE_PROCESS], now)
-    grid_decision = evaluate_grid_routing([intent for intent in intents if intent.axis == GRID_ROUTING], now)
-    recovery_decision = evaluate_recovery([intent for intent in intents if intent.axis == RECOVERY], now)
+    node_decision = decide_node_process(commands, facts)
+    grid_decision = decide_grid_routing(facts)
+    recovery_decision = decide_recovery(commands, facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
     # Universal session-safety invariant: only an explicit hard stop
     # (``stop_mode == "hard"`` — operator force-release, bulk operator stop,
