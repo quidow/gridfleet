@@ -2,6 +2,22 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.31.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.30.0...gridfleet-agent-v0.31.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **main:** prune zero-user driver-pack verticals ([#771](https://github.com/quidow/gridfleet/issues/771))
+
+### Features
+
+* **main:** prune zero-user driver-pack verticals ([#771](https://github.com/quidow/gridfleet/issues/771)) ([064c67f](https://github.com/quidow/gridfleet/commit/064c67f4359e67819dde87ee452417bc72090c9e))
+
+
+### Dependencies
+
+* **deps:** bump uvicorn[standard] ([#766](https://github.com/quidow/gridfleet/issues/766)) ([2b66fdd](https://github.com/quidow/gridfleet/commit/2b66fdd53914ecc9f89f53cce80da0a82706efad))
+
 ## [0.30.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.29.5...gridfleet-agent-v0.30.0) (2026-07-08)
 
 
