@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from agent_app.appium.schemas import (
     AppiumLogsResponse,
-    AppiumReconfigureResponse,
-    AppiumStartResponse,
     AppiumStatusResponse,
-    AppiumStopResponse,
 )
 from agent_app.host.schemas import HealthResponse, HostTelemetryResponse
 from agent_app.pack.schemas import (
@@ -18,20 +15,6 @@ from agent_app.pack.schemas import (
     PackDeviceTelemetryResponse,
 )
 from agent_app.tools.schemas import ToolsStatusResponse
-
-
-def test_appium_start_response_accepts_route_shape() -> None:
-    AppiumStartResponse.model_validate({"pid": 1234, "port": 4723, "connection_target": "device-1"})
-
-
-def test_appium_reconfigure_response_accepts_route_shape() -> None:
-    AppiumReconfigureResponse.model_validate(
-        {"port": 4723, "accepting_new_sessions": True, "stop_pending": False, "grid_run_id": None}
-    )
-
-
-def test_appium_stop_response_accepts_route_shape() -> None:
-    AppiumStopResponse.model_validate({"stopped": True, "port": 4723})
 
 
 def test_appium_status_response_accepts_arbitrary_status_dict() -> None:

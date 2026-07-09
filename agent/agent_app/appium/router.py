@@ -7,27 +7,12 @@ from typing import Any
 from fastapi import APIRouter, Query, Request, status
 
 from agent_app.appium.dependencies import AppiumMgrDep
-from agent_app.appium.exceptions import (
-    AlreadyRunningError,
-    DeviceNotFoundError,
-    InvalidStartPayloadError,
-    PortOccupiedError,
-    RuntimeMissingError,
-    RuntimeNotInstalledError,
-    StartupTimeoutError,
-)
 from agent_app.appium.schemas import (
     AppiumLogsResponse,
-    AppiumReconfigureRequest,
-    AppiumReconfigureResponse,
-    AppiumStartRequest,
-    AppiumStartResponse,
     AppiumStatusResponse,
-    AppiumStopRequest,
-    AppiumStopResponse,
     NodeRefreshResponse,
 )
-from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
+from agent_app.error_codes import ErrorEnvelope
 
 router = APIRouter(prefix="/agent/appium", tags=["appium"])
 node_state_router = APIRouter(prefix="/agent/appium-nodes", tags=["appium-nodes"])
@@ -45,104 +30,6 @@ async def refresh_node_state(request: Request) -> dict[str, bool]:
     if loop is not None:
         loop.wake()
     return {"accepted": True}
-
-
-@router.post(
-    "/start",
-    response_model=AppiumStartResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Start a managed Appium process for a device",
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"model": ErrorEnvelope, "description": "INVALID_PAYLOAD"},
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
-        status.HTTP_409_CONFLICT: {"model": ErrorEnvelope, "description": "PORT_OCCUPIED or ALREADY_RUNNING"},
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorEnvelope, "description": "INTERNAL_ERROR"},
-        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorEnvelope, "description": "RUNTIME_MISSING"},
-        status.HTTP_504_GATEWAY_TIMEOUT: {"model": ErrorEnvelope, "description": "STARTUP_TIMEOUT"},
-    },
-)
-async def start_appium(req: AppiumStartRequest, mgr: AppiumMgrDep) -> dict[str, Any]:
-    try:
-        info = await mgr.start(
-            connection_target=req.connection_target,
-            platform_id=req.platform_id,
-            port=req.port,
-            extra_caps=req.extra_caps,
-            accepting_new_sessions=req.accepting_new_sessions,
-            stop_pending=req.stop_pending,
-            grid_run_id=req.grid_run_id,
-            session_override=req.session_override,
-            device_type=req.device_type,
-            ip_address=req.ip_address,
-            headless=req.headless,
-            pack_id=req.pack_id,
-            appium_platform_name=req.appium_platform_name,
-            appium_env=req.appium_env,
-            insecure_features=req.insecure_features,
-            lifecycle_actions=req.lifecycle_actions,
-            connection_behavior=req.connection_behavior,
-        )
-    except PortOccupiedError as e:
-        raise http_exc(status_code=409, code=AgentErrorCode.PORT_OCCUPIED, message=str(e)) from e
-    except AlreadyRunningError as e:
-        raise http_exc(status_code=409, code=AgentErrorCode.ALREADY_RUNNING, message=str(e)) from e
-    except StartupTimeoutError as e:
-        raise http_exc(
-            status_code=504,
-            code=AgentErrorCode.STARTUP_TIMEOUT,
-            message=str(e),
-            headers={"Retry-After": "5"},
-        ) from e
-    except (RuntimeMissingError, RuntimeNotInstalledError) as e:
-        raise http_exc(
-            status_code=503,
-            code=AgentErrorCode.RUNTIME_MISSING,
-            message=str(e),
-            headers={"Retry-After": "30"},
-        ) from e
-    except DeviceNotFoundError as e:
-        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(e)) from e
-    except InvalidStartPayloadError as e:
-        raise http_exc(status_code=400, code=AgentErrorCode.INVALID_PAYLOAD, message=str(e)) from e
-    return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
-
-
-@router.post(
-    "/{port}/reconfigure",
-    response_model=AppiumReconfigureResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Toggle accepting-sessions / drain-pending / run scope",
-    responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
-    },
-)
-async def reconfigure_appium(port: int, req: AppiumReconfigureRequest, mgr: AppiumMgrDep) -> dict[str, Any]:
-    try:
-        await mgr.reconfigure(
-            port,
-            accepting_new_sessions=req.accepting_new_sessions,
-            stop_pending=req.stop_pending,
-            grid_run_id=req.grid_run_id,
-        )
-    except DeviceNotFoundError as exc:
-        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(exc)) from exc
-    return {
-        "port": port,
-        "accepting_new_sessions": req.accepting_new_sessions,
-        "stop_pending": req.stop_pending,
-        "grid_run_id": req.grid_run_id,
-    }
-
-
-@router.post(
-    "/stop",
-    response_model=AppiumStopResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Stop a managed Appium process by port (idempotent)",
-)
-async def stop_appium(req: AppiumStopRequest, mgr: AppiumMgrDep) -> dict[str, Any]:
-    await mgr.stop(req.port)
-    return {"stopped": True, "port": req.port}
 
 
 @router.get(
