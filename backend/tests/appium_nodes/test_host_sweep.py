@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
@@ -8,7 +9,10 @@ from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.appium_nodes.services.host_sweep import SweepStage, run_host_sweep_once, stage_due
 from app.appium_nodes.services.reconciler import ReconcilerService
+from app.core.leader import state_store as control_plane_state_store
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceOperationalState
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -44,7 +48,7 @@ def _reconciler_service(
     )
 
 
-async def test_sweep_converges_from_ping_payload_without_second_fetch(
+async def test_sweep_converges_from_stored_snapshot_without_fetch(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
@@ -66,24 +70,28 @@ async def test_sweep_converges_from_ping_payload_without_second_fetch(
             desired_port=4723,
         )
     )
+    # The push handler already stored this snapshot; the sweep must converge from
+    # it without a second /agent/health fetch.
+    await control_plane_state_store.set_value(
+        db_session,
+        HOST_STATUS_NAMESPACE,
+        str(db_host.id),
+        {
+            "received_at": now_utc().isoformat(),
+            "payload": {
+                "appium_processes": {
+                    "running_nodes": [
+                        {"port": 4723, "pid": 123, "connection_target": "host-sweep-target", "platform_id": "android"}
+                    ]
+                }
+            },
+        },
+    )
     await db_session.commit()
 
-    payload = {
-        "appium_processes": {
-            "running_nodes": [
-                {"port": 4723, "pid": 123, "connection_target": "host-sweep-target", "platform_id": "android"}
-            ]
-        }
-    }
-    ping = HeartbeatPingResult(
-        outcome=HeartbeatOutcome.success,
-        payload=payload,
-        duration_ms=1,
-        client_mode=ClientMode.pooled,
-        http_status=200,
-        error_category=None,
-    )
-    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=ping))
+    # No fetch drives aliveness or convergence anymore; the probe path still dials
+    # the agent, so stub it to keep the test off the network.
+    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=_alive_ping()))
     monkeypatch.setattr(reconciler_module, "_touch_last_observed", AsyncMock())
     converge = AsyncMock()
     monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
@@ -111,16 +119,10 @@ async def test_sweep_skips_convergence_for_dead_host(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Dead = no status push within the offline window; recency, not a failed ping.
+    db_host.last_heartbeat = now_utc() - timedelta(minutes=10)
     await db_session.commit()
-    ping = HeartbeatPingResult(
-        outcome=HeartbeatOutcome.timeout,
-        payload=None,
-        duration_ms=1,
-        client_mode=ClientMode.pooled,
-        http_status=None,
-        error_category="Timeout",
-    )
-    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=ping))
+    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=_dead_ping()))
     reconcile_host = AsyncMock()
     monkeypatch.setattr(ReconcilerService, "reconcile_host", reconcile_host)
     settings = FakeSettingsReader()
@@ -177,19 +179,33 @@ async def _run_sweep_with_recorders(
     *,
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
     calls: list[str],
     cycle_index: int,
     alive: bool = True,
     reconcile_raises: bool = False,
     connectivity_raises: bool = False,
 ) -> None:
-    """Drive one sweep with reconcile_host / check_host_nodes / connectivity recorders."""
+    """Drive one sweep with reconcile_host / check_host_nodes / connectivity recorders.
+
+    Aliveness derives from status-push recency: an alive host gets a fresh stored
+    snapshot (so convergence has a payload to consume); a dead host gets a stale
+    ``last_heartbeat``.
+    """
+    if alive:
+        await control_plane_state_store.set_value(
+            db_session,
+            HOST_STATUS_NAMESPACE,
+            str(db_host.id),
+            {"received_at": now_utc().isoformat(), "payload": {"appium_processes": {}, "host_telemetry": {}}},
+        )
+    else:
+        db_host.last_heartbeat = now_utc() - timedelta(minutes=10)
     # Commit so the host is visible to the fresh sessions _sweep_host opens.
     await db_session.commit()
     settings = FakeSettingsReader()
-    monkeypatch.setattr(
-        heartbeat_module, "_ping_agent", AsyncMock(return_value=_alive_ping() if alive else _dead_ping())
-    )
+    # The probe path still dials the agent on its cadence; stub it off the network.
+    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=_alive_ping()))
 
     async def _record_reconcile(**_kwargs: object) -> None:
         calls.append("reconcile_host")
@@ -231,7 +247,12 @@ async def test_node_health_stage_runs_on_due_cycle_after_convergence(
     calls: list[str] = []
     # Cycle 2: node health due (divisor 2), connectivity not (divisor 4) — isolates node health.
     await _run_sweep_with_recorders(
-        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=2
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=2,
     )
     assert calls == ["reconcile_host", "check_host_nodes"]
 
@@ -245,7 +266,12 @@ async def test_node_health_stage_skipped_on_off_cycle(
     calls: list[str] = []
     # Default 30s/15s settings → divisor 2 → node health only on even cycles.
     await _run_sweep_with_recorders(
-        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=1
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
     )
     assert "reconcile_host" in calls
     assert "check_host_nodes" not in calls
@@ -260,7 +286,13 @@ async def test_node_health_stage_skipped_for_dead_host(
     calls: list[str] = []
     # Cycle 2: connectivity not due (divisor 4), so a dead host leaves calls empty.
     await _run_sweep_with_recorders(
-        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=2, alive=False
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=2,
+        alive=False,
     )
     assert calls == []
 
@@ -278,6 +310,7 @@ async def test_node_health_stage_runs_even_when_convergence_fails(
         monkeypatch,
         db_session=db_session,
         db_session_maker=db_session_maker,
+        db_host=db_host,
         calls=calls,
         cycle_index=2,
         reconcile_raises=True,
@@ -293,7 +326,12 @@ async def test_connectivity_stage_runs_after_fanout_on_due_cycle(
 ) -> None:
     calls: list[str] = []
     await _run_sweep_with_recorders(
-        monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=0
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=0,
     )
     # Global stage runs strictly after every per-host stage.
     assert calls[-1] == "run_connectivity_pass"
@@ -309,7 +347,12 @@ async def test_connectivity_stage_skipped_on_off_cycles(
     for cycle_index, expected in ((1, False), (2, False), (3, False), (4, True)):
         calls: list[str] = []
         await _run_sweep_with_recorders(
-            monkeypatch, db_session=db_session, db_session_maker=db_session_maker, calls=calls, cycle_index=cycle_index
+            monkeypatch,
+            db_session=db_session,
+            db_session_maker=db_session_maker,
+            db_host=db_host,
+            calls=calls,
+            cycle_index=cycle_index,
         )
         assert ("run_connectivity_pass" in calls) is expected
 
@@ -369,8 +412,42 @@ async def test_connectivity_stage_failure_does_not_fail_the_cycle(
         monkeypatch,
         db_session=db_session,
         db_session_maker=db_session_maker,
+        db_host=db_host,
         calls=calls,
         cycle_index=0,
         connectivity_raises=True,
     )
     assert "run_connectivity_pass" in calls
+
+
+async def test_probe_stage_gated_by_partition_probe_interval(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The network-partition probe dials the agent only on its cadence cycles.
+    Default 60s partition_probe / 15s base → divisor 4 → probe on cycles 0 and 4."""
+    await db_session.commit()  # db_host is fresh + online → alive by recency
+    settings = FakeSettingsReader()
+    probe_ips: list[str] = []
+
+    async def _record_ping(ip: str, port: int, **_kwargs: object) -> HeartbeatPingResult:
+        probe_ips.append(ip)
+        return _alive_ping()
+
+    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(side_effect=_record_ping))
+    monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock())
+
+    for cycle_index, expected in ((0, True), (1, False), (2, False), (3, False), (4, True)):
+        probe_ips.clear()
+        await run_host_sweep_once(
+            db_session,
+            heartbeat=_heartbeat_service(settings=settings, session_factory=db_session_maker),
+            reconciler=_reconciler_service(settings=settings, session_factory=db_session_maker),
+            node_health=Mock(check_host_nodes=AsyncMock()),
+            settings=settings,
+            session_factory=db_session_maker,
+            cycle_index=cycle_index,
+        )
+        assert (db_host.ip in probe_ips) is expected

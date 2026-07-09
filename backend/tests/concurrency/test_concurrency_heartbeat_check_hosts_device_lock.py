@@ -1,14 +1,14 @@
 import asyncio
 import contextlib
+from datetime import timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import select
 
-from app.appium_nodes.services import heartbeat
 from app.appium_nodes.services.heartbeat import HeartbeatService
-from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
@@ -38,6 +38,9 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
         operational_state=DeviceOperationalState.available,
     )
     device_id = device.id
+    # Offline now derives from status-push recency: no push within the offline window.
+    db_host.last_heartbeat = now_utc() - timedelta(minutes=10)
+    await db_session.commit()
 
     threshold = int(settings_service.get("general.max_missed_heartbeats"))
 
@@ -48,7 +51,7 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
     # The host-offline write now derives through update_device_checks -> reconcile ->
     # apply_derived_state, which calls set_operational_state in app.devices.services.state
     # (heartbeat no longer calls it directly). The row lock is still acquired by
-    # _apply_host_ping_result's lock_devices before that derivation, so gate on the
+    # evaluate_host's lock_devices before that derivation, so gate on the
     # state-module call to prove the lock window covers the offline write.
     original_set_operational_state = device_state.set_operational_state
 
@@ -75,20 +78,8 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
             publisher=publisher,
         )
 
-    _dead_result = HeartbeatPingResult(
-        outcome=HeartbeatOutcome.connect_error,
-        payload=None,
-        duration_ms=0,
-        client_mode=ClientMode.pooled,
-        http_status=None,
-        error_category=None,
-    )
-
     async def heartbeat_caller() -> None:
-        with (
-            patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=_dead_result)),
-            patch.object(device_state, "set_operational_state", new=gated_set_operational_state),
-        ):
+        with patch.object(device_state, "set_operational_state", new=gated_set_operational_state):
             async with db_session_maker() as db:
                 svc = HeartbeatService(
                     publisher=Mock(),

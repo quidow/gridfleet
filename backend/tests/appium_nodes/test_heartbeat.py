@@ -1,9 +1,10 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+import structlog.testing
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -16,49 +17,20 @@ from app.appium_nodes.services.heartbeat import (
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.core.leader import state_store as control_plane_state_store
+from app.core.metrics_recorders import HEARTBEAT_PING_TOTAL
+from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
 from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus, OSType
-from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
-from tests.helpers import run_one_heartbeat_cycle
+from tests.helpers import test_event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-
-def _ok_result(payload: dict[str, Any]) -> HeartbeatPingResult:
-    return HeartbeatPingResult(
-        outcome=HeartbeatOutcome.success,
-        payload=payload,
-        duration_ms=0,
-        client_mode=ClientMode.pooled,
-        http_status=200,
-        error_category=None,
-    )
-
-
-def _dead_result() -> HeartbeatPingResult:
-    return HeartbeatPingResult(
-        outcome=HeartbeatOutcome.connect_error,
-        payload=None,
-        duration_ms=0,
-        client_mode=ClientMode.pooled,
-        http_status=None,
-        error_category=None,
-    )
-
-
-def _hb_services(db: AsyncSession) -> Mock:
-    m = Mock()
-    factory = AsyncMock()
-    factory.__aenter__ = AsyncMock(return_value=db)
-    factory.__aexit__ = AsyncMock(return_value=None)
-    m.session_factory = lambda: factory
-    return m
 
 
 def _hb_svc(
@@ -69,8 +41,6 @@ def _hb_svc(
     circuit_breaker: object = None,
 ) -> HeartbeatService:
     """Create a HeartbeatService wired to the test DB session."""
-    from tests.fakes import FakeSettingsReader
-
     factory = AsyncMock()
     factory.__aenter__ = AsyncMock(return_value=db)
     factory.__aexit__ = AsyncMock(return_value=None)
@@ -84,12 +54,21 @@ def _hb_svc(
     )
 
 
-@pytest.fixture(autouse=True)
-async def _skip_leader_fencing(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[None]:
-    """No-op the leader fence and redirect per-host sessions to the test schema engine."""
-    yield
+async def _seed_snapshot(db: AsyncSession, host: Host, appium_processes: dict[str, Any]) -> None:
+    """Store a consolidated status-push snapshot the way the push handler would."""
+    await control_plane_state_store.set_value(
+        db,
+        HOST_STATUS_NAMESPACE,
+        str(host.id),
+        {"received_at": now_utc().isoformat(), "payload": {"appium_processes": appium_processes}},
+    )
+    await db.commit()
+
+
+def _unguarded_guard(svc: HeartbeatService) -> object:
+    """Advance past the first (always-guarded) cycle and return an unguarded guard."""
+    svc.begin_cycle()
+    return svc.begin_cycle()
 
 
 async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:
@@ -104,71 +83,45 @@ async def get_node_health_control_plane_state(db_session: AsyncSession) -> dict[
     return {str(node.id): node.consecutive_health_failures for node in nodes if node.consecutive_health_failures > 0}
 
 
-async def test_heartbeat_marks_online(db_session: AsyncSession) -> None:
-    host = Host(hostname="test-host", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.offline)
+@pytest.fixture(autouse=True)
+async def _skip_leader_fencing(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[None]:
+    """No-op the leader fence and redirect per-host sessions to the test schema engine."""
+    yield
+
+
+# ─────────────────────────── liveness (recency verdict) ───────────────────────────
+
+
+async def test_recent_push_keeps_host_online(db_session: AsyncSession) -> None:
+    host = Host(hostname="recent-host", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    host.last_heartbeat = now_utc() - timedelta(seconds=10)
     db_session.add(host)
     await db_session.commit()
 
-    with (
-        patch(
-            "app.appium_nodes.services.heartbeat._ping_agent",
-            return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
-        ),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
+    svc = _hb_svc(db_session)
+    guard = _unguarded_guard(svc)  # second cycle: unguarded
+    evaluation = await svc.evaluate_host(db_session, host, guard=guard)
 
-    await db_session.refresh(host)
+    assert evaluation.alive is True
     assert host.status == HostStatus.online
-    assert host.last_heartbeat is not None
 
 
-async def test_heartbeat_updates_missing_prerequisites(db_session: AsyncSession) -> None:
-    host = Host(
-        hostname="prereq-host",
-        ip="10.0.0.5",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-        capabilities={"missing_prerequisites": ["java"]},
-    )
+async def test_stale_push_marks_host_offline_and_cascades_devices(db_session: AsyncSession) -> None:
+    """Agent-dies case: last push 10 minutes ago -> offline flip + device cascade."""
+    host = Host(hostname="stale-host", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    host.last_heartbeat = now_utc() - timedelta(minutes=10)
     db_session.add(host)
-    await db_session.commit()
-
-    with patch(
-        "app.appium_nodes.services.heartbeat._ping_agent",
-        return_value=_ok_result(
-            {
-                "status": "ok",
-                "hostname": "prereq-host",
-                "os_type": "linux",
-                "version": "0.1.0",
-                "missing_prerequisites": [],
-            }
-        ),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
-
-    await db_session.refresh(host)
-    assert host.missing_prerequisites == []
-    assert host.capabilities == {"missing_prerequisites": []}
-
-
-async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) -> None:
-    host = Host(hostname="test-host", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
-    db_session.add(host)
-    await db_session.flush()  # generate host.id before referencing it
+    await db_session.flush()
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         identity_scheme="android_serial",
         identity_scope="host",
-        identity_value="dev-hb",
-        connection_target="dev-hb",
-        name="HB Device",
+        identity_value="dev-stale",
+        connection_target="dev-stale",
+        name="Stale Device",
         os_version="14",
         host_id=host.id,
         operational_state=DeviceOperationalState.available,
@@ -178,16 +131,174 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     db_session.add(device)
     await db_session.commit()
 
-    svc = _hb_svc(db_session)
-    with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await run_one_heartbeat_cycle(db_session, svc)  # failure 1
-        await run_one_heartbeat_cycle(db_session, svc)  # failure 2
-        await run_one_heartbeat_cycle(db_session, svc)  # failure 3
+    publisher = Mock()
+    svc = _hb_svc(db_session, publisher=publisher)
+    guard = _unguarded_guard(svc)  # unguarded
+    evaluation = await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
 
-    await db_session.refresh(host)
-    await db_session.refresh(device)
+    assert evaluation.alive is False
     assert host.status == HostStatus.offline
+    await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
+
+    events = {call.args[1]: call.args[2] for call in publisher.queue_for_session.call_args_list}
+    assert events["host.status_changed"]["new_status"] == "offline"
+    lost = events["host.heartbeat_lost"]
+    assert "missed_count" not in lost
+    assert lost["stale_for_sec"] >= 45
+    assert lost["last_push_at"] is not None
+
+
+async def test_first_cycle_after_boot_never_flips_offline(db_session: AsyncSession) -> None:
+    """Backend-restart case: guard is active on the very first begin_cycle()."""
+    host = Host(hostname="boot-host", ip="10.0.0.3", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    host.last_heartbeat = now_utc() - timedelta(minutes=10)
+    db_session.add(host)
+    await db_session.commit()
+
+    svc = _hb_svc(db_session)
+    guard = svc.begin_cycle()  # first cycle -> guard.active
+    evaluation = await svc.evaluate_host(db_session, host, guard=guard)
+
+    assert evaluation.alive is False
+    assert host.status == HostStatus.online  # swallowed
+
+
+async def test_never_pushed_host_grace_from_created_at(db_session: AsyncSession) -> None:
+    """Fresh auto-accepted host: last_heartbeat is None -> measured from created_at."""
+    fresh = Host(hostname="fresh-host", ip="10.0.0.4", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    db_session.add(fresh)
+    await db_session.commit()
+    assert fresh.last_heartbeat is None
+
+    svc = _hb_svc(db_session)
+    guard = _unguarded_guard(svc)
+    evaluation = await svc.evaluate_host(db_session, fresh, guard=guard)
+    assert evaluation.alive is True  # grace window from created_at
+
+    old = Host(hostname="old-host", ip="10.0.0.5", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    db_session.add(old)
+    await db_session.flush()
+    old.created_at = now_utc() - timedelta(minutes=10)
+    await db_session.flush()
+
+    svc2 = _hb_svc(db_session)
+    guard2 = _unguarded_guard(svc2)
+    evaluation2 = await svc2.evaluate_host(db_session, old, guard=guard2)
+    assert evaluation2.alive is False
+    assert old.status == HostStatus.offline
+
+
+async def test_alive_evaluation_ingests_restart_events_from_snapshot_once(db_session: AsyncSession) -> None:
+    """Cursor pin: seed the snapshot with one restart event, evaluate twice ->
+    exactly one DeviceEvent (sequence cursor dedupes re-reads of the same snapshot)."""
+    host = Host(hostname="cursor-host", ip="10.0.0.6", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    db_session.add(host)
+    await db_session.flush()
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-cursor",
+        connection_target="dev-cursor",
+        name="Cursor Device",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1111,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
+            "recent_restart_events": [
+                {
+                    "sequence": 1,
+                    "kind": "crash_detected",
+                    "port": 4723,
+                    "pid": 1111,
+                    "attempt": 1,
+                    "will_retry": True,
+                }
+            ]
+        },
+    )
+
+    svc = _hb_svc(db_session)
+    for _ in range(2):
+        guard = svc.begin_cycle()
+        await svc.evaluate_host(db_session, host, guard=guard)
+        await db_session.commit()
+
+    crash_events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id, DeviceEvent.event_type == DeviceEventType.node_crash
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(crash_events) == 1
+    assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == 1
+
+
+async def test_partition_probe_records_metric_and_log_without_state_change(db_session: AsyncSession) -> None:
+    """Network-partition case: pushes fresh (alive) but probe_host gets connect_error ->
+    host stays online; gridfleet_agent_heartbeat_total incremented with the failure
+    outcome; 'agent_partition_suspected' warning logged."""
+    host = Host(hostname="probe-host", ip="10.0.0.7", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    db_session.add(host)
+    await db_session.commit()
+
+    connect_error = HeartbeatPingResult(
+        outcome=HeartbeatOutcome.connect_error,
+        payload=None,
+        duration_ms=3,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category="ConnectError",
+    )
+    before = HEARTBEAT_PING_TOTAL.labels(
+        host_id=str(host.id), outcome="connect_error", client_mode="pooled"
+    )._value.get()  # type: ignore[attr-defined]
+
+    svc = _hb_svc(db_session)
+    with (
+        patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=connect_error)),
+        structlog.testing.capture_logs() as cap,
+    ):
+        result = await svc.probe_host(host_id=str(host.id), host_ip=host.ip, agent_port=host.agent_port)
+
+    assert result.outcome is HeartbeatOutcome.connect_error
+    after = HEARTBEAT_PING_TOTAL.labels(
+        host_id=str(host.id), outcome="connect_error", client_mode="pooled"
+    )._value.get()  # type: ignore[attr-defined]
+    assert after == before + 1
+    await db_session.refresh(host)
+    assert host.status == HostStatus.online  # probe writes no state
+    assert any(e.get("event") == "agent_partition_suspected" for e in cap)
+
+
+# ─────────────── canonical availability event on the offline cascade ───────────────
 
 
 async def test_host_offline_cascade_publishes_canonical_availability_event(
@@ -199,9 +310,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     async def fake_publish(name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
         captured.append((name, payload, severity))
 
-    from tests.helpers import test_event_bus as _event_bus
-
-    monkeypatch.setattr(_event_bus, "publish", fake_publish)
+    monkeypatch.setattr(test_event_bus, "publish", fake_publish)
 
     host = Host(
         hostname="cascade-host",
@@ -210,6 +319,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
         agent_port=5100,
         status=HostStatus.online,
     )
+    host.last_heartbeat = now_utc() - timedelta(minutes=10)
     db_session.add(host)
     await db_session.flush()
     device = Device(
@@ -229,11 +339,10 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     db_session.add(device)
     await db_session.commit()
 
-    svc = _hb_svc(db_session, publisher=_event_bus)
-    with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await run_one_heartbeat_cycle(db_session, svc)
-        await run_one_heartbeat_cycle(db_session, svc)
-        await run_one_heartbeat_cycle(db_session, svc)
+    svc = _hb_svc(db_session, publisher=test_event_bus)
+    guard = _unguarded_guard(svc)
+    await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
 
     availability_events = [
         (payload, severity) for name, payload, severity in captured if name == "device.operational_state_changed"
@@ -253,28 +362,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     assert severity == "warning"
 
 
-async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
-    host = Host(hostname="test-host", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.offline)
-    db_session.add(host)
-    await db_session.commit()
-
-    # Simulate previous failures
-    await control_plane_state_store.set_value(db_session, "heartbeat.failure_count", str(host.id), 5)
-    await db_session.commit()
-
-    with (
-        patch(
-            "app.appium_nodes.services.heartbeat._ping_agent",
-            return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
-        ),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
-
-    await db_session.refresh(host)
-    assert host.status == HostStatus.online
-    assert await control_plane_state_store.get_value(db_session, "heartbeat.failure_count", str(host.id)) is None
+# ─────────────────────── restart-event ingest (behavior pins) ───────────────────────
 
 
 async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_plane_state(
@@ -314,12 +402,10 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     await db_session.commit()
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
-    payload = {
-        "status": "ok",
-        "hostname": "agent-host",
-        "os_type": "linux",
-        "version": "0.1.0",
-        "appium_processes": {
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
             "running_nodes": [
                 {
                     "port": 4723,
@@ -352,34 +438,19 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
                 },
             ],
         },
-    }
+    )
 
-    with (
-        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
+    svc = _hb_svc(db_session)
+    for _ in range(2):
+        guard = svc.begin_cycle()
+        await svc.evaluate_host(db_session, host, guard=guard)
+        await db_session.commit()
 
     await db_session.refresh(node)
     assert node.pid == 2222
     assert node.observed_running
     assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == 2
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
-    process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
-    assert isinstance(process_snapshot, dict)
-    assert isinstance(process_snapshot["reported_at"], str)
-    assert process_snapshot["running_nodes"] == [
-        {
-            "port": 4723,
-            "pid": 2222,
-            "connection_target": "dev-agent-1",
-            "platform_id": "android_mobile",
-        }
-    ]
 
     events = (
         (
@@ -402,9 +473,6 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     await db_session.refresh(node)
     assert node.health_running is None
     assert node.health_state is None
-    # Re-query device with appium_node loaded: per-host session committed the change;
-    # the test's device object needs an eager reload so build_public_summary can access
-    # device.appium_node without triggering a lazy-load outside an async greenlet.
     device_reloaded = (
         await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
     ).scalar_one()
@@ -414,9 +482,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
 async def test_restart_succeeded_eager_fills_active_connection_target(db_session: AsyncSession) -> None:
     """I11/N15: after a crash auto-restart, a reconciler poll that observed the down window may
     have nulled ``active_connection_target``. The agent confirms the node is back via
-    ``restart_succeeded``, so the handler must restore the node-viability marker immediately —
-    otherwise the device reads ``available`` but fails the allocator's ``node_viable_predicate``
-    until the next reconciler poll refills it (lost allocatability for ~one interval)."""
+    ``restart_succeeded``, so the handler must restore the node-viability marker immediately."""
     host = Host(
         hostname="agent-host-act", ip="10.0.0.9", os_type=OSType.linux, agent_port=5100, status=HostStatus.online
     )
@@ -447,18 +513,15 @@ async def test_restart_succeeded_eager_fills_active_connection_target(db_session
         pid=None,
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
-        # Nulled by a reconciler poll that observed the crash window.
         active_connection_target=None,
     )
     db_session.add(node)
     await db_session.commit()
 
-    payload = {
-        "status": "ok",
-        "hostname": "agent-host-act",
-        "os_type": "linux",
-        "version": "0.1.0",
-        "appium_processes": {
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
             "running_nodes": [],
             "recent_restart_events": [
                 {
@@ -472,18 +535,15 @@ async def test_restart_succeeded_eager_fills_active_connection_target(db_session
                 }
             ],
         },
-    }
+    )
 
-    with (
-        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
+    svc = _hb_svc(db_session)
+    guard = svc.begin_cycle()
+    await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
 
     await db_session.refresh(node)
     assert node.pid == 2222
-    # The viability marker is restored, so the allocator's node_viable_predicate passes now.
     assert node.active_connection_target is not None
     assert node.observed_running
 
@@ -521,12 +581,10 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     db_session.add(node)
     await db_session.commit()
 
-    exhausted_payload = {
-        "status": "ok",
-        "hostname": "agent-host",
-        "os_type": "linux",
-        "version": "0.1.0",
-        "appium_processes": {
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
             "running_nodes": [],
             "recent_restart_events": [
                 {
@@ -551,22 +609,17 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
                 },
             ],
         },
-    }
+    )
 
-    with (
-        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(exhausted_payload)),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
+    svc = _hb_svc(db_session)
+    guard = svc.begin_cycle()
+    await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
 
     await db_session.refresh(node)
     await db_session.refresh(device)
     assert node.observed_running
     assert device.operational_state == DeviceOperationalState.available
-    process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
-    assert isinstance(process_snapshot, dict)
-    assert process_snapshot["running_nodes"] == []
 
     events = (
         (
@@ -638,12 +691,10 @@ async def test_unknown_process_restart_events_normalize_to_appium_and_restore_he
     await db_session.commit()
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
-    payload = {
-        "status": "ok",
-        "hostname": "agent-host",
-        "os_type": "linux",
-        "version": "0.1.0",
-        "appium_processes": {
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
             "running_nodes": [
                 {
                     "port": 4725,
@@ -678,14 +729,12 @@ async def test_unknown_process_restart_events_normalize_to_appium_and_restore_he
                 },
             ],
         },
-    }
+    )
 
-    with (
-        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
+    svc = _hb_svc(db_session)
+    guard = svc.begin_cycle()
+    await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
 
     await db_session.refresh(node)
     assert node.pid == 8888
@@ -701,8 +750,6 @@ async def test_unknown_process_restart_events_normalize_to_appium_and_restore_he
         .scalars()
         .all()
     )
-    # After Task 10: reconciler may write desired_state_changed events too.
-    # Check that node_crash and node_restart events are present in the list.
     event_types = [event.event_type for event in events]
     assert DeviceEventType.node_crash in event_types
     assert DeviceEventType.node_restart in event_types
@@ -716,9 +763,6 @@ async def test_unknown_process_restart_events_normalize_to_appium_and_restore_he
     await db_session.refresh(node)
     assert node.health_running is None
     assert node.health_state is None
-    # Re-query device with appium_node loaded: per-host session committed the change;
-    # the test's device object needs an eager reload so build_public_summary can access
-    # device.appium_node without triggering a lazy-load outside an async greenlet.
     device_reloaded = (
         await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
     ).scalar_one()
@@ -760,12 +804,10 @@ async def test_restart_exhausted_sets_degraded_state(
     db_session.add(node)
     await db_session.commit()
 
-    payload = {
-        "status": "ok",
-        "hostname": "agent-host",
-        "os_type": "linux",
-        "version": "0.1.0",
-        "appium_processes": {
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
             "running_nodes": [],
             "recent_restart_events": [
                 {
@@ -792,14 +834,12 @@ async def test_restart_exhausted_sets_degraded_state(
                 },
             ],
         },
-    }
+    )
 
-    with (
-        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
-    ):
-        await run_one_heartbeat_cycle(
-            db_session, _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
-        )
+    svc = _hb_svc(db_session)
+    guard = svc.begin_cycle()
+    await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
 
     await db_session.refresh(node)
     assert node.health_running is False

@@ -10,7 +10,7 @@ from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover
-from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.conftest import test_circuit_breaker
 from tests.helpers import create_device_record
 
@@ -266,24 +266,28 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
     )
     await control_plane_state_store.set_value(
         db_session,
-        APPIUM_PROCESSES_NAMESPACE,
+        HOST_STATUS_NAMESPACE,
         host["id"],
         {
-            "reported_at": "2026-04-04T10:00:02+00:00",
-            "running_nodes": [
-                {
-                    "port": 4723,
-                    "pid": 2222,
-                    "connection_target": "dev-runtime-1",
-                    "platform_id": "android_mobile",
+            "received_at": "2026-04-04T10:00:02+00:00",
+            "payload": {
+                "appium_processes": {
+                    "running_nodes": [
+                        {
+                            "port": 4723,
+                            "pid": 2222,
+                            "connection_target": "dev-runtime-1",
+                            "platform_id": "android_mobile",
+                        },
+                        {
+                            "port": 4999,
+                            "pid": 9999,
+                            "connection_target": "mystery-runtime",
+                            "platform_id": "android_tv",
+                        },
+                    ],
                 },
-                {
-                    "port": 4999,
-                    "pid": 9999,
-                    "connection_target": "mystery-runtime",
-                    "platform_id": "android_tv",
-                },
-            ],
+            },
         },
     )
     await db_session.commit()
@@ -346,13 +350,17 @@ async def test_get_host_diagnostics_keeps_last_snapshot_visible_for_offline_host
     await db_session.flush()
     await control_plane_state_store.set_value(
         db_session,
-        APPIUM_PROCESSES_NAMESPACE,
+        HOST_STATUS_NAMESPACE,
         str(host.id),
         {
-            "reported_at": "2026-04-04T10:30:00+00:00",
-            "running_nodes": [
-                {"port": 4725, "pid": 5005, "connection_target": "stale-node", "platform_id": "roku_network"}
-            ],
+            "received_at": "2026-04-04T10:30:00+00:00",
+            "payload": {
+                "appium_processes": {
+                    "running_nodes": [
+                        {"port": 4725, "pid": 5005, "connection_target": "stale-node", "platform_id": "roku_network"}
+                    ],
+                },
+            },
         },
     )
     await db_session.commit()

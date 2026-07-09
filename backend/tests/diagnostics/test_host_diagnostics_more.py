@@ -60,17 +60,21 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
     await db_session.commit()
 
     snapshot = {
-        "reported_at": "2026-05-01T12:00:00Z",
-        "running_nodes": [
-            {
-                "port": "4731",
-                "pid": "777",
-                "connection_target": "override-target",
-                "platform_id": "override-platform",
+        "received_at": "2026-05-01T12:00:00Z",
+        "payload": {
+            "appium_processes": {
+                "running_nodes": [
+                    {
+                        "port": "4731",
+                        "pid": "777",
+                        "connection_target": "override-target",
+                        "platform_id": "override-platform",
+                    },
+                    {"port": 9999, "pid": 321},
+                    {"port": None, "pid": 111},
+                ],
             },
-            {"port": 9999, "pid": 321},
-            {"port": None, "pid": 111},
-        ],
+        },
     }
     await test_circuit_breaker.record_failure(host.ip, error="first failure")
 
@@ -102,8 +106,11 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
 async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(db_session: AsyncSession) -> None:
     host, _device = await seed_host_and_device(db_session, identity="diagnostics-reported-at")
     snapshots = [
-        {"reported_at": datetime(2026, 5, 1, 12, 0, tzinfo=UTC), "running_nodes": []},
-        {"reported_at": "not-a-date", "running_nodes": []},
+        {
+            "received_at": datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+            "payload": {"appium_processes": {"running_nodes": []}},
+        },
+        {"received_at": "not-a-date", "payload": {"appium_processes": {"running_nodes": []}}},
     ]
 
     svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=test_circuit_breaker)
@@ -115,7 +122,7 @@ async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(
         second = await svc.get_host_diagnostics(db_session, host.id)
 
     assert first is not None
-    assert first.appium_processes.reported_at == snapshots[0]["reported_at"]
+    assert first.appium_processes.reported_at == snapshots[0]["received_at"]
     assert second is not None
     assert second.appium_processes.reported_at is None
 

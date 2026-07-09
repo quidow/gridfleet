@@ -194,15 +194,6 @@ async def test_agent_driver_pack_router_delegates_and_commits() -> None:
     assert response == desired_payload
     compute.assert_awaited_once_with(db, host_id)
 
-    status_payload: dict[str, object] = {"host_id": str(host_id), "packs": []}
-    apply_status = AsyncMock()
-    mock_packs_status = SimpleNamespace(status=SimpleNamespace(apply_status=apply_status))
-    response = await agent_driver_packs.status(payload=status_payload, db=db, packs=mock_packs_status)
-
-    assert response.status_code == 204
-    assert db.committed is True
-    apply_status.assert_awaited_once_with(db, status_payload)
-
 
 async def test_analytics_router_non_csv_and_capacity_defaults() -> None:
     row = DeviceUtilizationRow(

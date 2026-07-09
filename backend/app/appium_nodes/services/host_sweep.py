@@ -1,11 +1,13 @@
-"""One agent observation per host per tick, feeding every host-scoped concern.
+"""One pushed observation per host per tick, feeding every host-scoped concern.
 
-Concerns run only for hosts this sweep pass proved alive: host liveness
-(heartbeat evaluation) and appium-node convergence from the same /agent/health
-payload, then node health as a cadence-gated per-host stage. Cross-host passes
-(connectivity, telemetry, property refresh) run as cadence-gated global stages
-after the per-host fan-out completes — one SweepStage entry each, gated by its
-own interval setting (see stage_due).
+Concerns run only for hosts this sweep pass proved alive: host liveness derives
+from status-push recency (evaluate_host), and appium-node convergence reads the
+same latest pushed snapshot, then node health as a cadence-gated per-host stage.
+The backend keeps a single cadence-gated reachability probe (probe_host) as a
+network-partition diagnostic. Cross-host passes (connectivity, telemetry,
+property refresh) run as cadence-gated global stages after the per-host fan-out
+completes — one SweepStage entry each, gated by its own interval setting (see
+stage_due).
 """
 
 from __future__ import annotations
@@ -82,6 +84,11 @@ async def run_host_sweep_once(
         base_interval=base_interval,
         stage_interval=settings.get_float("general.node_check_interval_sec"),
     )
+    probe_due = stage_due(
+        cycle_index,
+        base_interval=base_interval,
+        stage_interval=settings.get_float("general.partition_probe_interval_sec"),
+    )
 
     async def _sweep_host(host_id: uuid.UUID) -> None:
         async with semaphore:
@@ -90,8 +97,8 @@ async def run_host_sweep_once(
                     host = await host_db.get(Host, host_id)
                     if host is None:
                         return
-                    result = await heartbeat.process_host(host_db, host, guard=guard)
-                    host_alive = result.alive and host.status == HostStatus.online
+                    evaluation = await heartbeat.evaluate_host(host_db, host, guard=guard)
+                    host_alive = evaluation.alive and host.status == HostStatus.online
                     host_ip, agent_port = host.ip, host.agent_port
                     await host_db.commit()
             except Exception:
@@ -99,19 +106,25 @@ async def run_host_sweep_once(
                 return
             if not host_alive:
                 return
-            try:
-                await reconciler.reconcile_host(
-                    host_id=host_id,
-                    host_ip=host_ip,
-                    agent_port=agent_port,
-                    rows=rows_by_host.get(host_id, []),
-                    backoff_until_by_device=backoff,
-                    payload=result.payload or {},
-                )
-            except Exception:
-                # Stage isolation: a convergence failure must not poison other
-                # hosts' sweep NOR this host's remaining stages.
-                logger.exception("host_sweep_convergence_failed", host_id=str(host_id))
+            if probe_due:
+                try:
+                    await heartbeat.probe_host(host_id=str(host_id), host_ip=host_ip, agent_port=agent_port)
+                except Exception:
+                    logger.exception("host_sweep_probe_failed", host_id=str(host_id))
+            if evaluation.payload is not None:
+                try:
+                    await reconciler.reconcile_host(
+                        host_id=host_id,
+                        host_ip=host_ip,
+                        agent_port=agent_port,
+                        rows=rows_by_host.get(host_id, []),
+                        backoff_until_by_device=backoff,
+                        payload=evaluation.payload,
+                    )
+                except Exception:
+                    # Stage isolation: a convergence failure must not poison other
+                    # hosts' sweep NOR this host's remaining stages.
+                    logger.exception("host_sweep_convergence_failed", host_id=str(host_id))
             if node_health_due:
                 try:
                     async with session_factory() as nh_db:

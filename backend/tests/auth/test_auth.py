@@ -289,12 +289,6 @@ async def test_agent_driver_pack_state_routes_require_machine_auth(
     desired_unauthorized = await client.get("/agent/driver-packs/desired", params={"host_id": host_id})
     assert desired_unauthorized.status_code == 401
 
-    status_unauthorized = await client.post(
-        "/agent/driver-packs/status",
-        json={"host_id": host_id, "runtimes": [], "packs": [], "doctor": []},
-    )
-    assert status_unauthorized.status_code == 401
-
     machine_headers = _basic_auth_header(
         auth_settings["machine_auth_username"],
         auth_settings["machine_auth_password"],
@@ -305,13 +299,6 @@ async def test_agent_driver_pack_state_routes_require_machine_auth(
         headers=machine_headers,
     )
     assert desired_authorized.status_code == 200
-
-    status_authorized = await client.post(
-        "/agent/driver-packs/status",
-        json={"host_id": host_id, "runtimes": [], "packs": [], "doctor": []},
-        headers=machine_headers,
-    )
-    assert status_authorized.status_code == 204
 
 
 async def test_event_stream_path_requires_auth(

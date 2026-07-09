@@ -159,7 +159,13 @@ async def test_active_target_from_host_snapshot_matches_port() -> None:
     with patch(
         "app.devices.services.capability.control_plane_state_store.get_value",
         new=AsyncMock(
-            return_value={"running_nodes": [{"port": 4700}, {"port": 4723, "connection_target": "emulator-5554"}]}
+            return_value={
+                "payload": {
+                    "appium_processes": {
+                        "running_nodes": [{"port": 4700}, {"port": 4723, "connection_target": "emulator-5554"}]
+                    }
+                }
+            }
         ),
     ):
         result = await capability_service._active_target_from_host_snapshot(db, device)
@@ -192,7 +198,11 @@ async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapsho
     )
     with patch(
         "app.devices.services.capability.control_plane_state_store.get_value",
-        new=AsyncMock(return_value={"running_nodes": [{"port": 9999, "connection_target": "emulator-1"}]}),
+        new=AsyncMock(
+            return_value={
+                "payload": {"appium_processes": {"running_nodes": [{"port": 9999, "connection_target": "emulator-1"}]}}
+            }
+        ),
     ):
         assert await capability_service._active_target_from_host_snapshot(db, device) is None
 

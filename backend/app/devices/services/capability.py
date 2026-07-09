@@ -8,7 +8,7 @@ from app.core.leader import state_store as control_plane_state_store
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceType
 from app.devices.services.identity import appium_connection_target
-from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
@@ -76,10 +76,12 @@ async def _active_target_from_host_snapshot(db: AsyncSession, device: Device) ->
     node = device.appium_node
     if node is None or device.host_id is None:
         return None
-    snapshot = await control_plane_state_store.get_value(db, APPIUM_PROCESSES_NAMESPACE, str(device.host_id))
+    snapshot = await control_plane_state_store.get_value(db, HOST_STATUS_NAMESPACE, str(device.host_id))
     if not isinstance(snapshot, dict):
         return None
-    running_nodes = snapshot.get("running_nodes")
+    payload = snapshot.get("payload")
+    processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+    running_nodes = processes.get("running_nodes") if isinstance(processes, dict) else None
     if not isinstance(running_nodes, list):
         return None
     for raw_node in running_nodes:

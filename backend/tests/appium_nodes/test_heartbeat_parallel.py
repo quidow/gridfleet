@@ -14,16 +14,7 @@ from tests.helpers import run_one_heartbeat_cycle
 if TYPE_CHECKING:
     import contextlib
 
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-
-def _hb_services(db: AsyncSession) -> Mock:
-    m = Mock()
-    factory = AsyncMock()
-    factory.__aenter__ = AsyncMock(return_value=db)
-    factory.__aexit__ = AsyncMock(return_value=None)
-    m.session_factory = lambda: factory
-    return m
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 def _ok() -> HeartbeatPingResult:
@@ -51,9 +42,11 @@ def _slow_timeout() -> HeartbeatPingResult:
 @pytest.mark.asyncio
 async def test_four_slow_hosts_run_in_parallel(
     populated_hosts_4_slow: contextlib.AbstractAsyncContextManager[AsyncSession],
+    db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """4 slow hosts each take 0.5s; sequential >= 2s, parallel (concurrency>=4) ~ 0.5s.
-    Bound: < 1.8s leaves CI slack while still proving parallelism."""
+    Bound: < 1.8s leaves CI slack while still proving parallelism. The slow work is
+    now the cadence-gated network-partition probe."""
     from app.appium_nodes.services.heartbeat import HeartbeatService
 
     async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
@@ -70,7 +63,7 @@ async def test_four_slow_hosts_run_in_parallel(
                     settings=FakeSettingsReader({}),
                     pool=Mock(),
                     circuit_breaker=Mock(),
-                    session_factory=_hb_services(db).session_factory,
+                    session_factory=db_session_maker,
                 ),
             )
         elapsed = time.monotonic() - started
@@ -80,8 +73,9 @@ async def test_four_slow_hosts_run_in_parallel(
 @pytest.mark.asyncio
 async def test_one_slow_host_does_not_delay_fast_host_log(
     populated_hosts_one_slow_one_fast: contextlib.AbstractAsyncContextManager[AsyncSession],
+    db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Verify the fast host's heartbeat_ping log appears BEFORE the slow host's log."""
+    """Verify the fast host's heartbeat_ping (probe) log appears BEFORE the slow host's log."""
     import structlog
 
     from app.appium_nodes.services.heartbeat import HeartbeatService
@@ -104,7 +98,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
                     settings=FakeSettingsReader({}),
                     pool=Mock(),
                     circuit_breaker=Mock(),
-                    session_factory=_hb_services(db).session_factory,
+                    session_factory=db_session_maker,
                 ),
             )
 

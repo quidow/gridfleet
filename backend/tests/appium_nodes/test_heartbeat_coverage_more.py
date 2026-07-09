@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.appium_nodes.services import heartbeat
-from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome
 from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
@@ -19,16 +19,6 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
     settings_unavailable = MagicMock()
     settings_unavailable.get = MagicMock(side_effect=RuntimeError("settings unavailable"))
     assert heartbeat._heartbeat_client_mode(settings=settings_unavailable) is ClientMode.fresh
-
-    with pytest.raises(AssertionError):
-        await heartbeat._apply_host_ping_result(
-            MagicMock(),
-            MagicMock(),
-            _dead_result(),
-            guard=heartbeat._ResumeGuard(active=True),
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
-        )
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(heartbeat, "agent_health", AsyncMock(side_effect=AgentCallError("1.2.3.4", "boom")))
@@ -84,19 +74,6 @@ async def test_restart_event_ingest_filters_and_stale_nodes(monkeypatch: pytest.
     set_value.assert_awaited_once()
     assert set_value.await_args.args[3] == 3
 
-    assert heartbeat._normalize_running_nodes({"appium_processes": {"running_nodes": "bad"}}) == []
-    assert heartbeat._normalize_running_nodes(
-        {
-            "appium_processes": {
-                "running_nodes": [
-                    "bad",
-                    {"port": True},
-                    {"port": "4723", "pid": "123", "connection_target": "dev", "platform_id": "android"},
-                ]
-            }
-        }
-    ) == [{"port": 4723, "pid": 123, "connection_target": "dev", "platform_id": "android"}]
-
 
 async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: pytest.MonkeyPatch) -> None:
     host = Host(hostname="h2", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
@@ -149,14 +126,3 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
 
     with pytest.raises(asyncio.CancelledError):
         await HostSweepLoop(services=services).run()
-
-
-def _dead_result() -> HeartbeatPingResult:
-    return HeartbeatPingResult(
-        outcome=HeartbeatOutcome.timeout,
-        payload=None,
-        duration_ms=1,
-        client_mode=ClientMode.fresh,
-        http_status=None,
-        error_category="Timeout",
-    )
