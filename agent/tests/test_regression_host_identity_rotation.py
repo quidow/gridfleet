@@ -54,11 +54,6 @@ class _RotationFakeClient:
         return self._desired
 
 
-class _NoopRuntimeMgr:
-    async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
-        return {}, {}
-
-
 class _SucceedingRuntimeMgr:
     async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
         envs: dict[str, RuntimeEnv] = {}
@@ -72,35 +67,6 @@ class _SucceedingRuntimeMgr:
                 server_version=spec.server_version,
             )
         return envs, {}
-
-
-@pytest.mark.asyncio
-async def test_pack_state_loop_resolves_rotated_host_id_each_iteration() -> None:
-    """PackStateLoop must read the live host_id each iteration (held by reference,
-    not captured at construction). The status payload no longer carries host_id
-    (see the consolidated status push), so this asserts on the resolver the loop
-    itself uses; ``test_pack_state_loop_doctor_ctx_picks_up_rotated_host_id`` below
-    covers the same rotation through an observable side effect."""
-
-    identity = HostIdentity()
-    identity.set("host-a")
-    # ``host_id`` in the *desired* payload is unrelated to identity rotation —
-    # it's required by ``parse_desired_payload`` but doesn't drive the agent's
-    # outgoing host_id, so we pin it to a placeholder value.
-    client = _RotationFakeClient({"host_id": "desired-placeholder", "packs": []})
-    loop = PackStateLoop(
-        client=client,
-        runtime_mgr=_NoopRuntimeMgr(),
-        host_identity=identity,
-    )
-
-    await loop.run_once()
-    assert loop._resolve_host_id() == "host-a"
-
-    identity.set("host-b")
-
-    await loop.run_once()
-    assert loop._resolve_host_id() == "host-b"
 
 
 class _DoctorRecordingAdapter:
