@@ -341,9 +341,7 @@ async def test_host_resource_sample_coercion_and_apply() -> None:
     )
     assert sample.memory_used_mb == 11
 
-    row = await HostResourceTelemetryService(
-        settings=FakeSettingsReader({}), circuit_breaker=Mock()
-    ).apply_host_resource_sample(
+    row = await HostResourceTelemetryService(settings=FakeSettingsReader({})).apply_host_resource_sample(
         db,
         host,
         {
@@ -363,55 +361,6 @@ async def test_host_resource_sample_coercion_and_apply() -> None:
     assert row.memory_used_mb == 1024
 
 
-async def test_poll_host_resource_telemetry_handles_agent_and_unexpected_errors() -> None:
-    host = SimpleNamespace(id=uuid.uuid4(), hostname="host-1", ip="10.0.0.1", agent_port=5100)
-
-    class Result:
-        def scalars(self) -> Result:
-            return self
-
-        def all(self) -> list[object]:
-            return [host, host, host]
-
-    class PollSession(FlushSession):
-        async def execute(self, *_args: object, **_kwargs: object) -> Result:
-            return Result()
-
-    db = PollSession()
-    with patch(
-        "app.hosts.service_resource_telemetry.agent_host_telemetry",
-        new=AsyncMock(side_effect=[None, AgentCallError("10.0.0.1", "failed"), RuntimeError("boom")]),
-    ):
-        await HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=Mock()).poll_once(db)
-
-    assert db.rolled_back is True
-
-
-async def test_poll_host_resource_telemetry_commits_successful_samples() -> None:
-    host = SimpleNamespace(id=uuid.uuid4(), hostname="host-1", ip="10.0.0.1", agent_port=5100)
-
-    class Result:
-        def scalars(self) -> Result:
-            return self
-
-        def all(self) -> list[object]:
-            return [host]
-
-    class PollSession(FlushSession):
-        async def execute(self, *_args: object, **_kwargs: object) -> Result:
-            return Result()
-
-    db = PollSession()
-    with patch(
-        "app.hosts.service_resource_telemetry.agent_host_telemetry",
-        new=AsyncMock(return_value={"cpu_percent": 50}),
-    ):
-        await HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=Mock()).poll_once(db)
-
-    assert db.committed is True
-    assert db.added
-
-
 async def test_fetch_host_resource_telemetry_validation_paths() -> None:
     host_id = uuid.uuid4()
 
@@ -421,7 +370,6 @@ async def test_fetch_host_resource_telemetry_validation_paths() -> None:
 
     svc = HostResourceTelemetryService(
         settings=FakeSettingsReader({"retention.host_resource_telemetry_hours": 24}),
-        circuit_breaker=Mock(),
     )
     for since, until, bucket_minutes, message in (
         (
@@ -460,9 +408,7 @@ async def test_fetch_host_resource_telemetry_returns_none_for_missing_host() -> 
             return None
 
     assert (
-        await HostResourceTelemetryService(
-            settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        ).fetch_host_resource_telemetry(
+        await HostResourceTelemetryService(settings=FakeSettingsReader({})).fetch_host_resource_telemetry(
             MissingHostSession(),  # type: ignore[arg-type]
             uuid.uuid4(),
             since=datetime(2026, 5, 1, tzinfo=UTC),

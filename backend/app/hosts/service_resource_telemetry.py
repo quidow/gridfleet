@@ -4,16 +4,15 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-import httpx2 as httpx
 from sqlalchemy import func, select, text
 
-from app.agent_comm import operations as agent_operations
 from app.core.coerce import coerce_float as _coerce_float
-from app.core.errors import AgentCallError
+from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -21,12 +20,9 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Row
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_comm.http_pool import AgentHttpPool
-    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
-agent_host_telemetry = agent_operations.agent_host_telemetry
 
 # Largest accepted telemetry bucket size: one day, expressed in minutes.
 _MAX_BUCKET_MINUTES = 1440
@@ -63,12 +59,8 @@ class HostResourceTelemetryService:
         self,
         *,
         settings: SettingsReader,
-        circuit_breaker: CircuitBreakerProtocol,
-        pool: AgentHttpPool | None = None,
     ) -> None:
         self._settings = settings
-        self._circuit_breaker = circuit_breaker
-        self._pool = pool
 
     async def apply_host_resource_sample(
         self,
@@ -97,21 +89,19 @@ class HostResourceTelemetryService:
 
         for host in hosts:
             try:
-                payload = await agent_host_telemetry(
-                    host.ip,
-                    host.agent_port,
-                    http_client_factory=httpx.AsyncClient,
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
-                )
-                if payload is None:
+                raw = await control_plane_state_store.get_value(db, HOST_STATUS_NAMESPACE, str(host.id))
+                payload = raw.get("payload") if isinstance(raw, dict) else None
+                sample = payload.get("host_telemetry") if isinstance(payload, dict) else None
+                if not isinstance(sample, dict):
                     continue
-                await self.apply_host_resource_sample(db, host, payload)
+                recorded_at = parse_iso(sample.get("recorded_at"))
+                latest = await db.scalar(
+                    select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host.id)
+                )
+                if recorded_at is not None and latest is not None and recorded_at <= latest:
+                    continue  # agent stopped pushing — don't duplicate the stale sample
+                await self.apply_host_resource_sample(db, host, sample)
                 await db.commit()
-            except AgentCallError as exc:
-                await db.rollback()
-                logger.warning("Host resource telemetry poll failed for host %s: %s", host.hostname, exc)
             except Exception:
                 await db.rollback()
                 logger.exception("Unexpected host resource telemetry failure for host %s", host.hostname)

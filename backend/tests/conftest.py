@@ -476,7 +476,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             resource_telemetry=HostResourceTelemetryService(
                 settings=settings_service,
-                circuit_breaker=test_circuit_breaker,
             ),
             diagnostics=HostDiagnosticsService(circuit_breaker=test_circuit_breaker),
             host_events=HostEventsService(),

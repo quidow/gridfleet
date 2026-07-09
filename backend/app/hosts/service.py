@@ -140,8 +140,6 @@ class HostCrudService:
         host.agent_version = data.agent_version
         host.capabilities = normalize_capabilities(data.capabilities)
         _apply_host_info(host, data.host_info)
-        if host.status == HostStatus.offline:
-            host.status = HostStatus.online
         await db.commit()
         await db.refresh(host)
         return host

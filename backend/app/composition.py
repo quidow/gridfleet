@@ -314,9 +314,7 @@ def compose_app(
             hardware_telemetry=HardwareTelemetryService(
                 publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
             ),
-            resource_telemetry=HostResourceTelemetryService(
-                settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
-            ),
+            resource_telemetry=HostResourceTelemetryService(settings=settings_svc),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
             status_push=HostStatusPushService(publisher=bus),

@@ -34,7 +34,9 @@ async def test_get_setting(client: AsyncClient) -> None:
     assert data["type"] == "int"
     assert isinstance(data["value"], int)
     assert data["is_overridden"] is False
-    assert data["description"] == "How often the manager pings agents"
+    assert data["description"] == (
+        "Host-sweep cadence: how often pushed agent status is evaluated (base tick for the stage intervals)"
+    )
     assert data["validation"] is not None
     assert data["validation"]["min"] == 5
 
@@ -165,7 +167,7 @@ async def test_bulk_update(client: AsyncClient) -> None:
         json={
             "settings": {
                 "general.heartbeat_interval_sec": 20,
-                "general.max_missed_heartbeats": 5,
+                "general.node_max_failures": 5,
             }
         },
     )
@@ -174,11 +176,11 @@ async def test_bulk_update(client: AsyncClient) -> None:
     assert len(data) == 2
     values = {s["key"]: s["value"] for s in data}
     assert values["general.heartbeat_interval_sec"] == 20
-    assert values["general.max_missed_heartbeats"] == 5
+    assert values["general.node_max_failures"] == 5
 
     # Cleanup
     await client.post("/api/settings/reset/general.heartbeat_interval_sec")
-    await client.post("/api/settings/reset/general.max_missed_heartbeats")
+    await client.post("/api/settings/reset/general.node_max_failures")
 
 
 async def test_bulk_update_validation_error(client: AsyncClient) -> None:
@@ -187,7 +189,7 @@ async def test_bulk_update_validation_error(client: AsyncClient) -> None:
         json={
             "settings": {
                 "general.heartbeat_interval_sec": 20,
-                "general.max_missed_heartbeats": -1,  # min is 1
+                "general.node_max_failures": -1,  # min is 1
             }
         },
     )
@@ -212,7 +214,7 @@ async def test_reset_setting(client: AsyncClient) -> None:
 async def test_reset_all(client: AsyncClient) -> None:
     # Override a couple
     await client.put("/api/settings/general.heartbeat_interval_sec", json={"value": 25})
-    await client.put("/api/settings/general.max_missed_heartbeats", json={"value": 10})
+    await client.put("/api/settings/general.node_max_failures", json={"value": 10})
 
     # Reset all
     resp = await client.post("/api/settings/reset-all")

@@ -84,7 +84,7 @@ async def test_delete_host_rejects_attached_devices(db_session: AsyncSession) ->
         await svc.delete_host(db_session, host.id)
 
 
-async def test_register_host_updates_existing_offline_host(db_session: AsyncSession) -> None:
+async def test_register_host_does_not_resurrect_offline_host(db_session: AsyncSession) -> None:
     host = Host(
         hostname="re-register",
         ip="10.0.0.1",
@@ -111,7 +111,8 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
     assert is_new is False
     assert registered.ip == "10.0.0.99"
     assert registered.os_type == OSType.macos
-    assert registered.status == HostStatus.online
+    # only a status push flips a host online
+    assert registered.status == HostStatus.offline
     assert registered.capabilities == {**CAPS_V4, "missing_prerequisites": ["adb"]}
 
 

@@ -12,7 +12,6 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
-from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, run_one_heartbeat_cycle
 
@@ -42,7 +41,8 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
     db_host.last_heartbeat = now_utc() - timedelta(minutes=10)
     await db_session.commit()
 
-    threshold = int(settings_service.get("general.max_missed_heartbeats"))
+    # >= 2 iterations forces the offline flip on cycle 2 (cycle 1 is guarded).
+    threshold = 2
 
     inside_offline_branch = asyncio.Event()
     race_attempted_lock = asyncio.Event()
