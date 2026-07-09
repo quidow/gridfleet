@@ -119,18 +119,13 @@ def test_device_cooldown_settings_are_registered() -> None:
 
 def test_intent_reconciler_settings_are_registered() -> None:
     interval = settings_registry.SETTINGS_REGISTRY["general.intent_reconcile_interval_sec"]
-    full_scan = settings_registry.SETTINGS_REGISTRY["general.intent_reconcile_full_scan_every_cycles"]
 
     assert interval.category == "general"
     assert interval.setting_type == "int"
     assert interval.default == 5
     assert interval.min_value == 1
     assert interval.max_value == 300
-    assert full_scan.category == "general"
-    assert full_scan.setting_type == "int"
-    assert full_scan.default == 720
-    assert full_scan.min_value == 1
-    assert full_scan.max_value == 17280
+    assert "general.intent_reconcile_full_scan_every_cycles" not in settings_registry.SETTINGS_REGISTRY
 
 
 def test_appium_reconciler_restart_window_setting_is_registered() -> None:

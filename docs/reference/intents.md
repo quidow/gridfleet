@@ -36,8 +36,9 @@ A **stored** intent is deleted by exactly one of two mechanisms:
 1. **Explicit revoke** via `revoke_intents_and_reconcile(...)` from the flow that
    drives the underlying state change (e.g. operator start revokes
    `operator_stop_sources`).
-2. **TTL** via the `expires_at` column, swept once per reconciler tick by
-   `_reconcile_expired_intents`.
+2. **TTL** via the `expires_at` column, swept by `_gc_expired_intents` at the
+   start of every reconciler tick (a bulk delete; the every-tick full scan
+   re-derives the affected devices).
 
 There are no preconditions and no orphan sweeps. **Synthesized** intents have no
 lifecycle at all — they exist only for the duration of one evaluation and

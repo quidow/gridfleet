@@ -93,7 +93,7 @@ sequenceDiagram
     Rec->>Rec: mark_node_started(port, pid, connection_target)
     Rec->>Pg: write AppiumNode.pid / active_connection_target (observed_running becomes true)
     Rec->>Pg: DeviceHealthService(...).apply_node_state_transition(mark_offline=False)
-    Note right of Pg: device operational-state restore is DERIVED by the device_intent_reconciler (mark_dirty_and_reconcile), never written directly here.
+    Note right of Pg: device operational-state restore is DERIVED by the device_intent_reconciler (reconcile_now), never written directly here.
 ```
 
 Call-outs:
