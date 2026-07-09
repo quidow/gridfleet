@@ -28,8 +28,7 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
-    RECOVERY,
+    CommandKind,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
@@ -197,7 +196,7 @@ class NodeHealthService:
             intents=[
                 IntentRegistration(
                     source=f"auto_recovery:node:{device.id}",
-                    axis=NODE_PROCESS,
+                    kind=CommandKind.auto_recovery_start,
                     payload={
                         "action": "start",
                         "restart_requested_at": requested_at.isoformat(),
@@ -206,7 +205,7 @@ class NodeHealthService:
                 ),
                 IntentRegistration(
                     source=f"auto_recovery:recovery:{device.id}",
-                    axis=RECOVERY,
+                    kind=CommandKind.auto_recovery_allow,
                     payload={"allowed": True, "reason": "Node health restart"},
                     expires_at=deadline,
                 ),

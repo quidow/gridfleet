@@ -19,7 +19,7 @@ from app.devices.models import (
     DeviceOperationalState,
     DeviceType,
 )
-from app.devices.services.intent_types import NODE_PROCESS
+from app.devices.services.intent_types import CommandKind
 from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ async def test_refresher_publishes_device_intent_count(db_session: AsyncSession)
             DeviceIntent(
                 device_id=device.id,
                 source=f"test:intent:{i}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.operator_start.value,
                 payload={"action": "start"},
             )
         )

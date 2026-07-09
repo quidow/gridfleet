@@ -18,8 +18,7 @@ from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
-    RECOVERY,
+    CommandKind,
     IntentRegistration,
     failure_stop_sources,
 )
@@ -264,13 +263,13 @@ class LifecyclePolicyService:
                 # reservation row; run: routing derives from it. No stored twin needed.
                 IntentRegistration(
                     source=f"auto_recovery:node:{device.id}",
-                    axis=NODE_PROCESS,
+                    kind=CommandKind.auto_recovery_start,
                     payload={"action": "start"},
                     expires_at=recovery_intent_expiry,
                 ),
                 IntentRegistration(
                     source=f"auto_recovery:recovery:{device.id}",
-                    axis=RECOVERY,
+                    kind=CommandKind.auto_recovery_allow,
                     payload={"allowed": True, "reason": reason},
                     expires_at=recovery_intent_expiry,
                 ),
@@ -676,7 +675,7 @@ class LifecyclePolicyService:
 
         Caller (``device_connectivity`` healthy path) has already established the
         device is healthy and not offline. We additionally gate on
-        ``operator_stop_active``: an active operator-stop deny intent (RECOVERY axis)
+        ``operator_stop_active``: an active operator-stop deny intent (operator_recovery_deny kind)
         makes the hold legitimate and operator-owned — it must stay sticky (N13).
 
         Final gate: only clear residue older than ``min_age_seconds`` (>= 2x the

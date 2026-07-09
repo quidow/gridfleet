@@ -9,7 +9,7 @@ import pytest
 
 from app.devices import locking as device_locking
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import RECOVERY, IntentRegistration
+from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import (
     CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
@@ -56,7 +56,7 @@ async def test_operator_recovery_deny_blocks(db_session: AsyncSession, db_host: 
         intents=[
             IntentRegistration(
                 source=f"operator:stop:recovery:{device.id}",
-                axis=RECOVERY,
+                kind=CommandKind.operator_recovery_deny,
                 payload={"allowed": False, "reason": "Operator stopped the node"},
             )
         ],

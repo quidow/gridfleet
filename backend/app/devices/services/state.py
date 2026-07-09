@@ -21,7 +21,7 @@ from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
 from app.devices.services.health_view import device_allows_allocation
-from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
+from app.devices.services.intent_types import verification_intent_source
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
 from app.sessions.live_session_predicate import live_session_predicate
@@ -188,7 +188,6 @@ async def gather_device_state_facts(
             select(DeviceIntent.id)
             .where(
                 DeviceIntent.device_id == device.id,
-                DeviceIntent.axis == NODE_PROCESS,
                 DeviceIntent.source == verification_intent_source(device.id),
                 or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
             )

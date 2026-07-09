@@ -36,7 +36,7 @@ async def test_bulk_restart_persists_watermark_when_auto_recovery_intent_present
     from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
     from app.devices.services import bulk as bulk_service
     from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
+    from app.devices.services.intent_types import CommandKind, IntentRegistration
 
     device = await create_device(db_session, host_id=db_host.id, name="bk-restart", verified=True)
     node = AppiumNode(
@@ -61,7 +61,7 @@ async def test_bulk_restart_persists_watermark_when_auto_recovery_intent_present
         intents=[
             IntentRegistration(
                 source=f"auto_recovery:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.auto_recovery_start,
                 payload={"action": "start"},
             ),
         ],

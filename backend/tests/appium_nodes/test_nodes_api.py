@@ -12,7 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import RECOVERY, IntentRegistration
+from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import (
     clear_operator_start_suppression,
     clear_stale_escalation_residue,
@@ -401,7 +401,7 @@ async def test_start_node_clears_operator_stop_suppression(
     """An explicit operator start must clear the ``recovery_suppressed_reason``
     residue left behind by a prior operator stop.
 
-    Operator stop registers a sticky RECOVERY-axis deny intent; the recovery
+    Operator stop registers a sticky recovery-deny command; the recovery
     loop then records ``recovery_suppressed_reason="Operator stopped the node"``
     onto ``lifecycle_policy_state``. The start path revokes the deny intent but
     must also clear the JSON residue, otherwise the device keeps deriving
@@ -437,7 +437,7 @@ async def test_start_node_clears_operator_stop_suppression(
         intents=[
             IntentRegistration(
                 source=f"operator:stop:recovery:{device_id}",
-                axis=RECOVERY,
+                kind=CommandKind.operator_recovery_deny,
                 payload={"allowed": False, "reason": "Operator stopped the node"},
             )
         ],

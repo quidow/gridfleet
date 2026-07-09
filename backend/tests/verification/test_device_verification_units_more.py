@@ -16,7 +16,7 @@ from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
+    CommandKind,
     IntentRegistration,
     verification_intent_source,
 )
@@ -384,7 +384,7 @@ async def test_register_verification_node_intent_revokes_blocking_health_failure
         intents=[
             IntentRegistration(
                 source=health_failure_source,
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop"},
             )
         ],

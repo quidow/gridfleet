@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -28,17 +29,21 @@ def failure_stop_sources(device_id: UUID) -> list[str]:
     ]
 
 
-IntentAxis = Literal["node_process", "grid_routing", "recovery"]
-
-NODE_PROCESS: IntentAxis = "node_process"
-GRID_ROUTING: IntentAxis = "grid_routing"
-RECOVERY: IntentAxis = "recovery"
+class CommandKind(StrEnum):
+    operator_stop = "operator:stop:node"
+    operator_recovery_deny = "operator:stop:recovery"
+    forced_release = "forced_release"
+    health_failure_stop = "health_failure:node"
+    operator_start = "operator:start"
+    verification_start = "verification"
+    auto_recovery_start = "auto_recovery:node"
+    auto_recovery_allow = "auto_recovery:recovery"
 
 
 @dataclass(frozen=True)
 class IntentRegistration:
     source: str
-    axis: IntentAxis
+    kind: CommandKind
     payload: dict[str, Any]
     run_id: UUID | None = None
     expires_at: datetime | None = None

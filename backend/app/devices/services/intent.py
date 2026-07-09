@@ -48,7 +48,7 @@ class IntentService:
                 {
                     "device_id": device_id,
                     "source": intent.source,
-                    "axis": intent.axis,
+                    "kind": intent.kind.value,
                     "run_id": intent.run_id,
                     "payload": dict(intent.payload),
                     "expires_at": intent.expires_at,
@@ -61,7 +61,7 @@ class IntentService:
         upsert = stmt.on_conflict_do_update(
             index_elements=[DeviceIntent.device_id, DeviceIntent.source],
             set_={
-                "axis": stmt.excluded.axis,
+                "kind": stmt.excluded.kind,
                 "run_id": stmt.excluded.run_id,
                 "payload": stmt.excluded.payload,
                 "expires_at": stmt.excluded.expires_at,

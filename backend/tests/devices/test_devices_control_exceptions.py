@@ -17,8 +17,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
-    RECOVERY,
+    CommandKind,
     IntentRegistration,
 )
 from app.devices.services.service import DeviceCrudService
@@ -98,17 +97,17 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         intents=[
             IntentRegistration(
                 source=f"connectivity:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "stop_mode": "defer"},
             ),
             IntentRegistration(
                 source=f"health_failure:node:{device.id}",
-                axis=NODE_PROCESS,
+                kind=CommandKind.health_failure_stop,
                 payload={"action": "stop", "stop_mode": "graceful"},
             ),
             IntentRegistration(
                 source=f"health_failure:recovery:{device.id}",
-                axis=RECOVERY,
+                kind=CommandKind.health_failure_stop,
                 payload={"allowed": False, "reason": "Node health failure"},
             ),
         ],

@@ -266,7 +266,7 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
             await db.execute(
                 select(DeviceIntent)
                 .where(DeviceIntent.device_id == device.id)
-                .order_by(DeviceIntent.axis, DeviceIntent.source)
+                .order_by(DeviceIntent.kind, DeviceIntent.source)
             )
         )
         .scalars()
@@ -278,7 +278,7 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
         "intents": [
             {
                 "source": intent.source,
-                "axis": intent.axis,
+                "kind": intent.kind,
                 "run_id": intent.run_id,
                 "payload": copy.deepcopy(intent.payload),
                 "expires_at": intent.expires_at,

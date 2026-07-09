@@ -23,8 +23,7 @@ from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
-    NODE_PROCESS,
-    RECOVERY,
+    CommandKind,
     IntentRegistration,
     failure_stop_sources,
 )
@@ -82,7 +81,7 @@ def operator_start_intent(device: Device, *, settings: SettingsReader) -> Intent
     expires_at = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
     return IntentRegistration(
         source=operator_start_source(device.id),
-        axis=NODE_PROCESS,
+        kind=CommandKind.operator_start,
         payload={"action": "start"},
         expires_at=expires_at,
     )
@@ -94,7 +93,7 @@ def operator_restart_intent(device: Device, *, settings: SettingsReader) -> Inte
     deadline = requested_at + timedelta(seconds=window_sec)
     return IntentRegistration(
         source=operator_start_source(device.id),
-        axis=NODE_PROCESS,
+        kind=CommandKind.operator_start,
         payload={
             "action": "start",
             "restart_requested_at": requested_at.isoformat(),
@@ -104,16 +103,12 @@ def operator_restart_intent(device: Device, *, settings: SettingsReader) -> Inte
 
 
 def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
-    # No GRID_ROUTING (operator:stop:grid) intent: the operator:stop:node hard stop
-    # already forces accepting_new_sessions=False via the node_factor in
-    # intent_reconciler (the node stops -> node_factor=False -> accepting=False),
-    # so a separate accepting=False grid intent was redundant (design P5).
-    # operator_stop_sources still lists operator:stop:grid so any row registered
-    # before this change is revoked on the next operator start.
+    # No grid intent: the operator:stop:node hard stop already forces
+    # accepting_new_sessions=False via the node_factor in intent_reconciler.
     return [
         IntentRegistration(
             source=f"operator:stop:node:{device_id}",
-            axis=NODE_PROCESS,
+            kind=CommandKind.operator_stop,
             payload={"action": "stop"},
         ),
         # An operator stop is sticky: deny auto-recovery so the recovery availability
@@ -122,7 +117,7 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
         # this stop (N13). The operator-start path revokes this via operator_stop_sources.
         IntentRegistration(
             source=f"operator:stop:recovery:{device_id}",
-            axis=RECOVERY,
+            kind=CommandKind.operator_recovery_deny,
             payload={"allowed": False, "reason": "Operator stopped the node"},
         ),
     ]

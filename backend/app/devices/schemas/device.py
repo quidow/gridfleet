@@ -259,7 +259,7 @@ class DeviceHealthRead(BaseModel):
 
 class DeviceIntentSummaryRead(BaseModel):
     source: str
-    axis: str
+    kind: str
     run_id: uuid.UUID | None = None
     payload: dict[str, Any]
     expires_at: datetime | None = None
