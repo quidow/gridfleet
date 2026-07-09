@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy import select
 
+from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -27,6 +29,8 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
 )
+from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.lifecycle_policy_state import write_state
 from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
@@ -1942,11 +1946,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=failing))
     mock_complete_auto_stop = AsyncMock()
     monkeypatch.setattr(LifecyclePolicyActionsService, "complete_auto_stop", mock_complete_auto_stop)
-    monkeypatch.setattr(
-        lifecycle_policy_module,
-        "_set_backoff",
-        lambda state, *, settings: "2026-05-13T12:00:00+00:00",
-    )
 
     viability2 = AsyncMock()
     viability2.run_session_viability_probe = AsyncMock(return_value={"status": "failed", "error": "probe failed"})
@@ -1962,6 +1961,37 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )  # type: ignore[arg-type]
     assert failing.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
     mock_complete_auto_stop.assert_awaited_once()
+
+
+async def test_node_start_failure_promotes_to_review_at_threshold(db_session: AsyncSession, db_host: Host) -> None:
+    """Node-start failures share the review promotion used by probe failures."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="node-start-review-threshold",
+        operational_state=DeviceOperationalState.offline,
+    )
+    locked = await device_locking.lock_device(db_session, device.id)
+    state = policy_state(locked)
+    state["recovery_backoff_attempts"] = 4
+    write_state(locked, state)
+    await db_session.commit()
+
+    svc = _make_svc()
+    locked = await device_locking.lock_device(db_session, device.id, load_sessions=True)
+    result = await svc._record_recovery_node_start_failure(
+        db_session,
+        locked,
+        policy_state(locked),
+        exc=NodeManagerError("agent rejected start"),
+        source="device_checks",
+        run=None,
+    )
+    assert result is False
+    refreshed = await db_session.get(Device, device.id)
+    assert refreshed is not None
+    assert refreshed.review_required is True
+    assert policy_state(refreshed)["recovery_backoff_attempts"] == 5
 
 
 def _make_actions_service() -> LifecyclePolicyActionsService:

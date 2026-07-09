@@ -33,7 +33,6 @@ from app.devices.services.lifecycle_policy_state import (
     in_maintenance,
     loaded_node,
     now,
-    parse_iso,
     record_backoff_suppressed,
     record_recovery_failed,
     record_recovery_recovered,
@@ -43,12 +42,10 @@ from app.devices.services.lifecycle_policy_state import (
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import (
-    set_backoff as _set_backoff_with_settings,
-)
-from app.devices.services.lifecycle_policy_state import (
     state as policy_state,
 )
 from app.devices.services.readiness import is_ready_for_use_async
+from app.lifecycle.services.escalation import backoff_active, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
@@ -106,8 +103,8 @@ class LifecyclePolicyService:
         if early is not None:
             return early
 
-        backoff_until = parse_iso(current_state.get("backoff_until"))
-        if backoff_until is not None and backoff_until > now():
+        backoff_until = backoff_active(current_state)
+        if backoff_until is not None:
             record_backoff_suppressed(current_state, until_iso=backoff_until.isoformat())
             write_state(device, current_state)
             await db.commit()
@@ -392,7 +389,15 @@ class LifecyclePolicyService:
         source: str,
         run: TestRun | None,
     ) -> bool:
-        backoff_until_iso = _set_backoff(current_state, settings=self._settings)
+        outcome = await escalate_remediation_failure(
+            db,
+            device,
+            current_state,
+            settings=self._settings,
+            review=self._review,
+            source=source,
+            reason=str(exc),
+        )
         record_recovery_failed(
             current_state,
             source=source,
@@ -407,7 +412,7 @@ class LifecyclePolicyService:
             failure_detail=current_state["recovery_suppressed_reason"],
             source=source,
             run=run,
-            backoff_until_iso=backoff_until_iso,
+            backoff_until_iso=outcome.backoff_until_iso,
         )
         await db.commit()
         return False
@@ -416,7 +421,6 @@ class LifecyclePolicyService:
         self, db: AsyncSession, device: Device, current_state: dict[str, Any], result: dict[str, Any]
     ) -> bool:
         failure_reason = result.get("error") or "Recovery viability probe failed"
-        backoff_until_iso = _set_backoff(current_state, settings=self._settings)
         record_recovery_failed(
             current_state,
             source="session_viability",
@@ -434,14 +438,21 @@ class LifecyclePolicyService:
         )
 
         # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases
-        # the row lock via intermediate commits in handle_node_crash.
-        # Without this re-lock, the trailing write_state below would clobber any
-        # concurrent writer (e.g., note_connectivity_loss) on the same device.
+        # the row lock via intermediate commits in handle_node_crash. Escalation
+        # (attempt count, backoff, review promotion) runs on the fresh row so it
+        # can never clobber a concurrent writer on the same device.
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
         run, _entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         fresh_state = policy_state(device)
-        fresh_state["backoff_until"] = backoff_until_iso
-        fresh_state["recovery_backoff_attempts"] = current_state["recovery_backoff_attempts"]
+        outcome = await escalate_remediation_failure(
+            db,
+            device,
+            fresh_state,
+            settings=self._settings,
+            review=self._review,
+            source="session_viability",
+            reason=failure_reason,
+        )
         record_recovery_failed(
             fresh_state,
             source="session_viability",
@@ -456,25 +467,9 @@ class LifecyclePolicyService:
             failure_detail=fresh_state["recovery_suppressed_reason"],
             source="session_viability",
             run=run,
-            backoff_until_iso=backoff_until_iso,
+            backoff_until_iso=outcome.backoff_until_iso,
         )
-        # Promote to review_required once consecutive failures cross the
-        # operator-configurable threshold. After this point the device drops
-        # out of automated recovery scope and only a sanctioned operator
-        # action (exit maintenance, restore from run, re-verify, restart
-        # node) clears the flag.
-        review_threshold = self._settings.get_int("general.lifecycle_recovery_review_threshold")
-        attempts = int(fresh_state.get("recovery_backoff_attempts") or 0)
-        if attempts >= review_threshold:
-            await self._review.mark_review_required(
-                db,
-                device,
-                reason=failure_reason,
-                source="session_viability",
-            )
-            await db.commit()
-        else:
-            await db.commit()
+        await db.commit()
         return False
 
     async def _finalize_recovery_success(
@@ -931,12 +926,6 @@ class DeferredStopOutcome(StrEnum):
     NO_PENDING_OR_RECOVERED = "no_pending_or_recovered"
     RUNNING_SESSION_EXISTS = "running_session_exists"
     AUTO_STOPPED = "auto_stopped"
-
-
-def _set_backoff(state: dict[str, Any], *, settings: SettingsReader) -> str:
-    base_seconds = settings.get_int("general.lifecycle_recovery_backoff_base_sec")
-    max_seconds = max(base_seconds, settings.get_int("general.lifecycle_recovery_backoff_max_sec"))
-    return _set_backoff_with_settings(state, base_seconds=base_seconds, max_seconds=max_seconds)
 
 
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
