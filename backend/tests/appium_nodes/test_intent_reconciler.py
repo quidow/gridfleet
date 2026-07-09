@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import ANY, AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationa
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
     _reconcile_all_devices_once,
+    _reconcile_commit_deliver,
     _reconcile_dirty_devices,
     _reconcile_expired_intents,
     reconcile_device,
@@ -422,8 +423,9 @@ async def test_full_scan_reconciles_each_intent_device(
 
     async def fake_reconcile(
         _db: AsyncSession, device_id: object, *, publisher: object = None, packs: object = None
-    ) -> None:
+    ) -> bool:
         reconciled.append(device_id)
+        return True
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
     monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", deliver)
@@ -630,3 +632,33 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     )
     await db_session.refresh(device)
     assert device.operational_state != DeviceOperationalState.offline  # drift corrected
+
+
+async def test_steady_state_reconcile_does_not_poke(db_session: AsyncSession, db_host: Host) -> None:
+    """A reconcile that changes nothing must not wake the agent."""
+    device = await create_device(db_session, host_id=db_host.id, name="steady-state")
+    await _seed_node(db_session, device.id)
+    settings = FakeSettingsReader()
+    # First reconcile settles initial derivation; the second is steady-state.
+    await _reconcile_commit_deliver(
+        db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+    )
+    poke = AsyncMock()
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
+        await _reconcile_commit_deliver(
+            db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+        )
+    poke.assert_not_awaited()
+
+
+async def test_desired_state_change_pokes_agent(db_session: AsyncSession, db_host: Host) -> None:
+    """A reconcile that flips desired node state must wake the agent."""
+    device = await create_device(db_session, host_id=db_host.id, name="pokes-agent")
+    await _seed_node(db_session, device.id)
+
+    poke = AsyncMock()
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
+        await _reconcile_commit_deliver(
+            db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+        )
+    poke.assert_awaited_once()

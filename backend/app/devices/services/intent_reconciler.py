@@ -98,13 +98,14 @@ async def _reconcile_commit_deliver(
     packs: dict[str, DriverPack] | None = None,
 ) -> None:
     if packs is not None:
-        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
+        changed = await reconcile_device(db, device_id, publisher=publisher, packs=packs)
     else:
-        await reconcile_device(db, device_id, publisher=publisher)
+        changed = await reconcile_device(db, device_id, publisher=publisher)
     await db.commit()
-    await poke_node_refresh(
-        db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-    )
+    if changed:
+        await poke_node_refresh(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def run_device_intent_reconciler_once(
@@ -257,15 +258,22 @@ async def reconcile_device(
     publisher: EventPublisher,
     observed_reason: ObservationReason | None = None,
     packs: dict[str, DriverPack] | None = None,
-) -> None:
+) -> bool:
+    """Re-derive desired node state and operational_state for one device.
+
+    Returns True when agent-visible node state changed (desired state/port,
+    grid run id, accepting_new_sessions, stop_pending, recovery fields) —
+    the caller uses this to gate the agent wake poke. Derivations that only
+    touch ``operational_state`` return False: the agent does not read it.
+    """
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     try:
         device = await device_locking.lock_device(db, device_id)
     except NoResultFound:
         # The device row was deleted concurrently (e.g. an operator delete
-        # between the dirty-scan select and this lock). Nothing to reconcile —
+        # between the scan select and this lock). Nothing to reconcile —
         # skip without failing the whole reconcile cycle.
-        return
+        return False
     node = device.appium_node
     if node is None:
         # No Appium node — skip intent evaluation but still derive device state
@@ -277,7 +285,7 @@ async def reconcile_device(
             )
         except Exception:  # noqa: BLE001 - state derivation must never break reconcile
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
-        return
+        return False
 
     now = now_utc()
     intents = await _load_intents_for_evaluation(db, device, node, now)
@@ -390,6 +398,8 @@ async def reconcile_device(
         )
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
+
+    return changed
 
 
 async def _apply_recovery_decision(
