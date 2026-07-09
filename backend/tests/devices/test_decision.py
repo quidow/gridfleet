@@ -31,8 +31,7 @@ def cmd(kind: CommandKind, **kw: object) -> Command:
         kind=kind,
         source=kw.pop("source", f"{kind.value}:{DEVICE}"),
         run_id=kw.pop("run_id", None),
-        transition_token=kw.pop("transition_token", None),
-        transition_deadline=kw.pop("transition_deadline", None),
+        restart_requested_at=kw.pop("restart_requested_at", None),
         reason_detail=kw.pop("reason_detail", None),
     )
 
@@ -102,30 +101,34 @@ def test_connectivity_park_suppressed_by_active_start_command() -> None:
     assert d.desired_state == "running"
 
 
-def test_token_bearing_start_wins_over_tokenless_start() -> None:
-    token = uuid.uuid4()
-    deadline = NOW + timedelta(seconds=120)
+def test_newest_watermark_wins_among_starts() -> None:
+    older = NOW - timedelta(seconds=60)
+    newer = NOW - timedelta(seconds=5)
     d = decide_node_process(
         [
-            cmd(CommandKind.operator_start, source=f"operator:start:{DEVICE}"),
-            cmd(
-                CommandKind.auto_recovery_start,
-                source=f"auto_recovery:node:{DEVICE}",
-                transition_token=token,
-                transition_deadline=deadline,
-            ),
+            cmd(CommandKind.operator_start, restart_requested_at=older),
+            cmd(CommandKind.auto_recovery_start, restart_requested_at=newer),
         ],
         facts(),
     )
     assert d.desired_state == "running"
-    assert d.transition_token == token
-    assert d.transition_deadline == deadline
+    assert d.restart_requested_at == newer
 
 
-def test_token_without_deadline_is_dropped() -> None:
-    d = decide_node_process([cmd(CommandKind.operator_start, transition_token=uuid.uuid4())], facts())
+def test_watermark_start_wins_over_plain_start() -> None:
+    watermark = NOW - timedelta(seconds=5)
+    d = decide_node_process(
+        [cmd(CommandKind.operator_start), cmd(CommandKind.auto_recovery_start, restart_requested_at=watermark)],
+        facts(),
+    )
     assert d.desired_state == "running"
-    assert d.transition_token is None
+    assert d.restart_requested_at == watermark
+
+
+def test_plain_starts_carry_no_watermark() -> None:
+    d = decide_node_process([cmd(CommandKind.operator_start)], facts())
+    assert d.desired_state == "running"
+    assert d.restart_requested_at is None
 
 
 # --- grid_routing ladder ---

@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS, APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED
+from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS
 from app.core.observability import get_logger
 from app.lifecycle.services.actions import is_reconciler_failure_residue
 
@@ -25,8 +25,6 @@ class DesiredRow:
     connection_target: str
     desired_state: str
     desired_port: int | None
-    transition_token: uuid.UUID | None
-    transition_deadline: datetime | None
     port: int | None
     pid: int | None
     active_connection_target: str | None
@@ -47,12 +45,10 @@ class ObservedEntry:
 ActionKind = Literal[
     "start",
     "stop",
-    "restart",
     "no_op",
     "confirm_running",
     "db_mark_running",
     "db_clear_stale_running",
-    "clear_expired_token",
 ]
 
 
@@ -69,7 +65,6 @@ class ConvergenceAction:
 
 
 WriteObserved = Callable[..., Awaitable[None]]
-ClearToken = Callable[..., Awaitable[None]]
 ResetStartFailure = Callable[..., Awaitable[None]]
 
 
@@ -77,18 +72,8 @@ def _decide_running_action(
     row: DesiredRow,
     *,
     observed: ObservedEntry | None,
-    token_active: bool,
-    token_expired: bool,
 ) -> ConvergenceAction:
     """Convergence action when the desired state is ``running``."""
-    if token_expired:
-        return ConvergenceAction(kind="clear_expired_token")
-    if token_active:
-        return ConvergenceAction(
-            kind="restart",
-            stop_port=observed.port if observed is not None else None,
-            start_port=_positive_or_none(row.desired_port) or _positive_or_none(row.port),
-        )
     if observed is None:
         return ConvergenceAction(kind="start", port=row.desired_port)
     if row.desired_port is None or observed.port == row.desired_port:
@@ -116,15 +101,8 @@ def decide_convergence_action(
     now: datetime,
 ) -> ConvergenceAction:
     """Return the next action for one desired DB row and one agent observation."""
-    token_active = (
-        row.transition_token is not None and row.transition_deadline is not None and row.transition_deadline > now
-    )
-    token_expired = (
-        row.transition_token is not None and row.transition_deadline is not None and row.transition_deadline <= now
-    )
-
     if row.desired_state == "running":
-        return _decide_running_action(row, observed=observed, token_active=token_active, token_expired=token_expired)
+        return _decide_running_action(row, observed=observed)
 
     if observed is not None:
         if row.stop_pending:
@@ -200,11 +178,11 @@ def rows_needing_stale_clear(
 def translate_action_for_pull(action: ConvergenceAction) -> ConvergenceAction | None:
     """Translate a convergence action for pull-only orchestration.
 
-    Agent-touching kinds (``start``/``stop``/``restart``) are skipped: the
+    Agent-touching kinds (``start``/``stop``) are skipped: the
     agent owns those transitions and reports the result as observed facts on
     its next health payload. DB-only kinds pass through unchanged.
     """
-    if action.kind in ("start", "stop", "restart"):
+    if action.kind in ("start", "stop"):
         return None
     return action
 
@@ -215,13 +193,12 @@ async def _execute_action(
     row: DesiredRow,
     action: ConvergenceAction,
     write_observed: WriteObserved,
-    clear_token: ClearToken,
     reset_start_failure: ResetStartFailure,
 ) -> None:
     """Dispatch one DB-only convergence action.
 
     ``translate_action_for_pull`` is the only action path into this function:
-    it strips agent-touching kinds (``start``/``stop``/``restart``) before a
+    it strips agent-touching kinds (``start``/``stop``) before a
     row ever reaches here, so every kind handled below is DB-only.
     """
     APPIUM_RECONCILER_CONVERGENCE_ACTIONS.labels(action=action.kind).inc()
@@ -239,10 +216,6 @@ async def _execute_action(
         if is_reconciler_failure_residue(row.lifecycle_policy_state):
             await reset_start_failure(row=row)
         return
-    if action.kind == "clear_expired_token":
-        APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED.inc()
-        await clear_token(row=row)
-        return
     if action.kind == "db_clear_stale_running":
         await write_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
         return
@@ -256,7 +229,3 @@ async def _execute_action(
             active_connection_target=action.active_connection_target,
         )
         return
-
-
-def _positive_or_none(value: int | None) -> int | None:
-    return value if value is not None and value > 0 else None

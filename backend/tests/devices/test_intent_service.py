@@ -25,7 +25,7 @@ def test_appium_node_has_orchestration_columns() -> None:
 
     assert "accepting_new_sessions" in columns
     assert "stop_pending" in columns
-    assert "generation" in columns
+    assert "restart_requested_at" in columns
 
 
 async def test_register_intents_batches(db_session: AsyncSession, db_host: Host) -> None:

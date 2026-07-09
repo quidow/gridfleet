@@ -1,4 +1,4 @@
-"""Node health auto-restart registers an intent with a transition token."""
+"""Node health auto-restart registers an intent with a restart watermark."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_node_health_auto_restart_registers_transition_token_intent(
+async def test_node_health_auto_restart_registers_restart_watermark_intent(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -64,7 +64,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     await db_session.commit()
 
     await db_session.refresh(node)
-    assert node.transition_token is not None
+    assert node.restart_requested_at is not None
     events = (
         (
             await db_session.execute(
@@ -80,7 +80,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     assert any(
         event.details is not None
         and event.details.get("caller") == "intent_reconciler"
-        and event.details.get("transition_token") is not None
+        and event.details.get("restart_requested_at") is not None
         for event in events
     )
     intent = (
@@ -91,7 +91,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
             )
         )
     ).scalar_one()
-    assert intent.payload["transition_token"] == str(node.transition_token)
+    assert intent.payload["restart_requested_at"] == node.restart_requested_at.isoformat()
 
 
 async def test_node_health_skips_escalation_for_intentionally_stopping_node(
@@ -137,7 +137,7 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
     await db_session.commit()
 
     await db_session.refresh(node)
-    assert node.transition_token is None  # no restart escalated
+    assert node.restart_requested_at is None  # no restart escalated
     assert node.consecutive_health_failures == 999  # refused probe not counted
     intent = (
         await db_session.execute(

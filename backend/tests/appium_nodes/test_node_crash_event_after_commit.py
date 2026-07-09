@@ -158,4 +158,4 @@ async def test_probe_failure_threshold_writes_restart_intent(
     assert node.observed_running is True
     assert node.health_state == "error"
     assert node.desired_state == AppiumDesiredState.running
-    assert node.transition_token is not None
+    assert node.restart_requested_at is not None

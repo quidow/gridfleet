@@ -117,16 +117,12 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         connection_target="dev",
         desired_state="running",
         desired_port=4723,
-        transition_token=uuid.uuid4(),
-        transition_deadline=None,
         port=4723,
         pid=None,
         active_connection_target=None,
         stop_pending=False,
     )
-    node = SimpleNamespace(
-        desired_state="running", desired_port=4723, transition_token=row.transition_token, transition_deadline=None
-    )
+    node = SimpleNamespace(desired_state="running", desired_port=4723, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=device))
@@ -160,12 +156,11 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         pid=None,
         active_connection_target=None,
         clear_desired_port=True,
-        clear_transition=True,
     )
     appium_reconciler.mark_node_stopped.assert_awaited_once()
     written = write.await_args.kwargs["write"]
     assert written.desired_port is None
-    assert written.transition_token is None
+    assert written.restart_requested_at is None
 
 
 async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,8 +182,6 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
         connection_target="dev",
         desired_state="running",
         desired_port=4723,
-        transition_token=uuid.uuid4(),
-        transition_deadline=None,
         port=4723,
         pid=None,
         active_connection_target=None,
@@ -213,12 +206,7 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
     await observed(row=row, state="running", port=4723, pid=1, active_connection_target="dev", clear_desired_port=True)
 
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
-    await observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None, clear_transition=True)
-
-    clear_token = _reconciler_svc._clear_token_factory(session_scope=lambda: db)
-    monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
-    await clear_token(row=row)
-    appium_reconciler._clear_transition_token.assert_awaited_once_with(db, row)
+    await observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
 
 
 async def test_session_scope_reuses_existing_db() -> None:
@@ -235,8 +223,6 @@ async def test_reconcile_host_returns_for_malformed_appium_processes(monkeypatch
         connection_target="dev",
         desired_state="running",
         desired_port=4723,
-        transition_token=None,
-        transition_deadline=None,
         port=4723,
         pid=None,
         active_connection_target=None,

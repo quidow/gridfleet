@@ -1,8 +1,7 @@
 """Pull-mode (agent-pull node desired state) tests for the Appium reconciler.
 
 Pull is now the only reconcile mode: the reconciler is always observe-only —
-no agent start/stop/restart or orphan reaps are issued, and applied-
-transition-token facts reported by the agent are ingested instead.
+no agent start/stop or orphan reaps are issued.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from app.appium_nodes.services.reconciler_convergence import DesiredRow, Observe
 from app.core.metrics_recorders import (
     APPIUM_PULL_MODE_ORPHANS_OBSERVED,
     APPIUM_PULL_MODE_SKIPPED_ACTIONS,
-    APPIUM_TRANSITION_TOKEN_OVERRIDDEN,
 )
 from app.devices.models import DeviceOperationalState
 from tests.fakes import FakeSettingsReader
@@ -58,8 +56,6 @@ def _desired_row(**overrides: object) -> DesiredRow:
         "connection_target": "serial-1",
         "desired_state": "running",
         "desired_port": 4723,
-        "transition_token": None,
-        "transition_deadline": None,
         "port": None,
         "pid": None,
         "active_connection_target": None,
@@ -85,15 +81,6 @@ def _scope_for(db: AsyncSession) -> Callable[[], AbstractAsyncContextManager[Asy
         yield db
 
     return _scope
-
-
-def _override_total() -> float:
-    return sum(
-        sample.value
-        for metric in APPIUM_TRANSITION_TOKEN_OVERRIDDEN.collect()
-        for sample in metric.samples
-        if sample.name.endswith("_total")
-    )
 
 
 class _DummySession:
@@ -128,7 +115,7 @@ async def test_pull_host_observed_running_writes_same_as_push_mode(monkeypatch: 
     row = _desired_row(device_id=device_id, desired_state="running", desired_port=4723, connection_target="pull-mark")
     observed = [ObservedEntry(port=4723, pid=999, connection_target="pull-mark")]
 
-    node = SimpleNamespace(desired_state="running", desired_port=4723, transition_token=None, transition_deadline=None)
+    node = SimpleNamespace(desired_state="running", desired_port=4723, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
     mark_started = AsyncMock()
@@ -144,76 +131,6 @@ async def test_pull_host_observed_running_writes_same_as_push_mode(monkeypatch: 
     assert kwargs["port"] == 4723
     assert kwargs["pid"] == 999
     assert kwargs["details"].active_connection_target == "pull-mark"
-    assert kwargs["details"].clear_transition is False
-
-
-@pytest.mark.db
-async def test_pull_host_applied_transition_token_match_clears_via_natural_clear(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="pull-token-clear",
-        identity_value="pull-token-clear-001",
-        connection_target="pull-token-clear-target",
-        operational_state=DeviceOperationalState.available,
-    )
-    token = uuid.uuid4()
-    deadline = datetime.now(UTC) + timedelta(seconds=60)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        pid=111,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        transition_token=token,
-        transition_deadline=deadline,
-        active_connection_target=device.connection_target,
-    )
-    db_session.add(node)
-    await db_session.commit()
-
-    row = _desired_row(
-        device_id=device.id,
-        host_id=db_host.id,
-        node_id=node.id,
-        connection_target=device.connection_target,
-        desired_state="running",
-        desired_port=4723,
-        transition_token=token,
-        transition_deadline=deadline,
-        port=4723,
-        pid=111,
-        active_connection_target=device.connection_target,
-    )
-    raw_running_nodes = [
-        {
-            "port": 4723,
-            "pid": 111,
-            "connection_target": device.connection_target,
-            "platform_id": device.platform_id,
-            "applied_transition_token": str(token),
-        }
-    ]
-
-    svc = ReconcilerService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        session_factory=_scope_for(db_session),
-    )
-
-    before = _override_total()
-    await svc._ingest_pull_host_reports([row], raw_running_nodes)
-    after = _override_total()
-
-    await db_session.refresh(node)
-    assert node.transition_token is None
-    assert node.transition_deadline is None
-    assert after == before, "natural clear must not trip APPIUM_TRANSITION_TOKEN_OVERRIDDEN"
 
 
 async def test_pull_host_stopped_desired_absent_from_payload_marks_observed_stopped(
@@ -231,7 +148,7 @@ async def test_pull_host_stopped_desired_absent_from_payload_marks_observed_stop
         pid=222,
         active_connection_target="pull-stop",
     )
-    node = SimpleNamespace(desired_state="stopped", desired_port=None, transition_token=None, transition_deadline=None)
+    node = SimpleNamespace(desired_state="stopped", desired_port=None, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
     mark_stopped = AsyncMock()
@@ -328,7 +245,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
         session_factory=_scope_for(db_session),
     )
 
-    await svc._ingest_pull_host_reports([row], [], [failure])
+    await svc._ingest_start_failure_reports([row], [failure])
 
     await db_session.refresh(node)
     await db_session.refresh(device)
@@ -339,7 +256,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
 
     # Second sweep, same (port, at) report still in the agent's ring: dedupe
     # must skip both the re-pin and the backoff increment.
-    await svc._ingest_pull_host_reports([row], [], [failure])
+    await svc._ingest_start_failure_reports([row], [failure])
 
     await db_session.refresh(node)
     await db_session.refresh(device)
@@ -399,8 +316,8 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
 
     t0 = datetime.now(UTC).isoformat()
     before_first = datetime.now(UTC)
-    await svc._ingest_pull_host_reports(
-        [row], [], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t0)]
+    await svc._ingest_start_failure_reports(
+        [row], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t0)]
     )
     after_first = datetime.now(UTC)
     await db_session.refresh(device)
@@ -410,8 +327,8 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
 
     t1 = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
     before_second = datetime.now(UTC)
-    await svc._ingest_pull_host_reports(
-        [row], [], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t1)]
+    await svc._ingest_start_failure_reports(
+        [row], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t1)]
     )
     after_second = datetime.now(UTC)
     await db_session.refresh(device)
@@ -465,7 +382,7 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
         session_factory=_scope_for(db_session),
     )
 
-    await svc._ingest_pull_host_reports([row], [], [failure])
+    await svc._ingest_start_failure_reports([row], [failure])
 
     await db_session.refresh(node)
     await db_session.refresh(device)
@@ -474,12 +391,11 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
 
 
 @pytest.mark.db
-async def test_pull_host_port_conflict_repin_preserves_transition_token(
+async def test_pull_host_port_conflict_repin_preserves_restart_watermark(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """The re-pin write must preserve the node's existing transition token/deadline
-    so it stays off APPIUM_TRANSITION_TOKEN_OVERRIDDEN (desired_state_writer.py:116)."""
+    """The re-pin write must preserve the node's existing restart watermark."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -488,16 +404,14 @@ async def test_pull_host_port_conflict_repin_preserves_transition_token(
         connection_target="pull-repin-token-target",
         operational_state=DeviceOperationalState.available,
     )
-    token = uuid.uuid4()
-    deadline = datetime.now(UTC) + timedelta(seconds=60)
+    restart_requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
     node = AppiumNode(
         device_id=device.id,
         port=4723,
         pid=None,
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
-        transition_token=token,
-        transition_deadline=deadline,
+        restart_requested_at=restart_requested_at,
     )
     db_session.add(node)
     await db_session.commit()
@@ -509,8 +423,6 @@ async def test_pull_host_port_conflict_repin_preserves_transition_token(
         connection_target=device.connection_target,
         desired_state="running",
         desired_port=4723,
-        transition_token=token,
-        transition_deadline=deadline,
         port=None,
         pid=None,
         active_connection_target=None,
@@ -525,12 +437,8 @@ async def test_pull_host_port_conflict_repin_preserves_transition_token(
         session_factory=_scope_for(db_session),
     )
 
-    before = _override_total()
-    await svc._ingest_pull_host_reports([row], [], [failure])
-    after = _override_total()
+    await svc._ingest_start_failure_reports([row], [failure])
 
     await db_session.refresh(node)
-    assert node.transition_token == token
-    assert node.transition_deadline is not None
+    assert node.restart_requested_at == restart_requested_at
     assert node.desired_port != 4723
-    assert after == before, "re-pin must preserve the existing token and not trip APPIUM_TRANSITION_TOKEN_OVERRIDDEN"

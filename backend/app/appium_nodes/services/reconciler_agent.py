@@ -81,7 +81,6 @@ class NodeStartDetails:
     active_connection_target: str | None = None
     allocated_caps: dict[str, Any] | None = None
     started_at: datetime | None = None
-    clear_transition: bool = False
 
 
 def _short_session_factory(db: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -182,9 +181,6 @@ async def mark_node_started(
         mark_offline=False,
     )
     reset_reconciler_start_failure_state(device)
-    if details.clear_transition:
-        node.transition_token = None
-        node.transition_deadline = None
     # Pull re-applies drain/stop flags from the last pull on crash-restart (the
     # agent re-derives accepting_new_sessions/stop_pending from desired state
     # every launch), so the belt-and-suspenders outbox re-push that used to run

@@ -51,14 +51,12 @@ async def test_desired_nodes_are_host_scoped_and_include_launch_only_for_running
         port=4723,
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
-        generation=7,
     )
     stopped_node = AppiumNode(
         device_id=stopped_device.id,
         port=4724,
         desired_state=AppiumDesiredState.stopped,
         desired_port=None,
-        generation=8,
     )
     db_session.add_all(
         [
@@ -69,7 +67,6 @@ async def test_desired_nodes_are_host_scoped_and_include_launch_only_for_running
                 port=4725,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4725,
-                generation=99,
             ),
         ]
     )
@@ -79,13 +76,12 @@ async def test_desired_nodes_are_host_scoped_and_include_launch_only_for_running
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["generation_hint"] == 8
     assert {node["device_id"] for node in payload["nodes"]} == {
         str(running_device.id),
         str(stopped_device.id),
     }
     by_device = {node["device_id"]: node for node in payload["nodes"]}
-    assert by_device[str(running_device.id)]["generation"] == 7
+    assert by_device[str(running_device.id)]["restart_requested_at"] is None
     assert by_device[str(running_device.id)]["launch"]["port"] == 4723
     assert by_device[str(running_device.id)]["launch"]["connection_target"] == running_device.connection_target
     assert by_device[str(stopped_device.id)]["launch"] is None
@@ -109,7 +105,6 @@ async def test_desired_launch_payload_matches_push_payload(
         port=4730,
         desired_state=AppiumDesiredState.running,
         desired_port=4730,
-        generation=12,
         accepting_new_sessions=False,
         stop_pending=True,
         desired_grid_run_id=grid_run_id,

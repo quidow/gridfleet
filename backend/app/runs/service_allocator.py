@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 # genuine shortfall surfaces.
 _MATCH_RETRY_ATTEMPTS = 5
 _MATCH_RETRY_BACKOFF_SEC = 0.25
+_RESTART_WINDOW_FALLBACK_SEC = 120
 
 
 class _UnmetRequirementError(Exception):
@@ -69,8 +70,11 @@ def _device_matches_requirement_tags(device: Device, tags: dict[str, str] | None
 async def _find_matching_devices(
     db: AsyncSession,
     requirement: DeviceRequirement,
+    *,
+    restart_window_sec: int = _RESTART_WINDOW_FALLBACK_SEC,
     excluded_device_ids: set[uuid.UUID] | None = None,
 ) -> list[Device]:
+    now = now_utc()
     active_reservation_exists = exists(
         select(DeviceReservation.id).where(
             DeviceReservation.device_id == Device.id,
@@ -83,7 +87,7 @@ async def _find_matching_devices(
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
-        .where(node_viable_predicate())
+        .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(Device.pack_id == requirement.pack_id)
         .where(Device.platform_id == requirement.platform_id)
         .where(~active_reservation_exists)
@@ -110,7 +114,7 @@ async def _find_matching_devices(
         .where(Device.id.in_(candidate_ids))
         .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
-        .where(node_viable_predicate())
+        .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
         .with_for_update(of=Device, skip_locked=True)
@@ -131,6 +135,8 @@ async def _classify_shortfall_gates(
     requirement: DeviceRequirement,
     devices: list[Device],
     reserved_run_by_device: dict[uuid.UUID, uuid.UUID],
+    *,
+    restart_window_sec: int,
 ) -> tuple[Counter[str], Counter[str], set[uuid.UUID]]:
     """Bucket each device by the first allocator gate it fails.
 
@@ -145,7 +151,7 @@ async def _classify_shortfall_gates(
             state_counts[device.operational_state.value] += 1
         elif device.review_required:
             gate_counts["review"] += 1
-        elif not device_node_is_viable(device):
+        elif not device_node_is_viable(device, now=now_utc(), restart_window_sec=restart_window_sec):
             gate_counts["node"] += 1
         elif device.id in reserved_run_by_device:
             gate_counts["reserved"] += 1
@@ -224,7 +230,7 @@ async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceR
     )
 
     state_counts, gate_counts, blocking_runs = await _classify_shortfall_gates(
-        db, requirement, devices, reserved_run_by_device
+        db, requirement, devices, reserved_run_by_device, restart_window_sec=_RESTART_WINDOW_FALLBACK_SEC
     )
     return _format_shortfall_parts(len(devices), state_counts, gate_counts, blocking_runs)
 
@@ -284,6 +290,10 @@ class RunAllocatorService:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._pool = pool
+
+    def _restart_window_sec(self) -> int:
+        value = self._settings.get("appium_reconciler.restart_window_sec")
+        return int(value) if value is not None else _RESTART_WINDOW_FALLBACK_SEC
 
     async def create_run(self, db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
         """Create a test run reservation. Returns (run, reserved_device_infos)."""
@@ -387,7 +397,12 @@ class RunAllocatorService:
         for req in data.requirements:
             await assert_runnable(db, pack_id=req.pack_id, platform_id=req.platform_id, pack_lock=True)
             already_ids = {device.id for device in all_matched}
-            available = await _find_matching_devices(db, req, excluded_device_ids=already_ids)
+            available = await _find_matching_devices(
+                db,
+                req,
+                restart_window_sec=self._restart_window_sec(),
+                excluded_device_ids=already_ids,
+            )
             required_count = _minimum_required_count(req)
             if len(available) < required_count:
                 raise _UnmetRequirementError(req, len(available))

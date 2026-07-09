@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -54,7 +53,7 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
 
     assert node.desired_state == AppiumDesiredState.running
     assert node.desired_port == 4723
-    assert node.transition_token is None
+    assert node.restart_requested_at is None
 
     events = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
     assert len(events) == 1
@@ -70,12 +69,12 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
     assert after == before + 1
 
 
-async def test_write_desired_state_stopped_clears_desired_port_and_token(
+async def test_write_desired_state_stopped_clears_desired_port_and_watermark(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-2", verified=True)
-    token = uuid.uuid4()
+    restart_requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
     node = AppiumNode(
         device_id=device.id,
         port=4723,
@@ -83,8 +82,7 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
         active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
-        transition_token=token,
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+        restart_requested_at=restart_requested_at,
     )
     db_session.add(node)
     await db_session.flush()
@@ -100,11 +98,10 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
 
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.desired_port is None
-    assert node.transition_token is None
-    assert node.transition_deadline is None
+    assert node.restart_requested_at is None
 
 
-async def test_write_desired_state_with_transition_token_increments_token_counter(
+async def test_write_desired_state_records_restart_watermark(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -120,8 +117,7 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
     db_session.add(node)
     await db_session.flush()
 
-    before = metrics_recorders.APPIUM_TRANSITION_TOKEN_WRITES.labels(caller="operator_restart")._value.get()
-    token = uuid.uuid4()
+    restart_requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
 
     await write_desired_state(
         db_session,
@@ -130,26 +126,34 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
         write=DesiredStateWrite(
             target=AppiumDesiredState.running,
             desired_port=4723,
-            transition_token=token,
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+            restart_requested_at=restart_requested_at,
         ),
     )
     await db_session.commit()
     await db_session.refresh(node)
 
-    assert node.transition_token == token
-    assert node.transition_deadline is not None
+    assert node.restart_requested_at == restart_requested_at
+    event = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(DeviceEvent.device_id == device.id).order_by(DeviceEvent.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert event is not None
+    assert event.details is not None
+    assert event.details["restart_requested_at"] == restart_requested_at.isoformat()
 
-    after = metrics_recorders.APPIUM_TRANSITION_TOKEN_WRITES.labels(caller="operator_restart")._value.get()
-    assert after == before + 1
 
-
-async def test_write_desired_state_overrides_pending_token_increments_overridden_counter(
+async def test_write_desired_state_newer_watermark_silently_replaces_old_watermark(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-4", verified=True)
-    existing_token = uuid.uuid4()
+    older = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
+    newer = datetime(2026, 7, 9, 15, 5, tzinfo=UTC)
     node = AppiumNode(
         device_id=device.id,
         port=4723,
@@ -157,23 +161,10 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
         active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
-        transition_token=existing_token,
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+        restart_requested_at=older,
     )
     db_session.add(node)
     await db_session.flush()
-    db_session.add(
-        DeviceEvent(
-            device_id=device.id,
-            event_type=DeviceEventType.desired_state_changed,
-            details={"caller": "operator_restart", "transition_token": str(existing_token)},
-        )
-    )
-    await db_session.flush()
-
-    before = metrics_recorders.APPIUM_TRANSITION_TOKEN_OVERRIDDEN.labels(
-        losing_source="operator_restart", winning_source="health_restart"
-    )._value.get()
 
     await write_desired_state(
         db_session,
@@ -182,13 +173,10 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
         write=DesiredStateWrite(
             target=AppiumDesiredState.running,
             desired_port=4723,
-            transition_token=uuid.uuid4(),
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
+            restart_requested_at=newer,
         ),
     )
     await db_session.commit()
+    await db_session.refresh(node)
 
-    after = metrics_recorders.APPIUM_TRANSITION_TOKEN_OVERRIDDEN.labels(
-        losing_source="operator_restart", winning_source="health_restart"
-    )._value.get()
-    assert after == before + 1
+    assert node.restart_requested_at == newer

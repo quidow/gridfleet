@@ -136,7 +136,7 @@ async def test_gather_facts_skip_reload_matches_reload_path(
     device = await create_device_record(
         db_session, host_id=host["id"], identity_value="reload-eq", name="reload-eq", verified=True
     )
-    node = AppiumNode(device_id=device.id, port=4723, desired_state=AppiumDesiredState.stopped, generation=0)
+    node = AppiumNode(device_id=device.id, port=4723, desired_state=AppiumDesiredState.stopped)
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

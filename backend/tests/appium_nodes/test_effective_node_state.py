@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.appium_nodes.services.effective_state import compute_effective_state
@@ -10,20 +9,60 @@ from app.appium_nodes.services.effective_state import compute_effective_state
 NOW = datetime(2026, 6, 7, 12, 0, 0, tzinfo=UTC)
 
 
-def test_restarting_when_transition_active() -> None:
+def test_pending_watermark_is_restarting_within_window() -> None:
+    watermark = NOW - timedelta(seconds=30)
     assert (
         compute_effective_state(
             pid=123,
             desired_state="running",
             health_running=True,
             health_state=None,
-            transition_token=uuid.uuid4(),
-            transition_deadline=NOW + timedelta(seconds=30),
+            restart_requested_at=watermark,
+            started_at=watermark - timedelta(seconds=600),
+            restart_window_sec=120,
             lifecycle_policy_state=None,
             review_required=False,
             now=NOW,
         )
         == "restarting"
+    )
+
+
+def test_satisfied_watermark_is_running() -> None:
+    watermark = NOW - timedelta(seconds=30)
+    assert (
+        compute_effective_state(
+            pid=123,
+            desired_state="running",
+            health_running=True,
+            health_state=None,
+            restart_requested_at=watermark,
+            started_at=NOW - timedelta(seconds=5),
+            restart_window_sec=120,
+            lifecycle_policy_state=None,
+            review_required=False,
+            now=NOW,
+        )
+        == "running"
+    )
+
+
+def test_expired_watermark_self_clears_at_read_time() -> None:
+    watermark = NOW - timedelta(seconds=600)
+    assert (
+        compute_effective_state(
+            pid=123,
+            desired_state="running",
+            health_running=True,
+            health_state=None,
+            restart_requested_at=watermark,
+            started_at=watermark - timedelta(seconds=600),
+            restart_window_sec=120,
+            lifecycle_policy_state=None,
+            review_required=False,
+            now=NOW,
+        )
+        == "running"
     )
 
 
@@ -34,8 +73,9 @@ def test_blocked_when_review_required() -> None:
             desired_state="running",
             health_running=None,
             health_state=None,
-            transition_token=None,
-            transition_deadline=None,
+            restart_requested_at=None,
+            started_at=None,
+            restart_window_sec=120,
             lifecycle_policy_state=None,
             review_required=True,
             now=NOW,
@@ -51,8 +91,9 @@ def test_blocked_when_backoff_active() -> None:
             desired_state="running",
             health_running=None,
             health_state=None,
-            transition_token=None,
-            transition_deadline=None,
+            restart_requested_at=None,
+            started_at=None,
+            restart_window_sec=120,
             lifecycle_policy_state={"backoff_until": (NOW + timedelta(seconds=120)).isoformat()},
             review_required=False,
             now=NOW,
@@ -69,8 +110,9 @@ def test_not_blocked_when_only_suppression() -> None:
             desired_state="running",
             health_running=None,
             health_state=None,
-            transition_token=None,
-            transition_deadline=None,
+            restart_requested_at=None,
+            started_at=None,
+            restart_window_sec=120,
             lifecycle_policy_state={"recovery_suppressed_reason": "manual"},
             review_required=False,
             now=NOW,
@@ -86,8 +128,9 @@ def test_error_when_health_state_error() -> None:
             desired_state="running",
             health_running=None,
             health_state="error",
-            transition_token=None,
-            transition_deadline=None,
+            restart_requested_at=None,
+            started_at=None,
+            restart_window_sec=120,
             lifecycle_policy_state=None,
             review_required=False,
             now=NOW,
@@ -103,8 +146,9 @@ def test_error_when_health_running_false() -> None:
             desired_state="running",
             health_running=False,
             health_state=None,
-            transition_token=None,
-            transition_deadline=None,
+            restart_requested_at=None,
+            started_at=None,
+            restart_window_sec=120,
             lifecycle_policy_state=None,
             review_required=False,
             now=NOW,
@@ -117,8 +161,9 @@ def test_starting_running_stopping_stopped() -> None:
     base = {
         "health_running": None,
         "health_state": None,
-        "transition_token": None,
-        "transition_deadline": None,
+        "restart_requested_at": None,
+        "started_at": None,
+        "restart_window_sec": 120,
         "lifecycle_policy_state": None,
         "review_required": False,
         "now": NOW,

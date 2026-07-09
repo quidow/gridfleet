@@ -33,11 +33,11 @@ if TYPE_CHECKING:
 
 
 async def _seed_node(db_session: AsyncSession, device_id: object, *, generation: int = 0) -> AppiumNode:
+    _ = generation
     node = AppiumNode(
         device_id=device_id,
         port=4723,
         desired_state=AppiumDesiredState.stopped,
-        generation=generation,
     )
     db_session.add(node)
     await db_session.commit()
@@ -54,7 +54,6 @@ async def test_baseline_eligible_device_derives_running(db_session: AsyncSession
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is True
-    assert node.generation == 1
 
 
 async def test_reconcile_uses_facts_directly_for_maintenance(db_session: AsyncSession, db_host: Host) -> None:
@@ -393,6 +392,42 @@ async def test_pull_host_metadata_change_pokes_instead_of_staging(
         db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
     )
 
+    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
+
+
+async def test_pull_host_watermark_only_change_pokes_agent(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="pull-watermark")
+    node = await _seed_node(db_session, device.id)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    await db_session.commit()
+    requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=f"auto_recovery:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "restart_requested_at": requested_at.isoformat()},
+            )
+        ],
+    )
+    await db_session.commit()
+    poke = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.node_poke.agent_operations.agent_nodes_refresh", poke)
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+    await poke_node_refresh(
+        db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
+
+    await db_session.refresh(node)
+    assert node.restart_requested_at == requested_at
     poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
 
 

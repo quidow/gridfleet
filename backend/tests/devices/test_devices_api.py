@@ -2401,8 +2401,6 @@ async def test_not_accepting_available_device_reports_cooldown(
 async def test_transitioning_available_device_reports_transitioning(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    import uuid
-
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await create_device_record(
@@ -2414,15 +2412,16 @@ async def test_transitioning_available_device_reports_transitioning(
         operational_state=DeviceOperationalState.available,
     )
     # A restart is in flight: the process is still up (pid + target present, so the
-    # device stays ``available``) but ``transition_token`` is set, so the allocator's
-    # node-viability gate refuses it. Seed the node columns directly for this fixture.
+    # device stays ``available``) but the restart watermark is unsatisfied, so the
+    # allocator's node-viability gate refuses it. Seed the node columns directly.
     node = AppiumNode(
         device_id=device.id,
         port=4723,
         pid=1234,
         active_connection_target=device.connection_target,
         desired_state=AppiumDesiredState.running,
-        transition_token=uuid.uuid4(),
+        started_at=datetime.now(UTC) - timedelta(seconds=60),
+        restart_requested_at=datetime.now(UTC),
     )
     db_session.add(node)
     await db_session.commit()

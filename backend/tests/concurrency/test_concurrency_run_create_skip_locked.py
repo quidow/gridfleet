@@ -55,10 +55,21 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
     real_find = service_allocator._find_matching_devices
     calls = 0
 
-    async def counting_find(db: AsyncSession, requirement: object, excluded_device_ids: object = None) -> list[Device]:
+    async def counting_find(
+        db: AsyncSession,
+        requirement: object,
+        *,
+        restart_window_sec: int = 120,
+        excluded_device_ids: object = None,
+    ) -> list[Device]:
         nonlocal calls
         calls += 1
-        result = await real_find(db, requirement, excluded_device_ids=excluded_device_ids)  # type: ignore[arg-type]
+        result = await real_find(  # type: ignore[arg-type]
+            db,
+            requirement,
+            restart_window_sec=restart_window_sec,
+            excluded_device_ids=excluded_device_ids,
+        )
         if calls == 1:
             # First pass races the held lock: SKIP LOCKED drops the only device.
             assert result == []
@@ -125,8 +136,15 @@ async def test_create_run_exhausts_widened_retry_budget(
 
     calls = 0
 
-    async def always_empty(db: AsyncSession, requirement: object, excluded_device_ids: object = None) -> list[Device]:
+    async def always_empty(
+        db: AsyncSession,
+        requirement: object,
+        *,
+        restart_window_sec: int = 120,
+        excluded_device_ids: object = None,
+    ) -> list[Device]:
         nonlocal calls
+        _ = restart_window_sec, excluded_device_ids
         calls += 1
         return []
 

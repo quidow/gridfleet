@@ -28,8 +28,6 @@ def _desired_row(**overrides: object) -> DesiredRow:
         "connection_target": "serial-1",
         "desired_state": "running",
         "desired_port": 4723,
-        "transition_token": None,
-        "transition_deadline": None,
         "port": None,
         "pid": None,
         "active_connection_target": None,
@@ -67,15 +65,13 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
             "backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         },
     )
-    token = uuid.uuid4()
-    deadline = datetime.now(UTC) + timedelta(seconds=30)
+    restart_requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
     node = AppiumNode(
         device_id=device.id,
         port=4723,
         desired_state=AppiumDesiredState.running,
         desired_port=4724,
-        transition_token=token,
-        transition_deadline=deadline,
+        restart_requested_at=restart_requested_at,
         pid=123,
         active_connection_target="reconciler-target",
         stop_pending=True,
@@ -88,7 +84,7 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
     missing = await appium_reconciler._fetch_desired_row(db_session, uuid.uuid4())
     backoff = await appium_reconciler.fetch_backoff_until(db_session)
 
-    assert desired[0].transition_token == token
+    assert desired[0].started_at == node.started_at
     assert desired_one is not None
     assert desired_one.stop_pending is True
     assert missing is None
@@ -295,7 +291,6 @@ async def test_confirm_running_skips_lock_when_no_failure_residue(
         row=row,
         action=ConvergenceAction(kind="confirm_running"),
         write_observed=AsyncMock(),
-        clear_token=AsyncMock(),
         reset_start_failure=reset_fn,
     )
     lock_mock.assert_not_awaited()
@@ -351,7 +346,6 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
         row=row,
         action=ConvergenceAction(kind="confirm_running"),
         write_observed=AsyncMock(),
-        clear_token=AsyncMock(),
         reset_start_failure=reset_fn,
     )
     await db_session.refresh(device)
@@ -360,11 +354,7 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
     assert device.lifecycle_policy_state.get("last_failure_source") is None
 
 
-async def test_clear_transition_token_and_touch_noop(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_touch_last_observed_noop() -> None:
     @asynccontextmanager
     async def _mock_session_factory() -> AsyncMock:
         yield AsyncMock()
@@ -372,32 +362,3 @@ async def test_clear_transition_token_and_touch_noop(
     await appium_reconciler._touch_last_observed(
         [], settings=FakeSettingsReader({}), session_factory=_mock_session_factory
     )
-    with monkeypatch.context() as ctx:
-        ctx.setattr("app.appium_nodes.services.reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
-        await appium_reconciler._clear_transition_token(db_session, _desired_row(device_id=uuid.uuid4()))
-
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="Clear Token Device",
-        identity_value="reconciler-clear-001",
-        operational_state=DeviceOperationalState.available,
-    )
-    token = uuid.uuid4()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        transition_token=token,
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=30),
-    )
-    db_session.add(node)
-    await db_session.commit()
-
-    await appium_reconciler._clear_transition_token(
-        db_session,
-        _desired_row(device_id=device.id, node_id=node.id),
-    )
-    await db_session.refresh(node)
-    assert node.transition_token is None

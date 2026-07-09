@@ -24,6 +24,7 @@ from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
+DEFAULT_RESTART_WINDOW_SEC = 120
 
 CONTROL_PLANE_MESSAGE = "gridfleet control plane"
 
@@ -163,7 +164,11 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
         # reservation, the same axes the allocator's lock-time recheck applies. ``eligible``
         # mirrors ``allocation._eligible_devices`` exactly (it also excludes a device with a
         # live session, e.g. a viability probe, which ``unavailable_reason`` does not model).
-        node_viable = device_node_is_viable(device)
+        node_viable = device_node_is_viable(
+            device,
+            now=now,
+            restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
+        )
         node_accepting = device_node_accepting_new_sessions(device)
         reserved = run_service.reservation_gating_run_id(reservation_map.get(device.id), device.id) is not None
         reason = unavailable_reason(
@@ -189,8 +194,9 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 desired_state=node.desired_state.value,
                 health_running=node.health_running,
                 health_state=node.health_state,
-                transition_token=node.transition_token,
-                transition_deadline=node.transition_deadline,
+                restart_requested_at=node.restart_requested_at,
+                started_at=node.started_at,
+                restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
                 lifecycle_policy_state=device.lifecycle_policy_state,
                 review_required=device.review_required,
                 now=now,

@@ -22,14 +22,12 @@ def _build_read(**overrides: object) -> AppiumNodeRead:
         "id": uuid.uuid4(),
         "port": 4723,
         "pid": None,
-        "container_id": None,
         "active_connection_target": None,
         "state": "stopped",
         "started_at": datetime.now(UTC),
         "desired_state": "stopped",
         "desired_port": None,
-        "transition_token": None,
-        "transition_deadline": None,
+        "restart_requested_at": None,
         "last_observed_at": None,
         "health_running": None,
         "health_state": None,
@@ -59,12 +57,13 @@ def test_effective_state_stopped_when_desired_stopped_and_pid_none() -> None:
     assert read.effective_state == "stopped"
 
 
-def test_effective_state_restarting_when_active_transition_token() -> None:
+def test_effective_state_restarting_when_watermark_pending() -> None:
+    requested_at = datetime.now(UTC)
     read = _build_read(
         desired_state="running",
         pid=12345,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+        started_at=requested_at - timedelta(seconds=60),
+        restart_requested_at=requested_at,
     )
     assert read.effective_state == "restarting"
 
@@ -120,12 +119,13 @@ def test_effective_state_not_blocked_when_backoff_expired() -> None:
     assert read.effective_state == "starting"
 
 
-def test_effective_state_expired_transition_token_falls_through_to_running() -> None:
+def test_effective_state_expired_watermark_falls_through_to_running() -> None:
+    requested_at = datetime.now(UTC) - timedelta(seconds=600)
     read = _build_read(
         desired_state="running",
         pid=12345,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) - timedelta(seconds=10),
+        started_at=requested_at - timedelta(seconds=60),
+        restart_requested_at=requested_at,
     )
     assert read.effective_state == "running"
 

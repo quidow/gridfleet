@@ -88,8 +88,6 @@ def _desired_select() -> Select[Any]:
         target_expr.label("connection_target"),
         AppiumNode.desired_state,
         AppiumNode.desired_port,
-        AppiumNode.transition_token,
-        AppiumNode.transition_deadline,
         AppiumNode.port,
         AppiumNode.pid,
         AppiumNode.started_at,
@@ -106,8 +104,6 @@ def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
         connection_target=row.connection_target,
         desired_state=row.desired_state.value,
         desired_port=row.desired_port,
-        transition_token=row.transition_token,
-        transition_deadline=row.transition_deadline,
         port=row.port,
         pid=row.pid,
         started_at=row.started_at,
@@ -179,17 +175,6 @@ async def _lock_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) ->
         return None
 
 
-def _applied_token_for_row(row: DesiredRow, applied_by_target: dict[str, object]) -> object:
-    """Return the agent-reported ``applied_transition_token`` for ``row``, if any.
-
-    Mirrors ``match_observed_entry``'s target-matching fallback: prefer the
-    row's recorded live target, then fall back to the registered one.
-    """
-    if row.active_connection_target is not None and row.active_connection_target in applied_by_target:
-        return applied_by_target[row.active_connection_target]
-    return applied_by_target.get(row.connection_target)
-
-
 def _running_rows_by_target(rows: list[DesiredRow]) -> dict[str, DesiredRow]:
     """Index desired-running rows by connection target for start-failure matching.
 
@@ -204,27 +189,6 @@ def _running_rows_by_target(rows: list[DesiredRow]) -> dict[str, DesiredRow]:
         if row.active_connection_target:
             running_by_target.setdefault(row.active_connection_target, row)
     return running_by_target
-
-
-async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
-    device = await _lock_device_for_reconciler(db, row.device_id)
-    if device is None or device.appium_node is None:
-        return
-    node = device.appium_node
-    # ``transition_token_natural_clear`` keeps this expiry-driven clear out
-    # of the ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN`` metric: the old token
-    # was not contended by a competing writer, the deadline elapsed.
-    await write_desired_state(
-        db,
-        node=node,
-        caller="appium_reconciler",
-        write=DesiredStateWrite(
-            target=node.desired_state,
-            desired_port=node.desired_port,
-            transition_token_natural_clear=True,
-        ),
-    )
-    await db.commit()
 
 
 async def _repin_desired_port(
@@ -244,9 +208,8 @@ async def _repin_desired_port(
             conflict_port=conflict_port,
         )
         return
-    # Preserve the existing token/deadline: this write only corrects the port
-    # under the same lease, it is not a competing writer, so minting or
-    # clearing a token here would wrongly trip APPIUM_TRANSITION_TOKEN_OVERRIDDEN.
+    # Preserve the existing watermark: this write only corrects the port under
+    # the same restart request; it is not a competing writer.
     await write_desired_state(
         db,
         node=node,
@@ -254,8 +217,7 @@ async def _repin_desired_port(
         write=DesiredStateWrite(
             target=node.desired_state,
             desired_port=ports[0],
-            transition_token=node.transition_token,
-            transition_deadline=node.transition_deadline,
+            restart_requested_at=node.restart_requested_at,
         ),
     )
     await db.commit()
@@ -355,9 +317,9 @@ class ReconcilerService:
 
         Observe-only: no agent start/stop/restart or orphan reaps are issued
         here — the agent owns those transitions and reports the result as
-        observed facts (applied-transition-token, start_failures) that this
+        observed facts (start_failures) that this
         pass ingests. See ``translate_action_for_pull`` and
-        ``_ingest_pull_host_reports``.
+        ``_ingest_start_failure_reports``.
         """
         now = now_utc()
         cycle_start = time.monotonic()
@@ -375,9 +337,6 @@ class ReconcilerService:
                 )
                 for entry in running
             ]
-            raw_running_nodes = appium_processes.get("running_nodes")
-            if not isinstance(raw_running_nodes, list):
-                raw_running_nodes = []
             raw_start_failures = appium_processes.get("start_failures")
             if not isinstance(raw_start_failures, list):
                 raw_start_failures = []
@@ -424,7 +383,7 @@ class ReconcilerService:
             # restart -> None; the observed-column sync lands on the next
             # cycle's fresh fetch_desired_rows. Scoped to active_rows
             # (backoff-excluded rows never converge this cycle anyway).
-            await self._ingest_pull_host_reports(active_rows, raw_running_nodes, raw_start_failures)
+            await self._ingest_start_failure_reports(active_rows, raw_start_failures)
             await self.converge_host_rows(
                 None,
                 active_rows,
@@ -450,7 +409,6 @@ class ReconcilerService:
         """Drive convergence for one host."""
         session_scope = _session_scope(db)
         write_observed = self._write_observed_factory(session_scope=session_scope)
-        clear_token = self._clear_token_factory(session_scope=session_scope)
         reset_start_failure = self._make_reset_start_failure(session_scope=session_scope)
         observed_by_target = {entry.connection_target: entry for entry in observed}
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
@@ -467,7 +425,6 @@ class ReconcilerService:
                     row=row,
                     action=action,
                     write_observed=write_observed,
-                    clear_token=clear_token,
                     reset_start_failure=reset_start_failure,
                 )
             except Exception:  # convergence loop; log and continue, re-raise if requested
@@ -481,40 +438,16 @@ class ReconcilerService:
                 if raise_errors:
                     raise
 
-    async def _ingest_pull_host_reports(
+    async def _ingest_start_failure_reports(
         self,
         rows: list[DesiredRow],
-        raw_running_nodes: list[dict[str, Any]],
         start_failures: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Ingest agent-reported facts for pull-only orchestration.
+        """Ingest agent-reported start-failure facts for pull-only orchestration.
 
-        Applied-transition-token clear: for each row carrying a pending
-        ``transition_token``, if the agent's matching running-node entry
-        reports ``applied_transition_token`` equal to that token, clear it
-        via the same natural-clear path used for expiry
-        (``_clear_transition_token``) so the clear does not trip
-        ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN``.
-
-        Start-failure ingest (Task 4, D3): see ``_ingest_start_failures``.
         Mark-stopped-on-absence is already handled by the
         ``db_clear_stale_running`` pass-through and is out of scope here.
         """
-        applied_by_target: dict[str, object] = {}
-        for entry in raw_running_nodes:
-            if not isinstance(entry, dict):
-                continue
-            target = entry.get("connection_target")
-            if isinstance(target, str):
-                applied_by_target[target] = entry.get("applied_transition_token")
-        if applied_by_target:
-            clear_token = self._clear_token_factory()
-            for row in rows:
-                if row.transition_token is None:
-                    continue
-                applied = _applied_token_for_row(row, applied_by_target)
-                if applied == str(row.transition_token):
-                    await clear_token(row=row)
         await self._ingest_start_failures(rows, start_failures or [])
 
     def _match_new_start_failure(
@@ -579,7 +512,7 @@ class ReconcilerService:
     ) -> Callable[..., Awaitable[None]]:
         resolved_session_scope = session_scope or self._session_factory
 
-        async def _write(  # noqa: PLR0913 - Task 4 removes token-era arguments from this internal callback.
+        async def _write(
             *,
             row: DesiredRow,
             state: str,
@@ -588,7 +521,6 @@ class ReconcilerService:
             active_connection_target: str | None,
             started_at: datetime | None = None,
             clear_desired_port: bool = False,
-            clear_transition: bool = False,
             allocated_caps: object = None,
         ) -> None:
             async with resolved_session_scope() as db:
@@ -605,17 +537,13 @@ class ReconcilerService:
                             active_connection_target=active_connection_target,
                             started_at=started_at,
                             allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
-                            clear_transition=clear_transition,
                         ),
                         publisher=self._publisher,
                         settings=self._settings,
                     )
                 else:
                     await mark_node_stopped(db, device, publisher=self._publisher)
-                # The running path delegates token clearing to mark_node_started
-                # (clear_transition passed through), so it re-writes desired state
-                # only to drop the port; the stopped path also clears the token here.
-                if clear_desired_port or (state != "running" and clear_transition):
+                if clear_desired_port:
                     device = await _lock_device_for_reconciler(db, row.device_id)
                     if device is None or device.appium_node is None:
                         return
@@ -627,26 +555,12 @@ class ReconcilerService:
                         write=DesiredStateWrite(
                             target=node.desired_state,
                             desired_port=None if clear_desired_port else node.desired_port,
-                            transition_token=None if clear_transition else node.transition_token,
-                            transition_deadline=None if clear_transition else node.transition_deadline,
+                            restart_requested_at=node.restart_requested_at,
                         ),
                     )
                     await db.commit()
 
         return _write
-
-    def _clear_token_factory(
-        self,
-        *,
-        session_scope: SessionScope | None = None,
-    ) -> Callable[..., Awaitable[None]]:
-        resolved_session_scope = session_scope or self._session_factory
-
-        async def _clear(*, row: DesiredRow) -> None:
-            async with resolved_session_scope() as db:
-                await _clear_transition_token(db, row)
-
-        return _clear
 
     def _make_reset_start_failure(
         self,

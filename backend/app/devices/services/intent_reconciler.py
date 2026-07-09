@@ -257,6 +257,7 @@ async def reconcile_device(
         "desired_grid_run_id": node.desired_grid_run_id,
         "accepting_new_sessions": node.accepting_new_sessions,
         "stop_pending": node.stop_pending,
+        "restart_requested_at": node.restart_requested_at,
     }
 
     # The node row is the single source of port truth: payload `desired_port` values are
@@ -273,8 +274,7 @@ async def reconcile_device(
         write=DesiredStateWrite(
             target=target_state,
             desired_port=desired_port,
-            transition_token=node_decision.transition_token,
-            transition_deadline=node_decision.transition_deadline,
+            restart_requested_at=node_decision.restart_requested_at,
             reason=node_decision.reason,
         ),
     )
@@ -305,9 +305,9 @@ async def reconcile_device(
         or old["stop_pending"] != node.stop_pending
         or old["desired_grid_run_id"] != node.desired_grid_run_id
     )
-    changed = metadata_changed or any(old[key] != getattr(node, key) for key in ("desired_state", "desired_port"))
-    if changed:
-        node.generation += 1
+    changed = metadata_changed or any(
+        old[key] != getattr(node, key) for key in ("desired_state", "desired_port", "restart_requested_at")
+    )
     await db.flush()
 
     try:

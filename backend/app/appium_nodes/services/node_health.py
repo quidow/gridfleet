@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
@@ -39,6 +38,8 @@ from app.lifecycle.services.escalation import backoff_active
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.http_pool import AgentHttpPool
@@ -187,9 +188,10 @@ class NodeHealthService:
         if node is None:
             return
         window_sec = self._settings.get_int("appium_reconciler.restart_window_sec")
-        deadline = now_utc() + timedelta(seconds=window_sec)
-        # TTL (transition deadline) replaces the node_running precondition (semantic
-        # delta #1): the start row self-expires; baseline:idle sustains a running node.
+        requested_at = now_utc()
+        deadline = requested_at + timedelta(seconds=window_sec)
+        # The command row TTL bounds the restart intent row; the watermark bounds
+        # the process spawn time the agent must satisfy.
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[
@@ -198,8 +200,7 @@ class NodeHealthService:
                     axis=NODE_PROCESS,
                     payload={
                         "action": "start",
-                        "transition_token": str(uuid.uuid4()),
-                        "transition_deadline": deadline.isoformat(),
+                        "restart_requested_at": requested_at.isoformat(),
                     },
                     expires_at=deadline,
                 ),

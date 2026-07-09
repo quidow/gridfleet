@@ -62,14 +62,13 @@ def test_appium_node_read_exposes_desired_state_fields() -> None:
     assert {
         "desired_state",
         "desired_port",
-        "transition_token",
-        "transition_deadline",
+        "restart_requested_at",
         "last_observed_at",
     } <= properties.keys()
     required = set(appium.get("required", []))
     assert "desired_state" in required
     assert "desired_port" not in required
-    assert "transition_token" not in required
+    assert "restart_requested_at" not in required
 
     desired_ref = properties["desired_state"]["$ref"]
     desired_schema = schema["components"]["schemas"][desired_ref.rsplit("/", 1)[-1]]

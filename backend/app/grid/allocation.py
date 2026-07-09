@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 # service is constructed without a settings reader (unit tests); production wiring
 # always passes one (``composition.py``).
 _SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC = 120
+_RESTART_WINDOW_FALLBACK_SEC = 120
 
 GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
     "gridfleet_grid_allocation_outcome",
@@ -206,6 +207,14 @@ class AllocationService:
         self._publisher = publisher
         self._stereotype_provider = stereotype_provider
         self._settings = settings
+
+    def _restart_window_sec(self) -> int:
+        if self._settings is None:
+            return _RESTART_WINDOW_FALLBACK_SEC
+        try:
+            return int(cast("int", self._settings.get("appium_reconciler.restart_window_sec")))
+        except KeyError:
+            return _RESTART_WINDOW_FALLBACK_SEC
 
     async def confirm(
         self,
@@ -538,11 +547,12 @@ class AllocationService:
         return AllocationResult(allocation_id=row.id, target=target, device_id=row.device.id)
 
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
+        now = now_utc()
         stmt = (
             select(Device)
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
             .where(Device.operational_state == DeviceOperationalState.available)
-            .where(node_viable_predicate())
+            .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
             .where(node_accepting_new_sessions_predicate())
             .where(~select(Session.id).where(Session.device_id == Device.id, live_session_predicate()).exists())
         )
@@ -614,7 +624,7 @@ class AllocationService:
         # sessions may have changed since _eligible_devices ran.
         if locked.operational_state != DeviceOperationalState.available:
             return False
-        if not device_node_is_viable(locked):
+        if not device_node_is_viable(locked, now=now_utc(), restart_window_sec=self._restart_window_sec()):
             return False
         if not device_node_accepting_new_sessions(locked):
             return False

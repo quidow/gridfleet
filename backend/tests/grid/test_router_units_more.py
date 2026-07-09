@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 from app.analytics import router as analytics
 from app.analytics.schemas import DeviceReliabilityRow, DeviceUtilizationRow, GroupByOption
 from app.appium_nodes.models import AppiumDesiredState
-from app.appium_nodes.routers import admin as admin_appium_nodes
 from app.appium_nodes.routers import nodes as nodes_router
 from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
@@ -659,82 +658,6 @@ def _run_read(run: SimpleNamespace) -> RunRead:
         last_heartbeat=run.last_heartbeat,
         session_counts=SessionCounts(total=1, passed=1),
     )
-
-
-async def test_admin_appium_node_clear_transition_paths() -> None:
-    node_id = uuid.uuid4()
-    device_id = uuid.uuid4()
-
-    with pytest.raises(HTTPException) as exc:
-        await admin_appium_nodes.clear_transition(
-            node_id,
-            admin_appium_nodes.ClearTransitionBody(reason="stuck"),
-            db=DummySession(get_result=None),
-            username="admin",
-        )
-    assert exc.value.status_code == 404
-
-    node = SimpleNamespace(device_id=device_id)
-    with (
-        patch("app.appium_nodes.routers.admin.device_locking.lock_device", new=AsyncMock(return_value=object())),
-        patch(
-            "app.appium_nodes.routers.admin.appium_node_locking.lock_appium_node_for_device",
-            new=AsyncMock(return_value=None),
-        ),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await admin_appium_nodes.clear_transition(
-                node_id,
-                admin_appium_nodes.ClearTransitionBody(reason="stuck"),
-                db=DummySession(get_result=node),
-                username="admin",
-            )
-    assert exc.value.status_code == 404
-
-    locked = SimpleNamespace(device_id=device_id, transition_token=None, transition_deadline=object())
-    session = MutatingSession(get_result=node)
-    with (
-        patch("app.appium_nodes.routers.admin.device_locking.lock_device", new=AsyncMock(return_value=object())),
-        patch(
-            "app.appium_nodes.routers.admin.appium_node_locking.lock_appium_node_for_device",
-            new=AsyncMock(return_value=locked),
-        ),
-    ):
-        assert (
-            await admin_appium_nodes.clear_transition(
-                node_id,
-                admin_appium_nodes.ClearTransitionBody(reason="stuck"),
-                db=session,
-                username="admin",
-            )
-            is locked
-        )
-    assert session.refreshed == [locked]
-
-    token = uuid.uuid4()
-    locked = SimpleNamespace(device_id=device_id, transition_token=token, transition_deadline=object())
-    session = MutatingSession(get_result=node)
-    with (
-        patch("app.appium_nodes.routers.admin.device_locking.lock_device", new=AsyncMock(return_value=object())),
-        patch(
-            "app.appium_nodes.routers.admin.appium_node_locking.lock_appium_node_for_device",
-            new=AsyncMock(return_value=locked),
-        ),
-        patch("app.appium_nodes.routers.admin.record_event", new=AsyncMock()) as record_event,
-    ):
-        assert (
-            await admin_appium_nodes.clear_transition(
-                node_id,
-                admin_appium_nodes.ClearTransitionBody(reason="stuck"),
-                db=session,
-                username="admin",
-            )
-            is locked
-        )
-    assert locked.transition_token is None
-    assert locked.transition_deadline is None
-    assert session.committed is True
-    record_event.assert_awaited_once()
 
 
 async def test_bulk_router_delegates_all_operations() -> None:
