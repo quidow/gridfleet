@@ -16,8 +16,7 @@ _OPS_WITHOUT_REQUIRED_4XX: set[tuple[str, str]] = {
     ("GET", "/agent/pack/devices"),
     # Doctor endpoint: always returns 200 (empty checks list when no adapter loaded)
     ("POST", "/agent/pack/{pack_id}/doctor"),
-    # Idempotent stop and soft-state probes: unknown port is treated as success
-    ("POST", "/agent/appium/stop"),
+    # Soft-state probes: unknown port is treated as success
     ("GET", "/agent/appium/{port}/status"),
     ("GET", "/agent/appium/{port}/logs"),
 }

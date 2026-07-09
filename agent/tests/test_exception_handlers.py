@@ -18,7 +18,7 @@ async def client() -> AsyncClient:
 
 
 async def test_validation_error_returns_envelope(client: AsyncClient) -> None:
-    resp = await client.post("/agent/appium/start", json={}, headers={REQUEST_ID_HEADER: "req-123"})
+    resp = await client.post("/agent/pack/devices/normalize", json={}, headers={REQUEST_ID_HEADER: "req-123"})
 
     assert resp.status_code == 422
     assert resp.headers[REQUEST_ID_HEADER] == "req-123"
@@ -49,7 +49,7 @@ async def test_unhandled_exception_returns_envelope(client: AsyncClient) -> None
 
 async def test_http_exception_passthrough_unchanged(client: AsyncClient) -> None:
     resp = await client.post(
-        "/agent/appium/stop",
-        json={"port": 1},
+        "/agent/pack/devices/normalize",
+        json={"pack_id": ""},
     )
     assert resp.status_code == 422

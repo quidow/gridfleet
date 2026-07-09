@@ -359,31 +359,6 @@ async def test_appium_logs_get_request_omits_json_body() -> None:
     ]
 
 
-async def test_appium_start_post_request_keeps_json_body() -> None:
-    client = StrictAgentClient(
-        post_response=_response("POST", "http://10.0.0.5:5100/agent/appium/start", payload={"port": 4723})
-    )
-
-    response = await agent_operations.appium_start(
-        "http://10.0.0.5:5100",
-        host="10.0.0.5",
-        agent_port=5100,
-        payload={"platform_id": "android_mobile"},
-        http_client_factory=_strict_client_factory(client),
-        timeout=15,
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-
-    assert response.status_code == 200
-    assert client.post_calls == [
-        (
-            "http://10.0.0.5:5100/agent/appium/start",
-            {"params": None, "headers": {}, "json": {"platform_id": "android_mobile"}, "timeout": 15},
-        )
-    ]
-
-
 async def test_get_tool_status_get_request_omits_json_body() -> None:
     client = StrictAgentClient(
         get_response=_response(

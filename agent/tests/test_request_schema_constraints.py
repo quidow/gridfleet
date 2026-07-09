@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_app.appium.schemas import AppiumStartRequest, AppiumStopRequest
+from agent_app.appium.schemas import AppiumStartRequest
 from agent_app.pack.schemas import NormalizeDeviceRequest
 
 
@@ -80,16 +80,6 @@ def test_appium_start_accepts_minimal_valid_payload() -> None:
     AppiumStartRequest(**_valid_start_payload())
 
 
-def test_appium_stop_rejects_port_below_1024() -> None:
-    with pytest.raises(ValidationError):
-        AppiumStopRequest(port=80)
-
-
-def test_appium_stop_rejects_port_above_65535() -> None:
-    with pytest.raises(ValidationError):
-        AppiumStopRequest(port=70000)
-
-
 def test_normalize_device_rejects_blank_pack_id() -> None:
     with pytest.raises(ValidationError):
         NormalizeDeviceRequest(pack_id="", pack_release="1.0.0", platform_id="android", raw_input={})
@@ -137,10 +127,6 @@ def test_normalize_device_rejects_pack_id_with_leading_slash() -> None:
 def test_normalize_device_rejects_pack_id_with_double_slash() -> None:
     with pytest.raises(ValidationError):
         NormalizeDeviceRequest(pack_id="foo//bar", pack_release="1.0.0", platform_id="android", raw_input={})
-
-
-def test_appium_stop_accepts_valid_port() -> None:
-    AppiumStopRequest(port=4723)
 
 
 def test_normalize_device_accepts_valid_payload() -> None:

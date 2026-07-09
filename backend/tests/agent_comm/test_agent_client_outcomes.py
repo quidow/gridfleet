@@ -71,8 +71,8 @@ async def test_pooled_post_not_retried_on_disconnect() -> None:
     with pytest.raises(AgentUnreachableError):
         await agent_request(
             "POST",
-            "http://1.2.3.4:5100/agent/appium/start",
-            endpoint="appium_start",
+            "http://1.2.3.4:5100/agent/pack/devices/normalize",
+            endpoint="pack_device_normalize",
             host="1.2.3.4",
             client=client,
             client_mode="pooled",

@@ -59,7 +59,7 @@ Two ranges, two owners:
 | `appium.port_range_start..appium.port_range_end` | manager (DB-tracked via `AppiumNode.port`) | one Appium server per managed node | `4723..4823` |
 | Per-device parallel resources (e.g. `mjpegServerPort`, `chromedriverPort`) | typed claim table | extra Appium-side ports the pack manifest declares | depends on manifest |
 
-Only the first range is the "main" Appium port that the router proxies sessions to. The second comes into play after `/agent/appium/start` succeeds and Appium spawns its own helpers. (There is no per-node Grid relay port range anymore: the agent runs no Grid relay; the router reaches each Appium server directly on its managed port.)
+Only the first range is the "main" Appium port that the router proxies sessions to. The second comes into play once the agent's `NodeStateLoop` starts Appium for the node and Appium spawns its own helpers. (There is no per-node Grid relay port range anymore: the agent runs no Grid relay; the router reaches each Appium server directly on its managed port.)
 
 ### `candidate_ports`
 
@@ -103,7 +103,7 @@ There is no per-node Grid relay and no central hub. The router (`router/`) liste
 
 Two consequences for the lifecycle:
 
-1. **Started Appium != usable node.** A successful `/agent/appium/start` returns 2xx as soon as Appium is alive. Post-cutover the agent `/agent/appium/{port}/status` probe is the authoritative liveness signal. There is no separate Grid registration step and no registration grace window.
+1. **Started Appium != usable node.** The agent's `NodeStateLoop` starts Appium as soon as it pulls a desired node, but Appium being alive is not the same as usable. The agent `/agent/appium/{port}/status` probe is the authoritative liveness signal. There is no separate Grid registration step and no registration grace window.
 
 2. **Stopped Appium must be confirmed.** Killing the Appium process is what frees the device. But only an agent-acknowledged stop proves the process is gone. An orphan Appium still listening on its managed port stays reachable by the router and can still be allocated a session. This is the operational reality behind the commit `4171847` rule: do not flip the DB to `stopped` without ack, because the process may still be serving.
 

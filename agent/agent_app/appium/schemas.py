@@ -8,12 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 
 
-class AppiumReconfigureRequest(BaseModel):
-    accepting_new_sessions: bool = True
-    stop_pending: bool = False
-    grid_run_id: UUID | None = None
-
-
 class NodeRefreshResponse(BaseModel):
     accepted: bool = True
 
@@ -38,28 +32,6 @@ class AppiumStartRequest(BaseModel):
     insecure_features: list[str] = []
     lifecycle_actions: list[dict[str, Any]] = []
     connection_behavior: dict[str, Any] = {}
-
-
-class AppiumStopRequest(BaseModel):
-    port: int = Field(ge=1024, le=65535)
-
-
-class AppiumStartResponse(BaseModel):
-    pid: int = Field(ge=1)
-    port: int = Field(ge=1024, le=65535)
-    connection_target: str = Field(min_length=1)
-
-
-class AppiumReconfigureResponse(BaseModel):
-    port: int = Field(ge=1024, le=65535)
-    accepting_new_sessions: bool
-    stop_pending: bool
-    grid_run_id: UUID | None = None
-
-
-class AppiumStopResponse(BaseModel):
-    stopped: bool
-    port: int = Field(ge=1024, le=65535)
 
 
 class AppiumStatusResponse(BaseModel):

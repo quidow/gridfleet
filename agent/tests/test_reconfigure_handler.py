@@ -1,16 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-import pytest
-from httpx2 import ASGITransport, AsyncClient
-
-from agent_app.appium.dependencies import get_appium_mgr
-from agent_app.appium.exceptions import DeviceNotFoundError
 from agent_app.appium.schemas import AppiumStartRequest
-from agent_app.main import app
 
 
 def test_appium_start_request_accepts_orchestration_metadata() -> None:
@@ -29,75 +22,6 @@ def test_appium_start_request_accepts_orchestration_metadata() -> None:
     assert request.accepting_new_sessions is False
     assert request.stop_pending is True
     assert request.grid_run_id == run_id
-
-
-def test_reconfigure_request_serializes_run_id() -> None:
-    from agent_app.appium.schemas import AppiumReconfigureRequest
-
-    run_id = uuid4()
-    request: AppiumReconfigureRequest = AppiumReconfigureRequest(
-        accepting_new_sessions=False,
-        stop_pending=True,
-        grid_run_id=run_id,
-    )
-
-    assert request.model_dump(mode="json") == {
-        "accepting_new_sessions": False,
-        "stop_pending": True,
-        "grid_run_id": str(run_id),
-    }
-
-
-@pytest.mark.asyncio
-async def test_reconfigure_route_invokes_manager() -> None:
-    run_id = uuid4()
-    fake_mgr = MagicMock()
-    fake_mgr.reconfigure = AsyncMock()
-    app.dependency_overrides[get_appium_mgr] = lambda: fake_mgr
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/agent/appium/4723/reconfigure",
-                json={
-                    "accepting_new_sessions": False,
-                    "stop_pending": True,
-                    "grid_run_id": str(run_id),
-                },
-            )
-    finally:
-        app.dependency_overrides.pop(get_appium_mgr, None)
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "port": 4723,
-        "accepting_new_sessions": False,
-        "stop_pending": True,
-        "grid_run_id": str(run_id),
-    }
-    fake_mgr.reconfigure.assert_awaited_once_with(
-        4723,
-        accepting_new_sessions=False,
-        stop_pending=True,
-        grid_run_id=run_id,
-    )
-
-
-@pytest.mark.asyncio
-async def test_reconfigure_unknown_port_returns_404() -> None:
-    fake_mgr = MagicMock()
-    fake_mgr.reconfigure = AsyncMock(side_effect=DeviceNotFoundError("No Appium process for port 4723"))
-    app.dependency_overrides[get_appium_mgr] = lambda: fake_mgr
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/agent/appium/4723/reconfigure",
-                json={"accepting_new_sessions": True, "stop_pending": False, "grid_run_id": None},
-            )
-    finally:
-        app.dependency_overrides.pop(get_appium_mgr, None)
-
-    assert response.status_code == 404
-    assert response.json()["detail"]["code"] == "DEVICE_NOT_FOUND"
 
 
 def test_health_capabilities_advertise_orchestration_contract() -> None:

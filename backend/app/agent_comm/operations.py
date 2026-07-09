@@ -310,60 +310,6 @@ async def appium_status(
     return decode_or_none_unless_200(response, host=host, action="fetch Appium status", model=AppiumStatusResponse)
 
 
-async def appium_start(
-    agent_base: str,
-    *,
-    host: str,
-    agent_port: int,
-    payload: dict[str, Any],
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> httpx.Response:
-    return await _send_request(
-        "POST",
-        f"{agent_base}/agent/appium/start",
-        endpoint="appium_start",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        json_body=payload,
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-
-
-async def appium_stop(
-    agent_base: str,
-    *,
-    host: str,
-    agent_port: int,
-    port: int,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 10,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> httpx.Response:
-    return await _send_request(
-        "POST",
-        f"{agent_base}/agent/appium/stop",
-        endpoint="appium_stop",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        json_body={"port": port},
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-
-
 async def agent_nodes_refresh(
     host: str,
     agent_port: int,
