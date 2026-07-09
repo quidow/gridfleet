@@ -209,9 +209,7 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     # stop_pending must still be set — the live session guards it.
     assert policy.get("stop_pending") is True, "stop_pending must not be cleared while a session is running"
 
-    # Recovery must be suppressed with the stop_pending reason.
-    assert policy.get("recovery_suppressed_reason") == "Waiting for active client session to finish", (
-        "Recovery must suppress with stop_pending reason while a live session exists"
-    )
+    # The deferred stop is surfaced as "waiting for session end", not a cleared/idle state.
+    assert policy.get("recovery_state") == "waiting_for_session_end"
 
     assert recovered is False, "attempt_auto_recovery must return False when stop_pending is guarded by a live session"

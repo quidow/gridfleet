@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent_reconciler import reconcile_device
+from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
@@ -645,14 +646,13 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
         source="device_checks",
         reason="Healthy again",
     )
+    # An active cooldown blocks automated recovery. The block is projected at read
+    # time from the reservation's cooldown fact — no lifecycle-state write happens.
     assert recovered is False
 
-    policy_result = await db_session.execute(select(Device).where(Device.id == device.id))
-    refreshed_device = policy_result.scalar_one()
-    assert refreshed_device.lifecycle_policy_state is not None
-    state = refreshed_device.lifecycle_policy_state
-    assert state.get("last_action") == "recovery_suppressed"
-    assert state.get("recovery_suppressed_reason") == "Device is in active cooldown"
+    policy = await build_lifecycle_policy(db_session, device)
+    assert policy["recovery_state"] == "suppressed"
+    assert policy["recovery_suppressed_reason"] == "flaky"
 
 
 async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: AsyncSession, default_host_id: str) -> None:

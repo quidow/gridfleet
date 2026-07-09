@@ -185,74 +185,25 @@ async def test_enter_maintenance_succeeds_for_available_device(
     assert result.lifecycle_policy_state.get("maintenance_reason") is not None
 
 
-async def test_exit_maintenance_clears_maintenance_recovery_suppression(
+async def test_exit_maintenance_preserves_active_backoff(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Exiting maintenance must clear lifecycle_policy_state.recovery_suppressed_reason
-    set by handle_health_failure while the device was held in maintenance.
-
-    Without this, devices stay rendered as Unhealthy (recovery_state="suppressed")
-    on the devices list even after the operator brought them back and the live
-    checks pass — see the "Device is in maintenance mode" suppression set by
-    lifecycle_policy.handle_health_failure.
-    """
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="exit-clears-suppression",
-        operational_state=DeviceOperationalState.maintenance,
-        lifecycle_policy_state={
-            "last_action": "recovery_suppressed",
-            "last_action_at": "2026-05-09T21:14:19+00:00",
-            "last_failure_reason": "Failed checks: ping, ecp",
-            "last_failure_source": "device_checks",
-            "recovery_suppressed_reason": "Device is in maintenance mode",
-            "recovery_backoff_attempts": 0,
-            "backoff_until": None,
-            "stop_pending": False,
-            "stop_pending_reason": None,
-            "stop_pending_since": None,
-            "maintenance_reason": "Operator entered maintenance",
-        },
-    )
-    await db_session.commit()
-
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).exit_maintenance(db_session, device)
-    await db_session.refresh(device)
-
-    # hold is now derived by the reconciler (Task 7+8); signal-cleared is what this test verifies
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state.get("recovery_suppressed_reason") is None
-    assert device.lifecycle_policy_state.get("backoff_until") is None
-    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 0
-    assert device.lifecycle_policy_state.get("last_action") == "maintenance_exited"
-
-
-async def test_exit_maintenance_preserves_non_maintenance_suppression(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Suppressions whose cause is independent of the maintenance hold
-    (``"Node restart failed"``, ``"Recovery probe failed"``, an active backoff
-    window, ...) describe a real condition that survives operator-driven
-    maintenance exit and must NOT be silently wiped along with the
-    maintenance-tautology reason.
+    """An active backoff window describes a real remediation condition that is
+    independent of the maintenance hold, so exit_maintenance must not wipe it —
+    it clears only the maintenance fact (the projected badge follows that fact).
     """
     backoff_until = "2027-01-01T00:00:00+00:00"
     device = await create_device(
         db_session,
         host_id=db_host.id,
-        name="exit-preserves-backoff-suppression",
+        name="exit-preserves-backoff",
         operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={
-            "last_action": "recovery_suppressed",
+            "last_action": "recovery_failed",
             "last_action_at": "2026-05-09T21:14:19+00:00",
             "last_failure_reason": "Max node health failures reached",
             "last_failure_source": "node_health",
-            "recovery_suppressed_reason": "Node restart failed",
             "recovery_backoff_attempts": 3,
             "backoff_until": backoff_until,
             "stop_pending": False,
@@ -268,13 +219,11 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
     ).exit_maintenance(db_session, device)
     await db_session.refresh(device)
 
-    # hold is now derived by the reconciler (Task 7+8); signal-cleared is what this test verifies
     assert device.lifecycle_policy_state is not None
-    # Suppression unrelated to the maintenance hold must persist.
-    assert device.lifecycle_policy_state.get("recovery_suppressed_reason") == "Node restart failed"
+    # The maintenance fact is cleared; the real backoff condition survives.
+    assert device.lifecycle_policy_state.get("maintenance_reason") is None
     assert device.lifecycle_policy_state.get("backoff_until") == backoff_until
     assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 3
-    assert device.lifecycle_policy_state.get("last_action") == "recovery_suppressed"
 
 
 async def test_enter_and_exit_maintenance_commit_false_branches(

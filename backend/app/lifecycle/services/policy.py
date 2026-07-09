@@ -24,15 +24,11 @@ from app.devices.services.intent_types import (
     failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import (
-    CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
-    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
-    clear_self_heal_suppression,
-    in_maintenance,
+    clear_stale_escalation_residue,
     loaded_node,
     now,
-    record_backoff_suppressed,
     record_recovery_failed,
     record_recovery_recovered,
     record_recovery_started,
@@ -43,9 +39,10 @@ from app.devices.services.lifecycle_policy_state import (
 from app.devices.services.lifecycle_policy_state import (
     state as policy_state,
 )
-from app.devices.services.readiness import is_ready_for_use_async
-from app.lifecycle.services.escalation import backoff_active, escalate_remediation_failure
+from app.devices.services.recovery_projection import recovery_availability
+from app.lifecycle.services.escalation import escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
+from app.lifecycle.services.operator_node import operator_stop_active
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.service_viability import (
@@ -67,9 +64,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Self-heal suppression clear: residue must be older than this before a healthy
-# connectivity tick is allowed to wipe it, so an in-flight failure sequence
-# (verify-failure records suppression seconds before its auto-stop lands) is not
+# Self-heal escalation-residue reset: residue must be older than this before a
+# healthy connectivity tick is allowed to wipe it, so an in-flight failure sequence
+# (verify-failure arms the backoff seconds before its auto-stop lands) is not
 # clobbered by a transient healthy probe racing in between (regression S10).
 _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR = 2.0  # at least two connectivity check intervals
 _SELF_HEAL_MIN_AGE_FLOOR_SEC = 120.0  # absolute floor (= factor x default 60s interval)
@@ -101,13 +98,6 @@ class LifecyclePolicyService:
         )
         if early is not None:
             return early
-
-        backoff_until = backoff_active(current_state)
-        if backoff_until is not None:
-            record_backoff_suppressed(current_state, until_iso=backoff_until.isoformat())
-            write_state(device, current_state)
-            await db.commit()
-            return False
 
         record_recovery_started(current_state)
         write_state(device, current_state)
@@ -158,35 +148,18 @@ class LifecyclePolicyService:
         if result.get("status") == "skipped":
             # The probe could not run because another viability probe holds the device's
             # lock, or the device left a probeable state mid-attempt (see _run_recovery_probe).
-            # Record a *skip* — not a suppression, not a failure: no auto-stop, no backoff, no
-            # review_required, and crucially no ``suppressed`` badge. A
-            # lock collision is benign and self-resolving — the flow that won the lock (the
-            # exit-maintenance verification lease, or the next device_connectivity tick) does
-            # the real recovery. (ex-N11 "Fix B": suppressing here raised a false "Recovery
-            # Paused" alarm and tripped the harness's forbidden-event check in the S14 window.)
-            return await self._actions.record_recovery_skipped(db, device)
+            # A skip is not a failure: no auto-stop, no backoff, no review_required, and no
+            # state write at all — the badge is projected from live facts, so a benign,
+            # self-resolving lock collision leaves nothing to clear. The flow that won the
+            # lock (the exit-maintenance verification lease, or the next device_connectivity
+            # tick) does the real recovery.
+            logger.info("auto-recovery skipped for device %s — probe could not run (transient)", device.id)
+            return False
 
         if result.get("status") != "passed":
             return await self._handle_recovery_probe_failure(db, device, current_state, result)
 
         return await self._finalize_recovery_success(db, device, current_state, source=source, reason=reason)
-
-    async def _pre_reservation_suppression(
-        self, db: AsyncSession, device: Device, current_state: dict[str, Any], *, source: str, reason: str
-    ) -> bool | None:
-        guards: list[tuple[bool, str]] = [
-            (device.review_required, device.review_reason or "Device shelved — operator review required"),
-            (
-                not device.recovery_allowed,
-                device.recovery_blocked_reason or "Recovery is blocked by orchestration intent",
-            ),
-        ]
-        for tripped, suppression_reason in guards:
-            if tripped:
-                return await self._actions.record_recovery_suppressed(
-                    db, device, source=source, reason=reason, suppression_reason=suppression_reason, run=None
-                )
-        return None
 
     async def _revoke_if_already_healthy(
         self, db: AsyncSession, device: Device, entry: DeviceReservation | None, *, reason: str
@@ -216,44 +189,15 @@ class LifecyclePolicyService:
             return True
         return False
 
-    async def _post_reservation_suppression(
-        self,
-        db: AsyncSession,
-        device: Device,
-        current_state: dict[str, Any],
-        run: TestRun | None,
-        entry: DeviceReservation | None,
-        *,
-        source: str,
-        reason: str,
-    ) -> bool | None:
-        async def _suppress(suppression_reason: str) -> bool | None:
-            return await self._actions.record_recovery_suppressed(
-                db, device, source=source, reason=reason, suppression_reason=suppression_reason, run=run
-            )
-
-        if not await is_ready_for_use_async(db, device):
-            return await _suppress("Device setup or verification is incomplete")
-        if in_maintenance(device):
-            return await _suppress(MAINTENANCE_HOLD_SUPPRESSION_REASON)
-        if entry is not None and entry.excluded and entry.excluded_until is not None and entry.excluded_until > now():
-            return await _suppress("Device is in active cooldown")
-        if current_state.get("stop_pending"):
-            return await _suppress("Waiting for active client session to finish")
-        if await self._actions.has_running_client_session(db, device.id):
-            return await _suppress(CLIENT_SESSION_RUNNING_SUPPRESSION_REASON)
-        return None
-
     async def _evaluate_recovery_guards(
         self, db: AsyncSession, device: Device, *, source: str, reason: str
     ) -> tuple[Device, dict[str, Any], TestRun | None, DeviceReservation | None, bool | None]:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
-        pre = await self._pre_reservation_suppression(db, device, current_state, source=source, reason=reason)
-        if pre is not None:
-            return device, current_state, None, None, pre
         # D4: a stale ``stop_pending`` traps the device permanently when nothing
         # else clears it (no session row to fire ``handle_session_finished``).
+        # Clear it BEFORE consulting availability — otherwise the projection would
+        # block on RecoveryBlockKind.stop_pending and re-trap the device (the D4 bug).
         if current_state.get("stop_pending") and (
             device.operational_state == DeviceOperationalState.offline
             or not await self._actions.has_running_client_session(db, device.id)
@@ -274,10 +218,13 @@ class LifecyclePolicyService:
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         if await self._revoke_if_already_healthy(db, device, entry, reason=reason):
             return device, current_state, run, entry, False
-        post = await self._post_reservation_suppression(
-            db, device, current_state, run, entry, source=source, reason=reason
-        )
-        return device, current_state, run, entry, post
+        availability = await recovery_availability(db, device)
+        if not availability.allowed:
+            logger.info(
+                "auto-recovery blocked for device %s: %s (%s)", device.id, availability.reason, availability.kind
+            )
+            return device, current_state, run, entry, False
+        return device, current_state, run, entry, None
 
     async def _register_recovery_start_intents(
         self, db: AsyncSession, device: Device, *, run: TestRun | None, entry: DeviceReservation | None, reason: str
@@ -398,14 +345,13 @@ class LifecyclePolicyService:
             current_state,
             source=source,
             reason=str(exc),
-            suppression_reason="Automatic restart failed",
         )
         write_state(device, current_state)
         await self._record_backoff_incident_pair(
             db,
             device,
             reason=str(exc),
-            failure_detail=current_state["recovery_suppressed_reason"],
+            failure_detail="Automatic restart failed",
             source=source,
             run=run,
             backoff_until_iso=outcome.backoff_until_iso,
@@ -421,7 +367,6 @@ class LifecyclePolicyService:
             current_state,
             source="session_viability",
             reason=failure_reason,
-            suppression_reason="Recovery probe failed",
         )
         write_state(device, current_state)  # eager-write before potential intermediate commit in complete_auto_stop
         await self._actions.complete_auto_stop(
@@ -453,14 +398,13 @@ class LifecyclePolicyService:
             fresh_state,
             source="session_viability",
             reason=failure_reason,
-            suppression_reason="Recovery probe failed",
         )
         write_state(device, fresh_state)
         await self._record_backoff_incident_pair(
             db,
             device,
             reason=failure_reason,
-            failure_detail=fresh_state["recovery_suppressed_reason"],
+            failure_detail="Recovery probe failed",
             source="session_viability",
             run=run,
             backoff_until_iso=outcome.backoff_until_iso,
@@ -485,7 +429,6 @@ class LifecyclePolicyService:
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
 
         clear_backoff(current_state)
-        current_state["recovery_suppressed_reason"] = None
 
         if run is not None and run.state not in TERMINAL_STATES:
             if run_reservation_service.reservation_entry_is_excluded(entry):
@@ -585,7 +528,6 @@ class LifecyclePolicyService:
         current_state = policy_state(device)
         current_state["last_failure_source"] = source
         current_state["last_failure_reason"] = reason
-        current_state["recovery_suppressed_reason"] = None
         # Persist this writer's intent into the session's identity map immediately
         # so the next intermediate commit lands these fields in the DB. Otherwise
         # downstream helpers that re-lock + refresh would lose this writer's intent
@@ -593,14 +535,10 @@ class LifecyclePolicyService:
         write_state(device, current_state)
 
         if policy_state(device).get("maintenance_reason") is not None:
-            await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                source=source,
-                reason=reason,
-                suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
-                run=None,
-            )
+            # The maintenance hold already drives the projected "Recovery Paused"
+            # badge and was already evented by maintenance_entered — nothing to
+            # record here. Keep the failure trail written above and stand down.
+            logger.info("health failure on maintenance-held device %s suppressed: %s", device.id, reason)
             return "suppressed"
 
         if await self._actions.has_running_client_session(db, device.id):
@@ -643,17 +581,9 @@ class LifecyclePolicyService:
         await reconcile_device(db, device.id, publisher=self._publisher)
         current_state = policy_state(device)
 
-        # Clear any stale "A client session is still running" suppression recorded by
-        # ``attempt_auto_recovery`` while a previous session was active. That branch
-        # does not set ``stop_pending``, so nothing else clears the reason once the
-        # session ends — the device renders as ``Unhealthy: A client session is still
-        # running`` indefinitely (lifecycle_policy_summary maps the suppression to
-        # ``state=suppressed`` → rendered as an error-tone state in the frontend).
-        if current_state.get("recovery_suppressed_reason") == CLIENT_SESSION_RUNNING_SUPPRESSION_REASON:
-            current_state["recovery_suppressed_reason"] = None
-            set_action(current_state, "recovery_unsuppressed_after_session_end")
-            write_state(device, current_state)
-            await db.commit()
+        # No stale session-suppression to sweep here anymore: the "A client session
+        # is still running" reason is projected from the live session rows, so it
+        # clears the instant the session ends. Nothing to write.
 
         if not current_state.get("stop_pending"):
             return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
@@ -736,38 +666,35 @@ class LifecyclePolicyService:
             detail="Manager marked the device offline after connectivity loss",
         )
 
-    async def clear_suppression_on_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
-        """Clear recovery-suppression residue when a healthy device self-healed.
+    async def clear_escalation_residue_on_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
+        """Reset the shared escalation ladder when a healthy device self-healed.
 
         Covers the gap that the operator-start (``clear_operator_start_suppression``)
-        and maintenance-exit (``clear_maintenance_recovery_suppression``) paths do
-        not: an agent restart → reconvergence leaves the node running and the
-        device available without any recovery path firing, so a stale
-        ``recovery_suppressed_reason`` (e.g. "Recovery probe failed") keeps the
-        device deriving ``recovery_state="suppressed"`` forever.
+        path does not: an agent restart → reconvergence leaves the node running and
+        the device available without any recovery path firing, so a stale backoff
+        window / attempt counter keeps the node's effective-state ``blocked`` forever.
 
         Caller (``device_connectivity`` healthy path) has already established the
         device is healthy and not offline. We additionally gate on
-        ``device.recovery_allowed``: an active operator-stop deny intent (RECOVERY
-        axis) flips that to False, which makes the suppression a legitimate,
-        operator-owned hold — it must stay sticky (N13).
+        ``operator_stop_active``: an active operator-stop deny intent (RECOVERY axis)
+        makes the hold legitimate and operator-owned — it must stay sticky (N13).
 
         Final gate: only clear residue older than ``min_age_seconds`` (>= 2x the
-        connectivity check interval). A verify-failure records the suppression
-        seconds before its auto-stop lands, and a concurrent healthy connectivity
-        tick can race in between — clearing fresh residue would wipe an in-flight
-        shelving sequence (regression S10). Returns True when residue was actually
-        cleared so the incident fires exactly once; subsequent cycles no-op.
+        connectivity check interval). A verify-failure arms the backoff seconds
+        before its auto-stop lands, and a concurrent healthy connectivity tick can
+        race in between — clearing fresh residue would wipe an in-flight shelving
+        sequence (regression S10). Returns True when residue was actually cleared so
+        the incident fires exactly once; subsequent cycles no-op.
         """
         device = await _reload_device(db, device)
-        if not device.recovery_allowed:
+        if await operator_stop_active(db, device.id):
             return False
         check_interval = self._settings.get_float("general.device_check_interval_sec")
         # Residue must survive at least two connectivity ticks before we treat it
-        # as stale, so an in-flight failure sequence (suppression → auto-stop) is
+        # as stale, so an in-flight failure sequence (backoff → auto-stop) is
         # never wiped by a transient healthy probe landing between the two.
         min_age_seconds = max(_SELF_HEAL_MIN_AGE_FLOOR_SEC, _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR * check_interval)
-        cleared = clear_self_heal_suppression(device, min_age_seconds=min_age_seconds)
+        cleared = clear_stale_escalation_residue(device, min_age_seconds=min_age_seconds)
         if not cleared:
             return False
         await self._incidents.record_lifecycle_incident(
@@ -777,7 +704,7 @@ class LifecyclePolicyService:
             LifecycleIncidentDetails(
                 summary_state=DeviceLifecyclePolicySummaryState.idle,
                 reason=reason,
-                detail="Device self-healed; cleared stale recovery suppression",
+                detail="Device self-healed; reset stale escalation residue",
                 source="device_checks",
             ),
         )
@@ -801,13 +728,13 @@ class LifecyclePolicyService:
 
         An ``available`` device is already deemed allocatable (``merged_liveness`` is
         not False), so rejoining its run is safe and consistent with the existing
-        recovery-restore. Gated on ``recovery_allowed`` so an operator-stop hold stays
-        sticky (mirrors ``clear_suppression_on_self_heal``). Cooldown exclusions
-        (``excluded_until`` in the future) are intentional backoff and are left
-        untouched. Returns True only when an exclusion was actually cleared.
+        recovery-restore. Gated on ``operator_stop_active`` so an operator-stop hold
+        stays sticky (mirrors ``clear_escalation_residue_on_self_heal``). Cooldown
+        exclusions (``excluded_until`` in the future) are intentional backoff and are
+        left untouched. Returns True only when an exclusion was actually cleared.
         """
         device = await _reload_device(db, device)
-        if not device.recovery_allowed:
+        if await operator_stop_active(db, device.id):
             return False
         if device.operational_state != DeviceOperationalState.available:
             return False
@@ -886,7 +813,6 @@ class LifecyclePolicyService:
         action: str,
         failure_source: str | None = None,
         failure_reason: str | None = None,
-        recovery_suppressed_reason: str | None = None,
     ) -> None:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
@@ -894,7 +820,6 @@ class LifecyclePolicyService:
             current_state["last_failure_source"] = failure_source
         if failure_reason is not None:
             current_state["last_failure_reason"] = failure_reason
-        current_state["recovery_suppressed_reason"] = recovery_suppressed_reason
         set_action(current_state, action)
         write_state(device, current_state)
 
