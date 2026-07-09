@@ -1512,8 +1512,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         appium_node=node,
         session_viability_status="failed",
         session_viability_error="Appium node is not running",
-        recovery_allowed=False,
-        recovery_blocked_reason="Node health failure",
     )
     db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     revoke = AsyncMock()
@@ -1552,8 +1550,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         ],
         publisher=event_bus,
     )
-    assert device.recovery_allowed is False
-    assert device.recovery_blocked_reason == "Node health failure"
     db.commit.assert_awaited_once()
     start_node.assert_awaited_once()
 

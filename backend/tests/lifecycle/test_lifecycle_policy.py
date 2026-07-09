@@ -1688,10 +1688,8 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
         lifecycle_policy_state={},
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
         appium_node=node,
     )
@@ -1734,10 +1732,8 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
         lifecycle_policy_state={},
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.busy,
         appium_node=node,
     )
@@ -1767,10 +1763,8 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
 ) -> None:
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
         host_id=None,
@@ -1835,10 +1829,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
 
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        recovery_allowed=True,
         review_required=False,
         review_reason=None,
-        recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
         host_id=uuid.uuid4(),

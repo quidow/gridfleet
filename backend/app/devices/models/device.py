@@ -163,8 +163,6 @@ class Device(Base):
     session_viability_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     session_viability_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_viability_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    recovery_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    recovery_blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # ``review_required`` is the terminal "device shelved, operator action
     # required" flag. Auto-recovery loops skip devices where this is True.
     # Cleared by sanctioned operator actions: exit maintenance, restore

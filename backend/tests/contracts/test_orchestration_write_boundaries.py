@@ -64,8 +64,6 @@ def test_derived_orchestration_fields_are_reconciler_owned() -> None:
         "desired_grid_run_id",
         "accepting_new_sessions",
         "stop_pending",
-        "recovery_allowed",
-        "recovery_blocked_reason",
     )
     offenders: list[str] = []
     for path in _python_files():

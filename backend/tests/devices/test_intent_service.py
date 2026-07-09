@@ -28,13 +28,6 @@ def test_appium_node_has_orchestration_columns() -> None:
     assert "generation" in columns
 
 
-def test_device_has_recovery_decision_columns() -> None:
-    columns = Device.__table__.columns
-
-    assert "recovery_allowed" in columns
-    assert "recovery_blocked_reason" in columns
-
-
 async def test_register_intents_batches(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-batch")
     service = IntentService(db_session)

@@ -20,8 +20,10 @@ if TYPE_CHECKING:
 
 
 async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_host: Host) -> None:
-    """A cooldown fact flips accepting_new_sessions and recovery_allowed; the
-    reconciler must emit desired_state_changed events with the decider reasons."""
+    """A cooldown fact flips accepting_new_sessions; the reconciler emits a
+    desired_state_changed event with the decider reason. Recovery is no longer a
+    reconciler-owned field, so no recovery_allowed event is emitted (the badge is
+    projected at read time)."""
     device = await create_device(db_session, host_id=db_host.id, name="events")
     node = await _seed_node(db_session, device.id)
     node.desired_state = AppiumDesiredState.running
@@ -59,13 +61,8 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
         "caller": "intent_reconciler",
         "reason": "reservation cooldown",
     } in details
-    assert {
-        "field": "recovery_allowed",
-        "old_value": True,
-        "new_value": False,
-        "caller": "intent_reconciler",
-        "reason": "blocked by test",
-    } in details
+    # No recovery_allowed field event: the recovery axis left the reconciler.
+    assert not any(detail.get("field") == "recovery_allowed" for detail in details)
 
 
 def test_operator_stopped_maps_to_auto_stopped_event() -> None:

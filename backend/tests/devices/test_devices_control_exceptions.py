@@ -147,7 +147,6 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     await db_session.refresh(device)
     assert device.session_viability_status is None
     assert device.session_viability_error is None
-    assert device.recovery_allowed is True
     remaining_sources = set((await db_session.execute(select(DeviceIntent.source))).scalars().all())
     assert f"connectivity:{device.id}" not in remaining_sources
     assert f"health_failure:node:{device.id}" not in remaining_sources
