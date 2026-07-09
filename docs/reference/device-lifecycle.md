@@ -14,9 +14,9 @@ column.
 
 1. **Observation loops** (`device_connectivity`, `node_health`, `session_sync`,
    `session_viability`) write durable facts — health flags, session rows,
-   `maintenance_reason` in `lifecycle_policy_state` — then call
-   `IntentService.reconcile_now` for read-your-writes. Anything that skips the
-   inline reconcile is re-derived by the reconciler's full scan, which runs every
+   `maintenance_reason` in `lifecycle_policy_state` — and reconcile inline only
+   when the criterion below holds. Anything that skips the inline reconcile is
+   re-derived by the reconciler's full scan, which runs every
    `general.intent_reconcile_interval_sec` tick as the backstop.
 2. **Reconciler tick** calls `apply_derived_state` in
    `app/devices/services/state.py`, which:
@@ -39,6 +39,33 @@ commit, just via derivation. Device-creation paths still set the initial value a
 construction time (`app.devices.services.write`). The static test
 `tests/contracts/test_no_direct_device_state_writes.py` enforces both rules with a
 call-site scan and a table-driven attribute-assignment scan.
+
+### When to reconcile inline (criterion)
+
+The full scan re-derives every device every `general.intent_reconcile_interval_sec`
+tick (default 5 s), so an inline `reconcile_now` buys at most one tick of
+freshness. Add one only when at least one of these holds — otherwise write the
+fact, commit, and rely on the scan:
+
+1. **Read-your-writes** — the same flow reads the derived state or desired node
+   columns after the write (e.g. `update_session_status` re-locks and acts on
+   `node.stop_pending`; verification registers its lease and immediately waits
+   for the node to spawn against a timeout budget). Skipping the inline
+   reconcile here is a correctness bug, not a latency cost.
+2. **Intent registration/revocation** — `register_intents_and_reconcile` /
+   `revoke_intents_and_reconcile` are one atomic operation under one device-row
+   lock; never split the register from its reconcile.
+3. **Tick-visible latency** — a human or the router observes the derived state
+   within one tick: allocation claim/fail, session terminal transitions, run
+   release/exclusion/cooldown, operator mutations (maintenance, node
+   start/stop), and observation writes that gate allocation (a node observed
+   stopped; a failed health or viability verdict).
+
+Steady-state and below-threshold observation writes deliberately defer to the
+scan — see the asymmetric reconcile-on-failure/defer-on-success pattern and its
+comments in `app/devices/services/health.py`. Existing inline call sites carry
+comments naming what the reconcile derives; give a new call site a comment
+naming which arm of this criterion it satisfies.
 
 ### Derived axes at a glance
 
