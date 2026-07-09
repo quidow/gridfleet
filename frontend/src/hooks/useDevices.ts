@@ -1,7 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  clearAppiumNodeTransition,
   deleteDevice,
   fetchConfigHistory,
   fetchDevice,
@@ -204,22 +203,6 @@ export function useRestartNode() {
     },
     onSettled: (_data, _error, id) => {
       invalidatePatchedDeviceQueries(qc, id);
-    },
-  });
-}
-
-export function useClearAppiumNodeTransition() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationKey: ['devices', 'clear-appium-node-transition'],
-    mutationFn: ({ nodeId, reason }: { nodeId: string; reason?: string }) =>
-      clearAppiumNodeTransition(nodeId, reason),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.devices.root });
-      qc.invalidateQueries({ queryKey: qk.device.root });
-    },
-    onError: (error, { nodeId }) => {
-      toast.error(getErrorMessage(error, `Failed to clear Appium transition for node ${nodeId}`));
     },
   });
 }

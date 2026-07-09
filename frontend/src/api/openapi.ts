@@ -55,23 +55,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/admin/appium-nodes/{node_id}/clear-transition": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Clear Transition */
-        post: operations["clear_transition_api_admin_appium_nodes__node_id__clear_transition_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/devices/reliability": {
         parameters: {
             query?: never;
@@ -1995,8 +1978,6 @@ export interface components {
         AppiumNodeRead: {
             /** Active Connection Target */
             active_connection_target: string | null;
-            /** Container Id */
-            container_id: string | null;
             /** Desired Port */
             desired_port?: number | null;
             desired_state: components["schemas"]["DesiredNodeState"];
@@ -2024,15 +2005,13 @@ export interface components {
             pid: number | null;
             /** Port */
             port: number;
+            /** Restart Requested At */
+            restart_requested_at?: string | null;
             /**
              * Started At
              * Format: date-time
              */
             started_at: string;
-            /** Transition Deadline */
-            transition_deadline?: string | null;
-            /** Transition Token */
-            transition_token?: string | null;
         };
         /** AuthLoginRequest */
         AuthLoginRequest: {
@@ -2090,11 +2069,6 @@ export interface components {
             tags: {
                 [key: string]: string;
             };
-        };
-        /** ClearTransitionBody */
-        ClearTransitionBody: {
-            /** Reason */
-            reason?: string | null;
         };
         /** ConfigAuditEntryRead */
         ConfigAuditEntryRead: {
@@ -4141,8 +4115,6 @@ export interface components {
              * Format: uuid
              */
             device_id: string;
-            /** Generation */
-            generation: number;
             /** Grid Run Id */
             grid_run_id: string | null;
             /** Launch */
@@ -4151,19 +4123,15 @@ export interface components {
             } | null;
             /** Port */
             port: number;
+            /** Restart Requested At */
+            restart_requested_at: string | null;
             /** Stop Pending */
             stop_pending: boolean;
-            /** Transition Deadline */
-            transition_deadline: string | null;
-            /** Transition Token */
-            transition_token: string | null;
             /** Unrunnable Reason */
             unrunnable_reason?: string | null;
         };
         /** NodesDesiredOut */
         NodesDesiredOut: {
-            /** Generation Hint */
-            generation_hint: number;
             /** Nodes */
             nodes: components["schemas"]["NodeDesiredSpecOut"][];
         };
@@ -5029,41 +4997,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clear_transition_api_admin_appium_nodes__node_id__clear_transition_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                node_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClearTransitionBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppiumNodeRead"];
-                };
             };
             /** @description Validation Error */
             422: {

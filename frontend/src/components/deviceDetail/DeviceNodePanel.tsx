@@ -14,7 +14,6 @@ import { getPendingDeviceAction } from '../../lib/devicePendingAction';
 import type { DeviceDetail } from '../../types';
 import { Button } from '../ui/Button';
 import { DefinitionList } from '../ui/DefinitionList';
-import { ForceClearRestartButton } from './ForceClearRestartButton';
 import { formatDate } from './utils';
 
 type Props = {
@@ -94,7 +93,6 @@ export function DeviceNodePanel({ device }: Props) {
               <h3 className="text-xs font-medium uppercase tracking-wide text-text-3">Appium Node</h3>
             </div>
             <div className="flex items-center gap-2">
-              <ForceClearRestartButton nodeId={node.id} transitionToken={node.transition_token} />
               <StatusBadge status={node.effective_state} />
             </div>
           </div>

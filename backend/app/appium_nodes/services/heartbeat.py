@@ -333,7 +333,7 @@ async def _handle_restart_succeeded(
         # agent has now confirmed the node is back, so restore it immediately rather
         # than waiting for the next reconciler poll to refill it — otherwise the
         # device reads ``available`` but fails the allocator's node_viable_predicate
-        # (pid + active_connection_target set, no transition_token) for up to one
+        # (pid + active_connection_target set, no unsatisfied restart watermark) for up to one
         # reconciler interval. The value is a liveness marker only (routing uses
         # host.ip + node.port via node_target); the reconciler reconciles it to the
         # agent-reported connection_target on its next poll. Only fill when null so a

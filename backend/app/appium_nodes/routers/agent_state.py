@@ -65,19 +65,17 @@ async def _get_desired(
         specs.append(
             NodeDesiredSpecOut(
                 device_id=node.device_id,
-                generation=node.generation,
                 desired_state=node.desired_state,
                 port=node.desired_port or node.port,
                 accepting_new_sessions=node.accepting_new_sessions,
                 stop_pending=node.stop_pending,
                 grid_run_id=node.desired_grid_run_id,
-                transition_token=node.transition_token,
-                transition_deadline=node.transition_deadline,
+                restart_requested_at=node.restart_requested_at,
                 launch=launch,
                 unrunnable_reason=unrunnable_reason,
             )
         )
-    return NodesDesiredOut(nodes=specs, generation_hint=max((node.generation for node in rows), default=0))
+    return NodesDesiredOut(nodes=specs)
 
 
 @router.get("/desired", response_model=NodesDesiredOut)

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from app.devices.models import HardwareHealthStatus
@@ -19,8 +20,8 @@ def _node(
         desired_state=SimpleNamespace(value=desired_state),
         health_running=health_running,
         health_state=health_state,
-        transition_token=None,
-        transition_deadline=None,
+        restart_requested_at=None,
+        started_at=datetime.now(UTC),
         last_health_checked_at=last_checked,
     )
 

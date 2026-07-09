@@ -1190,8 +1190,8 @@ async def test_create_run_excludes_device_mid_appium_restart(
                 pid=0,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
-                transition_token=uuid.uuid4(),
-                transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+                started_at=datetime.now(UTC) - timedelta(seconds=60),
+                restart_requested_at=datetime.now(UTC),
             ),
             AppiumNode(
                 device_id=available.id,

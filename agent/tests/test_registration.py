@@ -284,7 +284,7 @@ async def test_register_with_manager_sends_host_info() -> None:
     }
 
     service = RegistrationService(
-        capabilities_cache=_fake_cache({"platforms": [], "orchestration_contract_version": 3}),
+        capabilities_cache=_fake_cache({"platforms": [], "orchestration_contract_version": 4}),
         version_guidance=VersionGuidanceStore(),
     )
     with (

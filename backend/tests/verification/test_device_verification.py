@@ -396,7 +396,7 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
     assert node.active_connection_target == DEVICE_PAYLOAD["identity_value"]
     assert node.observed_running
     assert node.desired_state == AppiumDesiredState.running
-    assert node.transition_token is None
+    assert node.restart_requested_at is None
 
 
 async def test_retain_verified_node_acquires_row_lock(

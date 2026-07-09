@@ -598,7 +598,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     assert node.observed_running is True
     assert node.health_state == "error"
     assert node.desired_state == AppiumDesiredState.running
-    assert node.transition_token is not None
+    assert node.restart_requested_at is not None
 
 
 async def test_unknown_process_restart_events_normalize_to_appium_and_restore_health_summary(

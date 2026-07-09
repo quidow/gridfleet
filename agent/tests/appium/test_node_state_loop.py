@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,6 +18,7 @@ class _Info:
     connection_target: str
     platform_id: str = "android_mobile"
     pid: int = 123
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class _Client:
@@ -25,7 +26,7 @@ class _Client:
         self.nodes = nodes
 
     async def fetch_desired(self) -> dict[str, Any]:
-        return {"nodes": self.nodes, "generation_hint": max((node["generation"] for node in self.nodes), default=0)}
+        return {"nodes": self.nodes}
 
 
 class _Manager:
@@ -86,12 +87,10 @@ def _node(
     *,
     desired_state: str = "running",
     port: int = 4723,
-    generation: int = 1,
     accepting_new_sessions: bool = True,
     stop_pending: bool = False,
     grid_run_id: str | None = None,
-    transition_token: str | None = None,
-    transition_deadline: datetime | None = None,
+    restart_requested_at: datetime | None = None,
     launch: dict[str, Any] | None | object = ...,  # sentinel means default launch
     unrunnable_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -110,14 +109,12 @@ def _node(
         resolved_launch = launch  # type: ignore[assignment]
     return {
         "device_id": str(uuid4()),
-        "generation": generation,
         "desired_state": desired_state,
         "port": port,
         "accepting_new_sessions": accepting_new_sessions,
         "stop_pending": stop_pending,
         "grid_run_id": grid_run_id,
-        "transition_token": transition_token,
-        "transition_deadline": transition_deadline.isoformat() if transition_deadline else None,
+        "restart_requested_at": restart_requested_at.isoformat() if restart_requested_at else None,
         "launch": resolved_launch,
         "unrunnable_reason": unrunnable_reason,
     }
@@ -166,37 +163,40 @@ async def test_same_running_node_is_unchanged_until_drain_flags_differ() -> None
 
 
 @pytest.mark.asyncio
-async def test_unexpired_transition_token_restarts_only_once() -> None:
-    manager = _Manager([_Info(port=4723, connection_target="device-1")])
-    token = str(uuid4())
-    node = _node(
-        transition_token=token,
-        transition_deadline=datetime.now(UTC) + timedelta(minutes=1),
-    )
-    loop = NodeStateLoop(client=_Client([node]), manager=manager)
+async def test_stale_process_restarts_on_watermark() -> None:
+    # A process spawned before the watermark is stopped and restarted exactly once:
+    # the respawn carries a fresh spawn time that satisfies the same watermark.
+    spawned = datetime.now(UTC) - timedelta(minutes=5)
+    watermark = datetime.now(UTC) - timedelta(minutes=1)
+    manager = _Manager([_Info(port=4723, connection_target="device-1", started_at=spawned)])
+    loop = NodeStateLoop(client=_Client([_node(restart_requested_at=watermark)]), manager=manager)
 
     await loop.run_once()
     await loop.run_once()
 
     assert manager.stopped == [4723]
     assert len(manager.started) == 1
-    assert token in loop.applied_tokens
 
 
 @pytest.mark.asyncio
-async def test_expired_transition_token_does_not_restart() -> None:
+async def test_fresh_process_satisfies_watermark() -> None:
+    # A process spawned after the watermark is left alone — idempotent by
+    # construction, no applied-token bookkeeping needed.
+    watermark = datetime.now(UTC) - timedelta(minutes=1)
+    spawned = datetime.now(UTC)
+    manager = _Manager([_Info(port=4723, connection_target="device-1", started_at=spawned)])
+    loop = NodeStateLoop(client=_Client([_node(restart_requested_at=watermark)]), manager=manager)
+
+    await loop.run_once()
+
+    assert manager.stopped == []
+    assert manager.started == []
+
+
+@pytest.mark.asyncio
+async def test_no_watermark_no_restart() -> None:
     manager = _Manager([_Info(port=4723, connection_target="device-1")])
-    loop = NodeStateLoop(
-        client=_Client(
-            [
-                _node(
-                    transition_token=str(uuid4()),
-                    transition_deadline=datetime.now(UTC) - timedelta(seconds=1),
-                )
-            ]
-        ),
-        manager=manager,
-    )
+    loop = NodeStateLoop(client=_Client([_node()]), manager=manager)
 
     await loop.run_once()
 

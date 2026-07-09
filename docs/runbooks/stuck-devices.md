@@ -70,18 +70,11 @@ Use node restart when:
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/devices/DEVICE_ID | python -m json.tool
 ```
 
-Focus on `appium_node.desired_state`, `appium_node.desired_port`, `appium_node.transition_token`, `appium_node.transition_deadline`, and `appium_node.last_observed_at`.
+Focus on `appium_node.desired_state`, `appium_node.desired_port`, `appium_node.restart_requested_at`, `appium_node.started_at`, and `appium_node.last_observed_at`.
 
 - If `last_observed_at` is fresh and lifecycle state shows a start backoff, wait for the shared remediation backoff window. Appium start failures use the `general.lifecycle_recovery_*` ladder: exponential backoff starts on the first failure and the device is promoted to `review_required` at `general.lifecycle_recovery_review_threshold`.
-- If `transition_deadline` is in the past, the reconciler should clear the token on its next cycle. Check backend scheduler/reconciler logs if it does not.
-- If an operator must clear a stuck token after confirming the agent state, use the admin endpoint with a reason:
-
-```bash
-curl -X POST -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
-  -H 'Content-Type: application/json' \
-  -d '{"reason":"confirmed stale Appium transition token"}' \
-  http://localhost:8000/api/admin/appium-nodes/APPIUM_NODE_ID/clear-transition | python -m json.tool
-```
+- If `restart_requested_at` is older than `appium_reconciler.restart_window_sec`, or `started_at >= restart_requested_at`, the node no longer projects as `restarting` — the watermark self-clears at read time; there is nothing to clear manually.
+- If the agent is still running a stale Appium process (its `started_at` predates a restart you expected to land), re-issue the restart through the backend (device-detail **Restart** or `POST /api/devices/DEVICE_ID/node/restart`) and let the agent converge.
 
 ## 5. If the device is in maintenance or lifecycle suppression, clear the real blocker
 

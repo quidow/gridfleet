@@ -22,6 +22,7 @@ from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 DeviceTags = dict[str, str]
+DEFAULT_RESTART_WINDOW_SEC = 120
 
 
 class DesiredNodeState(enum.StrEnum):
@@ -119,13 +120,11 @@ class AppiumNodeRead(BaseModel):
     id: uuid.UUID
     port: int
     pid: int | None
-    container_id: str | None
     active_connection_target: str | None
     started_at: datetime
     desired_state: DesiredNodeState
     desired_port: int | None = None
-    transition_token: uuid.UUID | None = None
-    transition_deadline: datetime | None = None
+    restart_requested_at: datetime | None = None
     last_observed_at: datetime | None = None
     health_running: bool | None = None
     health_state: str | None = None
@@ -142,8 +141,9 @@ class AppiumNodeRead(BaseModel):
             desired_state=self.desired_state.value,
             health_running=self.health_running,
             health_state=self.health_state,
-            transition_token=self.transition_token,
-            transition_deadline=self.transition_deadline,
+            restart_requested_at=self.restart_requested_at,
+            started_at=self.started_at,
+            restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
             lifecycle_policy_state=self.lifecycle_policy_state,
             review_required=self.review_required,
             now=now_utc(),
@@ -287,8 +287,8 @@ class UnavailableReason(enum.StrEnum):
     # (cooldown). Distinct from ``offline`` (node down / crashed).
     cooldown = "cooldown"
     # Node transition window (Stage 4 / P6): the node is healthy and the device is
-    # still ``available``, but its Appium process is mid-transition — a restart is in
-    # flight (``transition_token`` set) or its routable target is not yet settled
+    # still ``available``, but its Appium process is mid-transition — a restart
+    # watermark is not yet satisfied or its routable target is not yet settled
     # (``active_connection_target`` missing) — so the allocator's node-viability gate
     # refuses it. Distinct from ``offline`` (process down) and ``cooldown`` (warm but
     # soft-gated): the node stays warm and returns to allocatable within seconds, with

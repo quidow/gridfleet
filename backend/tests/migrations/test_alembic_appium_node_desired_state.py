@@ -73,14 +73,16 @@ async def test_appium_nodes_has_desired_state_columns(alembic_session: AsyncSess
         assert {
             "desired_state",
             "desired_port",
-            "transition_token",
-            "transition_deadline",
+            "restart_requested_at",
             "last_observed_at",
         } <= cols.keys()
+        assert "transition_token" not in cols
+        assert "transition_deadline" not in cols
+        assert "generation" not in cols
+        assert "container_id" not in cols
         assert cols["desired_state"]["nullable"] is False
         assert cols["desired_port"]["nullable"] is True
-        assert cols["transition_token"]["nullable"] is True
-        assert cols["transition_deadline"]["nullable"] is True
+        assert cols["restart_requested_at"]["nullable"] is True
         assert cols["last_observed_at"]["nullable"] is True
 
         check_names = {c["name"] for c in insp.get_check_constraints("appium_nodes")}

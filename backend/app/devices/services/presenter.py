@@ -28,6 +28,7 @@ from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
 
 assert_runnable = pack_platform_resolver.assert_runnable
+DEFAULT_RESTART_WINDOW_SEC = 120
 
 if TYPE_CHECKING:
     import uuid
@@ -89,7 +90,11 @@ class DevicePresenterService:
         # AppiumNode.accepting_new_sessions (the same flag _eligible_devices gates on).
         await _ensure_appium_node_loaded(db, device)
         node_accepting = device_node_accepting_new_sessions(device)
-        node_viable = device_node_is_viable(device)
+        node_viable = device_node_is_viable(
+            device,
+            now=now_utc(),
+            restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
+        )
         allocatability_reason = unavailable_reason(
             device.operational_state,
             reserved=reservation_blocks_allocation,
@@ -237,13 +242,11 @@ def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
         "id": node.id,
         "port": node.port,
         "pid": node.pid,
-        "container_id": node.container_id,
         "active_connection_target": node.active_connection_target,
         "started_at": node.started_at,
         "desired_state": node.desired_state,
         "desired_port": node.desired_port,
-        "transition_token": node.transition_token,
-        "transition_deadline": node.transition_deadline,
+        "restart_requested_at": node.restart_requested_at,
         "last_observed_at": node.last_observed_at,
         "health_running": node.health_running,
         "health_state": node.health_state,

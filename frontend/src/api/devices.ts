@@ -115,14 +115,6 @@ export async function restartNode(id: string): Promise<AppiumNodeRead> {
   return data;
 }
 
-export async function clearAppiumNodeTransition(
-  nodeId: string,
-  reason?: string,
-): Promise<AppiumNodeRead> {
-  const { data } = await api.post(`/admin/appium-nodes/${nodeId}/clear-transition`, { reason });
-  return data;
-}
-
 export async function fetchDeviceConfig(id: string): Promise<Record<string, unknown>> {
   const { data } = await api.get(`/devices/${id}/config`);
   return data;

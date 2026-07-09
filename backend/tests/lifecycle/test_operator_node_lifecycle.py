@@ -74,8 +74,7 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     await db_session.flush()
     device.appium_node = node
 
-    stale_token = uuid.uuid4()
-    stale_deadline = datetime.now(UTC) - timedelta(days=2)
+    stale_requested_at = datetime.now(UTC) - timedelta(days=2)
     stale_intent = DeviceIntent(
         device_id=device.id,
         source=f"operator:start:{device.id}",
@@ -84,12 +83,11 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
             "action": "start",
             "priority": 20,
             "desired_port": 4724,
-            "transition_token": str(stale_token),
-            "transition_deadline": stale_deadline.isoformat(),
+            "restart_requested_at": stale_requested_at.isoformat(),
         },
         expires_at=None,
-        created_at=stale_deadline - timedelta(minutes=2),
-        updated_at=stale_deadline - timedelta(minutes=2),
+        created_at=stale_requested_at - timedelta(minutes=2),
+        updated_at=stale_requested_at - timedelta(minutes=2),
     )
     db_session.add(stale_intent)
     await db_session.commit()
@@ -105,7 +103,7 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     )
 
     # An operator Restart through the unified path still refreshes the intent row
-    # (fresh transition_token, transition_deadline, expires_at, precondition) and
+    # (fresh restart_requested_at + expires_at) and
     # keeps desired_port on the live port.
     await OperatorNodeLifecycleService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -124,8 +122,8 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
             )
         )
     ).scalar_one()
-    assert intent.payload.get("transition_token") != str(stale_token), (
-        "stale transition_token must be replaced by the fresh restart"
+    assert intent.payload.get("restart_requested_at") != stale_requested_at.isoformat(), (
+        "stale restart_requested_at must be replaced by the fresh restart"
     )
     assert intent.expires_at is not None, "fresh restart must set expires_at"
     assert intent.expires_at > datetime.now(UTC), "fresh expires_at must be in the future"
@@ -134,9 +132,7 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
 def test_operator_restart_intent_sets_expires_at(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """operator_restart_intent must set expires_at = now + window_sec, embed the same
-    deadline in the payload, and carry no precondition (TTL replaces node_running).
-    """
+    """operator_restart_intent must set a watermark and TTL bounded by window_sec."""
     from app.lifecycle.services import operator_node as mod
     from app.lifecycle.services.operator_node import operator_restart_intent
 
@@ -152,7 +148,7 @@ def test_operator_restart_intent_sets_expires_at(
 
     assert intent.expires_at is not None
     assert intent.expires_at == expected_deadline
-    assert intent.payload["transition_deadline"] == expected_deadline.isoformat()
+    assert intent.payload["restart_requested_at"] == fixed_now.isoformat()
 
 
 async def test_gc_expired_intents_deletes_expired_restart_intent(
@@ -173,8 +169,7 @@ async def test_gc_expired_intents_deletes_expired_restart_intent(
             "action": "start",
             "priority": 20,
             "desired_port": 4725,
-            "transition_token": str(uuid.uuid4()),
-            "transition_deadline": (datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+            "restart_requested_at": (datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
         },
         expires_at=datetime.now(UTC) - timedelta(minutes=5),
         created_at=datetime.now(UTC) - timedelta(minutes=10),
@@ -197,10 +192,10 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Each operator restart must produce a fresh transition_token + expires_at.
+    """Each operator restart must produce a fresh watermark + expires_at.
 
     Pre-PR-#301, a stale operator:start intent payload could re-assert old
-    transition_token/desired_port indefinitely. The unified path overwrites the
+    restart_requested_at/desired_port indefinitely. The unified path overwrites the
     full payload on every restart.
     """
     device = await create_device(db_session, host_id=db_host.id, name="rr-refresh", verified=True)
@@ -231,7 +226,7 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
             )
         )
     ).scalar_one()
-    first_token = intent_first.payload["transition_token"]
+    first_watermark = intent_first.payload["restart_requested_at"]
     first_deadline = intent_first.expires_at
 
     await svc.request_restart(db_session, device, caller="operator_restart", reason="second")
@@ -248,7 +243,7 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
         )
     ).scalar_one()
 
-    assert intent_second.payload["transition_token"] != first_token, "transition_token must rotate on each restart"
+    assert intent_second.payload["restart_requested_at"] != first_watermark, "watermark must refresh on each restart"
     assert intent_second.expires_at is not None
     assert first_deadline is not None
     assert intent_second.expires_at > first_deadline, "expires_at must move forward on each restart"

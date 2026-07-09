@@ -13,7 +13,7 @@ import subprocess
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any
 
 import httpx2 as httpx
 
@@ -43,11 +43,6 @@ from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_post_sessi
 from agent_app.pack.runtime_registry import RuntimeRegistry
 
 logger = logging.getLogger(__name__)
-
-
-class NodeStateObserver(Protocol):
-    applied_generations: dict[int, int]
-    applied_transition_tokens: dict[int, str]
 
 
 def _has_lifecycle_action(actions: list[dict[str, Any]], action_id: str) -> bool:
@@ -239,6 +234,7 @@ class AppiumProcessInfo:
     pid: int
     connection_target: str
     platform_id: str
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass(frozen=True)
@@ -333,7 +329,6 @@ class AppiumProcessManager:
         self._intentional_stop_ports: set[int] = set()
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
-        self._node_state_observer: NodeStateObserver | None = None
         self._start_lock = asyncio.Lock()
 
     def set_runtime_registry(self, registry: RuntimeRegistry) -> None:
@@ -341,9 +336,6 @@ class AppiumProcessManager:
 
     def set_adapter_registry(self, registry: AdapterRegistry) -> None:
         self._adapter_registry = registry
-
-    def set_node_state_observer(self, observer: NodeStateObserver | None) -> None:
-        self._node_state_observer = observer
 
     def start_log_maintenance(self) -> None:
         """Sweep orphaned Appium log files and start the periodic size-cap pass."""
@@ -819,6 +811,7 @@ class AppiumProcessManager:
             else:
                 self._stop_pending_ports.discard(port)
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
+            started_at = datetime.now(UTC)
 
             info = self._info.get(port)
             if info is None:
@@ -827,12 +820,14 @@ class AppiumProcessManager:
                     pid=appium_proc.pid,
                     connection_target=resolved_connection_target,
                     platform_id=platform_id,
+                    started_at=started_at,
                 )
                 self._info[port] = info
             else:
                 info.pid = appium_proc.pid
                 info.connection_target = resolved_connection_target
                 info.platform_id = platform_id
+                info.started_at = started_at
             if spec.stop_pending:
                 # Carry the stop-pending flag so ``_auto_restart_appium``
                 # refuses to resurrect this Appium process if it exits. The
@@ -967,16 +962,7 @@ class AppiumProcessManager:
             "pid": info.pid,
             "connection_target": info.connection_target,
             "platform_id": info.platform_id,
-            "applied_generation": (
-                self._node_state_observer.applied_generations.get(info.port)
-                if self._node_state_observer is not None
-                else None
-            ),
-            "applied_transition_token": (
-                self._node_state_observer.applied_transition_tokens.get(info.port)
-                if self._node_state_observer is not None
-                else None
-            ),
+            "started_at": info.started_at.isoformat(),
         }
         # Re-emit has_active_session for the agent self-update drain gate (harness C1).
         # The grid relay that used to track sessions is gone, so the only authoritative

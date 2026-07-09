@@ -316,7 +316,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
     assert node.observed_running is True
     assert node.health_state == "error"
     assert node.desired_state == AppiumDesiredState.running
-    assert node.transition_token is not None
+    assert node.restart_requested_at is not None
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
 
@@ -343,7 +343,7 @@ async def test_restart_deferred_while_shared_backoff_armed(db_session: AsyncSess
 
     assert await _auto_recovery_intents(db_session, device.id) == []
     await db_session.refresh(node)
-    assert node.transition_token is None
+    assert node.restart_requested_at is None
 
 
 async def test_restart_counts_toward_shared_ladder(db_session: AsyncSession, db_host: Host) -> None:
@@ -453,7 +453,7 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
     assert node.observed_running is True
     assert node.health_state == "error"
     assert node.desired_state == AppiumDesiredState.running
-    assert node.transition_token is not None
+    assert node.restart_requested_at is not None
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
 
@@ -515,7 +515,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
     await db_session.refresh(node)
     assert node.observed_running is True
     assert node.desired_state == AppiumDesiredState.running
-    assert node.transition_token is not None
+    assert node.restart_requested_at is not None
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
     assert node_key not in await get_node_health_control_plane_state(db_session)

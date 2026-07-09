@@ -80,16 +80,6 @@ APPIUM_DESIRED_GRID_RUN_ID_WRITES = Counter(
     "Total writes of AppiumNode.desired_grid_run_id by the run-routing writer.",
     labelnames=("caller",),
 )
-APPIUM_TRANSITION_TOKEN_WRITES = Counter(
-    "appium_transition_token_writes_total",
-    "Total transition_token allocations by Phase 3 writers.",
-    labelnames=("caller",),
-)
-APPIUM_TRANSITION_TOKEN_OVERRIDDEN = Counter(
-    "appium_transition_token_overridden_total",
-    "Counts every time one writer overrode another writer's pending transition_token.",
-    labelnames=("losing_source", "winning_source"),
-)
 APPIUM_RECONCILER_CONVERGENCE_ACTIONS = Counter(
     "appium_reconciler_convergence_actions_total",
     "Convergence actions executed by the Appium reconciler.",
@@ -103,10 +93,6 @@ APPIUM_RECONCILER_HOST_CYCLE_SECONDS = Histogram(
 APPIUM_RECONCILER_ALLOCATION_COLLISIONS = Counter(
     "appium_reconciler_allocation_collisions_total",
     "Port allocation collisions encountered by the Appium reconciler.",
-)
-APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED = Counter(
-    "appium_reconciler_transition_token_expired_total",
-    "Restart transition tokens cleared by the Appium reconciler after their deadline elapsed.",
 )
 APPIUM_RECONCILER_START_FAILURES = Counter(
     "appium_reconciler_start_failures_total",

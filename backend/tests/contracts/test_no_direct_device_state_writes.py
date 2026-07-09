@@ -24,21 +24,7 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
     "lifecycle_policy_state": frozenset({"app/devices/services/lifecycle_policy_state.py"}),
     "desired_state": frozenset({"app/appium_nodes/services/desired_state_writer.py"}),
     "desired_port": frozenset({"app/appium_nodes/services/desired_state_writer.py"}),
-    # Writer plus sanctioned direct clears.
-    "transition_token": frozenset(
-        {
-            "app/appium_nodes/services/desired_state_writer.py",
-            "app/appium_nodes/services/reconciler_agent.py",
-            "app/appium_nodes/routers/admin.py",
-        }
-    ),
-    "transition_deadline": frozenset(
-        {
-            "app/appium_nodes/services/desired_state_writer.py",
-            "app/appium_nodes/services/reconciler_agent.py",
-            "app/appium_nodes/routers/admin.py",
-        }
-    ),
+    "restart_requested_at": frozenset({"app/appium_nodes/services/desired_state_writer.py"}),
     "pid": frozenset(
         {
             "app/appium_nodes/services/reconciler_agent.py",
@@ -67,6 +53,13 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
     "health_running": frozenset({"app/devices/services/health.py"}),
     "health_state": frozenset({"app/devices/services/health.py"}),
     "last_health_checked_at": frozenset({"app/devices/services/health.py"}),
+    "started_at": frozenset(
+        {
+            "app/appium_nodes/services/reconciler_agent.py",
+            "app/appium_nodes/services/heartbeat.py",
+            "app/verification/services/execution.py",
+        }
+    ),
     # _touch_last_observed uses a SQLAlchemy Core bulk update; this entry is
     # documentary because neither the former runtime guard nor this scan sees it.
     "last_observed_at": frozenset({"app/appium_nodes/services/reconciler.py"}),
@@ -77,6 +70,8 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
 SCAN_EXEMPT_FILES: dict[str, frozenset[str]] = {
     # Raw SQL compares resource-claim aliases with ``existing.port = candidate.port``.
     "port": frozenset({"app/appium_nodes/services/resource_service.py"}),
+    # Job and run rows have their own started_at lifecycle unrelated to AppiumNode.started_at.
+    "started_at": frozenset({"app/jobs/queue.py", "app/runs/service_lifecycle.py"}),
 }
 
 

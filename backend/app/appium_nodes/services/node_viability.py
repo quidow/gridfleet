@@ -13,6 +13,7 @@ devices are filtered elsewhere by their operational state / node target.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, or_
@@ -20,28 +21,34 @@ from sqlalchemy import and_, or_
 from app.appium_nodes.models import AppiumNode
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.devices.models import Device
 
 
-def node_viable_predicate() -> ColumnElement[bool]:
+def node_viable_predicate(*, now: datetime, restart_window_sec: int) -> ColumnElement[bool]:
     """A device's Appium node is up and not transitioning.
 
     Mirrors the run allocator's node filter: a live ``pid`` and
-    ``active_connection_target`` with no in-flight ``transition_token``.
+    ``active_connection_target`` with no unsatisfied in-window restart watermark.
     """
     return or_(
         AppiumNode.id.is_(None),
         and_(
             AppiumNode.pid.is_not(None),
             AppiumNode.active_connection_target.is_not(None),
-            AppiumNode.transition_token.is_(None),
+            or_(
+                AppiumNode.restart_requested_at.is_(None),
+                AppiumNode.started_at >= AppiumNode.restart_requested_at,
+                AppiumNode.restart_requested_at <= now - timedelta(seconds=restart_window_sec),
+            ),
         ),
     )
 
 
-def device_node_is_viable(device: Device) -> bool:
+def device_node_is_viable(device: Device, *, now: datetime, restart_window_sec: int) -> bool:
     """Python-side equivalent of :func:`node_viable_predicate` for a loaded device.
 
     Used by the grid allocator's locked re-check, where the row is already
@@ -51,7 +58,12 @@ def device_node_is_viable(device: Device) -> bool:
     node = device.appium_node
     if node is None:
         return True
-    return node.pid is not None and node.active_connection_target is not None and node.transition_token is None
+    watermark_satisfied = (
+        node.restart_requested_at is None
+        or (node.started_at is not None and node.started_at >= node.restart_requested_at)
+        or node.restart_requested_at <= now - timedelta(seconds=restart_window_sec)
+    )
+    return node.pid is not None and node.active_connection_target is not None and watermark_satisfied
 
 
 def node_accepting_new_sessions_predicate() -> ColumnElement[bool]:

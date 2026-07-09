@@ -5,12 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from sqlalchemy import desc, select
-
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core import metrics_recorders
 from app.core.observability import get_logger
-from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.models import DeviceEventType
 from app.devices.services.event import record_event
 
 logger = get_logger(__name__)
@@ -34,7 +32,6 @@ DesiredStateCaller = Literal[
     "group",
     "verification",
     "device_delete",
-    "admin_clear_transition",
     "appium_reconciler",
     "cooldown",
     "cooldown_expired",
@@ -59,27 +56,19 @@ DesiredGridRunIdCaller = Literal[
 class DesiredStateWrite:
     """Cohesive payload describing a single desired Appium state write.
 
-    Bundles the target state with its transition fields and audit metadata so
+    Bundles the target state with its restart watermark and audit metadata so
     the writer call site stays under the argument-count ceiling. ``db``,
     ``node`` and ``caller`` remain direct arguments to ``write_desired_state``
     because they describe *where* the write lands and *who* issued it, not
     *what* is being written.
 
-    ``transition_token_natural_clear`` opts callers out of the
-    ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN`` metric for the case where an
-    expired transition token is being cleared by the reconciler — the old
-    token was not contended for by a competing writer, the deadline simply
-    elapsed. Counting that as an override pollutes the override dashboard
-    once per reconciler tick that lands on an expired deadline.
     """
 
     target: AppiumDesiredState
     desired_port: int | None = None
-    transition_token: uuid.UUID | None = None
-    transition_deadline: datetime | None = None
+    restart_requested_at: datetime | None = None
     actor: str | None = None
     reason: str | None = None
-    transition_token_natural_clear: bool = False
 
 
 async def write_desired_state(
@@ -92,52 +81,30 @@ async def write_desired_state(
     """Write desired Appium state on an already locked node row. Caller commits."""
     target = write.target
     desired_port = write.desired_port
-    transition_token = write.transition_token
-    transition_deadline = write.transition_deadline
+    restart_requested_at = write.restart_requested_at
     actor = write.actor
     reason = write.reason
-    transition_token_natural_clear = write.transition_token_natural_clear
 
     if target == AppiumDesiredState.stopped and desired_port is not None:
         raise ValueError("desired_port must be None when target=stopped")
-    if transition_token is not None and transition_deadline is None:
-        raise ValueError("transition_deadline is required when transition_token is set")
-    if transition_token_natural_clear and transition_token is not None:
-        raise ValueError("transition_token_natural_clear requires transition_token to be None")
 
     old_state = node.desired_state
-    old_token = node.transition_token
+    old_restart_requested_at = node.restart_requested_at
     old_port = node.desired_port
 
     new_port = None if target == AppiumDesiredState.stopped else desired_port
-    if old_state == target and old_token == transition_token and old_port == new_port:
+    new_restart_requested_at = None if target == AppiumDesiredState.stopped else restart_requested_at
+    if old_state == target and old_restart_requested_at == new_restart_requested_at and old_port == new_port:
         return
-
-    if old_token is not None and old_token != transition_token and not transition_token_natural_clear:
-        losing_source = await _lookup_token_source(db, node.device_id, old_token)
-        metrics_recorders.APPIUM_TRANSITION_TOKEN_OVERRIDDEN.labels(
-            losing_source=losing_source,
-            winning_source=caller,
-        ).inc()
-        logger.warning(
-            "appium_transition_token_overridden",
-            device_id=str(node.device_id),
-            losing_source=losing_source,
-            winning_source=caller,
-            old_token=str(old_token),
-            new_token=str(transition_token) if transition_token else None,
-        )
 
     node.desired_state = target
     if target == AppiumDesiredState.stopped:
         node.desired_port = None
-        node.transition_token = None
-        node.transition_deadline = None
+        node.restart_requested_at = None
         event_desired_port = None
     else:
         node.desired_port = desired_port
-        node.transition_token = transition_token
-        node.transition_deadline = transition_deadline
+        node.restart_requested_at = restart_requested_at
         event_desired_port = desired_port
 
     await record_event(
@@ -148,7 +115,7 @@ async def write_desired_state(
             "old_desired_state": old_state.value,
             "new_desired_state": target.value,
             "desired_port": event_desired_port,
-            "transition_token": str(transition_token) if transition_token else None,
+            "restart_requested_at": restart_requested_at.isoformat() if restart_requested_at else None,
             "caller": caller,
             "actor": actor,
             "reason": reason,
@@ -156,8 +123,6 @@ async def write_desired_state(
     )
 
     metrics_recorders.APPIUM_DESIRED_STATE_WRITES.labels(caller=caller, target_state=target.value).inc()
-    if transition_token is not None:
-        metrics_recorders.APPIUM_TRANSITION_TOKEN_WRITES.labels(caller=caller).inc()
 
     logger.info(
         "appium_desired_state_written",
@@ -166,7 +131,7 @@ async def write_desired_state(
         old_desired_state=old_state.value,
         new_desired_state=target.value,
         desired_port=event_desired_port,
-        transition_token=str(transition_token) if transition_token else None,
+        restart_requested_at=restart_requested_at.isoformat() if restart_requested_at else None,
     )
 
 
@@ -208,23 +173,3 @@ async def write_desired_grid_run_id(
         old_value=str(old) if old else None,
         new_value=str(run_id) if run_id else None,
     )
-
-
-async def _lookup_token_source(db: AsyncSession, device_id: uuid.UUID, token: uuid.UUID) -> str:
-    stmt = (
-        select(DeviceEvent)
-        .where(
-            DeviceEvent.device_id == device_id,
-            DeviceEvent.event_type == DeviceEventType.desired_state_changed,
-        )
-        .order_by(desc(DeviceEvent.created_at))
-        .limit(50)
-    )
-    rows = (await db.execute(stmt)).scalars().all()
-    for row in rows:
-        details = row.details or {}
-        if details.get("transition_token") == str(token):
-            caller = details.get("caller")
-            if isinstance(caller, str):
-                return caller
-    return "unknown"

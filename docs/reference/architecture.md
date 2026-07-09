@@ -18,7 +18,7 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 ### Appium node lifecycle
 
 Operator routes and lifecycle paths commit intent to `AppiumNode.desired_state`
-plus optional `desired_port`, `transition_token`, and `transition_deadline`,
+plus optional `desired_port` and the `restart_requested_at` restart watermark,
 then return in milliseconds; each write is followed by a fire-and-forget wake
 poke (`POST /agent/appium-nodes/refresh`). The scheduler's `host_sweep` fetches
 `/agent/health` once per host at `general.heartbeat_interval_sec`, applies the

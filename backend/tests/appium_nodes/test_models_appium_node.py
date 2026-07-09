@@ -29,8 +29,7 @@ async def test_appium_node_desired_state_defaults_to_stopped(
 
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.desired_port is None
-    assert node.transition_token is None
-    assert node.transition_deadline is None
+    assert node.restart_requested_at is None
     assert node.last_observed_at is None
 
 

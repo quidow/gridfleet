@@ -56,7 +56,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `appium.port_range_start` | `grid` | `int` | `4723` | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `1024..65535` | Start of the managed Appium node port range |
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
-| `appium_reconciler.restart_window_sec` | `grid` | `int` | `120` | none | `30..600` | Wall-clock window the Phase 3 restart-node writer uses to populate `transition_deadline`; the reconciler clears the lease past this deadline |
+| `appium_reconciler.restart_window_sec` | `grid` | `int` | `120` | none | `30..600` | Wall-clock window within which a fresh `restart_requested_at` watermark projects a node as `restarting` (read-time bounding); past this window a still-unsatisfied watermark self-clears at read time — no sweep |
 | `appium_reconciler.host_parallelism` | `grid` | `int` | `8` | none | `1..32` | Maximum number of hosts processed concurrently by the host sweep |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
 | `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hardware_health_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |

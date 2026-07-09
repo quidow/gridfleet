@@ -22,16 +22,19 @@ divergence automatically. If it does not:
 3. Check `/metrics` for `appium_reconciler_cycle_failures_total`. If it is
    increasing, inspect backend logs for `host_sweep_cycle_failed` and
    `host_sweep_convergence_failed`.
-4. Check the `appium_nodes` row's `transition_token` and the device row's
-   `lifecycle_policy_state`. A stuck token blocks dispatch; a future
+4. Check the `appium_nodes` row's `restart_requested_at` / `started_at` and the
+   device row's `lifecycle_policy_state`. An unsatisfied restart watermark
+   (`started_at < restart_requested_at`) projects the node as `restarting` and
+   blocks dispatch, but only for `appium_reconciler.restart_window_sec`; a future
    `backoff_until` value inside the `lifecycle_policy_state` JSON skips
    convergence until that deadline.
 
-**Manual override (last resort):** for a stuck `transition_token`, use
-`POST /api/admin/appium-nodes/{node_id}/clear-transition` or the device-detail
-"Force-clear restart" button. For a stuck agent process, call
-`POST /agent/appium/stop {"port": N}` against the host agent. File an incident
-if either override is needed.
+**Manual override (last resort):** a stuck `restarting` projection is not one — it
+self-clears at read time once the watermark is satisfied (the agent respawned) or
+after `appium_reconciler.restart_window_sec` elapses; there is no clear-transition
+route or "Force-clear restart" button anymore. For a stuck agent process, call
+`POST /agent/appium/stop {"port": N}` against the host agent. File an incident if
+that override is needed.
 
 > **All supported hosts use pull-only orchestration:** a direct
 > `POST /agent/appium/stop` is reverted on the agent's next pull while the

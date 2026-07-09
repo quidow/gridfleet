@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,7 +24,6 @@ async def converge_host_rows(
     agent_running: list[ObservedEntry],
     now: datetime,
     write_observed: object,
-    clear_token: object,
     reset_start_failure: object,
     raise_errors: bool = False,
 ) -> None:
@@ -39,7 +38,6 @@ async def converge_host_rows(
                 row=row,
                 action=action,
                 write_observed=write_observed,  # type: ignore[arg-type]
-                clear_token=clear_token,  # type: ignore[arg-type]
                 reset_start_failure=reset_start_failure,  # type: ignore[arg-type]
             )
         except Exception:
@@ -55,8 +53,6 @@ def _row(**kw: object) -> DesiredRow:
         "connection_target": "emulator-5554",
         "desired_state": "stopped",
         "desired_port": None,
-        "transition_token": None,
-        "transition_deadline": None,
         "port": None,
         "pid": None,
         "active_connection_target": None,
@@ -94,6 +90,25 @@ def test_desired_running_observed_but_db_lacks_pid_repairs_observed_state() -> N
     assert action.port == 4723
     assert action.pid == 12345
     assert action.active_connection_target == row.connection_target
+
+
+def test_desired_running_observed_with_new_spawn_time_repairs_observed_state() -> None:
+    old_spawn = datetime(2026, 7, 9, 14, 0, tzinfo=UTC)
+    new_spawn = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+        started_at=old_spawn,
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, started_at=new_spawn)
+
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+
+    assert action.kind == "db_mark_running"
+    assert action.started_at == new_spawn
 
 
 def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry() -> None:
@@ -194,50 +209,6 @@ def test_rows_needing_stale_clear_matches_node_by_active_connection_target() -> 
     assert rows_needing_stale_clear([row], observed, now=now) == []
 
 
-def test_desired_running_active_token_picks_restart() -> None:
-    row = _row(
-        desired_state="running",
-        desired_port=4723,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
-        port=4723,
-    )
-    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
-    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
-    assert action.kind == "restart"
-    assert action.stop_port == 4723
-    assert action.start_port == 4723
-
-
-def test_desired_running_active_token_without_observation_restarts_without_stop() -> None:
-    row = _row(
-        desired_state="running",
-        desired_port=4724,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
-        port=4723,
-    )
-    action = decide_convergence_action(row, observed=None, now=datetime.now(UTC))
-    assert action.kind == "restart"
-    assert action.stop_port is None
-    assert action.start_port == 4724
-
-
-def test_desired_running_expired_token_picks_clear_then_running_no_token() -> None:
-    row = _row(
-        desired_state="running",
-        desired_port=4723,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) - timedelta(seconds=1),
-        port=4723,
-        pid=1,
-        active_connection_target="emulator-5554",
-    )
-    obs = ObservedEntry(port=4723, pid=1, connection_target=row.connection_target)
-    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
-    assert action.kind == "clear_expired_token"
-
-
 def test_desired_stopped_with_observed_picks_stop() -> None:
     row = _row(desired_state="stopped", port=4723, pid=1, active_connection_target="emulator-5554")
     obs = ObservedEntry(port=4723, pid=1, connection_target=row.connection_target)
@@ -294,7 +265,6 @@ async def test_converge_host_rows_resets_start_failure_when_observed_matches_db(
         agent_running=[observed],
         now=datetime.now(UTC),
         write_observed=write_observed,
-        clear_token=AsyncMock(),
         reset_start_failure=reset_start_failure,
     )
 
@@ -322,7 +292,6 @@ async def test_converge_host_rows_confirm_running_skips_reset_when_no_residue() 
         agent_running=[observed],
         now=datetime.now(UTC),
         write_observed=AsyncMock(),
-        clear_token=AsyncMock(),
         reset_start_failure=reset_start_failure,
     )
 
@@ -341,7 +310,6 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         agent_running=[observed],
         now=datetime.now(UTC),
         write_observed=write_observed,
-        clear_token=AsyncMock(),
         reset_start_failure=AsyncMock(),
     )
 
@@ -350,21 +318,13 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         state="running",
         port=4723,
         pid=12345,
+        started_at=None,
         active_connection_target=row.connection_target,
     )
 
 
 @pytest.mark.asyncio
-async def test_converge_host_rows_clear_token_and_db_clear_branches() -> None:
-    expired = _row(
-        desired_state="running",
-        desired_port=4723,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) - timedelta(seconds=1),
-        port=4723,
-        pid=1,
-        active_connection_target="emulator-5554",
-    )
+async def test_converge_host_rows_db_clear_branch() -> None:
     stale = _row(
         desired_state="stopped",
         connection_target="stale",
@@ -372,20 +332,17 @@ async def test_converge_host_rows_clear_token_and_db_clear_branches() -> None:
         pid=2,
         active_connection_target="stale",
     )
-    clear_token = AsyncMock()
     write_observed = AsyncMock()
 
     await converge_host_rows(
-        host_id=expired.host_id,
-        rows=[expired, stale],
-        agent_running=[ObservedEntry(port=4723, pid=1, connection_target=expired.connection_target)],
+        host_id=stale.host_id,
+        rows=[stale],
+        agent_running=[],
         now=datetime.now(UTC),
         write_observed=write_observed,
-        clear_token=clear_token,
         reset_start_failure=AsyncMock(),
     )
 
-    clear_token.assert_awaited_once_with(row=expired)
     write_observed.assert_awaited_once_with(
         row=stale,
         state="stopped",
@@ -404,7 +361,6 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
         agent_running=[],
         now=datetime.now(UTC),
         write_observed=AsyncMock(),
-        clear_token=AsyncMock(),
         reset_start_failure=AsyncMock(),
     )
 
@@ -419,7 +375,6 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
             agent_running=[observed],
             now=datetime.now(UTC),
             write_observed=AsyncMock(side_effect=RuntimeError("write failed")),
-            clear_token=AsyncMock(),
             reset_start_failure=AsyncMock(),
             raise_errors=True,
         )

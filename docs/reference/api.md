@@ -170,13 +170,13 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 - `version_guidance.agent_version_status`: manager-computed status for the installed agent version (compared against minimum, not recommended).
 - `version_guidance.agent_update_available`: `true` when the installed version trails the recommended version.
 
-Each `appium_processes.running_nodes` entry also includes `applied_generation` and `applied_transition_token`. They report the last desired generation and transition token applied to that port, or `null` before the agent has applied one.
+Each `appium_processes.running_nodes` entry also includes `started_at`, the ISO-8601 spawn time of that Appium process (re-stamped on every restart). The backend mirrors it into `AppiumNode.started_at` and compares it against the restart watermark.
 
 ## Agent Appium-Node Desired State
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/agent/appium-nodes/desired` | Agent fetches host-scoped Appium-node intent | `host_id` | `{ nodes: NodeDesiredSpecOut[], generation_hint }` |
+| `GET` | `/agent/appium-nodes/desired` | Agent fetches host-scoped Appium-node intent | `host_id` | `{ nodes: NodeDesiredSpecOut[] }` |
 | `POST` | `/agent/appium-nodes/refresh` | Wake the agent node poller | none | `{ accepted: true }` (`202`) |
 
 Running specs include the complete `launch` payload. Stopped specs use `launch: null`. A node whose launch inputs cannot be resolved also uses `launch: null` and includes `unrunnable_reason`; one blocked node does not fail the host response. The refresh endpoint returns `202` as a best-effort wake hint.
@@ -416,12 +416,6 @@ Supported dynamic group filters:
 | `GET` | `/api/analytics/fleet/overview` | Read aggregate fleet analytics | `date_from`, `date_to` | `FleetOverview` |
 | `GET` | `/api/analytics/fleet/capacity-timeline` | Read fleet capacity time series | `date_from`, `date_to`, `bucket_minutes` | `FleetCapacityTimeline` |
 | `GET` | `/api/lifecycle/incidents` | Read recent lifecycle incident history | `limit`, optional `device_id`, `cursor`, `direction` | `LifecycleIncidentListRead` (`{ items: LifecycleIncidentRead[], limit, next_cursor, prev_cursor }`) |
-
-## Admin
-
-| Method | Path | Purpose | Main input | Primary response |
-| --- | --- | --- | --- | --- |
-| `POST` | `/api/admin/appium-nodes/{node_id}/clear-transition` | Clear a stuck Appium node desired-state transition | path `node_id` | `AppiumNodeRead` |
 
 ## Notes
 

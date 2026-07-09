@@ -232,6 +232,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
 
 SCHEDULER_STALL_GRACE_SEC = 600.0
 SCHEDULER_WATCHDOG_INTERVAL_SEC = 60.0
+DEFAULT_RESTART_WINDOW_SEC = 120
 
 
 async def _scheduler_stall_watchdog() -> None:
@@ -400,7 +401,11 @@ async def check_availability(
         1
         for device in available_devices
         if not device.review_required
-        and device_node_is_viable(device)
+        and device_node_is_viable(
+            device,
+            now=now_utc(),
+            restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
+        )
         and readiness_map[device.id].readiness_state == "verified"
         and device_health.device_allows_allocation(device)
     )

@@ -312,7 +312,7 @@ async def test_restart_node(
     assert resp.status_code == 200
     data = resp.json()
     assert data["desired_state"] == AppiumDesiredState.running.value
-    assert data["transition_token"] is not None
+    assert data["restart_requested_at"] is not None
 
 
 async def test_restart_node_cold_start(
@@ -383,7 +383,7 @@ async def test_restart_node_clears_stale_recovery_suppression(
 
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
-    assert resp.json()["transition_token"] is not None
+    assert resp.json()["restart_requested_at"] is not None
 
     # recovery_suppressed_reason is no longer stored — the "Recovery Paused" badge
     # is projected from live facts. With no review flag, backoff, or operator deny,
@@ -684,7 +684,7 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
     resp = await client.post(f"/api/devices/{device['id']}/node/restart")
     assert resp.status_code == 200
     assert resp.json()["port"] == 4723
-    assert resp.json()["transition_token"] is not None
+    assert resp.json()["restart_requested_at"] is not None
 
     detail = await client.get(f"/api/devices/{device['id']}")
     assert detail.status_code == 200

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.devices.models import Device
 
 HealthVerdictStatus = Literal["ok", "warn", "failed", "unknown"]
+DEFAULT_RESTART_WINDOW_SEC = 120
 
 _NODE_STATE_TO_STATUS: dict[str, HealthVerdictStatus] = {
     "running": "ok",
@@ -76,8 +77,9 @@ def _node_verdict(device: Device) -> dict[str, Any]:
         desired_state=node.desired_state.value,
         health_running=node.health_running,
         health_state=node.health_state,
-        transition_token=node.transition_token,
-        transition_deadline=node.transition_deadline,
+        restart_requested_at=node.restart_requested_at,
+        started_at=node.started_at,
+        restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
         lifecycle_policy_state=device.lifecycle_policy_state,
         review_required=device.review_required,
         now=now_utc(),

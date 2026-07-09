@@ -163,8 +163,10 @@ async def test_claim_proceeds_when_probe_lock_is_stale(
 async def test_claim_declines_when_node_not_viable_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
-    """_claim re-checks node viability under the row lock: a node mid-restart
-    (transition_token set) after _eligible_devices ran is declined."""
+    """_claim re-checks node viability under the row lock: a node with an
+    unsatisfied restart watermark after _eligible_devices ran is declined."""
+    from datetime import UTC, datetime, timedelta
+
     from app.appium_nodes.models import AppiumNode
 
     node = (
@@ -172,7 +174,8 @@ async def test_claim_declines_when_node_not_viable_under_lock(
         .scalars()
         .one()
     )
-    node.transition_token = uuid.uuid4()
+    node.started_at = datetime.now(UTC) - timedelta(seconds=60)
+    node.restart_requested_at = datetime.now(UTC)
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
@@ -201,9 +204,11 @@ async def test_older_waiter_with_invalid_body_is_skipped(
 
 @pytest.mark.db
 async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, seeded_available_device: Device) -> None:
-    """Node-viability predicate (#8): a device whose Appium node is mid-restart
-    (transition_token set) must be excluded from grid eligibility, matching the
-    run allocator's node filter."""
+    """Node-viability predicate (#8): a device whose Appium node has an
+    unsatisfied restart watermark must be excluded from grid eligibility,
+    matching the run allocator's node filter."""
+    from datetime import UTC, datetime, timedelta
+
     from app.appium_nodes.models import AppiumNode
 
     node = (
@@ -215,7 +220,8 @@ async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, se
     eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
     assert seeded_available_device.id in eligible_ids
 
-    node.transition_token = uuid.uuid4()
+    node.started_at = datetime.now(UTC) - timedelta(seconds=60)
+    node.restart_requested_at = datetime.now(UTC)
     await db_session.flush()
 
     eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}

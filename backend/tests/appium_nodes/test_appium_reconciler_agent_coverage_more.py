@@ -121,8 +121,7 @@ async def test_start_stop_restart_node_guard_paths(
         await svc.start_node(db_session, device)
 
     restarted = await svc.restart_node(db_session, device)
-    assert restarted.transition_token is not None
-    assert restarted.transition_deadline is not None
+    assert restarted.restart_requested_at is not None
 
 
 async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:

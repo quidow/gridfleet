@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from agent_app.appium.exceptions import PortOccupiedError
 from agent_app.appium.schemas import AppiumStartRequest
@@ -22,21 +22,18 @@ class NodeStateClient(Protocol):
 
 class NodeDesiredSpec(BaseModel):
     device_id: UUID
-    generation: int = Field(ge=0)
     desired_state: str
     port: int
     accepting_new_sessions: bool
     stop_pending: bool
     grid_run_id: UUID | None = None
-    transition_token: UUID | None = None
-    transition_deadline: datetime | None = None
+    restart_requested_at: datetime | None = None
     launch: AppiumStartRequest | None = None
     unrunnable_reason: str | None = None
 
 
 class NodesDesired(BaseModel):
     nodes: list[NodeDesiredSpec]
-    generation_hint: int = Field(ge=0)
 
 
 @dataclass
@@ -44,9 +41,6 @@ class NodeStateLoop:
     client: NodeStateClient
     manager: Any
     poll_interval: float = 5.0
-    applied_tokens: set[str] = field(default_factory=set)
-    applied_generations: dict[int, int] = field(default_factory=dict)
-    applied_transition_tokens: dict[int, str] = field(default_factory=dict)
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     async def run_once(self) -> None:
@@ -63,7 +57,6 @@ class NodeStateLoop:
         for port in sorted(set(running_by_port) - desired_ports):
             try:
                 await self.manager.stop(port)
-                self._forget_applied(port)
             except Exception:
                 logger.exception("failed to stop orphan Appium process on port %d", port)
 
@@ -73,7 +66,6 @@ class NodeStateLoop:
             if local is not None:
                 await self.manager.stop(spec.port)
                 running_by_port.pop(spec.port, None)
-            self._forget_applied(spec.port)
             return
 
         if spec.desired_state != "running":
@@ -87,8 +79,15 @@ class NodeStateLoop:
             return
 
         launch = spec.launch
-        token = str(spec.transition_token) if spec.transition_token is not None else None
-        force_restart = self._token_requires_restart(spec, token)
+        # Clock-skew note: spec.restart_requested_at is backend-minted; started_at is
+        # local. NTP-synced lab hosts bound the skew; a request landing within |skew|
+        # of a fresh spawn no-ops once and self-heals via node_health. Restart iff the
+        # local spawn predates the watermark — idempotent by construction (an agent
+        # restart respawns every child, so old watermarks are trivially satisfied).
+        watermark = spec.restart_requested_at
+        if watermark is not None and watermark.tzinfo is None:
+            watermark = watermark.replace(tzinfo=UTC)
+        force_restart = local is not None and watermark is not None and local.started_at < watermark
         target_changed = local is not None and (
             local.connection_target != launch.connection_target or local.platform_id != launch.platform_id
         )
@@ -126,26 +125,9 @@ class NodeStateLoop:
                     grid_run_id=spec.grid_run_id,
                 )
 
-        self.applied_generations[spec.port] = spec.generation
-        if token is not None and (force_restart or local is None):
-            self.applied_tokens.add(token)
-            self.applied_transition_tokens[spec.port] = token
-
     @staticmethod
     def _launch_kwargs(launch: AppiumStartRequest) -> dict[str, Any]:
         return launch.model_dump(mode="python", exclude={"allocated_caps"})
-
-    def _token_requires_restart(self, spec: NodeDesiredSpec, token: str | None) -> bool:
-        if token is None or token in self.applied_tokens or spec.transition_deadline is None:
-            return False
-        deadline = spec.transition_deadline
-        if deadline.tzinfo is None:
-            deadline = deadline.replace(tzinfo=UTC)
-        return deadline > datetime.now(UTC)
-
-    def _forget_applied(self, port: int) -> None:
-        self.applied_generations.pop(port, None)
-        self.applied_transition_tokens.pop(port, None)
 
     def wake(self) -> None:
         self._wake_event.set()

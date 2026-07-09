@@ -478,8 +478,9 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=120,
         description=(
-            "Wall-clock window (seconds) the Phase 3 restart_node writer uses to populate "
-            "appium_nodes.transition_deadline. The reconciler clears the lease past this deadline."
+            "Wall-clock window (seconds) within which a fresh appium_nodes.restart_requested_at "
+            "watermark projects a node as 'restarting' (read-time bounding). Past this window a "
+            "still-unsatisfied watermark self-clears at read time — there is no sweep."
         ),
         min_value=30,
         max_value=600,

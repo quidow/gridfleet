@@ -15,9 +15,8 @@ behavior-preservation truth table.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -26,6 +25,8 @@ from app.core.observability import get_logger
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 
 if TYPE_CHECKING:
+    import uuid
+
     from app.devices.models import DeviceIntent
 
 logger = get_logger(__name__)
@@ -55,8 +56,7 @@ class Command:
     kind: CommandKind
     source: str
     run_id: uuid.UUID | None
-    transition_token: uuid.UUID | None
-    transition_deadline: datetime | None
+    restart_requested_at: datetime | None
     reason_detail: str | None
 
 
@@ -75,8 +75,7 @@ class NodeProcessDecision:
     desired_state: NodeProcessState
     stop_mode: StopMode | None
     reason: str
-    transition_token: uuid.UUID | None = None
-    transition_deadline: datetime | None = None
+    restart_requested_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -105,17 +104,13 @@ def parse_command(intent: DeviceIntent, now: datetime) -> Command | None:
     if kind is None:
         logger.warning("device_intent_unknown_source", source=intent.source, device_id=str(intent.device_id))
         return None
-    token = _optional_uuid(intent.payload.get("transition_token"))
-    deadline = _optional_datetime(intent.payload.get("transition_deadline"))
-    if token is not None and deadline is None:
-        token = None  # a token without a deadline can never be cleared — drop it
+    restart_requested_at = _optional_datetime(intent.payload.get("restart_requested_at"))
     reason_detail = intent.payload.get("reason")
     return Command(
         kind=kind,
         source=intent.source,
         run_id=intent.run_id,
-        transition_token=token,
-        transition_deadline=deadline,
+        restart_requested_at=restart_requested_at,
         reason_detail=reason_detail if isinstance(reason_detail, str) else None,
     )
 
@@ -136,20 +131,23 @@ def decide_node_process(commands: list[Command], facts: DecisionFacts) -> NodePr
         # structurally suppressed by any active start command (semantic delta #3).
         return NodeProcessDecision("running_blocked", "defer", "connectivity park")
     if starts:
-        # Prefer a token-bearing start (an explicit one-shot restart) over
-        # tokenless standing orders; tie-break lexicographically by source —
-        # both rules verbatim from the retired arbiter.
-        winner = sorted(starts, key=lambda c: (0 if c.transition_token is not None else 1, c.source))[0]
-        # A token with no deadline can never be cleared — drop it (verbatim from
-        # the retired arbiter). parse_command also drops it; this covers commands
-        # built by other means.
-        token = winner.transition_token if winner.transition_deadline is not None else None
+        # Newest watermark wins: a later restart request supersedes an earlier
+        # one (restart-at-least-once-after-T is monotone), so last-write-wins
+        # is correct and the old token override-detection has nothing to detect.
+        watermark = max((c.restart_requested_at for c in starts if c.restart_requested_at is not None), default=None)
+        winner = max(
+            starts,
+            key=lambda c: (
+                c.restart_requested_at is not None,
+                c.restart_requested_at or datetime.min.replace(tzinfo=UTC),
+                c.source,
+            ),
+        )
         return NodeProcessDecision(
             "running",
             None,
             f"{winner.source} command",
-            transition_token=token,
-            transition_deadline=winner.transition_deadline,
+            restart_requested_at=watermark,
         )
     if facts.in_service:
         return NodeProcessDecision("running", None, "baseline:idle standing start")
@@ -193,15 +191,6 @@ def map_node_process_decision(decision: NodeProcessDecision) -> tuple[AppiumDesi
 def _reason(commands: list[Command], kind: CommandKind) -> str:
     winner = next(c for c in commands if c.kind is kind)
     return f"{winner.source} command"
-
-
-def _optional_uuid(value: object) -> uuid.UUID | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        return uuid.UUID(value)
-    except ValueError:
-        return None
 
 
 def _optional_datetime(value: object) -> datetime | None:

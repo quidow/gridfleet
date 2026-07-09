@@ -6,6 +6,7 @@ Pure function with no IO so it can be unit-tested without spinning up an agent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -15,6 +16,19 @@ class RunningAppiumNode:
     pid: int
     connection_target: str
     platform_id: str
+    started_at: datetime | None = None
+
+
+def _parse_started_at(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[RunningAppiumNode]:
@@ -41,6 +55,7 @@ def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[Runnin
                 pid=pid,
                 connection_target=connection_target,
                 platform_id=platform_id,
+                started_at=_parse_started_at(entry.get("started_at")),
             )
         )
     return nodes

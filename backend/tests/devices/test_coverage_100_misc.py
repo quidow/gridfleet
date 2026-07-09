@@ -18,9 +18,6 @@ from app.appium_nodes.services import (
     desired_state_writer,
 )
 from app.appium_nodes.services import (
-    reconciler as appium_reconciler,
-)
-from app.appium_nodes.services import (
     reconciler_agent as appium_reconciler_agent,
 )
 from app.auth.config import AuthConfig
@@ -153,7 +150,6 @@ def test_device_readiness_effective_state_branches() -> None:
             id=uuid.uuid4(),
             port=4723,
             pid=None,
-            container_id=None,
             active_connection_target=None,
             started_at=now,
             desired_state=DesiredNodeState.running,
@@ -166,7 +162,6 @@ def test_device_readiness_effective_state_branches() -> None:
             id=uuid.uuid4(),
             port=4723,
             pid=123,
-            container_id=None,
             active_connection_target=None,
             started_at=now,
             desired_state=DesiredNodeState.running,
@@ -188,18 +183,13 @@ async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.
     with pytest.raises(ValueError, match="desired_port"):
         await desired_state_writer.write_desired_state(
             db,
-            node=SimpleNamespace(desired_state=AppiumDesiredState.running, transition_token=None, desired_port=1),
+            node=SimpleNamespace(
+                desired_state=AppiumDesiredState.running,
+                restart_requested_at=None,
+                desired_port=1,
+            ),
             caller="test",
             write=desired_state_writer.DesiredStateWrite(target=AppiumDesiredState.stopped, desired_port=1),
-        )
-    with pytest.raises(ValueError, match="transition_deadline"):
-        await desired_state_writer.write_desired_state(
-            db,
-            node=SimpleNamespace(desired_state=AppiumDesiredState.running, transition_token=None, desired_port=1),
-            caller="test",
-            write=desired_state_writer.DesiredStateWrite(
-                target=AppiumDesiredState.running, transition_token=uuid.uuid4()
-            ),
         )
 
     assert (
@@ -421,18 +411,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
 
         async def __aexit__(self, *_args: object) -> None:
             return None
-
-    from app.appium_nodes.services.reconciler import ReconcilerService
-
-    clear = ReconcilerService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        session_factory=SessionCtx,
-    )._clear_token_factory(session_scope=SessionCtx)
-    monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
-    await clear(row=SimpleNamespace(device_id=uuid.uuid4()))
 
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))

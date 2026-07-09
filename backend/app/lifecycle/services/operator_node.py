@@ -90,14 +90,14 @@ def operator_start_intent(device: Device, *, settings: SettingsReader) -> Intent
 
 def operator_restart_intent(device: Device, *, settings: SettingsReader) -> IntentRegistration:
     window_sec = settings.get_int("appium_reconciler.restart_window_sec")
-    deadline = now_utc() + timedelta(seconds=window_sec)
+    requested_at = now_utc()
+    deadline = requested_at + timedelta(seconds=window_sec)
     return IntentRegistration(
         source=operator_start_source(device.id),
         axis=NODE_PROCESS,
         payload={
             "action": "start",
-            "transition_token": str(uuid.uuid4()),
-            "transition_deadline": deadline.isoformat(),
+            "restart_requested_at": requested_at.isoformat(),
         },
         expires_at=deadline,
     )
@@ -271,7 +271,7 @@ class OperatorNodeLifecycleService:
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
     ) -> AppiumNode:
         """Register an operator:start intent in restart form (with fresh
-        transition_token + expires_at). If the node isn't currently observed running,
+        restart_requested_at + expires_at). If the node isn't currently observed running,
         fall back to request_start (no token, no deadline) — mirrors the existing
         bulk._bulk_restart_one fallback.
         """

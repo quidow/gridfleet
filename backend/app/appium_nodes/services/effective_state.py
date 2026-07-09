@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
-
-if TYPE_CHECKING:
-    import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 EffectiveNodeStateValue = Literal[
     "starting",
@@ -48,13 +45,20 @@ def compute_effective_state(  # noqa: PLR0913 - keyword-only node observation fi
     desired_state: str,
     health_running: bool | None,
     health_state: str | None,
-    transition_token: uuid.UUID | None,
-    transition_deadline: datetime | None,
+    restart_requested_at: datetime | None,
+    started_at: datetime | None,
+    restart_window_sec: int,
     lifecycle_policy_state: dict[str, Any] | None,
     review_required: bool,
     now: datetime,
 ) -> EffectiveNodeStateValue:
-    if transition_token is not None and transition_deadline is not None and transition_deadline > now:
+    if (
+        restart_requested_at is not None
+        and restart_requested_at > now - timedelta(seconds=restart_window_sec)
+        and (started_at is None or started_at < restart_requested_at)
+    ):
+        # Read-time bounding replaces the lease-expiry sweep; a dead agent can
+        # pin "restarting" for at most restart_window_sec.
         return "restarting"
 
     if review_required or _backoff_active(lifecycle_policy_state or {}, now):

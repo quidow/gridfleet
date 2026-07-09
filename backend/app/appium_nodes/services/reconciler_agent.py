@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
@@ -79,7 +80,7 @@ class NodeStartDetails:
 
     active_connection_target: str | None = None
     allocated_caps: dict[str, Any] | None = None
-    clear_transition: bool = False
+    started_at: datetime | None = None
 
 
 def _short_session_factory(db: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -153,6 +154,8 @@ async def mark_node_started(
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     active_connection_target = details.active_connection_target or appium_connection_target(device)
     node = upsert_node(db, device, port, pid, active_connection_target, settings=settings)
+    if details.started_at is not None:
+        node.started_at = details.started_at
     await db.flush()
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot promote Appium resource claims")
@@ -178,9 +181,6 @@ async def mark_node_started(
         mark_offline=False,
     )
     reset_reconciler_start_failure_state(device)
-    if details.clear_transition:
-        node.transition_token = None
-        node.transition_deadline = None
     # Pull re-applies drain/stop flags from the last pull on crash-restart (the
     # agent re-derives accepting_new_sessions/stop_pending from desired state
     # every launch), so the belt-and-suspenders outbox re-push that used to run
@@ -461,8 +461,8 @@ class ReconcilerAgentService:
     ) -> AppiumNode:
         """Operator-initiated single-device restart. Routes through
         ``self._operator.request_restart`` so the operator:start intent
-        payload is the single source of truth (with fresh transition_token and
-        expires_at on every restart).
+        payload is the single source of truth (with a fresh restart_requested_at
+        watermark and expires_at on every restart).
         """
         if not device.appium_node or not device.appium_node.observed_running:
             return await self.start_node(db, device, caller=caller)

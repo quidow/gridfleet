@@ -25,15 +25,13 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_present(
+async def test_bulk_restart_persists_watermark_when_auto_recovery_intent_present(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
     """Regression: with an auto_recovery:node start command already registered,
-    the operator restart command used to lose the lex-by-source tie-break,
-    dropping its transition_token before write_desired_state ran. Convergence
-    then emitted `confirm_running` and the node never restarted. The decision
-    ladder now prefers token-bearing starts on same-tier `start` ties.
+    the operator restart command must still carry its restart watermark into the
+    desired row.
     """
     from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
     from app.devices.services import bulk as bulk_service
@@ -57,8 +55,7 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
         write=DesiredStateWrite(target=AppiumDesiredState.running, desired_port=4723),
     )
     # Simulate the standing baseline registered by lifecycle_policy when a
-    # device boots healthy. Same priority + axis as the operator restart, but
-    # no transition_token.
+    # device boots healthy. Same axis as the operator restart, but no watermark.
     await IntentService(db_session).register_intents(
         device_id=device.id,
         intents=[
@@ -70,7 +67,7 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
         ],
     )
     await db_session.commit()
-    assert node.transition_token is None
+    assert node.restart_requested_at is None
 
     await bulk_service._bulk_restart_one(
         db_session,
@@ -82,8 +79,7 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     )
     await db_session.refresh(node)
 
-    assert node.transition_token is not None, "restart intent's token must reach the node row"
-    assert node.transition_deadline is not None
+    assert node.restart_requested_at is not None, "restart intent's watermark must reach the node row"
     assert node.desired_state == AppiumDesiredState.running
 
 
@@ -128,7 +124,7 @@ async def test_operator_restart_intent_is_ttl_bounded(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """_bulk_restart_one (restart variant with transition_token) must be TTL-bounded, no precondition."""
+    """_bulk_restart_one (restart variant with watermark) must be TTL-bounded, no precondition."""
     from sqlalchemy import select
 
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -166,9 +162,8 @@ async def test_operator_restart_intent_is_ttl_bounded(
         )
     ).scalar_one()
     assert row.expires_at is not None
-    # Restart-specific payload fields remain intact.
-    assert row.payload.get("transition_token") is not None
-    assert row.payload.get("transition_deadline") is not None
+    # Restart-specific payload field remains intact.
+    assert row.payload.get("restart_requested_at") is not None
 
 
 async def test_bulk_start_nodes_tags_desired_state_as_bulk(
