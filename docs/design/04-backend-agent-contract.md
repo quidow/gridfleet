@@ -100,7 +100,7 @@ The node desired response contains `device_id`, `generation`, `desired_state`, `
 
 Nodes converge by agent pull. The backend never starts, stops, restarts, or reconfigures an Appium process — the only backend→agent node signal is the refresh poke. There is no push path, no reconfigure-delivery machinery, and no `AgentReconfigureOutbox` table.
 
-`POST /agent/appium/start`, `POST /agent/appium/stop`, and `POST /agent/appium/{port}/reconfigure` still exist as HTTP routes on the agent (`agent_app/appium/router.py`), but the backend does not call any of them — node lifecycle now happens entirely in-process inside the agent, via `AppiumManager.start`/`.stop`/`.reconfigure` driven by `NodeStateLoop`.
+The agent no longer exposes `POST /agent/appium/start`, `POST /agent/appium/stop`, or `POST /agent/appium/{port}/reconfigure` HTTP routes — they were removed once pull mode became the only lifecycle channel. Node lifecycle happens entirely in-process inside the agent, via `AppiumManager.start`/`.stop`/`.reconfigure` driven by `NodeStateLoop` converging the pulled desired state.
 
 Per host, `reconcile_host` (`app/appium_nodes/services/reconciler.py`) parses the agent's `/agent/health` payload and runs DB-writing convergence — confirm/mark-running, stale clears, expired-token clears — but every agent-effecting action (`start`, `stop`, `restart`) is translated to a no-op by `translate_action_for_pull` (`app/appium_nodes/services/reconciler_convergence.py`):
 

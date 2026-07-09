@@ -32,12 +32,12 @@ divergence automatically. If it does not:
 **Manual override (last resort):** a stuck `restarting` projection is not one — it
 self-clears at read time once the watermark is satisfied (the agent respawned) or
 after `appium_reconciler.restart_window_sec` elapses; there is no clear-transition
-route or "Force-clear restart" button anymore. For a stuck agent process, call
-`POST /agent/appium/stop {"port": N}` against the host agent. File an incident if
-that override is needed.
+route or "Force-clear restart" button anymore. The agent no longer exposes an HTTP
+stop route either. For a stuck agent process, change desired state (see below) and
+let the agent converge; as a true last resort, kill the Appium process on the host
+directly. File an incident if that override is needed.
 
-> **All supported hosts use pull-only orchestration:** a direct
-> `POST /agent/appium/stop` is reverted on the agent's next pull while the
-> backend still desires the node running. Change desired state through the
-> backend instead (e.g. set the device to maintenance / stop the run), then let
-> the agent converge.
+> **All supported hosts use pull-only orchestration:** killing an Appium process
+> out of band is reverted on the agent's next pull while the backend still desires
+> the node running. Change desired state through the backend instead (e.g. set the
+> device to maintenance / stop the run), then let the agent converge.

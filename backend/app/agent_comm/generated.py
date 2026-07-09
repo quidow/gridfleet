@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,53 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 class AppiumLogsResponse(BaseModel):
     count: Annotated[int, Field(ge=0, title="Count")]
     lines: Annotated[list[str], Field(title="Lines")]
-    port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
-
-
-class AppiumReconfigureRequest(BaseModel):
-    accepting_new_sessions: Annotated[bool | None, Field(title="Accepting New Sessions")] = True
-    grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")] = None
-    stop_pending: Annotated[bool | None, Field(title="Stop Pending")] = False
-
-
-class AppiumReconfigureResponse(BaseModel):
-    accepting_new_sessions: Annotated[bool, Field(title="Accepting New Sessions")]
-    grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")] = None
-    port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
-    stop_pending: Annotated[bool, Field(title="Stop Pending")]
-
-
-class AppiumStartRequest(BaseModel):
-    accepting_new_sessions: Annotated[bool | None, Field(title="Accepting New Sessions")] = True
-    allocated_caps: Annotated[dict[str, Any] | None, Field(title="Allocated Caps")] = None
-    appium_env: Annotated[dict[str, str] | None, Field(title="Appium Env")] = None
-    appium_platform_name: Annotated[str | None, Field(title="Appium Platform Name")] = None
-    connection_behavior: Annotated[dict[str, Any] | None, Field(title="Connection Behavior")] = {}
-    connection_target: Annotated[str, Field(max_length=512, min_length=1, title="Connection Target")]
-    device_type: Annotated[str | None, Field(title="Device Type")] = None
-    extra_caps: Annotated[dict[str, Any] | None, Field(title="Extra Caps")] = None
-    grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")] = None
-    headless: Annotated[bool | None, Field(title="Headless")] = True
-    insecure_features: Annotated[list[str] | None, Field(title="Insecure Features")] = []
-    ip_address: Annotated[str | None, Field(title="Ip Address")] = None
-    lifecycle_actions: Annotated[list[dict[str, Any]] | None, Field(title="Lifecycle Actions")] = []
-    pack_id: Annotated[
-        str,
-        Field(
-            min_length=1,
-            pattern="^(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,})(?:/(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,}))*$",
-            title="Pack Id",
-        ),
-    ]
-    platform_id: Annotated[str, Field(min_length=1, pattern="^[A-Za-z0-9_.\\-]+$", title="Platform Id")]
-    port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
-    session_override: Annotated[bool | None, Field(title="Session Override")] = True
-    stop_pending: Annotated[bool | None, Field(title="Stop Pending")] = False
-
-
-class AppiumStartResponse(BaseModel):
-    connection_target: Annotated[str, Field(min_length=1, title="Connection Target")]
-    pid: Annotated[int, Field(ge=1, title="Pid")]
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
 
 
@@ -72,15 +24,6 @@ class AppiumStatusResponse(BaseModel):
     pid: Annotated[int | None, Field(title="Pid")] = None
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
     running: Annotated[bool, Field(title="Running")]
-
-
-class AppiumStopRequest(BaseModel):
-    port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
-
-
-class AppiumStopResponse(BaseModel):
-    port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
-    stopped: Annotated[bool, Field(title="Stopped")]
 
 
 class DoctorCheckOut(BaseModel):
