@@ -7,7 +7,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
 | `general` | General | 31 |
-| `grid` | Appium & Grid | 13 |
+| `grid` | Appium & Grid | 12 |
 | `notifications` | Notifications | 3 |
 | `agent` | Agent | 10 |
 | `reservations` | Reservations | 4 |
@@ -58,7 +58,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
 | `appium_reconciler.restart_window_sec` | `grid` | `int` | `120` | none | `30..600` | Wall-clock window the Phase 3 restart-node writer uses to populate `transition_deadline`; the reconciler clears the lease past this deadline |
-| `appium_reconciler.start_failure_threshold` | `grid` | `int` | `5` | none | `1..100` | Consecutive desired-state convergence failures before lifecycle policy treats the device as backoff-suppressed; suppression lasts `appium.startup_timeout_sec * 4` seconds |
 | `appium_reconciler.host_parallelism` | `grid` | `int` | `8` | none | `1..32` | Maximum number of hosts processed concurrently by the host sweep |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
 | `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hardware_health_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
