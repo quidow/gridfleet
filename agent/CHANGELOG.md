@@ -2,6 +2,22 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.32.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.31.0...gridfleet-agent-v0.32.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** push one consolidated status; stop pushing pack status separately
+* **agent:** converge restarts from the spawn-time watermark
+
+### Features
+
+* **agent:** converge restarts from the spawn-time watermark ([b432bd9](https://github.com/quidow/gridfleet/commit/b432bd941d5db0aaa318d1a589065d742b596504))
+* **agent:** push one consolidated status; stop pushing pack status separately ([4e2f7d8](https://github.com/quidow/gridfleet/commit/4e2f7d8ed8a8430605d62ea69b53cedc842f041a))
+* **agent:** record and report appium process spawn time ([2172c59](https://github.com/quidow/gridfleet/commit/2172c596f446146869ec218768da11952bb6f23c))
+* **agent:** remove dead appium start/stop/reconfigure http routes ([7216681](https://github.com/quidow/gridfleet/commit/72166817a4454f5768bae44dbd6b515f60486bd3))
+* **agent:** remove dead appium start/stop/reconfigure surface ([1ba8283](https://github.com/quidow/gridfleet/commit/1ba82836980dff413cc12f0fac51bcea85f67abe))
+
 ## [0.31.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.30.0...gridfleet-agent-v0.31.0) (2026-07-09)
 
 
