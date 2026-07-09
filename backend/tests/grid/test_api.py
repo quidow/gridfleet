@@ -179,7 +179,7 @@ async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default
     db_session.add(
         GridSessionQueueTicket(
             requested_body={"capabilities": {"alwaysMatch": {"platformName": "ios"}}},
-            status=GridQueueStatus.claimed,
+            status=GridQueueStatus.expired,
         )
     )
     await db_session.commit()

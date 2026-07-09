@@ -108,8 +108,8 @@ async def test_allocate_creates_pending_and_busy(
     assert row.status == SessionStatus.pending
     # #6: the allocation target is persisted on the row so /routes can fall back to it.
     assert row.router_target == result.target
-    assert ticket.status == GridQueueStatus.claimed
-    assert ticket.session_row_id == row.id
+    assert row.ticket_id == ticket.id
+    assert await db_session.get(GridSessionQueueTicket, ticket.id) is None
     await db_session.refresh(seeded_available_device)
     assert seeded_available_device.operational_state == DeviceOperationalState.busy
 

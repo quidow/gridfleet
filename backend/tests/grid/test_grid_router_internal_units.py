@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 if TYPE_CHECKING:
     from app.devices.models import Device
@@ -189,29 +190,18 @@ async def test_activity_empty_is_noop(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.db
-async def test_allocate_handler_resumes_claimed_ticket(
+async def test_allocate_handler_resumes_session_ticket(
     services: GridServices, db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
-    """A retry carrying an already-claimed ticket returns the SAME allocation via the
-    resume-claimed branch of the allocate handler."""
+    """A retry carrying the Session.ticket_id returns the SAME allocation."""
     alloc = await router_internal.allocate(AllocateRequest(body=_body(platformName="Android")), services)
     assert alloc.allocation_id is not None
-    # Find the claimed ticket that the allocation produced.
-    from sqlalchemy import select
 
-    ticket = (
-        (
-            await db_session.execute(
-                select(GridSessionQueueTicket).where(GridSessionQueueTicket.session_row_id == alloc.allocation_id)
-            )
-        )
-        .scalars()
-        .first()
-    )
-    assert ticket is not None and ticket.status == GridQueueStatus.claimed
+    row = (await db_session.execute(select(Session).where(Session.id == alloc.allocation_id))).scalars().one()
+    assert row.ticket_id is not None
 
     resumed = await router_internal.allocate(
-        AllocateRequest(body=_body(platformName="Android"), ticket=ticket.id), services
+        AllocateRequest(body=_body(platformName="Android"), ticket=row.ticket_id), services
     )
     assert resumed.status == "allocated"
     assert resumed.allocation_id == alloc.allocation_id

@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +89,25 @@ async def test_claim_stamps_ticket_id(
     row = await db_session.get(Session, result.allocation_id)
     assert row is not None
     assert row.ticket_id == ticket.id
+
+
+@pytest.mark.db
+async def test_claim_deletes_ticket(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """The ticket's job ends at claim: the Session row (ticket_id) is the
+    allocation ledger, so no ticket state can outlive its session -- the G7
+    leak class is structurally impossible."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    ticket_id = ticket.id
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    assert await db_session.get(GridSessionQueueTicket, ticket_id) is None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.ticket_id == ticket_id
 
 
 @pytest.mark.db
@@ -260,15 +278,6 @@ async def test_close_reads_committed_run_state_over_stale_attached_run(
     assert allocated_pending.error_type == "run_released"
 
 
-async def _claimed_ticket_for(db_session: AsyncSession, allocated_pending: Session) -> GridSessionQueueTicket:
-    """Return the ticket that claimed ``allocated_pending`` (try_allocate set it)."""
-    stmt = select(GridSessionQueueTicket).where(GridSessionQueueTicket.session_row_id == allocated_pending.id)
-    ticket = (await db_session.execute(stmt)).scalars().first()
-    assert ticket is not None
-    assert ticket.status == GridQueueStatus.claimed
-    return ticket
-
-
 @pytest.mark.db
 async def test_resume_allocation_returns_same_allocation_for_live_row(
     db_session: AsyncSession,
@@ -277,14 +286,13 @@ async def test_resume_allocation_returns_same_allocation_for_live_row(
 ) -> None:
     """Lost-Allocated-response retry: a ticket_id with a live pending row returns
     the SAME allocation, no second Session row, no second device claimed (#2)."""
-    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    assert allocated_pending.ticket_id is not None
     sessions_before = len((await db_session.execute(select(Session))).scalars().all())
 
-    result = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
+    result = await allocation_service.resume_allocation(db_session, ticket_id=allocated_pending.ticket_id)
 
     assert result is not None
     assert result.allocation_id == allocated_pending.id
-    assert ticket.status == GridQueueStatus.claimed
     sessions_after = len((await db_session.execute(select(Session))).scalars().all())
     assert sessions_after == sessions_before
 
@@ -332,10 +340,10 @@ async def test_resume_allocation_returns_same_allocation_for_running_row(
     allocation_service: AllocationService,
 ) -> None:
     """A confirmed (running) row is still the honest allocation to hand back."""
-    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    assert allocated_pending.ticket_id is not None
     await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="run-id")
 
-    result = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
+    result = await allocation_service.resume_allocation(db_session, ticket_id=allocated_pending.ticket_id)
 
     assert result is not None
     assert result.allocation_id == allocated_pending.id
@@ -349,14 +357,12 @@ async def test_resume_allocation_does_not_rewind_ticket_when_row_reaped(
 ) -> None:
     """If the claim was reaped while the response was lost, resume leaves the
     ticket terminal; the caller will create a fresh ticket and rejoin the back."""
-    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    assert allocated_pending.ticket_id is not None
     await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
 
-    result = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
+    result = await allocation_service.resume_allocation(db_session, ticket_id=allocated_pending.ticket_id)
 
     assert result is None
-    await db_session.refresh(ticket)
-    assert ticket.status == GridQueueStatus.expired
 
 
 @pytest.mark.db
@@ -374,68 +380,10 @@ async def test_reap_expired_pending_and_tickets(
 
     reaped = await allocation_service.reap_expired(db_session)
 
-    assert reaped == {"pending_failed": 1, "tickets_expired": 1, "orphan_claims_reaped": 0}
+    assert reaped == {"pending_failed": 1, "tickets_expired": 1}
     await db_session.refresh(allocated_pending)
     assert allocated_pending.status == SessionStatus.error
     await db_session.refresh(stale_ticket)
     assert stale_ticket.status == GridQueueStatus.expired
     await db_session.refresh(fresh_ticket)
     assert fresh_ticket.status == GridQueueStatus.waiting
-
-
-@pytest.mark.db
-async def test_fail_expires_claimed_ticket(
-    db_session: AsyncSession,
-    allocated_pending: Session,
-    allocation_service: AllocationService,
-    seeded_available_device: Device,
-) -> None:
-    """Reaper-failing a claim must terminalize the claimed ticket — otherwise it
-    dangles ``claimed`` forever once the session is purged (harness G7)."""
-    ticket = await _claimed_ticket_for(db_session, allocated_pending)
-    await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
-    await db_session.refresh(ticket)
-    assert ticket.status == GridQueueStatus.expired
-
-
-@pytest.mark.db
-async def test_mark_ended_expires_claimed_ticket(
-    db_session: AsyncSession,
-    allocated_pending: Session,
-    allocation_service: AllocationService,
-    seeded_available_device: Device,
-) -> None:
-    """The router-DELETE close path (mark_ended -> close_running_session) must
-    terminalize the claimed ticket."""
-    ticket = await _claimed_ticket_for(db_session, allocated_pending)
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="end-me")
-    await allocation_service.mark_ended(db_session, appium_session_id="end-me")
-    await db_session.refresh(ticket)
-    assert ticket.status == GridQueueStatus.expired
-
-
-@pytest.mark.db
-async def test_sweep_close_expires_claimed_ticket(
-    db_session: AsyncSession,
-    allocated_pending: Session,
-    allocation_service: AllocationService,
-    seeded_available_device: Device,
-) -> None:
-    """The session_sync sweep close path (close_running_session directly) must
-    terminalize the claimed ticket — same chokepoint as mark_ended."""
-    from app.sessions.service import close_running_session
-
-    ticket = await _claimed_ticket_for(db_session, allocated_pending)
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="swept")
-    row = (
-        (
-            await db_session.execute(
-                select(Session).options(selectinload(Session.device)).where(Session.id == allocated_pending.id)
-            )
-        )
-        .scalars()
-        .one()
-    )
-    await close_running_session(db_session, row, attached_run=None, publisher=event_bus)
-    await db_session.refresh(ticket)
-    assert ticket.status == GridQueueStatus.expired

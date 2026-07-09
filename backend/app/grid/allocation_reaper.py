@@ -42,12 +42,11 @@ class GridAllocationReaperLoop(BackgroundLoop):
 
     async def run_cycle(self, db: AsyncSession) -> None:
         reaped = await self._services.allocation.reap_expired(db)
-        if reaped["pending_failed"] or reaped["tickets_expired"] or reaped["orphan_claims_reaped"]:
+        if reaped["pending_failed"] or reaped["tickets_expired"]:
             logger.info(
                 "grid_allocation_reaped",
                 pending_failed=reaped["pending_failed"],
                 tickets_expired=reaped["tickets_expired"],
-                orphan_claims_reaped=reaped["orphan_claims_reaped"],
             )
         if reaped["pending_failed"]:
             # A reaped pending row just freed its device (P2). Ring the session_sync

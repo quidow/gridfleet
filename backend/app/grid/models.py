@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, func
+from sqlalchemy import DateTime, Enum, Index, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,13 +12,16 @@ from app.core.database import Base
 
 class GridQueueStatus(enum.StrEnum):
     waiting = "waiting"
-    claimed = "claimed"
     cancelled = "cancelled"
     expired = "expired"
 
 
 class GridSessionQueueTicket(Base):
-    """Durable FIFO ticket for a W3C new-session request awaiting a device."""
+    """Durable FIFO ticket for a waiting W3C new-session request.
+
+    Tickets exist only while waiting, cancelled, or expired; claim deletes the
+    row and the pending Session becomes the allocation ledger.
+    """
 
     __tablename__ = "grid_session_queue"
     # Composite index for the reaper's `status = 'waiting' ORDER BY created_at` scans
@@ -32,9 +35,6 @@ class GridSessionQueueTicket(Base):
     # amplification on a table churned every allocation poll (wave-5 #14).
     status: Mapped[GridQueueStatus] = mapped_column(
         Enum(GridQueueStatus), default=GridQueueStatus.waiting, nullable=False
-    )
-    session_row_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

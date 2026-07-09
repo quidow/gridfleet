@@ -18,12 +18,7 @@ if TYPE_CHECKING:
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
-from app.grid.allocation import (
-    AllocationService,
-    _legal_bulk_ticket_transition,
-    transition_ticket,
-    transition_tickets_bulk,
-)
+from app.grid.allocation import AllocationService
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
@@ -185,20 +180,6 @@ async def test_claim_declines_when_node_not_viable_under_lock(
         db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
     )
     assert result is None
-
-
-@pytest.mark.db
-async def test_claimed_ticket_cannot_rewind_to_waiting(db_session: AsyncSession) -> None:
-    """Lost-response resume reads Session.ticket_id now; claimed tickets never rewind."""
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android"),
-        status=GridQueueStatus.claimed,
-        session_row_id=None,
-    )
-    db_session.add(ticket)
-    await db_session.flush()
-    with pytest.raises(ValueError, match="illegal ticket transition"):
-        transition_ticket(ticket, GridQueueStatus.waiting, reason="test_no_rewind")
 
 
 @pytest.mark.db
@@ -493,18 +474,13 @@ async def test_resume_allocation_falls_back_to_stored_target(
 
     await seed_test_packs(db_session)
     _, device, node = await seed_host_and_running_node(db_session, identity=f"grid-guard-resume-{uuid.uuid4().hex[:8]}")
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android"),
-        status=GridQueueStatus.claimed,
-    )
-    db_session.add(ticket)
-    await db_session.flush()
+    ticket_id = uuid.uuid4()
     row = Session(
         session_id="alloc-resume-1",
         device_id=device.id,
         status=SessionStatus.pending,
         router_target="http://stored.example:4730",
-        ticket_id=ticket.id,
+        ticket_id=ticket_id,
     )
     db_session.add(row)
     await db_session.flush()
@@ -512,30 +488,9 @@ async def test_resume_allocation_falls_back_to_stored_target(
     await db_session.delete(await db_session.get(AppiumNode, node.id))
     await db_session.flush()
 
-    result = await _service().resume_allocation(db_session, ticket_id=ticket.id)
+    result = await _service().resume_allocation(db_session, ticket_id=ticket_id)
     assert result is not None
     assert result.target == "http://stored.example:4730"
-    assert ticket.status == GridQueueStatus.claimed
-
-
-def test_bulk_transition_legal_table_terminalizes_claimed() -> None:
-    # The bulk seam permits the claimed -> expired terminalization the per-row table
-    # deliberately omits, and rejects anything else.
-    assert _legal_bulk_ticket_transition(GridQueueStatus.claimed, GridQueueStatus.expired) is True
-    assert _legal_bulk_ticket_transition(GridQueueStatus.cancelled, GridQueueStatus.waiting) is False
-    assert _legal_bulk_ticket_transition(GridQueueStatus.waiting, GridQueueStatus.expired) is False
-
-
-@pytest.mark.asyncio
-async def test_transition_tickets_bulk_raises_on_illegal_transition() -> None:
-    from unittest.mock import AsyncMock
-
-    db = AsyncMock()
-    with pytest.raises(ValueError, match="illegal bulk ticket transition"):
-        await transition_tickets_bulk(
-            db, from_status=GridQueueStatus.cancelled, to=GridQueueStatus.waiting, reason="test"
-        )
-    db.execute.assert_not_called()
 
 
 @pytest.mark.db
