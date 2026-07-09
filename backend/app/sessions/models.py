@@ -39,6 +39,14 @@ class Session(Base):
             "status",
             postgresql_where=text("ended_at IS NULL"),
         ),
+        # At most one live session per ticket: resume must resolve to exactly the
+        # original allocation. Enforced in the DB, not just by flow.
+        Index(
+            "ux_sessions_ticket_id_live",
+            "ticket_id",
+            unique=True,
+            postgresql_where=text("ended_at IS NULL AND ticket_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -55,6 +63,11 @@ class Session(Base):
     # device's appium_node.port was transiently stale-cleared (recovery backoff), so a
     # running session never vanishes from the router's route table mid-flight (#6).
     router_target: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The waiting-queue ticket that claimed this allocation -- the router's resume
+    # key for a lost Allocated response. Plain UUID, no FK: the ticket row is
+    # deleted at claim (Task 3 of the ticket merge); from then on this Session IS
+    # the allocation ledger. NULL for probe rows and non-router sessions.
+    ticket_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     status: Mapped[SessionStatus] = mapped_column(Enum(SessionStatus), default=SessionStatus.running, nullable=False)
     requested_capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # Negotiated capabilities from the Appium create-session response, captured by

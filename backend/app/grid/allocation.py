@@ -789,6 +789,7 @@ class AllocationService:
             requested_capabilities=candidate,
             test_name=requested_test_name if isinstance(requested_test_name, str) else None,
             run_id=run_id,
+            ticket_id=ticket.id,
             # Persist the allocation target so /routes can fall back to it if the
             # device's node port is transiently stale-cleared later (#6).
             router_target=target,

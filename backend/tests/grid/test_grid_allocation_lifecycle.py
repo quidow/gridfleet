@@ -79,6 +79,20 @@ async def allocated_pending(
 
 
 @pytest.mark.db
+async def test_claim_stamps_ticket_id(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.ticket_id == ticket.id
+
+
+@pytest.mark.db
 async def test_confirm_promotes_to_running(
     db_session: AsyncSession, allocated_pending: Session, allocation_service: AllocationService
 ) -> None:
