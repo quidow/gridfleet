@@ -5,7 +5,6 @@ import inspect
 import json
 from collections import deque
 from datetime import datetime
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -331,8 +330,6 @@ async def test_process_snapshot_reports_has_active_session_true() -> None:
         "platform_id": "android_mobile",
         "started_at": manager._info[4723].started_at.isoformat(),
         "has_active_session": True,
-        "applied_generation": None,
-        "applied_transition_token": None,
     }
 
 
@@ -349,25 +346,6 @@ async def test_process_snapshot_reports_spawn_time() -> None:
         snapshot = await manager.process_snapshot()
 
     assert snapshot["running_nodes"][0]["started_at"] == info.started_at.isoformat()
-
-
-async def test_process_snapshot_reports_applied_node_state_from_pull_loop() -> None:
-    manager = AppiumProcessManager()
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
-    )
-    observer = SimpleNamespace(
-        applied_generations={4723: 9},
-        applied_transition_tokens={4723: "token-1"},
-    )
-    manager.set_node_state_observer(observer)
-
-    with patch("agent_app.appium.process.http_client.get_client", return_value=_appium_sessions_client(sessions=[])):
-        snapshot = await manager.process_snapshot()
-
-    assert snapshot["running_nodes"][0]["applied_generation"] == 9
-    assert snapshot["running_nodes"][0]["applied_transition_token"] == "token-1"
 
 
 async def test_process_snapshot_reports_has_active_session_false_when_no_sessions() -> None:
