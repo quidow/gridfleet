@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any
 
 from agent_app.pack.runtime_types import AppiumInstallable, RuntimePolicy
 
@@ -31,13 +31,6 @@ class DesiredPlatform:
         return self.identity_scheme, self.identity_scope
 
 
-@dataclass
-class DesiredFeature:
-    id: str
-    sidecar: dict[str, Any] | None = None
-    actions: list[dict[str, Any]] = field(default_factory=list)
-
-
 @dataclass(frozen=True)
 class ToolDependency:
     name: str
@@ -57,7 +50,6 @@ class DesiredPack:
     appium_server: AppiumInstallable
     appium_driver: AppiumInstallable
     platforms: list[DesiredPlatform]
-    features: list[DesiredFeature] = field(default_factory=list)
     runtime_policy: RuntimePolicy = field(default_factory=RuntimePolicy)
     tarball_sha256: str | None = None
     tool_dependencies: list[ToolDependency] = field(default_factory=list)
@@ -68,10 +60,6 @@ class DesiredPack:
         """True when the pack has platforms that can be served by its adapter."""
 
         return bool(self.platforms)
-
-    @property
-    def sidecar_feature_ids(self) -> list[str]:
-        return [feature.id for feature in self.features if feature.sidecar is not None]
 
 
 @dataclass
@@ -95,7 +83,6 @@ def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
                 appium_server=_installable(raw["appium_server"]),
                 appium_driver=_installable(raw["appium_driver"]),
                 platforms=[_platform(p) for p in raw["platforms"]],
-                features=_features(raw.get("features") or {}),
                 runtime_policy=_runtime_policy(raw.get("runtime_policy") or {"strategy": "recommended"}),
                 tarball_sha256=raw.get("tarball_sha256"),
                 tool_dependencies=tool_deps,
@@ -119,7 +106,6 @@ def _installable(raw: dict[str, Any]) -> AppiumInstallable:
         recommended=raw.get("recommended"),
         known_bad=list(raw.get("known_bad") or []),
         github_repo=raw.get("github_repo"),
-        available_versions=[item for item in raw.get("available_versions", []) if isinstance(item, str)],
     )
 
 
@@ -140,15 +126,7 @@ def _platform(raw: dict[str, Any]) -> DesiredPlatform:
 
 
 def _runtime_policy(raw: dict[str, Any]) -> RuntimePolicy:
-    return RuntimePolicy(
-        strategy=_runtime_strategy(raw.get("strategy", "recommended")),
-        appium_server_version=raw.get("appium_server_version"),
-        appium_driver_version=raw.get("appium_driver_version"),
-    )
-
-
-def _runtime_strategy(value: object) -> Literal["recommended", "latest_patch", "exact"]:
-    return cast("Literal['recommended', 'latest_patch', 'exact']", value)
+    return RuntimePolicy(strategy=str(raw.get("strategy", "recommended")))
 
 
 def resolve_desired_platform(
@@ -164,15 +142,3 @@ def resolve_desired_platform(
             if platform.id == platform_id:
                 return platform
     return None
-
-
-def _features(raw: dict[str, Any]) -> list[DesiredFeature]:
-    return [
-        DesiredFeature(
-            id=feature_id,
-            sidecar=dict(feature_data.get("sidecar") or {}) or None,
-            actions=list(feature_data.get("actions") or []),
-        )
-        for feature_id, feature_data in sorted(raw.items())
-        if isinstance(feature_data, dict)
-    ]

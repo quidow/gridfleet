@@ -76,7 +76,6 @@ const basePack = {
     },
   ],
   doctor: [{ id: 'adb', description: 'ADB available', adapter_hook: 'check_adb' }],
-  features: {},
   runtime_summary: {
     installed_hosts: 1,
     blocked_hosts: 0,
@@ -288,22 +287,4 @@ it('switches to an older uploaded release from the releases tab', async () => {
     packId: 'appium-uiautomator2',
     release: '2026.04.0',
   });
-});
-
-it('renders operations tab only when manifest features exist', async () => {
-  mockPack = {
-    ...basePack,
-    features: {
-      remotexpc_tunnel: {
-        display_name: 'RemoteXPC tunnel',
-        description_md: 'Keeps iOS 18 real-device tunnels available.',
-        actions: [{ id: 'restart', label: 'Restart tunnel' }],
-      },
-    },
-  };
-
-  render(<DriverDetail />, { wrapper });
-  await userEvent.click(screen.getByRole('button', { name: /operations/i }));
-  expect(screen.getByText('RemoteXPC tunnel')).toBeInTheDocument();
-  expect(screen.getByText('Restart tunnel')).toBeInTheDocument();
 });

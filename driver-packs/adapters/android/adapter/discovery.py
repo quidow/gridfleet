@@ -78,7 +78,6 @@ async def _candidate_for_device(adb: str, serial: str, state: str) -> DiscoveryC
         runnable=runnable,
         missing_requirements=[] if runnable else [f"adb_state:{state}"],
         field_errors=[],
-        feature_status=[],
     )
 
 

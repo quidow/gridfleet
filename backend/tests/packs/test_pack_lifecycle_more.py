@@ -255,14 +255,6 @@ async def test_delete_pack_missing_and_runtime_policy_update(db_session: AsyncSe
     with pytest.raises(LookupError):
         await _catalog_svc.set_runtime_policy(db_session, "missing/pack", RuntimePolicy())
 
-    policy = RuntimePolicy(
-        strategy="exact",
-        appium_server_version="2.10.0",
-        appium_driver_version="3.0.0",
-    )
+    policy = RuntimePolicy(strategy="recommended")
     pack = await _catalog_svc.set_runtime_policy(db_session, "local/coverage-pack", policy)
-    assert pack.runtime_policy == {
-        "strategy": "exact",
-        "appium_server_version": "2.10.0",
-        "appium_driver_version": "3.0.0",
-    }
+    assert pack.runtime_policy == {"strategy": "recommended"}

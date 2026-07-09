@@ -50,7 +50,7 @@ async def test_adapter_health_check_threads_ip_ping_fields() -> None:
     )
     assert payload == {
         "healthy": True,
-        "checks": [{"check_id": "x", "ok": True, "message": ""}],
+        "checks": [{"check_id": "x", "ok": True, "message": "", "debounce": False}],
     }
     assert adapter.last_ctx.ip_address == "10.0.0.7"
     assert adapter.last_ctx.ip_ping_timeout_sec == 1.5
@@ -85,6 +85,19 @@ async def test_adapter_health_check_expected_identity_defaults_to_none() -> None
         ctx=HealthCtx(device_identity_value="10.0.0.5", allow_boot=False),
     )
     assert getattr(adapter.last_ctx, "expected_identity_value", "missing") is None
+
+
+def test_adapter_health_payload_carries_debounce_flag() -> None:
+    from agent_app.pack.dispatch import _adapter_health_payload
+
+    payload = _adapter_health_payload(
+        [
+            HealthCheckResult(check_id="ping", ok=False, debounce=True),
+            HealthCheckResult(check_id="adb_connected", ok=True),
+        ]
+    )
+    assert payload["checks"][0]["debounce"] is True
+    assert payload["checks"][1]["debounce"] is False
 
 
 class _NormalizeStubAdapter:

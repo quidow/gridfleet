@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Badge } from '../../components/ui';
-import type { AppiumInstallable, DriverPack } from '../../types/driverPacks';
+import type { AppiumInstallable } from '../../types/driverPacks';
 
 export function objectEntries(value: Record<string, unknown> | undefined): Array<[string, unknown]> {
   return Object.entries(value ?? {});
@@ -28,8 +28,4 @@ export function installableSummary(spec: AppiumInstallable | null | undefined): 
 
 export function recommendedValue(spec: AppiumInstallable | null | undefined): string {
   return spec?.recommended ?? 'None';
-}
-
-export function hasPackOperations(pack: DriverPack): boolean {
-  return Object.keys(pack.features ?? {}).length > 0;
 }

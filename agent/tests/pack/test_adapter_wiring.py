@@ -22,14 +22,12 @@ from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DoctorCheckResult,
     DoctorContext,
-    FeatureActionResult,
     HardwareTelemetry,
     HealthCheckResult,
     LifecycleActionResult,
     NormalizedDevice,
     SessionOutcome,
     SessionSpec,
-    SidecarStatus,
 )
 from agent_app.pack.contexts import HealthCtx
 from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
@@ -70,7 +68,6 @@ class _RecordingAdapter:
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             )
         ]
 
@@ -97,16 +94,6 @@ class _RecordingAdapter:
 
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
         self.calls.append(("post_session", {"spec": spec, "outcome": outcome}))
-
-    async def feature_action(
-        self, feature_id: str, action_id: str, args: dict[str, Any], ctx: object
-    ) -> FeatureActionResult:
-        self.calls.append(("feature_action", {"feature_id": feature_id, "action_id": action_id, "args": args}))
-        return FeatureActionResult(ok=True, detail="adapter dispatched", data={})
-
-    async def sidecar_lifecycle(self, feature_id: str, action: Literal["start", "stop", "status"]) -> SidecarStatus:
-        self.calls.append(("sidecar_lifecycle", {"feature_id": feature_id, "action": action}))
-        return SidecarStatus(ok=True, detail="running", state="running")
 
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         raw_input = cast("Any", ctx).raw_input
@@ -228,7 +215,6 @@ async def test_pack_wide_discovery_routes_candidates_to_matching_platforms_once(
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             ),
             DiscoveryCandidate(
                 identity_scheme="android_serial",
@@ -242,7 +228,6 @@ async def test_pack_wide_discovery_routes_candidates_to_matching_platforms_once(
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             ),
         ]
 

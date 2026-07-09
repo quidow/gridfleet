@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.packs.protocols import PackDiscoveryProtocol
-    from app.packs.services.feature_dispatch import FeatureService
     from app.packs.services.lifecycle import PackLifecycleService
     from app.packs.services.release import PackReleaseService
     from app.packs.services.service import PackCatalogService
@@ -23,7 +22,6 @@ class PackServices:
     release: PackReleaseService
     status: PackStatusService
     lifecycle: PackLifecycleService
-    feature: FeatureService
     discovery: PackDiscoveryProtocol
     storage: PackStorageService
     session_factory: async_sessionmaker[AsyncSession]

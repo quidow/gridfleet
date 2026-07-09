@@ -15,17 +15,12 @@ from sqlalchemy import select
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from unittest.mock import Mock
-
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation
-from app.packs.services.feature_dispatch import FeatureService
+from app.packs.models import HostPackDoctorResult, HostPackInstallation
 from app.packs.services.status import PackStatusService
-from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
-_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_status_svc = PackStatusService(feature=_feature_svc)
+_status_svc = PackStatusService()
 
 
 @pytest.mark.asyncio
@@ -102,74 +97,6 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
     assert by_pack["appium-uiautomator2"].runtime_status == "installed"
     assert by_pack["appium-uiautomator2"].appium_server_version == "2.19.0"
     assert by_pack["appium-xcuitest"].runtime_status is None
-
-
-@pytest.mark.asyncio
-async def test_apply_status_persists_sidecar_feature_status(db_session: AsyncSession, db_host: Host) -> None:
-    await _status_svc.apply_status(
-        db_session,
-        {
-            "host_id": str(db_host.id),
-            "runtimes": [],
-            "packs": [],
-            "doctor": [],
-            "sidecars": [
-                {
-                    "pack_id": "uploaded-sidecar-pack",
-                    "release": "1.0.0",
-                    "feature_id": "tunnel",
-                    "ok": False,
-                    "detail": "tunnel down",
-                    "state": "failed",
-                    "last_error": "boom",
-                }
-            ],
-        },
-    )
-    await db_session.commit()
-
-    row = (await db_session.execute(select(HostPackFeatureStatus))).scalar_one()
-    assert row.host_id == db_host.id
-    assert row.pack_id == "uploaded-sidecar-pack"
-    assert row.feature_id == "tunnel"
-    assert row.ok is False
-    assert row.detail == "tunnel down"
-
-
-@pytest.mark.asyncio
-async def test_host_driver_pack_status_returns_feature_status(db_session: AsyncSession, db_host: Host) -> None:
-    await _status_svc.apply_status(
-        db_session,
-        {
-            "host_id": str(db_host.id),
-            "runtimes": [],
-            "packs": [],
-            "doctor": [],
-            "sidecars": [
-                {
-                    "pack_id": "uploaded-sidecar-pack",
-                    "release": "1.0.0",
-                    "feature_id": "tunnel",
-                    "ok": True,
-                    "detail": "running",
-                    "state": "running",
-                    "last_error": None,
-                }
-            ],
-        },
-    )
-    await db_session.commit()
-
-    payload = await _status_svc.get_host_driver_pack_status(db_session, db_host.id)
-
-    assert payload["features"] == [
-        {
-            "pack_id": "uploaded-sidecar-pack",
-            "feature_id": "tunnel",
-            "ok": True,
-            "detail": "running",
-        }
-    ]
 
 
 @pytest.mark.asyncio

@@ -62,13 +62,6 @@ async def test_disabled_to_enabled(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_draft_to_enabled(db_session: AsyncSession) -> None:
-    await _seed_pack(db_session, state=PackState.draft)
-    pack = await transition_pack_state(db_session, "test-pack", PackState.enabled)
-    assert pack.state == PackState.enabled
-
-
-@pytest.mark.asyncio
 async def test_invalid_transition_raises(db_session: AsyncSession) -> None:
     await _seed_pack(db_session, state=PackState.disabled)
     with pytest.raises(ValueError, match="Cannot transition"):

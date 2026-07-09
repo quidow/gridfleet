@@ -351,7 +351,6 @@ app.include_router(settings.router, dependencies=[Depends(auth_dependencies.requ
 app.include_router(pack_routers.export.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(pack_routers.host_features.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.agent_state.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 
 

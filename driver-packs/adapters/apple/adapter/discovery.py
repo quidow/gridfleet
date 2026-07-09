@@ -75,7 +75,6 @@ async def _discover_physical() -> list[DiscoveryCandidate]:
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             )
         )
     return candidates
@@ -153,7 +152,6 @@ async def _discover_simulators() -> list[DiscoveryCandidate]:
                     runnable=True,
                     missing_requirements=[],
                     field_errors=[],
-                    feature_status=[],
                 )
             )
     return candidates

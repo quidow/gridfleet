@@ -105,6 +105,7 @@ async def _orphan_system_port_check(ctx: HealthContext) -> HealthCheckResult | N
         ok=not bound,
         detail="" if not bound else f"systemPort {port} bound with no live session (orphan adb-server socket)",
         recommended_action=None if not bound else "release_forwarded_ports",
+        debounce=True,
     )
 
 

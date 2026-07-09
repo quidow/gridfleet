@@ -128,8 +128,6 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | `success` | `success`, `warning`, `critical` | device and group bulk actions |
 | `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | `neutral` | `neutral`, `info` | settings writes |
 | `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted`, `duration_seconds` | `neutral` | `neutral`, `warning` | retention cleanup loop |
-| `pack_feature.degraded` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `warning` | `warning`, `critical` | driver pack feature monitor |
-| `pack_feature.recovered` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `success` | `success` | driver pack feature monitor |
 
 ## Event Delivery Semantics
 

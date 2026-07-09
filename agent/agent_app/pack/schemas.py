@@ -9,12 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 
 
-class FeatureActionRequest(BaseModel):
-    pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
-    args: dict[str, Any] = {}
-    device_identity_value: str | None = None
-
-
 class NormalizeDeviceRequest(BaseModel):
     pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
     pack_release: str = Field(min_length=1)
@@ -65,6 +59,7 @@ class HealthCheckResult(BaseModel):
     check_id: str
     ok: bool
     message: str | None = None
+    debounce: bool = False
 
 
 class PackDeviceHealthResponse(BaseModel):
@@ -90,12 +85,6 @@ class PackDeviceLifecycleResponse(BaseModel):
 
     success: bool
     detail: str | None = None
-
-
-class FeatureActionResponse(BaseModel):
-    ok: bool
-    detail: str | None = None
-    data: dict[str, Any] | None = None
 
 
 class DoctorCheckOut(BaseModel):

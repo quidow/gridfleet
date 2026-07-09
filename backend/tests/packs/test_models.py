@@ -7,7 +7,6 @@ from sqlalchemy import select
 
 from app.packs.models import (
     DriverPack,
-    DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
     HostPackDoctorResult,
@@ -105,35 +104,6 @@ async def test_driver_pack_platform(db_session: AsyncSession) -> None:
     assert rows[0].manifest_platform_id == "android-platform"
     assert rows[0].device_types == ["real_device", "emulator"]
     assert rows[0].connection_types == ["usb", "network"]
-
-
-@pytest.mark.asyncio
-async def test_driver_pack_feature(db_session: AsyncSession) -> None:
-    pack = DriverPack(id="test-pack", display_name="Test Pack")
-    release = DriverPackRelease(
-        pack_id="test-pack",
-        release="1.0.0",
-        manifest_json={"id": "test-pack", "version": "1.0.0"},
-    )
-    db_session.add_all([pack, release])
-    await db_session.flush()
-
-    feature = DriverPackFeature(
-        pack_release_id=release.id,
-        manifest_feature_id="feature-1",
-        data={"name": "Feature 1", "enabled": True},
-    )
-    db_session.add(feature)
-    await db_session.commit()
-
-    rows = (
-        (await db_session.execute(select(DriverPackFeature).where(DriverPackFeature.pack_release_id == release.id)))
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
-    assert rows[0].manifest_feature_id == "feature-1"
-    assert rows[0].data == {"name": "Feature 1", "enabled": True}
 
 
 @pytest.mark.asyncio

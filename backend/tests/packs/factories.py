@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.packs.manifest import Manifest, load_manifest_yaml
-from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease, PackState
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,13 +82,5 @@ async def seed_manifest_pack(
             )
         )
 
-    for feature_id, feature in manifest.features.items():
-        session.add(
-            DriverPackFeature(
-                pack_release_id=release.id,
-                manifest_feature_id=feature_id,
-                data=feature.model_dump(mode="json"),
-            )
-        )
     await session.flush()
     return pack

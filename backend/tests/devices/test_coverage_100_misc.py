@@ -74,9 +74,6 @@ from app.packs.services import (
     discovery as pack_discovery_service,
 )
 from app.packs.services import (
-    feature_dispatch as pack_feature_dispatch_service,
-)
-from app.packs.services import (
     platform_resolver as pack_platform_resolver,
 )
 from app.packs.services import release_ordering as pack_desired_state_service
@@ -85,7 +82,6 @@ from app.packs.services import (
 )
 from app.packs.services.discovery import PackDiscoveryService as _PackDiscoveryService
 from app.packs.services.driver_version import installed_driver_version as _installed_driver_version
-from app.packs.services.feature_dispatch import FeatureService as PackFeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
 from app.packs.services.status import PackStatusService as _PackStatusService
@@ -135,8 +131,8 @@ def test_schema_validator_and_model_guard_branches() -> None:
     run.reserved_devices = None
     assert run.device_reservations == []
 
-    with pytest.raises(ValidationError, match="version pins are only valid"):
-        RuntimePolicy(mode="latest", appium_server_version="2.0.0")
+    with pytest.raises(ValidationError):
+        RuntimePolicy(strategy="latest_patch")
 
     requirement = DeviceRequirement(pack_id="pack", platform_id="platform", allocation="all_available")
     assert requirement.min_count == 1
@@ -305,7 +301,7 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
 
     disabled_pack = SimpleNamespace(state=PackState.disabled)
     draining_pack = SimpleNamespace(state=PackState.draining)
-    unknown_pack = SimpleNamespace(state=PackState.draft)
+    unknown_pack = SimpleNamespace(state="unknown")
     db.execute = AsyncMock(
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: None),
@@ -488,20 +484,6 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     assert await svc.exclude_device_from_run(reservation_db, uuid.uuid4(), reason="r") is None
     assert await svc.restore_device_to_run(reservation_db, uuid.uuid4()) is None
 
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
-    assert (
-        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock()).record_feature_status(
-            db,
-            host_id=uuid.uuid4(),
-            pack_id="pack",
-            feature_id="camera",
-            ok=True,
-            detail="ok",
-        )
-        is False
-    )
-
     missing_pack_db = AsyncMock()
     missing_pack_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(LookupError):
@@ -536,55 +518,6 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
     )
     assert result.new_devices == []
-
-    class ClientManager:
-        async def __aenter__(self) -> object:
-            return object()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    monkeypatch.setattr(
-        pack_feature_dispatch_service,
-        "agent_request",
-        AsyncMock(side_effect=pack_feature_dispatch_service.AgentCallError("host", "bad")),
-    )
-    with pytest.raises(pack_feature_dispatch_service._AgentDispatchError, match="Agent unreachable"):
-        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock())._call_agent(
-            host="127.0.0.1",
-            url="http://agent/pack-feature",
-            body={"feature_id": "camera"},
-            http_client_factory=lambda **_kwargs: ClientManager(),
-            timeout=1,
-        )
-    monkeypatch.setattr(
-        pack_feature_dispatch_service,
-        "agent_request",
-        AsyncMock(side_effect=pack_feature_dispatch_service.httpx.ConnectError("boom")),
-    )
-    with pytest.raises(pack_feature_dispatch_service._AgentDispatchError, match="Agent transport error"):
-        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock())._call_agent(
-            host="127.0.0.1",
-            url="http://agent/pack-feature",
-            body={"feature_id": "camera"},
-            http_client_factory=lambda **_kwargs: ClientManager(),
-            timeout=1,
-        )
-
-    feature_db = AsyncMock()
-    existing_status = SimpleNamespace(ok=True)
-    feature_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing_status))
-    assert (
-        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock()).record_feature_status(
-            feature_db,
-            host_id=uuid.uuid4(),
-            pack_id="pack",
-            feature_id="camera",
-            ok=True,
-            detail="still ok",
-        )
-        is False
-    )
 
     assert (
         await pack_capability_service.resolve_appium_env(
@@ -795,7 +728,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
         ]
     )
-    assert (await _PackStatusService(feature=Mock()).compute_desired(desired_db, uuid.uuid4()))["packs"] == []
+    assert (await _PackStatusService().compute_desired(desired_db, uuid.uuid4()))["packs"] == []
 
     assert _installed_driver_version(SimpleNamespace(driver_specs=[{"version": "1.2.3"}])) == "1.2.3"
 

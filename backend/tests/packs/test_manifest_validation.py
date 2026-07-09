@@ -84,9 +84,19 @@ def test_platform_accepts_health_check_labels() -> None:
     manifest = load_manifest_yaml(yaml_text)
 
     assert [check.model_dump() for check in manifest.platforms[0].health_checks] == [
-        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None, "debounce": False},
-        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None, "debounce": False},
+        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None},
+        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None},
     ]
+
+
+def test_manifest_rejects_health_check_debounce_field() -> None:
+    """debounce moved to the adapter's HealthCheckResult; the manifest label field is gone."""
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (_IDENTITY_LINE + "\n    health_checks:\n      - id: ping\n        label: Ping\n        debounce: true\n"),
+    )
+    with pytest.raises(ManifestValidationError, match="debounce"):
+        load_manifest_yaml(yaml_text)
 
 
 def test_platform_health_check_rejects_empty_id() -> None:
@@ -159,6 +169,38 @@ def test_manifest_rejects_legacy_discovery_block() -> None:
     )
     with pytest.raises(ManifestValidationError, match=r"discovery"):
         load_manifest_yaml(yaml_text)
+
+
+def test_manifest_rejects_sidecar_feature() -> None:
+    """Sidecars were removed; a manifest declaring one must fail ingest loudly."""
+    manifest_text = (
+        _base_yaml()
+        + """
+features:
+  adb_monitor:
+    display_name: ADB Monitor
+    sidecar:
+      command: ["adb-monitor"]
+"""
+    )
+    with pytest.raises(ManifestValidationError, match="features"):
+        load_manifest_yaml(manifest_text)
+
+
+def test_manifest_rejects_features_block() -> None:
+    """The feature-actions vertical was removed; a manifest declaring features must fail ingest."""
+    manifest_text = (
+        _base_yaml()
+        + """
+features:
+  bugreport:
+    display_name: Collect Bugreport
+    actions:
+      - id: collect
+"""
+    )
+    with pytest.raises(ManifestValidationError, match="features"):
+        load_manifest_yaml(manifest_text)
 
 
 def test_health_check_entry_accepts_applies_when() -> None:

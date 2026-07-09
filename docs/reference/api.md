@@ -188,7 +188,7 @@ Orchestration-contract-v3 agents run the pull loop whenever a backend URL is con
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/agent/driver-packs/desired` | Agent fetches desired driver-pack runtime state | `host_id` | desired pack/runtime payload |
-| `POST` | `/agent/driver-packs/status` | Agent reports installed runtimes, pack status, doctor checks, and sidecars | status payload | empty `204` |
+| `POST` | `/agent/driver-packs/status` | Agent reports installed runtimes, pack status, and doctor checks | status payload | empty `204` |
 
 ## Driver Packs
 

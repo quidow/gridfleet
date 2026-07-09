@@ -154,7 +154,6 @@ class _PackScopeAdapter:
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             )
         ]
 
@@ -212,7 +211,6 @@ def test_candidate_matches_platform_props_not_dict() -> None:
         runnable=True,
         missing_requirements=[],
         field_errors=[],
-        feature_status=[],
     )
     platform = _platform()
     assert _candidate_matches_platform(raw, platform) is True
@@ -227,7 +225,6 @@ def test_candidate_matches_platform_connection_type_filter() -> None:
         runnable=True,
         missing_requirements=[],
         field_errors=[],
-        feature_status=[],
     )
     platform = _platform(connection_types=["usb"])
     assert _candidate_matches_platform(raw, platform) is False
@@ -440,7 +437,6 @@ class _MovedDeviceAdapter:
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],
-                feature_status=[],
             )
         ]
 

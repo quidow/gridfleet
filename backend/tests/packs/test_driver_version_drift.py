@@ -10,16 +10,13 @@ import pytest
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import HostPackStatusOut
-from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.service import PackCatalogService
 from app.packs.services.status import PackStatusService
-from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_status_svc = PackStatusService(feature=_feature_svc)
+_status_svc = PackStatusService()
 
 
 def test_host_pack_status_includes_driver_version_fields() -> None:

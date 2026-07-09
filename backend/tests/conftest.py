@@ -65,7 +65,6 @@ from app.lifecycle.services_container import LifecycleServices
 from app.main import app
 from app.packs.dependencies import get_pack_services
 from app.packs.services.discovery import PackDiscoveryService
-from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.release import PackReleaseService
 from app.packs.services.service import PackCatalogService
@@ -603,14 +602,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         storage = PackStorageService(root=pack_storage_root)
-        feature = FeatureService(publisher=test_event_bus, circuit_breaker=test_circuit_breaker)
         lifecycle = PackLifecycleService()
         return PackServices(
             catalog=PackCatalogService(lifecycle=lifecycle),
             release=PackReleaseService(storage=storage),
-            status=PackStatusService(feature=feature),
+            status=PackStatusService(),
             lifecycle=lifecycle,
-            feature=feature,
             discovery=PackDiscoveryService(
                 agent_get_pack_devices=agent_operations.get_pack_devices,
                 agent_get_pack_device_properties=agent_operations.get_pack_device_properties,

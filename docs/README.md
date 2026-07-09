@@ -47,8 +47,6 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - React/Tailwind architectural standards and UI development workflows.
 - `guides/security.md`
   - Threat models, network boundary definitions, and authorization controls.
-- `guides/driver-pack-features-and-sidecars.md`
-  - Driver pack feature declarations and sidecar service lifecycle.
 - `guides/driver-pack-tarball-upload.md`
   - Building and uploading custom driver-pack tarballs.
 - `guides/testkit-integration.md`

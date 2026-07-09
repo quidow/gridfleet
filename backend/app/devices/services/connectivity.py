@@ -406,12 +406,9 @@ class ConnectivityService:
                 value=int(counter_value or 0),
             )
 
-        # Debounce transient failures of manifest-declared debounceable checks (e.g. Roku
-        # ECP on port 8060). Only suppress when EVERY failing non-ip_ping check is
-        # debounceable — a hard check (adb) failing in the same cycle must act immediately.
-        # The manifest owns which checks are debounceable; core never names specific ids.
-        # Platform resolution runs only on the cold path (a probe actually failed), so the
-        # healthy path stays a single counter reset.
+        # Debounce transient failures only when EVERY failing non-ip_ping check
+        # carries debounce=True. Missing keys from old pack releases degrade to
+        # immediate failure during rollout.
         gated_others_ok = others_ok
         if raw_checks_list and not in_maintenance(device):
             if others_ok:
@@ -420,27 +417,11 @@ class ConnectivityService:
                 )
             else:
                 failing = [c for c in other_checks if isinstance(c, dict) and not c.get("ok")]
-                debounceable = await self._debounceable_check_ids(db, device)
-                if failing and all(c.get("check_id") in debounceable for c in failing):
+                if failing and all(c.get("debounce") for c in failing):
                     gated_others_ok = await _apply_failure_hysteresis(
                         db, device, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=probe_failed_threshold
                     )
         return gated_others_ok and gated_ip_ping_ok, ip_ping_entry
-
-    async def _debounceable_check_ids(self, db: AsyncSession, device: Device) -> set[str]:
-        """Manifest-declared health-check ids whose transient failures should be debounced.
-
-        Resolved from the device's pack/platform manifest so core stays driver-agnostic.
-        Empty when the platform cannot be resolved.
-        """
-        resolved = await _resolve_platform_or_none(db, device)
-        if resolved is None:
-            return set()
-        return {
-            str(check["id"])
-            for check in resolved.health_checks
-            if isinstance(check, dict) and check.get("debounce") and check.get("id")
-        }
 
     async def _handle_healthy_device(
         self,

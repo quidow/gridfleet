@@ -17,7 +17,6 @@ from app.events.models import SystemEvent
 from app.packs.manifest import ManifestValidationError, load_manifest_yaml
 from app.packs.models import (
     DriverPack,
-    DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
     PackState,
@@ -130,15 +129,6 @@ def _add_release_children(session: AsyncSession, manifest: Manifest, release_row
             )
         )
 
-    for feature_id, feature_data in manifest.features.items():
-        session.add(
-            DriverPackFeature(
-                pack_release_id=release_row.id,
-                manifest_feature_id=feature_id,
-                data=feature_data.model_dump(exclude_none=True, mode="json"),
-            )
-        )
-
 
 async def record_pack_upload(
     session: AsyncSession,
@@ -201,7 +191,6 @@ async def ingest_pack_tarball(
             .where(DriverPack.id == pack_id)
             .options(
                 selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
             )
         )
     ).scalar_one_or_none()
@@ -289,7 +278,6 @@ async def ingest_pack_tarball(
             .where(DriverPack.id == pack_id)
             .options(
                 selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
             )
         )
     ).scalar_one()

@@ -38,8 +38,6 @@ const EVENT_QUERY_MAP: Record<string, ReadonlyArray<readonly string[]>> = {
   'device_group.members_changed': [qk.deviceGroups.root, qk.deviceGroup.root, qk.devices.root],
   'settings.changed': [qk.settings.root],
   'system.cleanup_completed': [qk.sessions.root, qk.analytics.root],
-  'pack_feature.degraded': [qk.driverPackCatalog.root, qk.driverPack.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
-  'pack_feature.recovered': [qk.driverPackCatalog.root, qk.driverPack.root, qk.driverPackHosts.root, qk.hostDriverPacks.root],
 };
 
 type ToastResult = { type: 'success' | 'error' | 'warning' | 'info'; message: string } | null;

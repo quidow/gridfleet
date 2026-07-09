@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
 
 from sqlalchemy import select
 
 from app.packs.models import HostPackDoctorResult, HostPackInstallation
 from app.packs.services import status as pack_status_service
 from app.packs.services.driver_version import desired_driver_version, has_driver_drift, installed_driver_version
-from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
-from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
-_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_status_svc = PackStatusService(feature=_feature_svc)
+_status_svc = PackStatusService()
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

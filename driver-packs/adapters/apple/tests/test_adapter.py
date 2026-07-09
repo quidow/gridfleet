@@ -15,8 +15,6 @@ REQUIRED_METHODS = {
     "post_session",
     "normalize_device",
     "telemetry",
-    "feature_action",
-    "sidecar_lifecycle",
 }
 
 
