@@ -239,6 +239,7 @@ class AppiumProcessInfo:
     pid: int
     connection_target: str
     platform_id: str
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass(frozen=True)
@@ -819,6 +820,7 @@ class AppiumProcessManager:
             else:
                 self._stop_pending_ports.discard(port)
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
+            started_at = datetime.now(UTC)
 
             info = self._info.get(port)
             if info is None:
@@ -827,12 +829,14 @@ class AppiumProcessManager:
                     pid=appium_proc.pid,
                     connection_target=resolved_connection_target,
                     platform_id=platform_id,
+                    started_at=started_at,
                 )
                 self._info[port] = info
             else:
                 info.pid = appium_proc.pid
                 info.connection_target = resolved_connection_target
                 info.platform_id = platform_id
+                info.started_at = started_at
             if spec.stop_pending:
                 # Carry the stop-pending flag so ``_auto_restart_appium``
                 # refuses to resurrect this Appium process if it exits. The
@@ -967,6 +971,7 @@ class AppiumProcessManager:
             "pid": info.pid,
             "connection_target": info.connection_target,
             "platform_id": info.platform_id,
+            "started_at": info.started_at.isoformat(),
             "applied_generation": (
                 self._node_state_observer.applied_generations.get(info.port)
                 if self._node_state_observer is not None

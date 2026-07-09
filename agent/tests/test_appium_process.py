@@ -242,12 +242,11 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
             extra_caps={"appium:platform": "phone"},
         )
 
-    assert info == AppiumProcessInfo(
-        port=4723,
-        pid=1234,
-        connection_target="device-001",
-        platform_id="android_mobile",
-    )
+    assert info.port == 4723
+    assert info.pid == 1234
+    assert info.connection_target == "device-001"
+    assert info.platform_id == "android_mobile"
+    assert info.started_at.tzinfo is not None
     assert wait_ready.await_count == 1
     assert manager.list_running() == [info]
     assert create_proc.await_args_list[0].args[:5] == (
@@ -260,6 +259,44 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
     assert "--session-override" in create_proc.await_args_list[0].args
     logs = manager.get_logs(4723)
     assert any("appium ready" in line for line in logs)
+    await manager.shutdown()
+
+
+async def test_start_restamps_spawn_time_when_reusing_process_info() -> None:
+    manager = AppiumProcessManager()
+    first_proc = FakeProcess(pid=1234)
+    second_proc = FakeProcess(pid=5678)
+    spawn_side_effects = [
+        _spawn_writing(first_proc, "first ready"),
+        _spawn_writing(second_proc, "second ready"),
+    ]
+
+    async def spawn_next(*args: object, **kwargs: object) -> FakeProcess:
+        spawn = spawn_side_effects.pop(0)
+        return await spawn(*args, **kwargs)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", side_effect=spawn_next),
+    ):
+        first_info = await manager.start(
+            connection_target="device-001",
+            port=4723,
+            **PACK_START_KWARGS,
+        )
+        first_started_at = first_info.started_at
+        first_proc.set_exit(1)
+        second_info = await manager.start(
+            connection_target="device-001",
+            port=4723,
+            **PACK_START_KWARGS,
+        )
+
+    assert second_info is first_info
+    assert second_info.pid == 5678
+    assert second_info.started_at > first_started_at
     await manager.shutdown()
 
 
@@ -292,10 +329,26 @@ async def test_process_snapshot_reports_has_active_session_true() -> None:
         "pid": 5003,
         "connection_target": "device-1",
         "platform_id": "android_mobile",
+        "started_at": manager._info[4723].started_at.isoformat(),
         "has_active_session": True,
         "applied_generation": None,
         "applied_transition_token": None,
     }
+
+
+async def test_process_snapshot_reports_spawn_time() -> None:
+    manager = AppiumProcessManager()
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+    info = manager._info[4723]
+    assert info.started_at.tzinfo is not None
+
+    with patch("agent_app.appium.process.http_client.get_client", return_value=_appium_sessions_client(sessions=[])):
+        snapshot = await manager.process_snapshot()
+
+    assert snapshot["running_nodes"][0]["started_at"] == info.started_at.isoformat()
 
 
 async def test_process_snapshot_reports_applied_node_state_from_pull_loop() -> None:
