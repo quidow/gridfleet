@@ -23,7 +23,7 @@ Every system event includes a `severity` field at the top level:
 - `critical` — incident; investigate.
 - `neutral` — low-noise bookkeeping (settings, config, test_data updates).
 
-Severity is decided by the backend from the transition context (direction, reason, status) rather than the event type alone. For example a `device.operational_state_changed` from `available → busy` due to a session viability probe is `info`, while the same transition from a crash is `warning`.
+Severity is decided by the backend at the emit site rather than from the event type alone. For `device.operational_state_changed` it derives from the transition itself: any transition to `offline` is `warning`, a recovery to `available` (from any state but `busy`) is `success`, and everything else — including `available → busy` session starts — is `info`.
 
 Old rows persisted before this field existed will have `severity = null`; consumers that need a value should fall back to the catalog's `default_severity` for that event type.
 
@@ -66,7 +66,7 @@ The manager publishes one shared event object shape:
 
 | Event | Typical `data` fields | Default severity | Allowed severities | Source |
 | --- | --- | --- | --- | --- |
-| `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state`, optional `reason` | `info` | all | node lifecycle, health recovery/failure, session-sync busy/idle flows |
+| `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state` | `info` | all | node lifecycle, health recovery/failure, session-sync busy/idle flows |
 | `device.verification.updated` | full verification job snapshot | `info` | `info`, `success`, `warning`, `critical` | verification pipeline |
 | `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | `warning` | `warning`, `critical`, `success` | hardware telemetry loop |
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | `info` | `info`, `success`, `warning` | node start/stop/recovery paths |
@@ -143,14 +143,14 @@ Run terminal events (`run.completed`, `run.cancelled`, `run.expired`) now dispat
 
 ## Persisted Device Event Types
 
-The `device_events` table is narrower than the live event bus. The persisted enum currently contains:
+The `device_events` table is narrower than the live event bus. Causes are recorded once, at the observation site that knows them; operational-state transitions themselves persist no audit row. The persisted enum currently contains:
 
-- `health_check_fail`
-- `connectivity_lost`
+- `health_check_fail` — node-health failures and non-connectivity remediation escalation
+- `connectivity_lost` — device disconnect (connectivity sweep), host heartbeat loss (one per device on the host), connectivity remediation escalation
 - `node_crash`
 - `node_restart`
 - `hardware_health_changed`
-- `connectivity_restored`
+- `connectivity_restored` — legacy value; no longer emitted (historical rows only)
 - `lifecycle_deferred_stop`
 - `lifecycle_auto_stopped`
 - `lifecycle_recovery_suppressed`
@@ -161,11 +161,10 @@ The `device_events` table is narrower than the live event bus. The persisted enu
 - `lifecycle_run_restored`
 - `lifecycle_run_cooldown_set`
 - `lifecycle_run_cooldown_escalated`
-- `maintenance_entered`
-- `maintenance_exited`
-- `session_started`
-- `session_ended`
-- `auto_stopped`
+- `maintenance_entered` / `maintenance_exited` — written by the maintenance service at enter/exit fact-write time
+- `session_started` — legacy value; was never emitted as a persisted row
+- `session_ended` — legacy value; no longer emitted (session history lives on the `sessions` table)
+- `auto_stopped` — legacy value; no longer emitted (operator stops appear as `desired_state_changed` rows)
 - `desired_state_changed`
 
 ## Notes
