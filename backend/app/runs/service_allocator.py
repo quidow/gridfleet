@@ -19,7 +19,7 @@ from app.devices.services.claims import active_reservation_exists, reservation_a
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import is_available_sql
+from app.devices.services.state import derive_operational_state, is_available_sql
 from app.packs.services.platform_resolver import assert_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
@@ -143,8 +143,9 @@ async def _classify_shortfall_gates(
     gate_counts: Counter[str] = Counter()
     blocking_runs: set[uuid.UUID] = set()
     for device in devices:
-        if device.operational_state != DeviceOperationalState.available:
-            state_counts[device.operational_state.value] += 1
+        operational_state = await derive_operational_state(db, device, now=now_utc())
+        if operational_state != DeviceOperationalState.available:
+            state_counts[operational_state.value] += 1
         elif device.review_required:
             gate_counts["review"] += 1
         elif not device_node_is_viable(device, now=now_utc(), restart_window_sec=restart_window_sec):

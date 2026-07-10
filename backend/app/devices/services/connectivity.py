@@ -26,6 +26,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -92,9 +93,9 @@ LOOP_NAME = "device_connectivity"
 _LIFECYCLE_POLL_CONCURRENCY = 4
 
 
-def _audit_label(device: Device) -> str:
+def _audit_label(operational_state: DeviceOperationalState) -> str:
     """Flat label for log output only — operational_state now carries maintenance."""
-    return device.operational_state.value
+    return operational_state.value
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -556,7 +557,8 @@ class ConnectivityService:
         """Shared unhealthy escalation: record the failed check, then hand the
         device to lifecycle policy unless it is already offline (re-escalating
         an offline device would churn recovery intents every cycle)."""
-        was_offline = device.operational_state == DeviceOperationalState.offline
+        operational_state = await derive_operational_state(db, device, now=now_utc())
+        was_offline = operational_state == DeviceOperationalState.offline
         await self._health.update_device_checks(db, device, healthy=False, summary=summary)
         if not was_offline:
             await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
@@ -584,7 +586,8 @@ class ConnectivityService:
         return True
 
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
-        if device.operational_state != DeviceOperationalState.offline:
+        operational_state = await derive_operational_state(db, device, now=now_utc())
+        if operational_state != DeviceOperationalState.offline:
             # Healthy without being offline: clear any stale previously-offline
             # flag so a later genuine offline->online recovery reports the
             # startup-recovery reason (restores the old endpoint-health
@@ -665,12 +668,13 @@ class ConnectivityService:
         await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
         locked_device = await device_locking.lock_device(db, device.id)
         held_after = await _is_held_or_reserved(db, locked_device)
+        locked_state = await derive_operational_state(db, locked_device, now=now_utc())
         if held_after != held:
             logger.info(
                 "Device %s (%s) changed held/reserved classification to %s before disconnect write — skipping",
                 locked_device.name,
                 locked_device.identity_value,
-                _audit_label(locked_device),
+                _audit_label(locked_state),
             )
             return
         if first_detection:
@@ -821,7 +825,8 @@ class ConnectivityService:
             if device.device_checks_healthy is False and (node is None or not node.observed_running):
                 return
             await _stop_disconnected_node(db, device, health=self._health)
-            if device.operational_state == DeviceOperationalState.offline:
+            operational_state = await derive_operational_state(db, device, now=now_utc())
+            if operational_state == DeviceOperationalState.offline:
                 return
             if await _is_held_or_reserved(db, device):
                 logger.warning(
@@ -829,7 +834,7 @@ class ConnectivityService:
                     device.name,
                     device.identity_value,
                     host.hostname,
-                    _audit_label(device),
+                    _audit_label(operational_state),
                 )
                 await self._record_disconnect_if_stable(db, device, held=True)
                 return

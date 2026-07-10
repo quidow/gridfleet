@@ -16,7 +16,7 @@ from app.devices.services import readiness as device_readiness
 from app.devices.services.claims import active_reservation_exists, device_is_reserved
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import verification_intent_source
-from app.devices.services.state import is_available_sql
+from app.devices.services.state import derive_operational_state, is_available_sql
 from app.grid import appium_direct
 from app.grid.allocation import node_target
 from app.sessions import probe_inflight
@@ -226,15 +226,15 @@ class SessionViabilityService:
         # responsible for and could push a healthy device closer to the
         # escalation threshold.
         locked_reserved = await device_is_reserved(db, locked.id)
-        locked_can_probe = (locked.operational_state == DeviceOperationalState.available and not locked_reserved) or (
-            checked_by == SessionViabilityCheckedBy.recovery
-            and locked.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+        locked_state = await derive_operational_state(db, locked, now=now_utc())
+        locked_can_probe = (locked_state == DeviceOperationalState.available and not locked_reserved) or (
+            checked_by == SessionViabilityCheckedBy.recovery and locked_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
         )
         if not locked_can_probe:
             raise SessionViabilityProbeNotPermittedError(
                 "Session viability checks only run for available devices (state changed concurrently)"
             )
-        previous_state = locked.operational_state
+        previous_state = locked_state
         await db.commit()
         return previous_state
 
@@ -290,9 +290,9 @@ class SessionViabilityService:
             # re-validate it. The device is ``offline``/``verifying`` here, so it serves no client
             # session — probing cannot steal an in-use Grid slot. Scheduled/manual probes still
             # require no active reservation.
-            can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (
-                checked_by == SessionViabilityCheckedBy.recovery
-                and device.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+            device_state = await derive_operational_state(db, device, now=now_utc())
+            can_probe = (device_state == DeviceOperationalState.available and not device_reserved) or (
+                checked_by == SessionViabilityCheckedBy.recovery and device_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
             )
             if not can_probe:
                 raise SessionViabilityProbeNotPermittedError("Session viability checks only run for available devices")
@@ -481,7 +481,8 @@ async def _is_probe_running(db: AsyncSession, device_key: str) -> bool:
 async def _is_device_probe_eligible(db: AsyncSession, device: Device, interval_sec: int) -> bool:
     if interval_sec <= 0:
         return False
-    if device.operational_state != DeviceOperationalState.available or await device_is_reserved(db, device.id):
+    state = await derive_operational_state(db, device, now=now_utc())
+    if state != DeviceOperationalState.available or await device_is_reserved(db, device.id):
         return False
     if not await is_ready_for_use_async(db, device):
         return False

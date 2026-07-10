@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, now, parse_iso, state
 from app.devices.services.recovery_projection import SUPPRESSED_KINDS, recovery_availability
+from app.devices.services.state import derive_operational_state
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.models import DeviceReservation
+    from app.devices.models import Device, DeviceOperationalState, DeviceReservation
     from app.runs.models import TestRun
 
 
@@ -47,6 +47,7 @@ async def build_lifecycle_policy(
     reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
     *,
     ready: bool | None = None,
+    operational_state: DeviceOperationalState | None = None,
 ) -> dict[str, Any]:
     policy = state(device)
     if reservation_context is None:
@@ -55,6 +56,8 @@ async def build_lifecycle_policy(
     policy.update(derive_run_tracking(run, entry))
 
     availability = await recovery_availability(db, device, ready=ready)
+    if operational_state is None:
+        operational_state = await derive_operational_state(db, device, now=now())
     backoff_until = parse_iso(policy.get("backoff_until"))
     if policy.get("stop_pending"):
         recovery_state = "waiting_for_session_end"
@@ -62,7 +65,7 @@ async def build_lifecycle_policy(
         recovery_state = "backoff"
     elif availability.kind in SUPPRESSED_KINDS:
         recovery_state = "suppressed"
-    elif policy.get("excluded_from_run") or device.operational_state == DeviceOperationalState.offline:
+    elif policy.get("excluded_from_run") or operational_state.value == "offline":
         recovery_state = "eligible"
     else:
         recovery_state = "idle"

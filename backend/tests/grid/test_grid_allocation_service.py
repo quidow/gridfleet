@@ -25,6 +25,8 @@ from app.sessions.models import Session, SessionStatus
 from tests.helpers import drain_handlers, recent_events, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
+pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
 
 def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}

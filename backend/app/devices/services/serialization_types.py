@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from app.devices.models import DeviceOperationalState
     from app.devices.services.readiness import DeviceReadiness
 
 
@@ -19,3 +20,4 @@ class DeviceSerializationContext:
 
     readiness: DeviceReadiness
     blocked_reason: str | None
+    operational_state: DeviceOperationalState

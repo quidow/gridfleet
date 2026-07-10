@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceIntent, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.claims import (
     device_has_live_session,
     device_has_verification_lease,
@@ -27,7 +27,6 @@ from app.devices.services.claims import (
     verification_lease_exists,
 )
 from app.devices.services.health_view import device_allows_allocation
-from app.devices.services.intent_types import CommandKind
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids
 from app.sessions.models import Session
@@ -372,21 +371,12 @@ async def derive_operational_states(
         .all()
     )
     leased_ids = set(
-        (
-            await db.execute(
-                select(DeviceIntent.device_id).where(
-                    DeviceIntent.device_id.in_(ids),
-                    DeviceIntent.kind == CommandKind.verification_start,
-                    or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
-                )
-            )
-        )
+        (await db.execute(select(Device.id).where(Device.id.in_(ids), verification_lease_exists(now=now))))
         .scalars()
         .all()
     )
     if packs is None:
         packs = await load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
-
     result: dict[uuid.UUID, DeviceOperationalState] = {}
     for device in devices:
         withdrawal = WithdrawalFacts.from_device(device)

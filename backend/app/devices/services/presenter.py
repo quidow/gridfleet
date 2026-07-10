@@ -23,6 +23,7 @@ from app.devices.services.decision import (
 )
 from app.devices.services.intent_reconciler import gather_decision_facts
 from app.devices.services.serialization_types import DeviceSerializationContext
+from app.devices.services.state import derive_operational_state, derive_operational_states
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
@@ -57,14 +58,18 @@ class DevicePresenterService:
         """Batch-load everything :meth:`serialize_device` would otherwise query
         per device: readiness and blocked-reason both derive from a single load of
         the driver-pack catalog, collapsing the previous ~3-queries-per-device into one."""
+        for device in devices:
+            await _ensure_appium_node_loaded(db, device)
         packs = await device_readiness.load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
         readiness_map = await device_readiness.assess_devices_async(db, devices, packs=packs)
+        operational_states = await derive_operational_states(db, devices, packs=packs, now=now_utc())
         contexts: dict[uuid.UUID, DeviceSerializationContext] = {}
         for device in devices:
             pack = packs.get(device.pack_id) if device.pack_id else None
             contexts[device.id] = DeviceSerializationContext(
                 readiness=readiness_map[device.id],
                 blocked_reason=pack_platform_resolver.evaluate_runnable(pack, platform_id=device.platform_id),
+                operational_state=operational_states[device.id],
             )
         return contexts
 
@@ -81,6 +86,11 @@ class DevicePresenterService:
         if reservation_context is None:
             reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
         reservation, reservation_entry = reservation_context
+        operational_state = (
+            precomputed.operational_state
+            if precomputed is not None
+            else await derive_operational_state(db, device, now=now_utc())
+        )
         is_reserved = reservation is not None
         # Gate-honest reservation: only a live, non-excluded reservation on a non-terminal
         # run actually blocks an arbitrary ticket (the same predicate the allocator uses).
@@ -96,7 +106,7 @@ class DevicePresenterService:
             restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
         )
         allocatability_reason = unavailable_reason(
-            device.operational_state,
+            operational_state,
             reserved=reservation_blocks_allocation,
             accepting_new_sessions=node_accepting,
             node_viable=node_viable,
@@ -105,14 +115,18 @@ class DevicePresenterService:
             precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
         )
         policy = await lifecycle_policy_summary.build_lifecycle_policy(
-            db, device, reservation_context=reservation_context, ready=readiness.readiness_state == "verified"
+            db,
+            device,
+            reservation_context=reservation_context,
+            ready=readiness.readiness_state == "verified",
+            operational_state=operational_state,
         )
         lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
         if health_summary is None:
             health_summary = device_health.build_public_summary(device)
         hardware_status = hardware_telemetry.current_hardware_health_status(device)
         needs_attention = device_attention.compute_needs_attention(
-            device.operational_state,
+            operational_state,
             readiness.readiness_state,
             hardware_health_status=hardware_status,
             review_required=bool(device.review_required),
@@ -150,7 +164,7 @@ class DevicePresenterService:
             "model_number": device.model_number,
             "software_versions": device.software_versions,
             "host_id": device.host_id,
-            "operational_state": device.operational_state,
+            "operational_state": operational_state,
             "is_reserved": is_reserved,
             "allocatable": allocatability_reason is None,
             "unavailable_reason": allocatability_reason,

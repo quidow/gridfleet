@@ -88,6 +88,7 @@ async def _setup_host_and_device(
             if device_operational_state == DeviceOperationalState.maintenance
             else {}
         ),
+        session_viability_status=("failed" if device_operational_state == DeviceOperationalState.offline else None),
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,

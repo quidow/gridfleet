@@ -31,7 +31,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.claims import live_session_exists
 from app.devices.services.intent import IntentService
-from app.devices.services.state import is_available_sql
+from app.devices.services.state import derive_operational_state, is_available_sql
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -623,7 +623,9 @@ class AllocationService:
     async def _recheck_claimable_under_lock(self, db: DbSession, locked: Device) -> bool:
         # Re-verify under the row lock: state, node viability, and absence of active
         # sessions may have changed since _eligible_devices ran.
-        if locked.operational_state != DeviceOperationalState.available:
+        # Full evaluator closes the SQL readiness approximation, including pack-manifest fields.
+        locked_state = await derive_operational_state(db, locked, now=now_utc())
+        if locked_state != DeviceOperationalState.available:
             return False
         if not device_node_is_viable(locked, now=now_utc(), restart_window_sec=self._restart_window_sec()):
             return False

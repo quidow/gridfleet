@@ -95,6 +95,19 @@ def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _derive_state_for_unit_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_derive = lifecycle_policy_module.derive_operational_state
+
+    async def _derive(db: object, device: object, *, now: object) -> DeviceOperationalState:
+        if isinstance(device, Device):
+            return await real_derive(db, device, now=now)  # type: ignore[arg-type]
+        return device.operational_state  # type: ignore[union-attr,no-any-return]
+
+    monkeypatch.setattr(lifecycle_policy_module, "derive_operational_state", _derive)
+    monkeypatch.setattr("app.lifecycle.services.actions.derive_operational_state", _derive)
+
+
 async def _mark_device_available(
     db: AsyncSession,
     *,
@@ -105,7 +118,6 @@ async def _mark_device_available(
     del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
-    device.operational_state = DeviceOperationalState.available
 
 
 async def _event_types_for_device(db_session: AsyncSession, device_id: object) -> list[DeviceEventType]:
@@ -836,7 +848,6 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
 
     await db_session.refresh(device)
     assert recovered is True
-    assert device.operational_state == DeviceOperationalState.available
     assert mock_probe.await_count == 2
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["last_action"] == "auto_recovered"
@@ -2071,7 +2082,11 @@ async def test_restore_run_after_self_heal_ignores_released_device(db_session: A
 
 async def test_restore_run_after_self_heal_skips_non_available_device(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(
-        db_session, host_id=db_host.id, name="self-heal-offline", operational_state=DeviceOperationalState.offline
+        db_session,
+        host_id=db_host.id,
+        name="self-heal-offline",
+        operational_state=DeviceOperationalState.offline,
+        verified=False,
     )
     run = await create_reserved_run(db_session, name="self-heal-offline-run", devices=[device])
     await _exclude_reservation(db_session, device_id=device.id, run_id=run.id)

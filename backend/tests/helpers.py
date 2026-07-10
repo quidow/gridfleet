@@ -293,6 +293,7 @@ async def seed_host_and_device(
         identity_value=identity,
         name=f"Device {identity}",
         operational_state=operational_state,
+        session_viability_status=("failed" if operational_state == DeviceOperationalState.offline else None),
     )
     return host, device
 

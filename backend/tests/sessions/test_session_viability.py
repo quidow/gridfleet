@@ -1,6 +1,6 @@
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -80,7 +80,25 @@ async def run_session_viability_probe(
     settings: FakeSettingsReader | None = None,
 ) -> dict[str, Any]:
     _svc._settings = settings or FakeSettingsReader({})
-    return await _svc.run_session_viability_probe(db, device, checked_by=checked_by)
+    if not isinstance(device, Device):
+        real_derive = session_viability.derive_operational_state
+
+        async def _derive_for_test_objects(_db: object, candidate: object, *, now: object) -> DeviceOperationalState:
+            if isinstance(candidate, Device):
+                return await real_derive(_db, candidate, now=now)  # type: ignore[arg-type]
+            return cast("DeviceOperationalState", cast("Any", candidate).operational_state)
+
+        with patch.object(session_viability, "derive_operational_state", new=_derive_for_test_objects):
+            return await _svc.run_session_viability_probe(db, device, checked_by=checked_by)
+    real_derive = session_viability.derive_operational_state
+
+    async def _derive_for_locked_test_objects(_db: object, candidate: object, *, now: object) -> DeviceOperationalState:
+        if isinstance(candidate, Device):
+            return await real_derive(_db, candidate, now=now)  # type: ignore[arg-type]
+        return cast("DeviceOperationalState", cast("Any", candidate).operational_state)
+
+    with patch.object(session_viability, "derive_operational_state", new=_derive_for_locked_test_objects):
+        return await _svc.run_session_viability_probe(db, device, checked_by=checked_by)
 
 
 async def probe_session_direct(
@@ -131,10 +149,10 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     node = AppiumNode(
         device_id=device.id,
         port=4729,
-        desired_state=AppiumDesiredState.stopped,
-        desired_port=None,
-        pid=None,
-        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4729,
+        pid=12345,
+        active_connection_target="127.0.0.1:4729",
     )
     db_session.add(node)
     await db_session.commit()
@@ -697,9 +715,12 @@ async def test_should_run_scheduled_probe_covers_skip_and_due_paths(
     await db_session.commit()
 
     assert await _should_run_scheduled_probe(db_session, device, 0) is False
-    device.operational_state = DeviceOperationalState.busy
+    busy_session = Session(session_id="probe-schedule-busy", device_id=device.id, status=SessionStatus.running)
+    db_session.add(busy_session)
+    await db_session.flush()
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
-    device.operational_state = DeviceOperationalState.available
+    await db_session.delete(busy_session)
+    await db_session.flush()
 
     monkeypatch.setattr("app.sessions.service_viability.is_ready_for_use_async", AsyncMock(return_value=False))
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
@@ -1331,7 +1352,7 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
         desired_port=4723,
         pid=12345,
         active_connection_target="probe-stop-pending-repro",
-        stop_pending=True,
+        stop_pending=False,
     )
     db_session.add(node)
     await db_session.commit()

@@ -264,6 +264,7 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
         device_type="real_device",
         connection_type="network",
         tags={"team": "qa", "lane": "smoke"},
+        verified=False,
     )
     non_matching_lifecycle = await create_device_record(
         db_session,

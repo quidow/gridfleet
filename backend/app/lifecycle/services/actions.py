@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from app.appium_nodes.services import locking as appium_node_locking
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -22,6 +23,7 @@ from app.devices.services.lifecycle_policy_state import (
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.review import ReviewService
+from app.devices.services.state import derive_operational_state
 from app.lifecycle.services.escalation import EscalationOutcome, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs import service as run_reservation_service
@@ -111,7 +113,8 @@ class LifecyclePolicyActionsService:
             failure_event_type(source),
             {"source": source, "reason": reason},
         )
-        if device.operational_state != DeviceOperationalState.offline:
+        operational_state = await derive_operational_state(db, device, now=now_utc())
+        if operational_state != DeviceOperationalState.offline:
             await record_event(
                 db,
                 device.id,

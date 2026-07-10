@@ -101,7 +101,7 @@ async def test_grid_status_with_running_node_and_session(
     assert "platform" not in dev_entry
     assert dev_entry["node_state"] == "running"
     assert dev_entry["node_port"] == 4723
-    assert dev_entry["operational_state"] == "available"
+    assert dev_entry["operational_state"] == "busy"
 
     assert data["running_node_count"] == 1
     assert data["active_session_ids"] == ["sess-abc"]

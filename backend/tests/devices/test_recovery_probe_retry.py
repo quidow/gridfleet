@@ -189,7 +189,13 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     from app.runs.service_reservation import RunReservationService
     from tests.helpers import create_device
 
-    device = await create_device(db_session, host_id=db_host.id, name="dw-publisher-forward", verified=True)
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="dw-publisher-forward",
+        verified=True,
+        session_viability_status="failed",
+    )
     node = AppiumNode(
         device_id=device.id,
         port=4723,

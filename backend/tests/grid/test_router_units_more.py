@@ -19,7 +19,7 @@ from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.routers import nodes as nodes_router
 from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
-from app.devices.models import ConnectionType, DeviceType
+from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType
 from app.devices.routers import (
     bulk,
 )
@@ -1561,6 +1561,16 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     with (
         patch.object(grid, "_live_sessions_by_device", AsyncMock(return_value={device_one_id: ["s1"]})),
         patch.object(grid, "_waiting_tickets", AsyncMock(return_value=[ticket])),
+        patch.object(
+            grid,
+            "derive_operational_states",
+            AsyncMock(
+                return_value={
+                    device_one_id: DeviceOperationalState.available,
+                    devices[1].id: DeviceOperationalState.offline,
+                }
+            ),
+        ),
     ):
         status = await grid.grid_status(db=db, device_services=fake_device_services)
         queue = await grid.grid_queue(db=db)

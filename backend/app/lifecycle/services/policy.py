@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -39,6 +40,7 @@ from app.devices.services.lifecycle_policy_state import (
     state as policy_state,
 )
 from app.devices.services.recovery_projection import recovery_availability
+from app.devices.services.state import derive_operational_state
 from app.lifecycle.services.escalation import escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.lifecycle.services.operator_node import operator_stop_active
@@ -106,6 +108,7 @@ class LifecyclePolicyService:
         write_state(device, current_state)
 
         node = loaded_node(device)
+        operational_state = await derive_operational_state(db, device, now=now_utc())
         # An offline device has no usable running node, so a positive
         # ``observed_running`` reading here is necessarily stale: the appium
         # process is gone but the ``appium_reconciler`` has not yet cleared the
@@ -116,7 +119,7 @@ class LifecyclePolicyService:
         # backoff until the stale observation happens to clear. Treat it as not
         # running and (re)assert the node start.
         stale_offline_observation = (
-            node is not None and node.observed_running and device.operational_state == DeviceOperationalState.offline
+            node is not None and node.observed_running and operational_state == DeviceOperationalState.offline
         )
         started_node = False
         if node is None or not node.observed_running or stale_offline_observation:
@@ -168,10 +171,11 @@ class LifecyclePolicyService:
         self, db: AsyncSession, device: Device, entry: DeviceReservation | None, *, reason: str
     ) -> bool:
         node = loaded_node(device)
+        operational_state = await derive_operational_state(db, device, now=now_utc())
         if (
             node is not None
             and node.observed_running
-            and device.operational_state not in (DeviceOperationalState.offline, DeviceOperationalState.verifying)
+            and operational_state not in (DeviceOperationalState.offline, DeviceOperationalState.verifying)
             and not run_reservation_service.reservation_entry_is_excluded(entry)
         ):
             # Device is already healthy — recovery has nothing to start. Revoke
@@ -197,12 +201,13 @@ class LifecyclePolicyService:
     ) -> tuple[Device, dict[str, Any], TestRun | None, DeviceReservation | None, bool | None]:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
+        operational_state = await derive_operational_state(db, device, now=now_utc())
         # D4: a stale ``stop_pending`` traps the device permanently when nothing
         # else clears it (no session row to fire ``handle_session_finished``).
         # Clear it BEFORE consulting availability — otherwise the projection would
         # block on RecoveryBlockKind.stop_pending and re-trap the device (the D4 bug).
         if current_state.get("stop_pending") and (
-            device.operational_state == DeviceOperationalState.offline
+            operational_state == DeviceOperationalState.offline
             or not await self._actions.has_running_client_session(db, device.id)
         ):
             await self.clear_pending_auto_stop_on_recovery(
@@ -218,6 +223,7 @@ class LifecyclePolicyService:
             # are already visible in the SQLAlchemy session.
             device = await _reload_device(db, device)
             current_state = policy_state(device)
+            operational_state = await derive_operational_state(db, device, now=now_utc())
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         if await self._revoke_if_already_healthy(db, device, entry, reason=reason):
             return device, current_state, run, entry, False
@@ -459,7 +465,8 @@ class LifecyclePolicyService:
                 DeviceEventType.node_restart,
                 {"recovered_from": source, "reason": reason},
             )
-            if device.operational_state != DeviceOperationalState.available:
+            operational_state = await derive_operational_state(db, device, now=now_utc())
+            if operational_state != DeviceOperationalState.available:
                 await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
 
@@ -741,7 +748,8 @@ class LifecyclePolicyService:
         device = await _reload_device(db, device)
         if await operator_stop_active(db, device.id):
             return False
-        if device.operational_state != DeviceOperationalState.available:
+        operational_state = await derive_operational_state(db, device, now=now_utc())
+        if operational_state != DeviceOperationalState.available:
             return False
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         if run is None or run.state in TERMINAL_STATES:

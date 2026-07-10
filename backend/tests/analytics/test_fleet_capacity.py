@@ -341,7 +341,7 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
         host_id=default_host_id,
         identity_value="capacity-offline",
         name="Offline Phone",
-        operational_state=DeviceOperationalState.offline,
+        verified=False,
     )
     stopped = await create_device_record(
         db_session,
@@ -497,14 +497,14 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
         host_id=online_host.id,
         identity_value="fleet-offline-1",
         name="Fleet Offline Phone",
-        operational_state=DeviceOperationalState.offline,
+        verified=False,
     )
     await create_device_record(
         db_session,
         host_id=online_host.id,
         identity_value="fleet-maintenance",
         name="Fleet Maintenance Phone",
-        operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "operator"},
     )
 
     # Count hosts after all seeds — default_host_id fixture adds one more online host,
@@ -578,7 +578,7 @@ async def test_count_devices_counts_maintenance_by_operational_state(
         host_id=default_host_id,
         identity_value="fleet-maintenance-opstate",
         name="Maintenance OpState Device",
-        operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "operator"},
     )
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(

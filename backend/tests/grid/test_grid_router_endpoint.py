@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-pytestmark = pytest.mark.db
+pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
 DEVICE_PAYLOAD = {
     "identity_value": "device-router-1",

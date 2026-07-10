@@ -60,7 +60,8 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
-    seeded_available_device.operational_state = DeviceOperationalState.maintenance
+    seeded_available_device.lifecycle_policy_state = {"maintenance_reason": "operator"}
+    await db_session.flush()
     result = await _service()._claim(
         db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
     )

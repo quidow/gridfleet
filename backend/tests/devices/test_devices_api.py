@@ -2294,7 +2294,7 @@ async def test_device_list_reports_unavailable_reason(
         identity_value="alloc-offline-1",
         connection_target="alloc-offline-1",
         name="Alloc Offline Device",
-        operational_state=DeviceOperationalState.offline,
+        verified=False,
     )
     reserved = await create_device_record(
         db_session,
@@ -2359,8 +2359,9 @@ async def test_busy_device_reports_busy_unavailable_reason(
         identity_value="alloc-busy-1",
         connection_target="alloc-busy-1",
         name="Alloc Busy Device",
-        operational_state=DeviceOperationalState.busy,
     )
+    db_session.add(Session(session_id="alloc-busy-session", device_id=device.id, status=SessionStatus.running))
+    await db_session.flush()
     got = await client.get(f"/api/devices/{device.id}")
     assert got.status_code == 200
     body = got.json()

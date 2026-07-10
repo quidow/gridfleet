@@ -14,6 +14,7 @@ from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services.allocatability import unavailable_reason
+from app.devices.services.state import derive_operational_states
 from app.grid.allocation import StereotypeTemplateCache, device_match_surface
 from app.grid.matching import CapabilityMergeError, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -82,6 +83,7 @@ async def _waiting_tickets(db: DbDep) -> list[GridSessionQueueTicket]:
 @router.get("/status", response_model=GridStatusRead)
 async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     devices = await device_services.crud.list_devices_by_filters(db, DeviceQueryFilters())
+    operational_states = await derive_operational_states(db, devices, now=now_utc())
     sessions_by_device = await _live_sessions_by_device(db)
     waiting = await _waiting_tickets(db)
 
@@ -96,7 +98,7 @@ async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 "connection_target": device.connection_target,
                 "name": device.name,
                 "platform_id": device.platform_id,
-                "operational_state": device.operational_state.value,
+                "operational_state": operational_states[device.id].value,
                 "node_state": ("running" if running else "stopped") if node else None,
                 "node_port": node.port if node else None,
             }
@@ -139,6 +141,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
 
     template_cache: StereotypeTemplateCache = {}
     now = now_utc()
+    operational_states = await derive_operational_states(db, devices, now=now)
 
     # Seed the per-operational-state buckets from the enum itself so that adding a 6th
     # DeviceOperationalState cannot turn the `counts[...] += 1` below into a fleet-wide
@@ -152,7 +155,8 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
     for device in devices:
         node = device.appium_node
         host = hosts_by_id.get(device.host_id)
-        counts[device.operational_state.value] += 1
+        operational_state = operational_states[device.id]
+        counts[operational_state.value] += 1
 
         running = bool(node and node.observed_running)
         if running:
@@ -172,17 +176,12 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
         node_accepting = device_node_accepting_new_sessions(device)
         reserved = run_service.reservation_gating_run_id(reservation_map.get(device.id), device.id) is not None
         reason = unavailable_reason(
-            device.operational_state,
+            operational_state,
             reserved=reserved,
             accepting_new_sessions=node_accepting,
             node_viable=node_viable,
         )
-        if (
-            device.operational_state is DeviceOperationalState.available
-            and node_viable
-            and node_accepting
-            and not session_ids
-        ):
+        if operational_state is DeviceOperationalState.available and node_viable and node_accepting and not session_ids:
             counts["eligible"] += 1
 
         effective_state = None
@@ -217,7 +216,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 "platform_id": device.platform_id,
                 "host_id": str(device.host_id),
                 "host_name": host.hostname if host is not None else None,
-                "operational_state": device.operational_state.value,
+                "operational_state": operational_state.value,
                 "node_effective_state": effective_state,
                 "unavailable_reason": reason.value if reason is not None else None,
                 "session_id": session_id,

@@ -30,6 +30,7 @@ from app.devices.services.connectivity import (
     PROBE_UNANSWERED_NAMESPACE,
 )
 from app.devices.services.state import (
+    derive_operational_state,
     is_available_sql,
     is_busyish_sql,
     is_maintenance_sql,
@@ -101,9 +102,10 @@ class DeviceCrudService:
             readiness_map = await device_readiness.assess_devices_async(db, devices)
             for device in devices:
                 readiness = readiness_map[device.id]
+                operational_state = await derive_operational_state(db, device, now=now_utc())
                 if (
                     device_attention.compute_needs_attention(
-                        device.operational_state,
+                        operational_state,
                         readiness.readiness_state,
                         hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
                         review_required=bool(device.review_required),
