@@ -81,6 +81,9 @@ async def test_register_with_manager_sends_expected_payload() -> None:
     assert payload["ip"] == "10.0.0.5"
     assert payload["agent_port"] == 5100
     assert payload["capabilities"]["platforms"] == ["android_mobile"]
+    # Enrollment-only: agent_version is a push-owned runtime fact, not sent at registration.
+    assert "agent_version" not in payload
+    assert set(payload) == {"hostname", "ip", "os_type", "agent_port", "capabilities", "host_info"}
     assert "auth" not in client.post.await_args.kwargs
 
 
