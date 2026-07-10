@@ -263,23 +263,22 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
 
 
 async def test_fold_hardware_telemetry_commits_samples_and_rolls_back_failures() -> None:
-    # d0 has no section entry -> skipped; d1 applies (commit), d2 raises (rollback).
-    devices = [
-        _telemetry_device(connection_target="d0"),
-        _telemetry_device(connection_target="d1"),
-        _telemetry_device(connection_target="d2"),
-    ]
+    # d1 applies (commit), d2 raises (rollback). The fold snapshots ids then
+    # re-fetches each device via db.get inside its own commit window.
+    d1 = _telemetry_device(connection_target="d1")
+    d2 = _telemetry_device(connection_target="d2")
+    by_id = {d1.id: d1, d2.id: d2}
 
-    class Result:
-        def scalars(self) -> Result:
-            return self
-
-        def all(self) -> list[object]:
-            return devices
+    class Rows:
+        def all(self) -> list[tuple[object, str]]:
+            return [(d1.id, "d1"), (d2.id, "d2")]
 
     class PollSession(FlushSession):
-        async def execute(self, *_args: object, **_kwargs: object) -> Result:
-            return Result()
+        async def execute(self, *_args: object, **_kwargs: object) -> Rows:
+            return Rows()
+
+        async def get(self, _model: object, device_id: object, **_kwargs: object) -> object:
+            return by_id.get(device_id)
 
     db = PollSession()
     svc = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))

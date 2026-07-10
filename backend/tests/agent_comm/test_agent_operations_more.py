@@ -124,67 +124,6 @@ def test_raise_for_status_wraps_http_errors() -> None:
     assert exc_info.value.host == "10.0.0.5"
 
 
-async def test_pack_device_properties_returns_none_for_404() -> None:
-    client = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/demo/properties",
-            status_code=404,
-            payload={"detail": "not found"},
-        )
-    )
-
-    payload = await agent_operations.get_pack_device_properties(
-        "10.0.0.5",
-        5100,
-        "demo",
-        "appium-uiautomator2",
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-    )
-
-    assert payload is None
-
-
-async def test_pack_device_properties_success_and_error_paths() -> None:
-    success = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/demo/properties",
-            payload={"serial": "demo"},
-        )
-    )
-    assert await agent_operations.get_pack_device_properties(
-        "10.0.0.5",
-        5100,
-        "demo",
-        "appium-uiautomator2",
-        http_client_factory=_strict_client_factory(success),
-        settings=SETTINGS,
-        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-    ) == {"serial": "demo"}
-
-    failure = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/demo/properties",
-            status_code=503,
-            payload={"detail": "offline"},
-        )
-    )
-    with pytest.raises(AgentResponseError, match="HTTP 503"):
-        await agent_operations.get_pack_device_properties(
-            "10.0.0.5",
-            5100,
-            "demo",
-            "appium-uiautomator2",
-            http_client_factory=_strict_client_factory(failure),
-            settings=SETTINGS,
-            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-        )
-
-
 async def test_normalize_pack_device_returns_none_for_404() -> None:
     client = StrictAgentClient(
         post_response=_response(

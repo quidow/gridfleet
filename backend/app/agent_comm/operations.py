@@ -24,7 +24,6 @@ from app.agent_comm.generated import (
     NormalizeDeviceResponse,
     PackDeviceHealthResponse,
     PackDeviceLifecycleResponse,
-    PackDevicePropertiesResponse,
     PackDevicesResponse,
     ToolsStatusResponse,
 )
@@ -379,40 +378,6 @@ async def get_pack_devices(
         circuit_breaker=circuit_breaker,
     )
     return _decode_model_payload(response, host=host, action="list pack devices", model=PackDevicesResponse)
-
-
-async def get_pack_device_properties(
-    host: str,
-    agent_port: int,
-    connection_target: str,
-    pack_id: str,
-    *,
-    identity_value: str | None = None,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any] | None:
-    params: dict[str, str] = {"pack_id": pack_id}
-    if identity_value:
-        params["identity_value"] = identity_value
-    response = await _send_request(
-        "GET",
-        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/properties",
-        endpoint="pack_device_properties",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        params=params,
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    return decode_or_none_on_404(
-        response, host=host, action="fetch pack device properties", model=PackDevicePropertiesResponse
-    )
 
 
 async def normalize_pack_device(

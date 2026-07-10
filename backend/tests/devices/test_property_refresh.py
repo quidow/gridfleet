@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus, OSType
@@ -11,119 +12,93 @@ from app.packs.services.discovery import PackDiscoveryService
 from tests.helpers import create_device_record
 
 
-async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices(
+def _properties_section(*connection_targets: str) -> dict[str, object]:
+    stamp = now_utc().isoformat()
+    return {
+        "reported_at": stamp,
+        "devices": {
+            target: {"identity_value": target, "detected_properties": {}, "observed_at": stamp}
+            for target in connection_targets
+        },
+    }
+
+
+async def test_fold_applies_only_to_section_devices_on_the_host(
     db_session: AsyncSession,
     setup_database: AsyncEngine,
 ) -> None:
-    online_host = Host(
-        hostname="online-host",
-        ip="10.0.0.10",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
+    host = Host(hostname="fold-host", ip="10.0.0.10", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    other_host = Host(
+        hostname="other-host", ip="10.0.0.11", os_type=OSType.linux, agent_port=5100, status=HostStatus.online
     )
-    offline_host = Host(
-        hostname="offline-host",
-        ip="10.0.0.11",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.offline,
-    )
-    db_session.add_all([online_host, offline_host])
+    db_session.add_all([host, other_host])
     await db_session.flush()
 
-    online_device = await create_device_record(
-        db_session,
-        host_id=online_host.id,
-        identity_value="refresh-001",
-        connection_target="refresh-001",
-        name="Refresh One",
-        operational_state="available",
+    in_section = await create_device_record(
+        db_session, host_id=host.id, identity_value="refresh-001", connection_target="refresh-001", name="One"
     )
-    offline_device = await create_device_record(
-        db_session,
-        host_id=online_host.id,
-        identity_value="refresh-002",
-        connection_target="refresh-002",
-        name="Refresh Two",
-        operational_state="offline",
+    absent = await create_device_record(
+        db_session, host_id=host.id, identity_value="refresh-002", connection_target="refresh-002", name="Two"
     )
-    offline_host_device = await create_device_record(
-        db_session,
-        host_id=offline_host.id,
-        identity_value="refresh-003",
-        connection_target="refresh-003",
-        name="Refresh Three",
-        operational_state="available",
+    other = await create_device_record(
+        db_session, host_id=other_host.id, identity_value="refresh-003", connection_target="refresh-003", name="Three"
     )
 
-    fetch_props = AsyncMock(return_value=None)
+    apply = AsyncMock()
 
     class _DiscoveryDouble:
-        fetch_pack_device_properties = fetch_props
-        apply_pack_device_properties = AsyncMock()
+        apply_pack_device_properties = apply
 
     svc = PropertyRefreshService(discovery=_DiscoveryDouble())
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as db:
-        await svc.refresh_all_properties(db)
+        await svc.fold_host_device_properties(db, host.id, _properties_section("refresh-001"))
 
-    refreshed_identity_values = [await_call.args[1].identity_value for await_call in fetch_props.await_args_list]
-    assert online_device.identity_value in refreshed_identity_values
-    assert offline_device.identity_value not in refreshed_identity_values
-    assert offline_host_device.identity_value not in refreshed_identity_values
+    applied = [await_call.args[1].identity_value for await_call in apply.await_args_list]
+    assert in_section.identity_value in applied
+    assert absent.identity_value not in applied  # not in section
+    assert other.identity_value not in applied  # different host
 
 
-async def test_property_refresh_continues_after_device_failure(
+async def test_fold_continues_after_device_failure(
     db_session: AsyncSession,
     setup_database: AsyncEngine,
 ) -> None:
-    host = Host(
-        hostname="online-host",
-        ip="10.0.0.12",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
+    host = Host(hostname="fold-host", ip="10.0.0.12", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()
 
     first = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="refresh-a",
-        connection_target="refresh-a",
-        name="Refresh A",
-        operational_state="available",
+        db_session, host_id=host.id, identity_value="refresh-a", connection_target="refresh-a", name="Refresh A"
     )
     second = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="refresh-b",
-        connection_target="refresh-b",
-        name="Refresh B",
-        operational_state="available",
+        db_session, host_id=host.id, identity_value="refresh-b", connection_target="refresh-b", name="Refresh B"
     )
 
-    fetch_props = AsyncMock(side_effect=[RuntimeError("boom"), None])
+    # Capture identity_value in-context: the fold rolls back on the first
+    # failure, which expires the passed instances, so reading identity_value
+    # after the session closes would trigger a lazy load outside the greenlet.
+    applied: list[str] = []
+
+    async def _apply(_session: object, device: object, _data: object) -> None:
+        applied.append(device.identity_value)  # type: ignore[attr-defined]
+        if len(applied) == 1:
+            raise RuntimeError("boom")
 
     class _DiscoveryDouble:
-        fetch_pack_device_properties = fetch_props
-        apply_pack_device_properties = AsyncMock()
+        apply_pack_device_properties = staticmethod(_apply)
 
     svc = PropertyRefreshService(discovery=_DiscoveryDouble())
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as db:
-        await svc.refresh_all_properties(db)
+        await svc.fold_host_device_properties(db, host.id, _properties_section("refresh-a", "refresh-b"))
 
-    refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
-    assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
+    assert sorted(applied) == sorted([first.identity_value, second.identity_value])
 
 
-def _discovery_service(fetcher: AsyncMock | None = None) -> PackDiscoveryService:
+def _discovery_service() -> PackDiscoveryService:
     return PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(return_value={"candidates": []}),
-        agent_get_pack_device_properties=fetcher or AsyncMock(return_value=None),
         settings=MagicMock(),
         circuit_breaker=MagicMock(),
         serializer=MagicMock(),
@@ -143,17 +118,6 @@ def _roku_device(**overrides: object) -> SimpleNamespace:
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
-
-
-@pytest.mark.asyncio
-async def test_fetch_pack_device_properties_passes_identity_value() -> None:
-    fetcher = AsyncMock(return_value=None)
-    svc = _discovery_service(fetcher)
-    host = SimpleNamespace(ip="192.168.1.10", agent_port=5100)
-    await svc.fetch_pack_device_properties(host, _roku_device())  # type: ignore[arg-type]
-    assert fetcher.await_args is not None
-    assert fetcher.await_args.kwargs["identity_value"] == "SER123"
-    assert fetcher.await_args.args[2] == "10.0.0.5"  # still queries the known target
 
 
 @pytest.mark.asyncio

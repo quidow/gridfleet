@@ -126,28 +126,6 @@ async def test_appium_status_returns_none_on_invalid_json() -> None:
     assert result is None
 
 
-async def test_get_pack_device_properties_returns_none_on_invalid_json() -> None:
-    """get_pack_device_properties should return None when the body is not valid JSON."""
-    client = StrictAgentClient(
-        get_response=_text_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/dev-1/properties",
-            status_code=200,
-            text=_INVALID_JSON_TEXT,
-        ),
-    )
-    result = await agent_operations.get_pack_device_properties(
-        "10.0.0.5",
-        5100,
-        "dev-1",
-        "appium-uiautomator2",
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-    assert result is None
-
-
 # ---------------------------------------------------------------------------
 # Raise-on-failure functions: JSONDecodeError -> AgentUnreachableError
 # ---------------------------------------------------------------------------
@@ -279,40 +257,6 @@ async def test_agent_health_preserves_wire_shape() -> None:
     assert result["status"] == "ok"
     # Must not have extra synthesised keys injected by model_dump
     assert set(result.keys()) == set(payload.keys())
-
-
-@pytest.mark.asyncio
-async def test_get_pack_device_properties_sends_identity_value_param() -> None:
-    client = StrictAgentClient(get_response=_json_response("GET", "http://example.test", payload={"pack_id": "roku"}))
-    result = await agent_operations.get_pack_device_properties(
-        "127.0.0.1",
-        5100,
-        "10.0.0.5",
-        "roku",
-        identity_value="SER123",
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-    assert result == {"pack_id": "roku"}
-    [(_, call)] = client.get_calls
-    assert call["params"] == {"pack_id": "roku", "identity_value": "SER123"}
-
-
-@pytest.mark.asyncio
-async def test_get_pack_device_properties_omits_identity_value_when_absent() -> None:
-    client = StrictAgentClient(get_response=_json_response("GET", "http://example.test", payload={"pack_id": "roku"}))
-    await agent_operations.get_pack_device_properties(
-        "127.0.0.1",
-        5100,
-        "10.0.0.5",
-        "roku",
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-    [(_, call)] = client.get_calls
-    assert call["params"] == {"pack_id": "roku"}
 
 
 @pytest.mark.asyncio

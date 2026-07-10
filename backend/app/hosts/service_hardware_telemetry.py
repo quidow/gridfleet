@@ -250,18 +250,25 @@ class HardwareTelemetryService:
         raw = section.get("devices")
         if not isinstance(raw, dict) or not raw:
             return
-        stmt = select(Device).where(
+        stmt = select(Device.id, Device.connection_target).where(
             Device.host_id == host_id,
             Device.connection_target.in_(list(raw)),
         )
-        devices = (await db.execute(stmt)).scalars().all()
-        for device in devices:
-            sample = raw.get(device.connection_target)
+        # Snapshot ids up front: the per-device commit/rollback below expires
+        # every instance in the session, so iterating live ORM rows would trigger
+        # a sync lazy-load (MissingGreenlet) after the first rollback. Re-fetch
+        # each device fresh inside its own commit window instead.
+        targets = [(device_id, target) for device_id, target in (await db.execute(stmt)).all()]
+        for device_id, target in targets:
+            sample = raw.get(target)
             if not isinstance(sample, dict):
+                continue
+            device = await db.get(Device, device_id)
+            if device is None:
                 continue
             try:
                 await self.apply_telemetry_sample(db, device, {**sample, "reported_at": sample.get("observed_at")})
                 await db.commit()
             except Exception:
                 await db.rollback()
-                logger.exception("Failed to fold hardware telemetry for device %s", device.identity_value)
+                logger.exception("Failed to fold hardware telemetry for device %s", device_id)

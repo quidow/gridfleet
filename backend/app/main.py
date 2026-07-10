@@ -189,6 +189,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
             ObservationFold("node_health", app_services.appium_nodes.node_health.fold_host_nodes),
             ObservationFold("device_health", app_services.devices.connectivity.fold_host_device_health),
             ObservationFold("device_telemetry", app_services.hosts.hardware_telemetry.fold_host_device_telemetry),
+            ObservationFold("device_properties", app_services.devices.property_refresh.fold_host_device_properties),
         ),
         expire_cooldowns=app_services.devices.connectivity.check_expired_cooldowns,
         global_stages=(
@@ -196,11 +197,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
                 "host_resource_telemetry",
                 "general.host_resource_telemetry_interval_sec",
                 app_services.hosts.resource_telemetry.poll_once,
-            ),
-            SweepStage(
-                "property_refresh",
-                "general.property_refresh_interval_sec",
-                app_services.devices.property_refresh.refresh_all_properties,
             ),
         ),
     )

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from app.events.event_bus import EventBus
     from app.settings.service import SettingsService
 
-from app.agent_comm.operations import get_pack_device_properties, get_pack_devices
+from app.agent_comm.operations import get_pack_devices
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
@@ -145,7 +145,6 @@ def compose_app(
     pack_status = PackStatusService()
     pack_discovery_svc = PackDiscoveryService(
         agent_get_pack_devices=get_pack_devices,
-        agent_get_pack_device_properties=get_pack_device_properties,
         settings=settings_svc,
         circuit_breaker=circuit_breaker,
         serializer=presenter_svc,
