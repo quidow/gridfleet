@@ -25,7 +25,7 @@ from sqlalchemy import exists, or_, select
 from app.devices.models import Device
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.reservation import DeviceReservation
-from app.devices.services.intent_types import verification_intent_source
+from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session
 
@@ -44,6 +44,7 @@ __all__ = [
     "live_session_exists",
     "live_session_predicate",
     "reservation_active",
+    "verification_lease_exists",
     "verification_lease_predicate",
 ]
 
@@ -68,6 +69,17 @@ def active_reservation_exists() -> ColumnElement[bool]:
         select(DeviceReservation.id).where(
             DeviceReservation.device_id == Device.id,
             reservation_active(),
+        )
+    )
+
+
+def verification_lease_exists(*, now: datetime) -> ColumnElement[bool]:
+    """Correlated EXISTS for ``Device`` selects: an unexpired verification lease."""
+    return exists(
+        select(DeviceIntent.id).where(
+            DeviceIntent.device_id == Device.id,
+            DeviceIntent.kind == CommandKind.verification_start,
+            or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
         )
     )
 

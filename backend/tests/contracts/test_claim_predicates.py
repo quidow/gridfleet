@@ -12,10 +12,24 @@ matched by these patterns.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+from sqlalchemy import select
 
 import app.sessions.live_session_predicate as session_axis
+from app.devices.models import Device
 from app.devices.services import claims
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
+from tests.helpers import create_device
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 
@@ -68,3 +82,40 @@ def test_verification_lease_definition_is_single_homed() -> None:
 
 def test_live_status_pair_is_not_recomposed_inline() -> None:
     assert _violations(LIVE_PAIR_PATTERN, LIVE_PAIR_ALLOWED) == []
+
+
+@pytest.mark.db
+async def test_verification_lease_sql_predicate_matches_row_helper(db_session: AsyncSession, db_host: Host) -> None:
+    now = datetime.now(UTC)
+    device = await create_device(db_session, host_id=db_host.id, name="claims-contract-verification")
+    registered = await IntentService(db_session).register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=verification_intent_source(device.id),
+                kind=CommandKind.verification_start,
+                payload={},
+                expires_at=now + timedelta(minutes=5),
+            )
+        ],
+    )
+    await db_session.flush()
+
+    selected = (
+        await db_session.execute(
+            select(Device.id).where(Device.id == device.id, claims.verification_lease_exists(now=now))
+        )
+    ).scalar_one_or_none()
+    assert selected == device.id
+    assert await claims.device_has_verification_lease(db_session, device.id, now=now) is True
+
+    registered[0].expires_at = now - timedelta(seconds=1)
+    await db_session.flush()
+
+    selected = (
+        await db_session.execute(
+            select(Device.id).where(Device.id == device.id, claims.verification_lease_exists(now=now))
+        )
+    ).scalar_one_or_none()
+    assert selected is None
+    assert await claims.device_has_verification_lease(db_session, device.id, now=now) is False
