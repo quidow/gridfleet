@@ -14,6 +14,8 @@ from app.devices.models import (
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.service import DeviceCrudService
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
@@ -149,7 +151,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         identity_value="device-filter-maint",
         connection_target="device-filter-maint",
         name="Beta Device",
-        operational_state=DeviceOperationalState.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "operator"},
         tags={"team": "ops"},
     )
 
@@ -249,7 +251,17 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         identity_value="device-filter-verifying",
         connection_target="device-filter-verifying",
         name="Verifying Device",
-        operational_state=DeviceOperationalState.verifying,
+    )
+    await IntentService(db_session).register_intents(
+        device_id=verifying.id,
+        intents=[
+            IntentRegistration(
+                source=verification_intent_source(verifying.id),
+                kind=CommandKind.verification_start,
+                payload={},
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        ],
     )
     await db_session.commit()
     reserved_devices = await crud.list_devices_by_filters(db_session, DeviceQueryFilters(reserved=True))

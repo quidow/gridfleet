@@ -31,6 +31,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.claims import live_session_exists
 from app.devices.services.intent import IntentService
+from app.devices.services.state import is_available_sql
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -551,7 +552,7 @@ class AllocationService:
         stmt = (
             select(Device)
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-            .where(Device.operational_state == DeviceOperationalState.available)
+            .where(is_available_sql(now=now))
             .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
             .where(node_accepting_new_sessions_predicate())
             .where(~live_session_exists())

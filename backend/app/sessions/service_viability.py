@@ -16,6 +16,7 @@ from app.devices.services import readiness as device_readiness
 from app.devices.services.claims import active_reservation_exists, device_is_reserved
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import verification_intent_source
+from app.devices.services.state import is_available_sql
 from app.grid import appium_direct
 from app.grid.allocation import node_target
 from app.sessions import probe_inflight
@@ -383,9 +384,10 @@ class SessionViabilityService:
 
     async def check_due_devices(self, db: AsyncSession) -> None:
         interval_sec = self._settings.get("general.session_viability_interval_sec")
+        now = now_utc()
         stmt = (
             select(Device)
-            .where(Device.operational_state == DeviceOperationalState.available, ~active_reservation_exists())
+            .where(is_available_sql(now=now), ~active_reservation_exists())
             .options(selectinload(Device.host), selectinload(Device.appium_node))
         )
         result = await db.execute(stmt)

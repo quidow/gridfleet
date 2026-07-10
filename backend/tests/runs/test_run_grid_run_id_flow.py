@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
-from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
@@ -90,6 +90,7 @@ async def _seed_schedulable_node(
             port=port,
             pid=1000 + port,
             active_connection_target=identity_value,
+            desired_state=AppiumDesiredState.running,
         )
     )
     await db_session.commit()

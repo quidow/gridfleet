@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import Select, asc, case, desc, func, select
+from sqlalchemy import Select, asc, case, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +28,14 @@ from app.devices.services.connectivity import (
     IP_PING_NAMESPACE,
     PROBE_FAILED_NAMESPACE,
     PROBE_UNANSWERED_NAMESPACE,
+)
+from app.devices.services.state import (
+    is_available_sql,
+    is_busyish_sql,
+    is_maintenance_sql,
+    is_offline_sql,
+    is_verifying_sql,
+    operational_state_rank_sql,
 )
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
@@ -229,15 +237,15 @@ def _has_post_filters(filters: DeviceQueryFilters) -> bool:
 
 def _apply_status_filter(stmt: DeviceQueryStatement, status: str) -> DeviceQueryStatement:
     if status == "available":
-        return stmt.where(Device.operational_state == DeviceOperationalState.available)
+        return stmt.where(is_available_sql(now=now_utc()))
     if status == "busy":
-        return stmt.where(Device.operational_state.in_([DeviceOperationalState.busy, DeviceOperationalState.verifying]))
+        return stmt.where(or_(is_busyish_sql(), is_verifying_sql(now=now_utc())))
     if status == "offline":
-        return stmt.where(Device.operational_state == DeviceOperationalState.offline)
+        return stmt.where(is_offline_sql(now=now_utc()))
     if status == "maintenance":
-        return stmt.where(Device.operational_state == DeviceOperationalState.maintenance)
+        return stmt.where(is_maintenance_sql(now=now_utc()))
     if status == "verifying":
-        return stmt.where(Device.operational_state == DeviceOperationalState.verifying)
+        return stmt.where(is_verifying_sql(now=now_utc()))
     return stmt
 
 
@@ -286,11 +294,12 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
 
 def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
     direction = asc if filters.sort_dir == "asc" else desc
+    now = now_utc()
     chip_case = case(
-        (Device.operational_state == DeviceOperationalState.busy, 4),
-        (Device.operational_state == DeviceOperationalState.maintenance, 3),
+        (is_busyish_sql(), 4),
+        (is_maintenance_sql(now=now), 3),
         (active_reservation_exists(), 2),
-        (Device.operational_state == DeviceOperationalState.offline, 1),
+        (is_offline_sql(now=now), 1),
         else_=0,
     )
     order_map: dict[str, Any] = {
@@ -302,7 +311,7 @@ def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
         "os_version_display": func.coalesce(Device.os_version_display, Device.os_version),
         "host": func.lower(func.coalesce(Host.hostname, "")),
         "status": chip_case,
-        "operational_state": Device.operational_state,
+        "operational_state": operational_state_rank_sql(now=now),
         "created_at": Device.created_at,
     }
     primary = order_map.get(filters.sort_by, Device.created_at)

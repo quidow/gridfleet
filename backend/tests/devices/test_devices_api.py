@@ -14,9 +14,12 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.service import DeviceCrudService
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
+from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host, seed_ready_loop_snapshots
@@ -557,8 +560,9 @@ async def test_list_devices_filter_status(
         identity_value="offline-1",
         connection_target="offline-1",
         name="Offline Device",
+        verified=False,
     )
-    online_device = await _create_device(
+    await _create_device(
         db_session,
         default_host_id,
         identity_value="online-1",
@@ -566,12 +570,6 @@ async def test_list_devices_filter_status(
         name="Online Device",
     )
     offline_id = str(offline_device.id)
-
-    from app.devices.models import DeviceOperationalState
-
-    offline_device.operational_state = DeviceOperationalState.offline
-    online_device.operational_state = DeviceOperationalState.available
-    await db_session.commit()
 
     resp = await client.get("/api/devices", params={"status": "offline"})
     assert resp.status_code == 200
@@ -609,12 +607,20 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
         name="Verifying Reserved Device",
     )
 
-    from app.devices.models import DeviceOperationalState
     from tests.helpers import create_reservation
 
-    busy_reserved.operational_state = DeviceOperationalState.busy
-    plain_reserved.operational_state = DeviceOperationalState.available
-    verifying_reserved.operational_state = DeviceOperationalState.verifying
+    db_session.add(Session(session_id="status-busy", device_id=busy_reserved.id, status=SessionStatus.running))
+    await IntentService(db_session).register_intents(
+        device_id=verifying_reserved.id,
+        intents=[
+            IntentRegistration(
+                source=verification_intent_source(verifying_reserved.id),
+                kind=CommandKind.verification_start,
+                payload={},
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        ],
+    )
     await create_reservation(db_session, device_id=busy_reserved.id)
     await create_reservation(db_session, device_id=plain_reserved.id)
     await create_reservation(db_session, device_id=verifying_reserved.id)
@@ -650,7 +656,6 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
     default_host_id: str,
 ) -> None:
     """status filters key off operational_state only; reservation is an orthogonal boolean filter."""
-    from app.devices.models import DeviceOperationalState
     from tests.helpers import create_reservation
 
     reserved = await _create_device(
@@ -666,6 +671,7 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
         identity_value="status-maintenance-1",
         connection_target="status-maintenance-1",
         name="Status Maintenance Device",
+        lifecycle_policy_state={"maintenance_reason": "operator"},
     )
     available = await _create_device(
         db_session,
@@ -675,10 +681,7 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
         name="Status Available Device",
     )
 
-    # hold stays NULL for all rows; state is expressed via operational_state + reservation rows.
-    reserved.operational_state = DeviceOperationalState.available
-    maintenance.operational_state = DeviceOperationalState.maintenance
-    available.operational_state = DeviceOperationalState.available
+    # hold stays NULL for all rows; state is expressed via durable facts + reservation rows.
     await create_reservation(db_session, device_id=reserved.id)
     await db_session.commit()
 

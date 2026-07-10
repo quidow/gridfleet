@@ -247,23 +247,30 @@ def maintenance_sql() -> ColumnElement[bool]:
 def stop_in_flight_sql() -> ColumnElement[bool]:
     """SQL form of ``appium_node_stop_in_flight``."""
     return exists(
-        select(AppiumNode.id).where(
+        select(AppiumNode.id)
+        .where(
             AppiumNode.device_id == Device.id,
             or_(AppiumNode.desired_state == AppiumDesiredState.stopped, AppiumNode.stop_pending.is_(True)),
         )
+        .correlate(Device)
     )
 
 
 def allows_allocation_sql() -> ColumnElement[bool]:
     """SQL form of ``device_allows_allocation``."""
     node_present_not_running = exists(
-        select(AppiumNode.id).where(
+        select(AppiumNode.id)
+        .where(
             AppiumNode.device_id == Device.id,
-            ~case(
-                (AppiumNode.health_running.is_not(None), AppiumNode.health_running),
-                else_=and_(AppiumNode.pid.is_not(None), AppiumNode.active_connection_target.is_not(None)),
+            or_(
+                AppiumNode.health_running.is_(False),
+                and_(
+                    AppiumNode.health_running.is_(None),
+                    or_(AppiumNode.pid.is_(None), AppiumNode.active_connection_target.is_(None)),
+                ),
             ),
         )
+        .correlate(Device)
     )
     return and_(
         Device.device_checks_healthy.is_not(False),

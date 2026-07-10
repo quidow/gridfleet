@@ -19,6 +19,7 @@ from app.devices.services.claims import active_reservation_exists, reservation_a
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.state import is_available_sql
 from app.packs.services.platform_resolver import assert_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
@@ -80,7 +81,7 @@ async def _find_matching_devices(
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(Device.operational_state == DeviceOperationalState.available)
+        .where(is_available_sql(now=now))
         .where(Device.review_required.is_(False))
         .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(Device.pack_id == requirement.pack_id)
@@ -107,7 +108,7 @@ async def _find_matching_devices(
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.id.in_(candidate_ids))
-        .where(Device.operational_state == DeviceOperationalState.available)
+        .where(is_available_sql(now=now))
         .where(Device.review_required.is_(False))
         .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(~active_reservation_exists())

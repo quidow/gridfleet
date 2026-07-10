@@ -11,8 +11,13 @@ from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumNode
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import Device
 from app.devices.services.claims import active_reservation_exists
+from app.devices.services.state import (
+    is_available_sql,
+    is_maintenance_sql,
+    is_offline_sql,
+)
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.liveness import host_online_clause
 from app.hosts.models import Host
@@ -153,13 +158,14 @@ async def _count_queued_requests(db: AsyncSession) -> int:
 
 
 async def _count_schedulable_capacity(db: AsyncSession) -> int:
+    now = now_utc()
     stmt = (
         select(func.count())
         .select_from(Device)
         .join(AppiumNode, AppiumNode.device_id == Device.id)
         .where(
             Device.verified_at.is_not(None),
-            Device.operational_state != DeviceOperationalState.offline,
+            ~is_offline_sql(now=now),
             ~active_reservation_exists(),
             AppiumNode.pid.is_not(None),
             AppiumNode.active_connection_target.is_not(None),
@@ -178,15 +184,12 @@ async def _count_hosts(db: AsyncSession, *, offline_after_sec: float) -> tuple[i
 
 
 async def _count_devices(db: AsyncSession) -> tuple[int, int, int, int]:
+    now = now_utc()
     stmt = select(
         func.count().label("total"),
-        func.count()
-        .filter(and_(Device.operational_state == DeviceOperationalState.available, ~active_reservation_exists()))
-        .label("available"),
-        func.count()
-        .filter(and_(Device.operational_state == DeviceOperationalState.offline, ~active_reservation_exists()))
-        .label("offline"),
-        func.count().filter(Device.operational_state == DeviceOperationalState.maintenance).label("maintenance"),
+        func.count().filter(and_(is_available_sql(now=now), ~active_reservation_exists())).label("available"),
+        func.count().filter(and_(is_offline_sql(now=now), ~active_reservation_exists())).label("offline"),
+        func.count().filter(is_maintenance_sql(now=now)).label("maintenance"),
     ).select_from(Device)
     row = (await db.execute(stmt)).one()
     return int(row.total or 0), int(row.available or 0), int(row.offline or 0), int(row.maintenance or 0)
