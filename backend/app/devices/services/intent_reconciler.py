@@ -23,6 +23,7 @@ from app.devices.models import (
     DeviceIntent,
     DeviceReservation,
 )
+from app.devices.services.claims import reservation_active
 from app.devices.services.decision import (
     DecisionFacts,
     decide_grid_routing,
@@ -158,7 +159,7 @@ async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime)
     entry = (
         await db.execute(
             select(DeviceReservation)
-            .where(DeviceReservation.device_id == device.id, DeviceReservation.released_at.is_(None))
+            .where(DeviceReservation.device_id == device.id, reservation_active())
             .order_by(DeviceReservation.created_at.desc())
             .limit(1)
         )

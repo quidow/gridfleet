@@ -13,19 +13,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.models.intent import DeviceIntent
+from app.devices.services.claims import device_has_live_session, device_has_verification_lease
 from app.devices.services.health_view import device_allows_allocation
-from app.devices.services.intent_types import verification_intent_source
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
-from app.sessions.live_session_predicate import live_session_predicate
-from app.sessions.models import Session
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -179,21 +176,8 @@ async def gather_device_state_facts(
             await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
         ).scalar_one()
 
-    has_running_session = (
-        await db.execute(select(Session.id).where(live_session_predicate(device.id)).limit(1))
-    ).first() is not None
-
-    has_verification_lease = (
-        await db.execute(
-            select(DeviceIntent.id)
-            .where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == verification_intent_source(device.id),
-                or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
-            )
-            .limit(1)
-        )
-    ).first() is not None
+    has_running_session = await device_has_live_session(db, device.id)
+    has_verification_lease = await device_has_verification_lease(db, device.id, now=now)
 
     device_in_maintenance = in_maintenance(device)
     ready = (

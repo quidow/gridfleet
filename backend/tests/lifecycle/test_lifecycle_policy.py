@@ -21,6 +21,7 @@ from app.devices.models import (
     DeviceReservation,
     DeviceType,
 )
+from app.devices.services.claims import device_is_reserved
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -33,7 +34,6 @@ from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
 )
-from app.devices.services.reservation_query import device_is_reserved
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService

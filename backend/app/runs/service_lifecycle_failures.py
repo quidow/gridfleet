@@ -12,6 +12,7 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services.claims import reservation_active
 from app.devices.services.intent import IntentService
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs.models import TERMINAL_STATES, TestRun
@@ -161,7 +162,7 @@ class RunFailureService:
             .options(selectinload(DeviceReservation.device))
             .where(DeviceReservation.run_id == run_id)
             .where(DeviceReservation.device_id == device_id)
-            .where(DeviceReservation.released_at.is_(None))
+            .where(reservation_active())
             .with_for_update()
             .limit(1)
         )

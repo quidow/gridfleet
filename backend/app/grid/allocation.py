@@ -29,6 +29,7 @@ from app.appium_nodes.services.node_viability import (
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
+from app.devices.services.claims import live_session_exists
 from app.devices.services.intent import IntentService
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
@@ -534,8 +535,7 @@ class AllocationService:
             .options(selectinload(Session.device).selectinload(Device.host))
             .where(
                 Session.ticket_id == ticket_id,
-                Session.ended_at.is_(None),
-                Session.status.in_((SessionStatus.pending, SessionStatus.running)),
+                live_session_predicate(),
             )
         )
         row = (await db.execute(stmt)).scalars().first()
@@ -554,7 +554,7 @@ class AllocationService:
             .where(Device.operational_state == DeviceOperationalState.available)
             .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
             .where(node_accepting_new_sessions_predicate())
-            .where(~select(Session.id).where(Session.device_id == Device.id, live_session_predicate()).exists())
+            .where(~live_session_exists())
         )
         devices = list((await db.execute(stmt)).scalars().all())
         GRID_ELIGIBLE_DEVICES.set(len(devices))

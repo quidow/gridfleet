@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import Device
-from app.devices.services.reservation_query import active_reservation_exists, device_is_reserved
+from app.devices.services.claims import active_reservation_exists, device_is_reserved
 from tests.helpers import create_device, create_reservation  # create_reservation added in step 0 if missing
 
 if TYPE_CHECKING:

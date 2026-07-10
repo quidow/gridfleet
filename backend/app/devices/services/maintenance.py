@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceEventType
+from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -16,7 +17,6 @@ from app.devices.services.lifecycle_policy_state import (
     set_maintenance_reason,
     state,
 )
-from app.devices.services.reservation_query import device_is_reserved
 
 if TYPE_CHECKING:
     import uuid

@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation
+from app.devices.services.claims import reservation_active
 from app.devices.services.intent import IntentService
 from app.runs.models import TERMINAL_STATES, TestRun
 
@@ -79,7 +80,7 @@ async def get_device_reservation_with_entry(
 ) -> tuple[TestRun | None, DeviceReservation | None]:
     stmt = (
         select(DeviceReservation)
-        .where(DeviceReservation.device_id == device_id, DeviceReservation.released_at.is_(None))
+        .where(DeviceReservation.device_id == device_id, reservation_active())
         .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
         .order_by(DeviceReservation.created_at.desc())
     )
@@ -115,7 +116,7 @@ async def _lock_active_reservation_entry(
         select(DeviceReservation)
         .where(
             DeviceReservation.id == entry.id,
-            DeviceReservation.released_at.is_(None),
+            reservation_active(),
         )
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -129,7 +130,7 @@ async def get_device_reservation_map(db: AsyncSession, device_ids: list[uuid.UUI
         return {}
     stmt = (
         select(DeviceReservation)
-        .where(DeviceReservation.device_id.in_(device_ids), DeviceReservation.released_at.is_(None))
+        .where(DeviceReservation.device_id.in_(device_ids), reservation_active())
         .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
     )
     result = await db.execute(stmt)
