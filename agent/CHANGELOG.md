@@ -2,6 +2,27 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.33.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.32.0...gridfleet-agent-v0.33.0) (2026-07-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** the registration payload no longer carries agent_version — it is a runtime fact owned by the consolidated status push. capabilities stays in the payload as the backend's 426 contract-gate input (not persisted at registration); host_info stays as enrollment hardware metadata.
+* **agent:** GET /agent/pack/devices/{target}/properties and /telemetry are gone — these observations ride the consolidated status push (contract v6); backends on the flag-day release no longer dial them. Their now-unreferenced response schemas are dropped from agent schemas and the backend's regenerated agent_comm/generated.py.
+
+### Features
+
+* add agent-local observation probes ([5b2e750](https://github.com/quidow/gridfleet/commit/5b2e7503959a8e16a7da8f4b14f2f3136718796f))
+* **agent:** registration payload is enrollment-only ([842a8ac](https://github.com/quidow/gridfleet/commit/842a8ac975285c9efa86e040ca21ee976e2ef47f))
+* **agent:** remove dialed device properties and telemetry probe routes ([1ec4c8b](https://github.com/quidow/gridfleet/commit/1ec4c8b060e129d883263221904b9b5740db43e3))
+* **agent:** run observation probes locally and push results in the consolidated status ([1c6fb53](https://github.com/quidow/gridfleet/commit/1c6fb53703ff3b667f8a2c549ed736319df153cb))
+* read-time host liveness + enrollment-only registration (WS-2.3/2.4) ([3629e56](https://github.com/quidow/gridfleet/commit/3629e56141b275e3f0d275db683434c14e74972f))
+
+
+### Dependencies
+
+* **deps:** bump the python-dependencies group in /agent with 2 updates ([#786](https://github.com/quidow/gridfleet/issues/786)) ([dca667b](https://github.com/quidow/gridfleet/commit/dca667b9b83abd1961e1ba758d8d48504755029b))
+
 ## [0.32.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.31.0...gridfleet-agent-v0.32.0) (2026-07-09)
 
 
