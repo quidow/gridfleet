@@ -120,7 +120,7 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `POST` | `/api/hosts/register` | Host self-registration, called by the agent at bootstrap and then periodically (`AGENT_REGISTRATION_REFRESH_INTERVAL_SEC`, default 300 s) to refresh enrollment fields (ip, os_type, agent_port, agent_version, capabilities, host_info). Enrollment-only — a re-register never touches `Host.status` or `last_heartbeat`, so it cannot resurrect an offline host. | `HostRegister` | `HostRead` |
+| `POST` | `/api/hosts/register` | Host self-registration, called by the agent at bootstrap and then periodically (`AGENT_REGISTRATION_REFRESH_INTERVAL_SEC`, default 300 s) to refresh enrollment fields (ip, os_type, agent_port, host_info; capabilities is carried only as the 426 contract-gate input, not persisted). Enrollment-only — it never writes `agent_version`, `capabilities`, `Host.status`, or `last_heartbeat` (all push-owned), so it cannot resurrect an offline host. | `HostRegister` | `HostRead` |
 | `POST` | `/api/hosts` | Create a host manually | `HostCreate` | `HostRead` |
 | `GET` | `/api/hosts` | List hosts | none | `HostRead[]` |
 | `GET` | `/api/hosts/{host_id}` | Read host detail including current devices | path `host_id` | `HostDetail` |
@@ -195,7 +195,7 @@ Orchestration-contract-v5 agents run the pull loop whenever a backend URL is con
 | --- | --- | --- | --- | --- |
 | `POST` | `/agent/hosts/status` | The one status-bearing channel from agent to backend, sent every `AGENT_STATUS_PUSH_INTERVAL_SEC` (default 10 s) | `HostStatusPush`: `host_id`, `appium_processes` (running nodes, restart events, start failures), `packs` (installed runtimes, pack status, doctor checks — replaces the old `POST /agent/driver-packs/status`), `host_telemetry`, `agent_version`, `capabilities`, `missing_prerequisites` | empty `204` |
 
-Stamps `Host.last_heartbeat` (recency drives liveness, see `general.host_offline_after_sec`) and flips a stale/offline host back online. Pack status has no separate channel — it rides inside this push's `packs` section.
+Stamps `Host.last_heartbeat` (recency drives liveness at read time, see `general.host_offline_after_sec`) and never writes `Host.status` — the sweep's `evaluate_host` edge detector owns the online/offline ledger, so a recovered host reads online immediately by recency and the sweep emits one `host.status_changed` on the next tick. Rejected with 426 if the capabilities block reports a pre-v6 orchestration contract. Pack status has no separate channel — it rides inside this push's `packs` section.
 
 ## Driver Packs
 

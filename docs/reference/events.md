@@ -100,7 +100,7 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | Event | Typical `data` fields | Default severity | Allowed severities | Source |
 | --- | --- | --- | --- | --- |
 | `host.registered` | `host_id`, `hostname`, `status` | `success` | `success`, `info` | host self-registration |
-| `host.status_changed` | `host_id`, `hostname`, `old_status`, `new_status` | `info` | `info`, `success`, `warning`, `critical` | approval, heartbeat recovery, heartbeat loss |
+| `host.status_changed` | `host_id`, `hostname`, `old_status`, `new_status` | `info` | `info`, `success`, `warning`, `critical` | approval, sweep edge detection (recovery and loss) |
 | `host.heartbeat_lost` | `host_id`, `hostname`, `stale_for_sec`, `last_push_at` | `critical` | `critical`, `warning` | host sweep |
 | `host.discovery_completed` | discovery summary fields for the host | `info` | `info` | discovery API |
 | `host.circuit_breaker.opened` | `host`, `consecutive_failures`, `cooldown_seconds`, `last_error` | `critical` | `critical`, `warning` | in-memory circuit-breaker transition |

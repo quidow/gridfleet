@@ -20,21 +20,23 @@ Typical examples:
 ### Preferred: Agent Self-Registration
 
 The agent starts a background registration loop on startup and posts itself to the manager.
-After a successful registration, it keeps refreshing the registration periodically so mutable host details such as the
-advertised IP address can recover after a network change without restarting the agent.
+After a successful registration, it keeps refreshing the registration periodically so enrollment details such as the
+advertised IP address can recover after a network change without restarting the agent. Registration is enrollment only —
+mutable runtime facts (agent version, capabilities, missing prerequisites) arrive on the separate status-push channel, not
+at registration.
 
-What the agent sends:
+What the agent sends at registration:
 
 - hostname
 - reachable IP address
 - OS type
 - agent port
-- agent version
-- detected capabilities
+- hardware descriptor (`host_info`)
+- detected capabilities (used only as the orchestration-contract gate credential; not persisted at registration)
 
 What happens next:
 
-- if `agent.auto_accept_hosts` is enabled, the new host is created as `online`
+- if `agent.auto_accept_hosts` is enabled, the new host is enrolled `online` and reads online immediately via the `created_at` recency grace until the first status push takes over
 - if `agent.auto_accept_hosts` is disabled, the new host is created as `pending`
 - successful accept also triggers background device discovery
 

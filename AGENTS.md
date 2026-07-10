@@ -104,7 +104,7 @@ Backend pack pipeline: `app/packs/` (ingest, storage, lifecycle, release, desire
 If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, stop — push it into the manifest or adapter instead. The agent test `test_no_driver_imports.py` actively guards this for the agent side.
 
 ### Host agent lifecycle
-1. Agent registers with manager (`AGENT_MANAGER_URL`) on a periodic refresh.
+1. Agent registers with manager (`AGENT_MANAGER_URL`) on a periodic refresh — enrollment only (identity, IP, agent port, hardware descriptor, plus capabilities as the contract-gate credential); all mutable runtime facts (agent version, capabilities, prerequisites) arrive via the status push, and host online/offline is computed from push recency at read time (`app/hosts/liveness.py`), with the sweep's edge detector emitting `host.status_changed`/`heartbeat_lost` exactly once per transition.
 2. Backend signals "start node" → agent allocates an Appium port (`AGENT_APPIUM_PORT_RANGE_*`).
 3. Agent spawns `appium` from the runtime venv. There is no Grid relay node; the agent only manages the per-device Appium process.
 4. Health checks watch ADB / driver viability and gracefully terminate the Appium process when the device disappears.
