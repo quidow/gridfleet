@@ -40,7 +40,7 @@ async def test_host_sweep_loop_one_successful_iteration(monkeypatch: pytest.Monk
     monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     services = AppiumNodeServices(
-        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 1}),
+        settings=FakeSettingsReader({}),
         reconciler=Mock(reconcile_host=AsyncMock()),
         reconciler_agent=Mock(),
         node_health=Mock(),
@@ -67,7 +67,7 @@ async def test_appium_sweep_loop_one_successful_iteration(monkeypatch: pytest.Mo
         crud=Mock(),
         sync=mock_sync,
         viability=viability_mock,
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
+        settings=FakeSettingsReader({}),
         session_factory=_Session,
         publisher=event_bus,
     )

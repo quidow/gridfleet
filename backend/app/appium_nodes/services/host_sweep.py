@@ -45,6 +45,12 @@ logger = get_logger(__name__)
 LOOP_NAME = "host_sweep"
 OBSERVATION_FOLD_NAMESPACE = "host_sweep.observation_fold"
 
+# Plumbing constants (P5): the sweep tick, its stage cadence, and fan-out width
+# are not operator policy. The operator-facing knob is host_offline_after_sec.
+HOST_SWEEP_INTERVAL_SEC = 15.0
+PARTITION_PROBE_INTERVAL_SEC = 60.0
+HOST_SWEEP_PARALLELISM = 8
+
 
 @dataclass(frozen=True)
 class ObservationFold:
@@ -109,13 +115,12 @@ async def run_host_sweep_once(
     rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
     for row in desired:
         rows_by_host.setdefault(row.host_id, []).append(row)
-    semaphore = asyncio.Semaphore(settings.get_int("appium_reconciler.host_parallelism"))
-    base_interval = settings.get_float("general.heartbeat_interval_sec")
     probe_due = stage_due(
         cycle_index,
-        base_interval=base_interval,
-        stage_interval=settings.get_float("general.partition_probe_interval_sec"),
+        base_interval=HOST_SWEEP_INTERVAL_SEC,
+        stage_interval=PARTITION_PROBE_INTERVAL_SEC,
     )
+    semaphore = asyncio.Semaphore(HOST_SWEEP_PARALLELISM)
 
     async def _sweep_host(host_id: uuid.UUID) -> None:
         async with semaphore:
@@ -196,7 +201,7 @@ class HostSweepLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return self._services.settings.get_float("general.heartbeat_interval_sec")
+        return HOST_SWEEP_INTERVAL_SEC
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await run_host_sweep_once(

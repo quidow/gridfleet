@@ -53,6 +53,9 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
 
+# Plumbing constant (P5): the full-scan backstop cadence is not operator policy.
+INTENT_RECONCILE_INTERVAL_SEC = 5.0
+
 
 class DeviceIntentReconcilerLoop(BackgroundLoop):
     loop_name = LOOP_NAME
@@ -66,7 +69,7 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get_int("general.intent_reconcile_interval_sec"))
+        return INTENT_RECONCILE_INTERVAL_SEC
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await run_device_intent_reconciler_once(

@@ -34,7 +34,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
 
     svc = SessionSyncService(
         publisher=event_bus,
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         lifecycle=AsyncMock(),
     )
 
@@ -48,7 +48,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
         crud=Mock(),
         sync=svc,
         viability=Mock(),
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         session_factory=_NullCtx,
         publisher=event_bus,
     )
@@ -80,7 +80,7 @@ async def test_running_loop_registers_module_wake_hook() -> None:
 
     svc = SessionSyncService(
         publisher=event_bus,
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         lifecycle=AsyncMock(),
     )
 
@@ -94,7 +94,7 @@ async def test_running_loop_registers_module_wake_hook() -> None:
         crud=Mock(),
         sync=svc,
         viability=Mock(),
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         session_factory=_NullCtx,
         publisher=event_bus,
     )
@@ -125,7 +125,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
 
     svc = SessionSyncService(
         publisher=event_bus,
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         lifecycle=AsyncMock(),
     )
 
@@ -141,7 +141,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
         crud=Mock(),
         sync=svc,
         viability=Mock(),
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         session_factory=_NullCtx,
         publisher=event_bus,
     )

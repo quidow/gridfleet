@@ -48,6 +48,7 @@ async def _fake_session() -> AsyncGenerator[AsyncMock]:
 async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core import background_loop
 
+    monkeypatch.setattr(intent_reconciler, "INTENT_RECONCILE_INTERVAL_SEC", 1.0)
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         intent_reconciler,
@@ -57,7 +58,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     sleep = AsyncMock(side_effect=asyncio.CancelledError())
     monkeypatch.setattr(background_loop.asyncio, "sleep", sleep)
 
-    _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
+    _svc_settings_2 = FakeSettingsReader({})
     _svc_pub_2 = AsyncMock()
     _svc_maint_2 = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus

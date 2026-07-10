@@ -116,7 +116,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         "app.appium_nodes.services.host_sweep.run_host_sweep_once", AsyncMock(side_effect=RuntimeError("boom"))
     )
     services = AppiumNodeServices(
-        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
+        settings=FakeSettingsReader({}),
         reconciler=Mock(),
         reconciler_agent=Mock(),
         node_health=Mock(),

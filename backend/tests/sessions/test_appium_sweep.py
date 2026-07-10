@@ -33,7 +33,7 @@ def _make_loop(calls: list[str], *, sync_error: Exception | None = None) -> Appi
         crud=Mock(),
         sync=Mock(sync=AsyncMock(side_effect=sync), wait_for_wake=AsyncMock()),
         viability=Mock(check_due_devices=AsyncMock(side_effect=check_due_devices)),
-        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        settings=FakeSettingsReader({}),
         session_factory=_Session,
         publisher=event_bus,
     )
