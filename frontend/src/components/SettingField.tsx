@@ -53,7 +53,7 @@ export function SettingField({ setting, value, onChange, onReset }: Props) {
 }
 
 function formatLabel(key: string): string {
-  // "general.heartbeat_interval_sec" -> "Heartbeat Interval Sec"
+  // "general.host_offline_after_sec" -> "Host Offline After Sec"
   const part = key.split('.').pop() || key;
   return part
     .split('_')
