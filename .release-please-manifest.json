@@ -1,6 +1,6 @@
 {
   "backend": "0.4.0",
-  "agent": "0.32.0",
+  "agent": "0.33.0",
   "frontend": "0.4.0",
   "router": "0.2.0",
   "testkit": "0.14.4"
