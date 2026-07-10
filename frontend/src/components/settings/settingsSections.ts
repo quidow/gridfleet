@@ -36,7 +36,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       settingKeys: [
         'general.session_viability_interval_sec',
         'general.session_viability_timeout_sec',
-        'general.fleet_capacity_snapshot_interval_sec',
       ],
     },
     {
@@ -102,7 +101,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
         'reservations.default_ttl_minutes',
         'reservations.max_ttl_minutes',
         'reservations.default_heartbeat_timeout_sec',
-        'reservations.reaper_interval_sec',
       ],
     },
   ],
@@ -131,7 +129,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
         'retention.device_events_days',
         'retention.capacity_snapshots_days',
         'retention.host_resource_telemetry_hours',
-        'retention.cleanup_interval_hours',
       ],
     },
   ],
