@@ -6,75 +6,12 @@ from app.settings import registry as settings_registry
 from app.settings.registry import SETTINGS_REGISTRY
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("true", True), ("YES", True), ("0", False), ("off", False)],
-)
-def test_parse_bool_accepts_supported_values(raw: str, expected: bool) -> None:
-    assert settings_registry._parse_bool(raw, "GRIDFLEET_TEST") is expected
-
-
-def test_parse_bool_rejects_invalid_values() -> None:
-    with pytest.raises(ValueError, match="Invalid boolean value"):
-        settings_registry._parse_bool("maybe", "GRIDFLEET_TEST")
-
-
-def test_parse_env_value_supports_int_bool_json_and_string() -> None:
-    definition = settings_registry.SettingDefinition(
-        key="demo",
-        category="general",
-        setting_type="int",
-        default=1,
-        description="demo",
-    )
-    assert settings_registry._parse_env_value(definition, "5") == 5
-
-    definition = settings_registry.SettingDefinition(
-        key="demo",
-        category="general",
-        setting_type="bool",
-        default=False,
-        description="demo",
-        env_var="GRIDFLEET_BOOL",
-    )
-    assert settings_registry._parse_env_value(definition, "true") is True
-
-    definition = settings_registry.SettingDefinition(
-        key="demo",
-        category="general",
-        setting_type="json",
-        default=[],
-        description="demo",
-    )
-    assert settings_registry._parse_env_value(definition, '["a"]') == ["a"]
-
-    definition = settings_registry.SettingDefinition(
-        key="demo",
-        category="general",
-        setting_type="string",
-        default="x",
-        description="demo",
-    )
-    assert settings_registry._parse_env_value(definition, "value") == "value"
-
-
-def test_resolve_default_prefers_env_override_and_deep_copies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    definition = settings_registry.SettingDefinition(
-        key="demo",
-        category="general",
-        setting_type="json",
-        default={"a": ["b"]},
-        description="demo",
-        env_var="GRIDFLEET_DEMO",
-    )
-
-    monkeypatch.setenv("GRIDFLEET_DEMO", '{"x": 1}')
-    assert settings_registry.resolve_default(definition) == {"x": 1}
-    monkeypatch.delenv("GRIDFLEET_DEMO")
-
+def test_resolve_default_deep_copies_mutable_defaults() -> None:
+    definition = settings_registry.SETTINGS_REGISTRY["notifications.toast_events"]
     value = settings_registry.resolve_default(definition)
-    value["a"].append("c")
-    assert settings_registry.resolve_default(definition) == {"a": ["b"]}
+    assert isinstance(value, list)
+    value.append("mutated")
+    assert settings_registry.resolve_default(definition) != value
 
 
 def test_capacity_snapshot_settings_are_registered() -> None:
@@ -101,26 +38,18 @@ def test_session_first_command_grace_setting_is_registered() -> None:
     assert setting.default == 180
     assert setting.min_value == 30
     assert setting.max_value == 3600
-    assert setting.env_var == "GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC"
 
 
 def test_device_cooldown_settings_are_registered() -> None:
     max_cooldown = settings_registry.SETTINGS_REGISTRY["general.device_cooldown_max_sec"]
 
     assert max_cooldown.default == 3600
-    assert max_cooldown.env_var == "GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC"
     assert max_cooldown.min_value == 60
     assert max_cooldown.max_value == 86400
 
 
-def test_intent_reconciler_settings_are_registered() -> None:
-    interval = settings_registry.SETTINGS_REGISTRY["general.intent_reconcile_interval_sec"]
-
-    assert interval.category == "general"
-    assert interval.setting_type == "int"
-    assert interval.default == 5
-    assert interval.min_value == 1
-    assert interval.max_value == 300
+def test_intent_reconciler_settings_are_not_registered() -> None:
+    assert "general.intent_reconcile_interval_sec" not in settings_registry.SETTINGS_REGISTRY
     assert "general.intent_reconcile_full_scan_every_cycles" not in settings_registry.SETTINGS_REGISTRY
 
 
@@ -164,17 +93,28 @@ def test_device_cooldown_escalation_threshold_default_and_bounds() -> None:
     assert setting.default == 3
     assert setting.min_value == 0
     assert setting.max_value == 100
-    assert setting.env_var == "GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD"
     assert setting.category == "general"
 
 
-def test_appium_reconciler_host_parallelism_is_registered() -> None:
-    setting = settings_registry.SETTINGS_REGISTRY["appium_reconciler.host_parallelism"]
-    assert setting.category == "grid"
-    assert setting.setting_type == "int"
-    assert setting.default == 8
-    assert setting.min_value == 1
-    assert setting.max_value == 32
+def test_removed_plumbing_settings_are_not_registered() -> None:
+    removed = {
+        "general.heartbeat_interval_sec",
+        "general.partition_probe_interval_sec",
+        "general.intent_reconcile_interval_sec",
+        "grid.session_poll_interval_sec",
+        "appium_reconciler.host_parallelism",
+        "agent.http_pool_enabled",
+        "agent.http_pool_max_keepalive",
+        "agent.http_pool_idle_seconds",
+        "agent.circuit_breaker_failure_threshold",
+        "agent.circuit_breaker_cooldown_seconds",
+    }
+    assert not removed & set(settings_registry.SETTINGS_REGISTRY)
+
+
+def test_auto_accept_hosts_defaults_to_false() -> None:
+    definition = settings_registry.SETTINGS_REGISTRY["agent.auto_accept_hosts"]
+    assert definition.default is False, "secure by default (D5): operators approve hosts manually"
 
 
 def test_unbounded_table_retention_settings_are_registered() -> None:
@@ -196,4 +136,3 @@ def test_run_failure_escalation_setting_is_registered() -> None:
     assert definition.category == "general"
     assert definition.setting_type == "bool"
     assert definition.default is True
-    assert definition.env_var is None

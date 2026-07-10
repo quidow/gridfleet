@@ -27,18 +27,16 @@ async def test_list_settings(client: AsyncClient) -> None:
 
 
 async def test_get_setting(client: AsyncClient) -> None:
-    resp = await client.get("/api/settings/general.heartbeat_interval_sec")
+    resp = await client.get("/api/settings/general.session_viability_timeout_sec")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["key"] == "general.heartbeat_interval_sec"
+    assert data["key"] == "general.session_viability_timeout_sec"
     assert data["type"] == "int"
     assert isinstance(data["value"], int)
     assert data["is_overridden"] is False
-    assert data["description"] == (
-        "Host-sweep cadence: how often pushed agent status is evaluated (base tick for the stage intervals)"
-    )
+    assert data["description"] == ("How long to wait for an Appium session probe before failing")
     assert data["validation"] is not None
-    assert data["validation"]["min"] == 5
+    assert data["validation"]["min"] == 10
 
 
 async def test_get_toast_events_setting_includes_catalog_validation(client: AsyncClient) -> None:
@@ -95,7 +93,7 @@ async def test_get_unknown_setting(client: AsyncClient) -> None:
 
 async def test_update_setting(client: AsyncClient) -> None:
     resp = await client.put(
-        "/api/settings/general.heartbeat_interval_sec",
+        "/api/settings/general.session_viability_timeout_sec",
         json={"value": 30},
     )
     assert resp.status_code == 200
@@ -104,25 +102,25 @@ async def test_update_setting(client: AsyncClient) -> None:
     assert data["is_overridden"] is True
 
     # Verify via GET
-    resp = await client.get("/api/settings/general.heartbeat_interval_sec")
+    resp = await client.get("/api/settings/general.session_viability_timeout_sec")
     assert resp.json()["value"] == 30
 
     # Cleanup: reset
-    await client.post("/api/settings/reset/general.heartbeat_interval_sec")
+    await client.post("/api/settings/reset/general.session_viability_timeout_sec")
 
 
 async def test_update_setting_validation_min(client: AsyncClient) -> None:
     resp = await client.put(
-        "/api/settings/general.heartbeat_interval_sec",
-        json={"value": 1},  # min is 5
+        "/api/settings/general.session_viability_timeout_sec",
+        json={"value": 1},  # min is 10
     )
     assert resp.status_code == 400
 
 
 async def test_update_setting_validation_max(client: AsyncClient) -> None:
     resp = await client.put(
-        "/api/settings/general.heartbeat_interval_sec",
-        json={"value": 9999},  # max is 300
+        "/api/settings/general.session_viability_timeout_sec",
+        json={"value": 9999},  # max is 600
     )
     assert resp.status_code == 400
 
@@ -140,7 +138,7 @@ async def test_update_lifecycle_recovery_backoff_setting(client: AsyncClient) ->
 
 async def test_update_setting_wrong_type(client: AsyncClient) -> None:
     resp = await client.put(
-        "/api/settings/general.heartbeat_interval_sec",
+        "/api/settings/general.session_viability_timeout_sec",
         json={"value": "not_an_int"},
     )
     assert resp.status_code == 400
@@ -159,7 +157,7 @@ async def test_bulk_update(client: AsyncClient) -> None:
         "/api/settings/bulk",
         json={
             "settings": {
-                "general.heartbeat_interval_sec": 20,
+                "general.session_viability_timeout_sec": 20,
                 "general.node_max_failures": 5,
             }
         },
@@ -168,11 +166,11 @@ async def test_bulk_update(client: AsyncClient) -> None:
     data = resp.json()
     assert len(data) == 2
     values = {s["key"]: s["value"] for s in data}
-    assert values["general.heartbeat_interval_sec"] == 20
+    assert values["general.session_viability_timeout_sec"] == 20
     assert values["general.node_max_failures"] == 5
 
     # Cleanup
-    await client.post("/api/settings/reset/general.heartbeat_interval_sec")
+    await client.post("/api/settings/reset/general.session_viability_timeout_sec")
     await client.post("/api/settings/reset/general.node_max_failures")
 
 
@@ -181,7 +179,7 @@ async def test_bulk_update_validation_error(client: AsyncClient) -> None:
         "/api/settings/bulk",
         json={
             "settings": {
-                "general.heartbeat_interval_sec": 20,
+                "general.session_viability_timeout_sec": 20,
                 "general.node_max_failures": -1,  # min is 1
             }
         },
@@ -192,12 +190,12 @@ async def test_bulk_update_validation_error(client: AsyncClient) -> None:
 async def test_reset_setting(client: AsyncClient) -> None:
     # Override first
     await client.put(
-        "/api/settings/general.heartbeat_interval_sec",
-        json={"value": 25},
+        "/api/settings/general.session_viability_timeout_sec",
+        json={"value": 120},
     )
 
     # Reset
-    resp = await client.post("/api/settings/reset/general.heartbeat_interval_sec")
+    resp = await client.post("/api/settings/reset/general.session_viability_timeout_sec")
     assert resp.status_code == 200
     data = resp.json()
     assert data["is_overridden"] is False
@@ -206,7 +204,7 @@ async def test_reset_setting(client: AsyncClient) -> None:
 
 async def test_reset_all(client: AsyncClient) -> None:
     # Override a couple
-    await client.put("/api/settings/general.heartbeat_interval_sec", json={"value": 25})
+    await client.put("/api/settings/general.session_viability_timeout_sec", json={"value": 120})
     await client.put("/api/settings/general.node_max_failures", json={"value": 10})
 
     # Reset all
@@ -215,7 +213,7 @@ async def test_reset_all(client: AsyncClient) -> None:
     assert resp.json()["status"] == "all settings reset to defaults"
 
     # Verify
-    resp = await client.get("/api/settings/general.heartbeat_interval_sec")
+    resp = await client.get("/api/settings/general.session_viability_timeout_sec")
     assert resp.json()["is_overridden"] is False
 
 
@@ -248,6 +246,31 @@ async def test_appium_session_override_setting_defaults_true_and_can_be_updated(
     assert update_resp.json()["value"] is False
 
     await client.post("/api/settings/reset/appium.session_override")
+
+
+async def test_update_rejects_cross_timer_contradiction_naming_both_keys(client: AsyncClient) -> None:
+    resp = await client.put("/api/settings/grid.session_idle_timeout_sec", json={"value": 80000})
+    assert resp.status_code == 400
+    detail = str(resp.json())
+    assert "grid.session_idle_timeout_sec" in detail
+    assert "grid.session_idle_timeout_ceiling_sec" in detail
+
+
+async def test_bulk_update_validates_the_merged_batch(client: AsyncClient) -> None:
+    resp = await client.put(
+        "/api/settings/bulk",
+        json={
+            "settings": {
+                "grid.session_idle_timeout_sec": 60,
+                "grid.session_idle_timeout_ceiling_sec": 60,
+                "grid.session_first_command_grace_sec": 30,
+            }
+        },
+    )
+    assert resp.status_code == 200
+    await client.post("/api/settings/reset/grid.session_idle_timeout_ceiling_sec")
+    await client.post("/api/settings/reset/grid.session_idle_timeout_sec")
+    await client.post("/api/settings/reset/grid.session_first_command_grace_sec")
 
 
 async def test_removed_global_runtime_tool_version_settings_are_not_registered(client: AsyncClient) -> None:

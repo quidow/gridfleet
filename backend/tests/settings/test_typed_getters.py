@@ -7,23 +7,23 @@ from tests.fakes import FakeSettingsReader
 def test_typed_getters_return_narrowed_types() -> None:
     reader = FakeSettingsReader(
         {
-            "general.heartbeat_interval_sec": 30,
+            "general.session_viability_timeout_sec": 30,
             "appium_reconciler.interval_sec": 2.5,
-            "agent.http_pool_enabled": True,
+            "general.node_max_failures": True,
         }
     )
-    assert reader.get_int("general.heartbeat_interval_sec") == 30
+    assert reader.get_int("general.session_viability_timeout_sec") == 30
     assert reader.get_float("appium_reconciler.interval_sec") == 2.5
-    assert reader.get_float("general.heartbeat_interval_sec") == 30.0  # int widens to float
-    assert reader.get_bool("agent.http_pool_enabled") is True
+    assert reader.get_float("general.session_viability_timeout_sec") == 30.0  # int widens to float
+    assert reader.get_bool("general.node_max_failures") is True
 
 
 def test_typed_getters_reject_mismatched_types() -> None:
-    reader = FakeSettingsReader({"general.heartbeat_interval_sec": "30"})
+    reader = FakeSettingsReader({"general.session_viability_timeout_sec": "30"})
     with pytest.raises(TypeError):
-        reader.get_int("general.heartbeat_interval_sec")
+        reader.get_int("general.session_viability_timeout_sec")
     with pytest.raises(TypeError):
-        reader.get_bool("general.heartbeat_interval_sec")
+        reader.get_bool("general.session_viability_timeout_sec")
 
 
 def test_settings_service_typed_getters_validate_cached_values() -> None:
@@ -31,14 +31,14 @@ def test_settings_service_typed_getters_validate_cached_values() -> None:
     # the 98% coverage gate, not just the fake. Cache-poking mirrors how the
     # conformance test constructs the service without DB initialization.
     service = SettingsService()
-    service._cache["general.heartbeat_interval_sec"] = 30
-    service._cache["agent.http_pool_enabled"] = True
-    assert service.get_int("general.heartbeat_interval_sec") == 30
-    assert service.get_float("general.heartbeat_interval_sec") == 30.0
-    assert service.get_bool("agent.http_pool_enabled") is True
+    service._cache["general.session_viability_timeout_sec"] = 30
+    service._cache["general.node_max_failures"] = True
+    assert service.get_int("general.session_viability_timeout_sec") == 30
+    assert service.get_float("general.session_viability_timeout_sec") == 30.0
+    assert service.get_bool("general.node_max_failures") is True
     with pytest.raises(TypeError):
-        service.get_bool("general.heartbeat_interval_sec")
+        service.get_bool("general.session_viability_timeout_sec")
     with pytest.raises(TypeError):
-        service.get_int("agent.http_pool_enabled")  # bool explicitly rejected as int
+        service.get_int("general.node_max_failures")  # bool explicitly rejected as int
     with pytest.raises(TypeError):
-        service.get_float("agent.http_pool_enabled")
+        service.get_float("general.node_max_failures")

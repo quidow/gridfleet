@@ -486,6 +486,11 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
         scheduled.append((task_fn, args))
 
     with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
+        # auto-accept now defaults to false (secure by default); this test exercises
+        # the auto-accept path where registration schedules discovery immediately.
+        accept_resp = await client.put("/api/settings/agent.auto_accept_hosts", json={"value": True})
+        assert accept_resp.status_code in (200, 201)
+
         resp = await client.post(
             "/api/hosts/register",
             json={
@@ -509,6 +514,9 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert len(scheduled) == 1
     assert scheduled[0][0] is _auto_discover
     assert scheduled[0][1][0] == host_id  # host_id arg
+
+    reset_resp = await client.post("/api/settings/reset/agent.auto_accept_hosts")
+    assert reset_resp.status_code == 200
 
 
 async def test_register_rejects_pre_pull_contract_v2(client: AsyncClient) -> None:

@@ -455,3 +455,9 @@ async def test_probe_stage_gated_by_partition_probe_interval(
             cycle_index=cycle_index,
         )
         assert (db_host.ip in probe_ips) is expected
+
+
+def test_partition_probe_stage_interval_at_least_base_tick() -> None:
+    from app.appium_nodes.services.host_sweep import HOST_SWEEP_INTERVAL_SEC, PARTITION_PROBE_INTERVAL_SEC
+
+    assert PARTITION_PROBE_INTERVAL_SEC >= HOST_SWEEP_INTERVAL_SEC

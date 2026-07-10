@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -21,7 +19,6 @@ class SettingDefinition:
     setting_type: str  # "int", "float", "string", "bool", "json"
     default: SettingValue
     description: str
-    env_var: str | None = None  # maps to GRIDFLEET_ env var for fallback
     min_value: int | float | None = None
     max_value: int | float | None = None
     allowed_values: list[str] | None = field(default=None)
@@ -42,18 +39,6 @@ CATEGORY_DISPLAY_NAMES: dict[str, str] = {
 _DEFINITIONS: list[SettingDefinition] = [
     # ── General ──
     SettingDefinition(
-        key="general.heartbeat_interval_sec",
-        category="general",
-        setting_type="int",
-        default=15,
-        description=(
-            "Host-sweep cadence: how often pushed agent status is evaluated (base tick for the stage intervals)"
-        ),
-        env_var="GRIDFLEET_HEARTBEAT_INTERVAL_SEC",
-        min_value=5,
-        max_value=300,
-    ),
-    SettingDefinition(
         key="general.host_offline_after_sec",
         category="general",
         setting_type="int",
@@ -63,30 +48,11 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3600,
     ),
     SettingDefinition(
-        key="general.partition_probe_interval_sec",
-        category="general",
-        setting_type="int",
-        default=60,
-        description="How often the manager verifies it can reach each online agent (network-partition diagnostic)",
-        min_value=15,
-        max_value=3600,
-    ),
-    SettingDefinition(
-        key="general.intent_reconcile_interval_sec",
-        category="general",
-        setting_type="int",
-        default=5,
-        description="Seconds between intent reconciler full-device scans.",
-        min_value=1,
-        max_value=300,
-    ),
-    SettingDefinition(
         key="general.node_max_failures",
         category="general",
         setting_type="int",
         default=3,
         description="Failed health checks before auto-restart",
-        env_var="GRIDFLEET_NODE_MAX_FAILURES",
         min_value=1,
         max_value=20,
     ),
@@ -96,7 +62,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=3600,
         description="Maximum run-scoped device cooldown accepted from clients",
-        env_var="GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC",
         min_value=60,
         max_value=86400,
     ),
@@ -109,7 +74,6 @@ _DEFINITIONS: list[SettingDefinition] = [
             "Number of cooldowns of the same device within one run before the device is "
             "escalated to maintenance and excluded from the run. Set to 0 to disable."
         ),
-        env_var="GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD",
         min_value=0,
         max_value=100,
     ),
@@ -289,24 +253,15 @@ _DEFINITIONS: list[SettingDefinition] = [
     ),
     # ── Appium & Allocation ──
     SettingDefinition(
-        key="grid.session_poll_interval_sec",
-        category="grid",
-        setting_type="int",
-        default=30,
-        description=(
-            "Interval of the direct-to-Appium session observation sweep (liveness probes and orphan-session cleanup)."
-        ),
-        min_value=1,
-        max_value=300,
-    ),
-    SettingDefinition(
         key="grid.queue_timeout_sec",
         category="grid",
         setting_type="int",
         default=300,
-        description="How long a queued new-session request may wait for a device before failing",
-        env_var="GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC",
-        min_value=5,
+        description=(
+            "How long a queued new-session request may wait for a device before failing "
+            "(must exceed the router's 25s long-poll slice)"
+        ),
+        min_value=30,
         max_value=3600,
     ),
     SettingDefinition(
@@ -321,7 +276,6 @@ _DEFINITIONS: list[SettingDefinition] = [
             "forever. A client appium:newCommandTimeout above this value extends the window per session, up to "
             "grid.session_idle_timeout_ceiling_sec."
         ),
-        env_var="GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC",
         min_value=60,
         max_value=86400,
     ),
@@ -336,7 +290,6 @@ _DEFINITIONS: list[SettingDefinition] = [
             "grid.session_idle_timeout_sec, up to this ceiling; newCommandTimeout=0 ('never idle-kill') clamps "
             "here, preserving the zombie-session guarantee. Clients can extend the idle window, never shorten it."
         ),
-        env_var="GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_CEILING_SEC",
         min_value=60,
         max_value=86400,
     ),
@@ -351,7 +304,6 @@ _DEFINITIONS: list[SettingDefinition] = [
             "session-create time eats into the grace. Bounds abandoned-client zombie sessions that claim a device but "
             "never route any WebDriver traffic, well below the full idle timeout."
         ),
-        env_var="GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC",
         min_value=30,
         max_value=3600,
     ),
@@ -367,7 +319,6 @@ _DEFINITIONS: list[SettingDefinition] = [
             "The floor is 30s: the router's create-timeout cap engages only above 10s, so a smaller window lets "
             "the orphan sweep race a real in-creation session."
         ),
-        env_var="GRIDFLEET_GRID_CLAIM_WINDOW_SEC",
         min_value=30,
         max_value=600,
     ),
@@ -377,7 +328,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=4723,
         description="Start of Appium port range",
-        env_var="GRIDFLEET_APPIUM_PORT_RANGE_START",
         min_value=1024,
         max_value=65535,
     ),
@@ -387,7 +337,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=4823,
         description="End of Appium port range",
-        env_var="GRIDFLEET_APPIUM_PORT_RANGE_END",
         min_value=1024,
         max_value=65535,
     ),
@@ -412,15 +361,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         ),
         min_value=30,
         max_value=600,
-    ),
-    SettingDefinition(
-        key="appium_reconciler.host_parallelism",
-        category="grid",
-        setting_type="int",
-        default=8,
-        description="Max number of hosts the Appium reconciler converges in parallel per cycle",
-        min_value=1,
-        max_value=32,
     ),
     SettingDefinition(
         key="appium.session_override",
@@ -462,7 +402,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="string",
         default="0.33.0",
         description="Minimum required agent version (empty = no check)",
-        env_var="GRIDFLEET_MIN_AGENT_VERSION",
     ),
     SettingDefinition(
         key="agent.recommended_version",
@@ -470,15 +409,13 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="string",
         default="",
         description="Recommended agent version shown to operators and agents (empty = no recommendation)",
-        env_var="GRIDFLEET_AGENT_RECOMMENDED_VERSION",
     ),
     SettingDefinition(
         key="agent.auto_accept_hosts",
         category="agent",
         setting_type="bool",
-        default=True,
-        description="Auto-accept self-registering hosts",
-        env_var="GRIDFLEET_HOST_AUTO_ACCEPT",
+        default=False,
+        description="Auto-accept self-registering hosts (off by default: operators approve hosts manually)",
     ),
     SettingDefinition(
         key="agent.default_port",
@@ -488,49 +425,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Default agent port for new hosts",
         min_value=1024,
         max_value=65535,
-    ),
-    SettingDefinition(
-        key="agent.http_pool_enabled",
-        category="agent",
-        setting_type="bool",
-        default=True,
-        description="When true, pool one httpx.AsyncClient per (host, port) tuple for backend->agent calls",
-    ),
-    SettingDefinition(
-        key="agent.http_pool_max_keepalive",
-        category="agent",
-        setting_type="int",
-        default=10,
-        description="Max keepalive connections per pooled client",
-        min_value=1,
-        max_value=100,
-    ),
-    SettingDefinition(
-        key="agent.http_pool_idle_seconds",
-        category="agent",
-        setting_type="int",
-        default=60,
-        description="Idle time (seconds) after which a pooled keepalive connection is closed",
-        min_value=5,
-        max_value=600,
-    ),
-    SettingDefinition(
-        key="agent.circuit_breaker_failure_threshold",
-        category="agent",
-        setting_type="int",
-        default=5,
-        description="Consecutive backend->agent failures before the circuit opens",
-        min_value=1,
-        max_value=50,
-    ),
-    SettingDefinition(
-        key="agent.circuit_breaker_cooldown_seconds",
-        category="agent",
-        setting_type="int",
-        default=30,
-        description="Seconds the circuit stays open before a probe is allowed",
-        min_value=5,
-        max_value=600,
     ),
     # ── Reservations ──
     SettingDefinition(
@@ -651,35 +545,6 @@ def _copy_default(value: SettingValue) -> SettingValue:
     return copy.deepcopy(value)
 
 
-def _parse_bool(raw: str, env_var: str) -> bool:
-    normalized = raw.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"Invalid boolean value for {env_var}: {raw!r}")
-
-
-def _parse_env_value(definition: SettingDefinition, raw: str) -> SettingValue:
-    if definition.setting_type == "int":
-        return int(raw)
-    if definition.setting_type == "float":
-        return float(raw)
-    if definition.setting_type == "bool":
-        return _parse_bool(raw, definition.env_var or definition.key)
-    if definition.setting_type == "json":
-        return json.loads(raw)
-    return raw
-
-
 def resolve_default(definition: SettingDefinition) -> SettingValue:
-    """Resolve the default value for a setting.
-
-    Default values are owned by this registry. If a setting exposes an env var,
-    parse it directly from the environment; otherwise use the registry default.
-    """
-    if definition.env_var:
-        raw = os.getenv(definition.env_var)
-        if raw is not None:
-            return _parse_env_value(definition, raw)
+    """Default values are owned by this registry; env vars never seed them (WS-4.2)."""
     return _copy_default(definition.default)

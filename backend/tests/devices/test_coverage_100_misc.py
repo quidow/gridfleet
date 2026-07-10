@@ -86,7 +86,6 @@ from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
 from app.sessions import protocols as session_viability_protocols
-from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.settings.service_config import SettingsConfigService
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
@@ -575,20 +574,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         identity_value="10.0.0.1:5555",
         connection_target="10.0.0.1:5555",
         ip_address=None,
-    )
-
-    assert (
-        settings_registry._parse_env_value(
-            settings_registry.SettingDefinition(
-                key="x",
-                category="general",
-                setting_type="float",
-                default=1.0,
-                description="x",
-            ),
-            "1.5",
-        )
-        == 1.5
     )
 
     class TestDataDb:
