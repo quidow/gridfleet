@@ -203,17 +203,22 @@ async def gather_device_state_facts(
     has_running_session = await device_has_live_session(db, device.id)
     has_verification_lease = await device_has_verification_lease(db, device.id, now=now)
 
-    device_in_maintenance = in_maintenance(device)
+    withdrawal = WithdrawalFacts.from_device(device)
+    # in_service() adds only implied or masked conjuncts over the previous
+    # formula (verified is implied by is_ready_for_use; ¬in_maintenance is
+    # masked by the evaluator's maintenance rung, and ready has no other
+    # consumer) — kept so the withdrawal group is consumed whole and a new
+    # withdrawal fact cannot reach one projection without the other.
     ready = (
         await is_ready_for_use_async(db, device, packs=packs)
         and device_allows_allocation(device)
-        and not device.review_required
+        and withdrawal.in_service()
     )
 
     return DeviceStateFacts(
         has_running_session=has_running_session,
         has_verification_lease=has_verification_lease,
-        in_maintenance=device_in_maintenance,
+        in_maintenance=withdrawal.in_maintenance,
         stop_in_flight=appium_node_stop_in_flight(device),
         ready=ready,
     )
