@@ -83,6 +83,24 @@ async def test_status_push_never_writes_status(client: AsyncClient, db_session: 
     assert offline_host.last_heartbeat is not None
 
 
+async def test_status_push_rejects_stale_orchestration_contract(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-stale-contract")
+    body = {"host_id": str(host.id), "capabilities": {"orchestration_contract_version": 5}}
+    resp = await client.post("/agent/hosts/status", json=body)
+    assert resp.status_code == 426
+    await db_session.refresh(host)
+    # No liveness stamp -> the host goes stale -> reads offline within the recency window.
+    assert host.last_heartbeat is None
+
+
+async def test_status_push_without_capabilities_still_accepted(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-no-caps")
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(host.id)})
+    assert resp.status_code == 204
+    await db_session.refresh(host)
+    assert host.last_heartbeat is not None
+
+
 async def test_status_push_never_flips_pending_host(client: AsyncClient, db_session: AsyncSession) -> None:
     pending_host = await _make_host(db_session, status=HostStatus.pending, hostname="status-push-pending")
     resp = await client.post("/agent/hosts/status", json={"host_id": str(pending_host.id)})
