@@ -118,7 +118,7 @@ async def _build_and_start_app_services(
     register_events_gauge_refresher(bus)
     svc = SettingsService()
     pool = AgentHttpPool(agent_auth=build_agent_basic_auth(agent_settings))
-    breaker = AgentCircuitBreaker(publisher=bus, settings=svc, session_factory=session_factory)
+    breaker = AgentCircuitBreaker(publisher=bus, session_factory=session_factory)
 
     app_services = compose_app(
         session_factory=session_factory,
@@ -136,10 +136,6 @@ async def _build_and_start_app_services(
     async with session_factory() as db:
         await svc.initialize(db)
 
-    pool.configure_limits(
-        max_keepalive=svc.get_int("agent.http_pool_max_keepalive"),
-        keepalive_expiry=svc.get_int("agent.http_pool_idle_seconds"),
-    )
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
     await bus.start()
@@ -239,6 +235,15 @@ async def _scheduler_stall_watchdog() -> None:
             os._exit(70)
 
 
+def _assert_settings_consistent(svc: SettingsService) -> None:
+    """Refuse to start scheduler loops on contradictory settings rows."""
+    violations = svc.cross_invariant_violations()
+    if violations:
+        raise RuntimeError(
+            "contradictory settings; fix via the settings API before restarting the scheduler: " + "; ".join(violations)
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
@@ -262,6 +267,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             registered_signals.append(signum)
 
     if process_settings.run_background_loops:
+        _assert_settings_consistent(svc)
         if await control_plane_leader.try_acquire(engine):
             tasks = _build_leader_loop_tasks(app_services)
             tasks.append(asyncio.create_task(_scheduler_stall_watchdog(), name="scheduler_stall_watchdog"))

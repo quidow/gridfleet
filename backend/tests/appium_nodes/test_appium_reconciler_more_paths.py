@@ -91,9 +91,7 @@ async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pyt
 
     assert await svc.converge_device_now(device_id, db=db) is node
 
-    poke.assert_awaited_once_with(
-        host.ip, host.agent_port, settings=settings, pool=None, circuit_breaker=circuit_breaker
-    )
+    poke.assert_awaited_once_with(host.ip, host.agent_port, pool=None, circuit_breaker=circuit_breaker)
     converge.assert_not_awaited()
     db.refresh.assert_awaited_once_with(node)
 

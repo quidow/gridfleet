@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.core.protocols import SettingsReader
     from app.hosts.models import Host
     from app.packs.protocols import DeviceIdentityGuard, DeviceSerializer
 
@@ -27,7 +26,6 @@ class PackDevicesFetcher(Protocol):
         host: str,
         agent_port: int,
         *,
-        settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         pool: AgentHttpPool | None = None,
     ) -> dict[str, object]: ...
@@ -41,14 +39,12 @@ class PackDiscoveryService:
         self,
         *,
         agent_get_pack_devices: PackDevicesFetcher,
-        settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         serializer: DeviceSerializer,
         identity_guard: DeviceIdentityGuard,
         pool: AgentHttpPool | None = None,
     ) -> None:
         self._agent_get_pack_devices = agent_get_pack_devices
-        self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._serializer = serializer
         self._identity_guard = identity_guard
@@ -56,7 +52,7 @@ class PackDiscoveryService:
 
     async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]:
         raw = await self._agent_get_pack_devices(
-            host.ip, host.agent_port, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+            host.ip, host.agent_port, circuit_breaker=self._circuit_breaker, pool=self._pool
         )
         candidates_raw = cast("list[dict[str, Any]]", raw.get("candidates", []))
         label_map = await platform_label_service.load_platform_label_map(
@@ -113,7 +109,7 @@ class PackDiscoveryService:
 
     async def discover_devices(self, session: AsyncSession, host: Host) -> DiscoveryResult:
         raw = await self._agent_get_pack_devices(
-            host.ip, host.agent_port, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+            host.ip, host.agent_port, circuit_breaker=self._circuit_breaker, pool=self._pool
         )
         candidates_raw = cast("list[dict[str, Any]]", raw.get("candidates", []))
         label_map = await platform_label_service.load_platform_label_map(

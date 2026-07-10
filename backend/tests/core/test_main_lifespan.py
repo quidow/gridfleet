@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from fastapi.responses import JSONResponse, Response
 
 from app import composition, main
@@ -72,11 +73,27 @@ def test_main_imports_in_fresh_interpreter() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_scheduler_refuses_contradictory_settings() -> None:
+    from app.main import _assert_settings_consistent
+    from app.settings.registry import SETTINGS_REGISTRY, resolve_default
+    from app.settings.service import SettingsService
+
+    svc = SettingsService()
+    for key, definition in SETTINGS_REGISTRY.items():
+        svc._cache[key] = resolve_default(definition)
+    svc._cache["grid.session_idle_timeout_sec"] = 7200
+    svc._cache["grid.session_idle_timeout_ceiling_sec"] = 3600
+    with pytest.raises(RuntimeError, match=r"grid\.session_idle_timeout_ceiling_sec"):
+        _assert_settings_consistent(svc)
+
+
 def _setting_value(key: str) -> int:
     values = {
         "appium.startup_timeout_sec": 30,
-        "agent.http_pool_max_keepalive": 10,
-        "agent.http_pool_idle_seconds": 60,
+        "general.host_offline_after_sec": 45,
+        "grid.session_idle_timeout_sec": 1800,
+        "grid.session_idle_timeout_ceiling_sec": 7200,
+        "grid.session_first_command_grace_sec": 180,
     }
     return values[key]
 
@@ -100,7 +117,6 @@ def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
 
     _cb = importlib.import_module("app.agent_comm.circuit_breaker").AgentCircuitBreaker(
         publisher=test_event_bus,
-        settings=_ss,
     )
 
     def _reuse_cb(**_: object) -> object:

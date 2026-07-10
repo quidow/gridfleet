@@ -101,7 +101,6 @@ async def test_agent_health_returns_none_on_invalid_json() -> None:
         5100,
         http_client_factory=_strict_client_factory(client),
         timeout=5,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     assert result is None
@@ -120,7 +119,6 @@ async def test_appium_status_returns_none_on_invalid_json() -> None:
         4723,
         http_client_factory=_strict_client_factory(client),
         timeout=5,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     assert result is None
@@ -149,7 +147,6 @@ async def test_pack_device_health_raises_on_invalid_json() -> None:
             pack_id="appium-uiautomator2",
             platform_id="android",
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -169,7 +166,6 @@ async def test_appium_logs_raises_on_invalid_json() -> None:
             lines=50,
             http_client_factory=_strict_client_factory(client),
             timeout=10,
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -187,7 +183,6 @@ async def test_get_tool_status_raises_on_invalid_json() -> None:
             5100,
             http_client_factory=_strict_client_factory(client),
             timeout=15,
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -204,7 +199,6 @@ async def test_get_pack_devices_raises_on_invalid_json() -> None:
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -223,7 +217,6 @@ async def test_get_pack_devices_preserves_empty_agent_payload() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     # {} from the agent must stay {} — NOT {"candidates": None}
@@ -250,7 +243,6 @@ async def test_agent_health_preserves_wire_shape() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     assert result is not None
@@ -272,7 +264,6 @@ async def test_pack_device_health_sends_identity_value_param() -> None:
         platform_id="roku_network",
         identity_value="SER123",
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     [(_, call)] = client.get_calls
@@ -293,7 +284,6 @@ async def test_pack_device_health_omits_identity_value_when_absent() -> None:
         pack_id="roku",
         platform_id="roku_network",
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     [(_, call)] = client.get_calls

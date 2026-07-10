@@ -50,7 +50,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 
 | Method | Path | Caller (backend) | Purpose | Ack semantics |
 | --- | --- | --- | --- | --- |
-| GET | `/agent/health` | `host_sweep_loop` (cadence-gated reachability probe, `general.partition_probe_interval_sec`) | partition diagnostic + installer drain gate (local); metrics only, feeds no host-liveness or convergence state | 200 → ok; non-200 → `None`, logged as `agent_partition_suspected` |
+| GET | `/agent/health` | `host_sweep_loop` (cadence-gated reachability probe, 60 s plumbing cadence) | partition diagnostic + installer drain gate (local); metrics only, feeds no host-liveness or convergence state | 200 → ok; non-200 → `None`, logged as `agent_partition_suspected` |
 | GET | `/agent/host/telemetry` | `host_sweep` host-resource-telemetry stage | CPU/memory/disk numbers | 200 → snapshot; non-200 → `None` |
 | GET | `/agent/pack/devices` | `host_sweep` connectivity stage, intake/discovery | currently-visible devices per pack | 2xx required (raises on non-2xx) |
 | GET | `/agent/pack/devices/{ct}/properties` | `host_sweep` property-refresh stage | per-device props (OS version, model, etc.) | 200 → dict, 404 → `None`, other → raise |
@@ -258,13 +258,13 @@ When a backend loop initiates a request with no inbound request id bound in stru
 
 Backend → agent calls reuse `httpx.AsyncClient` instances pooled by `(host_ip, agent_port)` via `app.agent_comm.http_pool.AgentHttpPool`. A pooled client lives for the lifetime of the backend process; on lifespan shutdown the pool drains via `aclose()`.
 
-The pool is opt-in via two guards: `agent.http_pool_enabled` (default `true`) **and** the caller using the default `httpx.AsyncClient` factory. Tests that inject a fake `http_client_factory` always go through the legacy per-call path. This is by design: the explicit-factory seam is used by unit tests and special-purpose call sites, and pooling must not surprise them.
+The pool is used whenever a pool is injected and the default `httpx.AsyncClient` factory is selected. Tests that inject a fake factory use the fresh-client path.
 
-`httpx.Limits(max_keepalive_connections=N, keepalive_expiry=S)` is read once at startup via `AgentHttpPool.configure_limits` and applied to every client the pool creates from then on. `agent.http_pool_max_keepalive` controls N (default 10); `agent.http_pool_idle_seconds` controls S in seconds (default 60). Retuning either setting requires a backend process restart; there is no runtime client-replacement path.
+`httpx.Limits(max_keepalive_connections=10, keepalive_expiry=60.0)` are fixed plumbing constants in `AgentHttpPool` and applied to every client the pool creates.
 
 Auth is not part of the pool key because Basic auth is applied per request, not bound to the pooled `httpx.AsyncClient`. Credential changes are process-env changes; restart the backend process after changing `GRIDFLEET_AGENT_AUTH_*`.
 
-Operational note: pooled clients do not refresh DNS until they are closed. If a host's IP changes mid-flight (lab reorg), restart the backend process. Toggling `agent.http_pool_enabled` off only routes new calls through the legacy path; existing pooled clients stay open and resume serving if the toggle is flipped back on. A process restart is the drain for both DNS/IP changes and pool tuning changes.
+Operational note: pooled clients do not refresh DNS until they are closed. If a host's IP changes mid-flight (lab reorg), restart the backend process.
 
 ## Versioning
 

@@ -30,7 +30,7 @@ def test_compose_app_returns_app_services(mock_session_factory: MagicMock) -> No
         bus=EventBus(),
         settings_svc=settings,
         http_pool=AgentHttpPool(),
-        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock(), settings=settings),
+        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock()),
     )
     assert isinstance(services, AppServices)
     assert services.events is not None
@@ -51,7 +51,7 @@ def test_app_services_immutable(mock_session_factory: MagicMock) -> None:
         bus=EventBus(),
         settings_svc=settings,
         http_pool=AgentHttpPool(),
-        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock(), settings=settings),
+        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock()),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         services.events = None  # type: ignore[misc]

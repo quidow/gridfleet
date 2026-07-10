@@ -601,7 +601,6 @@ class ReconcilerService:
             await agent_nodes_refresh(
                 host.ip,
                 host.agent_port,
-                settings=self._settings,
                 pool=self._pool,
                 circuit_breaker=self._circuit_breaker,
             )

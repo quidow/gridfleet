@@ -335,7 +335,6 @@ class VerificationPreparationService:
                     if key not in {"device_config", "replace_device_config", "host_id"}
                 },
                 http_client_factory=http_client_factory,
-                settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,
             )
@@ -370,7 +369,6 @@ class VerificationPreparationService:
                 platform_id=payload.get("platform_id", ""),
                 action=action,
                 http_client_factory=http_client_factory,
-                settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,
             )

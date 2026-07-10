@@ -49,7 +49,7 @@ async def test_four_slow_hosts_run_in_parallel(
     now the cadence-gated network-partition probe."""
     from app.appium_nodes.services.heartbeat import HeartbeatService
 
-    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
+    async def fake_ping(ip: str, port: int, **_extra: object) -> HeartbeatPingResult:
         await asyncio.sleep(0.5)
         return _slow_timeout()
 
@@ -80,7 +80,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
 
     from app.appium_nodes.services.heartbeat import HeartbeatService
 
-    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
+    async def fake_ping(ip: str, port: int, **_extra: object) -> HeartbeatPingResult:
         if ip == "1.1.1.1":
             await asyncio.sleep(0.5)
             return _slow_timeout()

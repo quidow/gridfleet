@@ -109,7 +109,7 @@ if TYPE_CHECKING:
 
 settings_service = SettingsService()
 test_http_pool = AgentHttpPool()
-test_circuit_breaker = AgentCircuitBreaker(publisher=test_event_bus, settings=settings_service)
+test_circuit_breaker = AgentCircuitBreaker(publisher=test_event_bus)
 
 
 def _test_database_url(base_database_url: str, worker_id: str | None = None) -> str:
@@ -299,14 +299,6 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
         settings_service._defaults[key] = default_value
         settings_service._cache[key] = default_value
     settings_service._cache["agent.recommended_version"] = "0.3.0"
-    # Ensure circuit-breaker settings are always present even without a DB session.
-    for key in (
-        "agent.circuit_breaker_failure_threshold",
-        "agent.circuit_breaker_cooldown_seconds",
-    ):
-        if key not in settings_service._cache:
-            defn = SETTINGS_REGISTRY[key]
-            settings_service._cache[key] = resolve_default(defn)
     yield session_factory
     await settings_service.shutdown()
 
@@ -610,7 +602,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             lifecycle=lifecycle,
             discovery=PackDiscoveryService(
                 agent_get_pack_devices=agent_operations.get_pack_devices,
-                settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 serializer=DevicePresenterService(settings=settings_service),
                 identity_guard=DeviceIdentityConflictService(),

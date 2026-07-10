@@ -144,7 +144,6 @@ class VerificationExecutionService:
                 headless=headless,
                 http_client_factory=http_client_factory,
                 timeout=_device_health_timeout(device, settings=self._agent.settings),
-                settings=self._agent.settings,
                 circuit_breaker=self._agent.circuit_breaker,
                 pool=self._agent.pool,
             )

@@ -17,7 +17,7 @@ column.
    `maintenance_reason` in `lifecycle_policy_state` — and reconcile inline only
    when the criterion below holds. Anything that skips the inline reconcile is
    re-derived by the reconciler's full scan, which runs every
-   `general.intent_reconcile_interval_sec` tick as the backstop.
+   reconciler tick (5 s plumbing constant) as the backstop.
 2. **Reconciler tick** calls `apply_derived_state` in
    `app/devices/services/state.py`, which:
    - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
@@ -42,7 +42,7 @@ call-site scan and a table-driven attribute-assignment scan.
 
 ### When to reconcile inline (criterion)
 
-The full scan re-derives every device every `general.intent_reconcile_interval_sec`
+The full scan re-derives every device every reconciler tick (5 s plumbing constant)
 tick (default 5 s), so an inline `reconcile_now` buys at most one tick of
 freshness. Add one only when at least one of these holds — otherwise write the
 fact, commit, and rely on the scan:

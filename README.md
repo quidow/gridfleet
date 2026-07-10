@@ -55,6 +55,8 @@ cd docker
 docker compose up --build -d
 ```
 
+Local development defaults new hosts to `pending`; enable `agent.auto_accept_hosts` once in Settings → Agent if automatic enrollment is desired.
+
 Local endpoints:
 
 - Dashboard: `http://localhost:3000`

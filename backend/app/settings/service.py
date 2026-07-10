@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import delete, select
 
 from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names
+from app.settings.invariants import cross_invariant_errors
 from app.settings.models import Setting
 
 if TYPE_CHECKING:
@@ -30,6 +31,8 @@ def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any], *, publis
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from app.core.type_defs import SettingValue
     from app.settings.registry import SettingDefinition
 
@@ -240,6 +243,9 @@ class SettingsService:
         if error:
             raise ValueError(error)
         normalized_value = self._normalize_value(key, value)
+        cross = self._cross_errors_with({key: normalized_value})
+        if cross:
+            raise ValueError("; ".join(cross))
 
         defn = SETTINGS_REGISTRY[key]
         await self._cancel_refresh_task()
@@ -274,6 +280,10 @@ class SettingsService:
             if error:
                 raise ValueError(error)
 
+        cross = self._cross_errors_with(updates)
+        if cross:
+            raise ValueError("; ".join(cross))
+
         await self._cancel_refresh_task()
 
         # Persist all
@@ -304,6 +314,10 @@ class SettingsService:
         if key not in SETTINGS_REGISTRY:
             raise KeyError(f"Unknown setting: {key}")
 
+        cross = self._cross_errors_with({key: self._defaults[key]})
+        if cross:
+            raise ValueError("; ".join(cross))
+
         await self._cancel_refresh_task()
         await db.execute(delete(Setting).where(Setting.key == key))
         _queue_settings_changed(db, {"key": key, "reset": True}, publisher=publisher)
@@ -312,6 +326,16 @@ class SettingsService:
         self._overrides.pop(key, None)
         self._cache[key] = self._defaults[key]
         return self.get_setting_response(key)
+
+    def _cross_errors_with(self, overlay: Mapping[str, SettingValue]) -> list[str]:
+        def _get(key: str) -> SettingValue:
+            return overlay[key] if key in overlay else self._cache[key]
+
+        return cross_invariant_errors(_get)
+
+    def cross_invariant_violations(self) -> list[str]:
+        """Check the current cache for scheduler boot contradictions."""
+        return cross_invariant_errors(self.get)
 
     async def reset_all(self, db: AsyncSession, *, publisher: EventPublisher) -> None:
         """Reset all settings to defaults."""

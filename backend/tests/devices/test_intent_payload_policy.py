@@ -172,7 +172,7 @@ async def test_cooldown_intent_payload_shape(
     await db_session.commit()
 
     _test_settings = FakeSettingsReader({})
-    _test_cb = AgentCircuitBreaker(publisher=event_bus, settings=_test_settings)
+    _test_cb = AgentCircuitBreaker(publisher=event_bus)
     _failure_svc = RunFailureService(
         publisher=event_bus,
         settings=_test_settings,

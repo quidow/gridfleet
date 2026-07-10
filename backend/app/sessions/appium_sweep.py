@@ -25,6 +25,9 @@ logger = get_logger(__name__)
 LOOP_NAME = "appium_sweep"
 VIABILITY_PASS_MIN_INTERVAL_SEC = 60.0
 
+# Plumbing constant (P5): the observation-sweep ceiling; the doorbell wakes it early.
+SESSION_POLL_INTERVAL_SEC = 30.0
+
 
 class AppiumSweepLoop(BackgroundLoop):
     """Run session observation and scheduled viability passes in order."""
@@ -44,7 +47,7 @@ class AppiumSweepLoop(BackgroundLoop):
         register_session_sync_wake_hook(self._services.sync.wake)
 
     def _interval(self) -> float:
-        return self._services.settings.get_float("grid.session_poll_interval_sec")
+        return SESSION_POLL_INTERVAL_SEC
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         try:

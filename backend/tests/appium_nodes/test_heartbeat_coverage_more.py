@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.appium_nodes.services import heartbeat
-from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome
+from app.appium_nodes.services.heartbeat_outcomes import HeartbeatOutcome
 from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
@@ -16,13 +16,9 @@ from tests.helpers import test_event_bus as event_bus
 
 
 async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings_unavailable = MagicMock()
-    settings_unavailable.get = MagicMock(side_effect=RuntimeError("settings unavailable"))
-    assert heartbeat._heartbeat_client_mode(settings=settings_unavailable) is ClientMode.fresh
-
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(heartbeat, "agent_health", AsyncMock(side_effect=AgentCallError("1.2.3.4", "boom")))
-        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        result = await heartbeat._ping_agent("1.2.3.4", 5100, circuit_breaker=Mock())
     assert result.outcome is HeartbeatOutcome.unexpected_error
     assert result.error_category == "AgentCallError"
 
@@ -32,7 +28,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             "agent_health",
             AsyncMock(side_effect=AgentUnreachableError("1.2.3.4", "dns", transport_outcome="dns_error")),
         )
-        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        result = await heartbeat._ping_agent("1.2.3.4", 5100, circuit_breaker=Mock())
     assert result.outcome is HeartbeatOutcome.dns_error
     assert result.error_category == "AgentUnreachableError"
 
@@ -116,7 +112,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         "app.appium_nodes.services.host_sweep.run_host_sweep_once", AsyncMock(side_effect=RuntimeError("boom"))
     )
     services = AppiumNodeServices(
-        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
+        settings=FakeSettingsReader({}),
         reconciler=Mock(),
         reconciler_agent=Mock(),
         node_health=Mock(),

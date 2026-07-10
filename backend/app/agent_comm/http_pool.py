@@ -5,8 +5,8 @@ key is (host_ip, agent_port). Auth is not part of the cache key (one pool
 entry serves all credentials for a host); the BasicAuth carried by the pool
 is read by callers per request.
 
-Connection limits (max_keepalive_connections, keepalive_expiry) are read once
-at startup via configure_limits(). Retuning them requires a process restart.
+Connection limits are fixed plumbing constants (POOL_MAX_KEEPALIVE,
+POOL_KEEPALIVE_EXPIRY_SEC).
 """
 
 from __future__ import annotations
@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Plumbing constants (P5): connection-pool tuning, not operator policy.
+POOL_MAX_KEEPALIVE = 10
+POOL_KEEPALIVE_EXPIRY_SEC = 60.0
+
 
 class PoolClosedError(RuntimeError):
     """Raised when get_client is called after the pool has been closed."""
@@ -34,18 +38,14 @@ class AgentHttpPool:
         self._lock = asyncio.Lock()
         self._closed: bool = False
         self._auth = agent_auth
-        self._limits = httpx.Limits(max_keepalive_connections=10, keepalive_expiry=60.0)
+        self._limits = httpx.Limits(
+            max_keepalive_connections=POOL_MAX_KEEPALIVE,
+            keepalive_expiry=POOL_KEEPALIVE_EXPIRY_SEC,
+        )
 
     @property
     def auth(self) -> httpx.BasicAuth | None:
         return self._auth
-
-    def configure_limits(self, *, max_keepalive: int, keepalive_expiry: float) -> None:
-        """Set connection limits for clients created from now on. Read once at startup."""
-        self._limits = httpx.Limits(
-            max_keepalive_connections=max_keepalive,
-            keepalive_expiry=keepalive_expiry,
-        )
 
     def size(self) -> int:
         return len(self._entries)

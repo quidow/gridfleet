@@ -73,9 +73,7 @@ async def test_trigger_doctor_proxies_to_agent_and_persists(client: AsyncClient,
         resp = await client.post(f"/api/hosts/{host.id}/driver-packs/appium-uiautomator2/doctor")
 
     assert resp.status_code == 200
-    mock_doctor.assert_awaited_once_with(
-        host.ip, host.agent_port, "appium-uiautomator2", settings=ANY, circuit_breaker=ANY, pool=ANY
-    )
+    mock_doctor.assert_awaited_once_with(host.ip, host.agent_port, "appium-uiautomator2", circuit_breaker=ANY, pool=ANY)
 
     body = resp.json()
     assert len(body) == 2

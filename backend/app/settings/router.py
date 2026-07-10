@@ -71,4 +71,7 @@ async def reset_setting(
     events: EventServicesDep,
 ) -> dict[str, Any]:
     with convert_not_found():
-        return await settings_services.service.reset(db, key, publisher=events.publisher)
+        try:
+            return await settings_services.service.reset(db, key, publisher=events.publisher)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e

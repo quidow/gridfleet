@@ -57,30 +57,20 @@ _TRANSPORT_TO_OUTCOME = {
 }
 
 
-def _heartbeat_client_mode(*, settings: SettingsReader) -> ClientMode:
-    try:
-        pool_enabled = bool(settings.get("agent.http_pool_enabled"))
-        return ClientMode.pooled if pool_enabled else ClientMode.fresh
-    except KeyError, RuntimeError:
-        return ClientMode.fresh
-
-
 async def _ping_agent(
     ip: str,
     port: int,
     *,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> HeartbeatPingResult:
     started = time.monotonic()
-    client_mode = _heartbeat_client_mode(settings=settings)
+    client_mode = ClientMode.pooled if pool is not None else ClientMode.fresh
     try:
         payload = await agent_health(
             ip,
             port,
             http_client_factory=httpx.AsyncClient,
-            settings=settings,
             pool=pool,
             circuit_breaker=circuit_breaker,
         )
@@ -620,9 +610,7 @@ class HeartbeatService:
     async def probe_host(self, *, host_id: str, host_ip: str, agent_port: int) -> HeartbeatPingResult:
         """Network-partition diagnostic: can the backend reach the agent it and
         the router must dial directly? No state ingestion, no DB writes."""
-        result = await _ping_agent(
-            host_ip, agent_port, settings=self._settings, pool=self._pool, circuit_breaker=self._circuit_breaker
-        )
+        result = await _ping_agent(host_ip, agent_port, pool=self._pool, circuit_breaker=self._circuit_breaker)
         _emit_heartbeat_log(
             host_id=host_id,
             host_ip=host_ip,

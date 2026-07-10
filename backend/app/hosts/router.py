@@ -299,7 +299,6 @@ async def trigger_driver_doctor(
         host.ip,
         host.agent_port,
         pack_id,
-        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )
@@ -365,7 +364,6 @@ async def get_host_tool_status(
     return await get_agent_tool_status(
         host.ip,
         host.agent_port,
-        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )

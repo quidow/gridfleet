@@ -143,7 +143,6 @@ async def _get_agent_devices(
             host.ip,
             host.agent_port,
             http_client_factory=httpx.AsyncClient,
-            settings=settings,
             circuit_breaker=circuit_breaker,
             pool=pool,
         )
@@ -203,7 +202,6 @@ async def _get_device_health(
             # address fails the probe instead of reporting false-healthy.
             identity_value=device.identity_value,
             http_client_factory=httpx.AsyncClient,
-            settings=settings,
             circuit_breaker=circuit_breaker,
             pool=pool,
         )
@@ -258,7 +256,6 @@ async def _fetch_lifecycle_state(
             platform_id=device.platform_id,
             action="state",
             http_client_factory=httpx.AsyncClient,
-            settings=settings,
             circuit_breaker=circuit_breaker,
             pool=pool,
         )
@@ -496,7 +493,6 @@ class ConnectivityService:
             result = await link_repair.dispatch_recommended_action(
                 device,
                 action,
-                settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,
                 extra_args=extra_args,

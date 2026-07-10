@@ -41,7 +41,7 @@ If `last_heartbeat` is stale and the push counter isn't advancing for this host,
 
 ## 4. Check manager-to-agent reachability (reverse direction — partition-probe diagnostic only)
 
-This is the same check the backend's own `general.partition_probe_interval_sec`-gated `/agent/health` probe performs. It no longer drives host liveness — it is a network-partition diagnostic and the installer's self-update drain gate. A failure here explains *why* pushes might not be reaching the backend (if the network is down both ways), but a success here does not clear the agent — go back to step 3.
+This is the same check the backend's own 60-second plumbing-cadence `/agent/health` probe performs. It no longer drives host liveness — it is a network-partition diagnostic and the installer's self-update drain gate. A failure here explains *why* pushes might not be reaching the backend (if the network is down both ways), but a success here does not clear the agent — go back to step 3.
 
 ```bash
 cd docker

@@ -86,7 +86,6 @@ from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
 from app.sessions import protocols as session_viability_protocols
-from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.settings.service_config import SettingsConfigService
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
@@ -474,9 +473,9 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
 
     class DummyClient:
         async def get_pack_devices(
-            self, _host: str, _port: int, *, settings: object, circuit_breaker: object, pool: object = None
+            self, _host: str, _port: int, *, circuit_breaker: object, pool: object = None
         ) -> dict[str, object]:
-            del settings, circuit_breaker, pool
+            del circuit_breaker, pool
             return {"devices": []}
 
     discovery_db = AsyncMock()
@@ -486,7 +485,6 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
     result = await _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
-        settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         serializer=_DevicePresenterService(settings=FakeSettingsReader()),
         identity_guard=DeviceIdentityConflictService(),
@@ -576,20 +574,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         identity_value="10.0.0.1:5555",
         connection_target="10.0.0.1:5555",
         ip_address=None,
-    )
-
-    assert (
-        settings_registry._parse_env_value(
-            settings_registry.SettingDefinition(
-                key="x",
-                category="general",
-                setting_type="float",
-                default=1.0,
-                description="x",
-            ),
-            "1.5",
-        )
-        == 1.5
     )
 
     class TestDataDb:

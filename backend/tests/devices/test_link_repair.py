@@ -40,7 +40,7 @@ async def test_dispatch_passes_only_driver_agnostic_args(monkeypatch: pytest.Mon
         platform_id="firetv_real",
     )
 
-    await dispatch_recommended_action(device, "reconnect", settings=AsyncMock(), circuit_breaker=AsyncMock(), pool=None)
+    await dispatch_recommended_action(device, "reconnect", circuit_breaker=AsyncMock(), pool=None)
 
     assert captured["args"] == {"ip_address": "10.0.0.20"}
     assert "port" not in captured["args"]  # type: ignore[operator]
@@ -65,7 +65,6 @@ async def test_dispatch_merges_extra_args(monkeypatch: pytest.MonkeyPatch) -> No
     await dispatch_recommended_action(
         device,
         "release_forwarded_ports",
-        settings=AsyncMock(),
         circuit_breaker=AsyncMock(),
         extra_args={"claimed_ports": {"appium:systemPort": 8200}, "has_live_session": False},
     )

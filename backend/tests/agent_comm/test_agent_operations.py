@@ -122,7 +122,6 @@ async def test_agent_health_get_request_omits_json_body() -> None:
         5100,
         http_client_factory=_strict_client_factory(client),
         timeout=5,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -149,7 +148,6 @@ async def test_agent_health_raises_response_error_on_http_500() -> None:
             5100,
             http_client_factory=_strict_client_factory(client),
             timeout=5,
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -171,7 +169,6 @@ async def test_agent_nodes_refresh_posts_with_no_body() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -197,7 +194,6 @@ async def test_agent_nodes_refresh_raises_response_error_on_http_500() -> None:
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -221,7 +217,6 @@ async def test_pack_device_health_get_request() -> None:
         platform_id="android_mobile",
         http_client_factory=_strict_client_factory(client),
         timeout=10,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -262,7 +257,6 @@ async def test_pack_device_health_forwards_ip_ping_params() -> None:
         ip_ping_count=2,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -305,7 +299,6 @@ async def test_pack_device_health_forwards_headless_when_explicitly_requested() 
         headless=False,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -344,7 +337,6 @@ async def test_appium_logs_get_request_omits_json_body() -> None:
         lines=200,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -379,7 +371,6 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         5100,
         http_client_factory=_strict_client_factory(client),
         timeout=15,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
 
@@ -406,7 +397,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr("app.agent_comm.circuit_breaker.monotonic", fake_monotonic)
         monkeypatch.setattr("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={}))
-        breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=SETTINGS, session_factory=AsyncMock())
+        breaker = AgentCircuitBreaker(publisher=AsyncMock(), session_factory=AsyncMock(), failure_threshold=threshold)
         monkeypatch.setattr(breaker, "failure_threshold", lambda: threshold)
         monkeypatch.setattr(breaker, "cooldown_seconds", lambda: 30.0)
 
@@ -417,7 +408,6 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                     5100,
                     http_client_factory=_strict_client_factory(client),
                     timeout=5,
-                    settings=SETTINGS,
                     circuit_breaker=breaker,
                 )
 
@@ -429,7 +419,6 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                 5100,
                 http_client_factory=_strict_client_factory(client),
                 timeout=5,
-                settings=SETTINGS,
                 circuit_breaker=breaker,
             )
 
@@ -453,7 +442,6 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
             "10.0.0.1",
             5100,
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=_noop_breaker(),
         )
 
@@ -539,7 +527,6 @@ async def test_send_request_supplies_basic_auth_when_configured() -> None:
         "host.test",
         agent_port=5100,
         http_client_factory=factory,
-        settings=SETTINGS,
         pool=pool,
         circuit_breaker=_noop_breaker(),
     )
@@ -553,7 +540,6 @@ async def test_send_request_omits_auth_when_unset() -> None:
         "host.test",
         agent_port=5100,
         http_client_factory=factory,
-        settings=SETTINGS,
         circuit_breaker=_noop_breaker(),
     )
     assert captured == [None]

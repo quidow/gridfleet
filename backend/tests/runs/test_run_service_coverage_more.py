@@ -49,7 +49,7 @@ RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
 RUN_LOOKUP_MODULE = "app.runs.service_reservation"
 
 _settings = FakeSettingsReader({})
-_circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
+_circuit_breaker = AgentCircuitBreaker(publisher=event_bus)
 _query_svc = RunQueryService()
 _release_svc = RunReleaseService(
     publisher=event_bus,

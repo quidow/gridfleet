@@ -1,27 +1,24 @@
 # Settings Reference
 
-This page documents the shipped settings registry. Each setting has a persisted key, category, default, validation metadata, and operational meaning. If an env var is listed, the registry uses that env var as the device default fallback.
+This page documents the shipped settings registry. Each setting has a persisted key, category, default, validation metadata, and operational meaning. Registry defaults are code constants; environment variables do not seed registry values.
 
 ## Categories
 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
-| `general` | General | 31 |
-| `grid` | Appium & Grid | 12 |
+| `general` | General | 16 |
+| `grid` | Appium & Grid | 10 |
 | `notifications` | Notifications | 3 |
-| `agent` | Agent | 10 |
-| `reservations` | Reservations | 4 |
-| `retention` | Data Retention | 10 |
-| `device_checks` | Device Checks | 3 |
+| `agent` | Agent | 4 |
+| `reservations` | Reservations | 3 |
+| `retention` | Data Retention | 9 |
+| `device_checks` | Device Checks | 5 |
 
 ## Registry
 
 | Key | Category | Type | Default | Env var | Validation | Operational meaning |
 | --- | --- | --- | --- | --- | --- | --- |
-| `general.heartbeat_interval_sec` | `general` | `int` | `15` | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `5..300` | Host-sweep cadence: how often the latest pushed agent status is evaluated, feeding liveness and Appium-node convergence |
 | `general.host_offline_after_sec` | `general` | `int` | `45` | none | `15..3600` | Seconds without a status push before a host is marked offline |
-| `general.partition_probe_interval_sec` | `general` | `int` | `60` | none | `15..3600` | How often the manager verifies it can reach each online agent (network-partition diagnostic; feeds no liveness state) |
-| `general.intent_reconcile_interval_sec` | `general` | `int` | `5` | none | `1..300` | Seconds between intent reconciler full-device scans |
 | `general.node_max_failures` | `general` | `int` | `3` | `GRIDFLEET_NODE_MAX_FAILURES` | `1..20` | Consecutive failed node checks before restart or suppression logic runs |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated out of the run; the escalated device is placed into maintenance or left available per `general.run_failure_escalates_to_maintenance`; `0` disables escalation |
@@ -40,7 +37,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `device_checks.ip_ping.consecutive_fail_threshold` | `device_checks` | `int` | `3` | none | `1..50` | Consecutive ICMP-ping misses before an opted-in device is marked unhealthy; set to 1 for strict, no-hysteresis behaviour |
 | `device_checks.ip_ping.timeout_sec` | `device_checks` | `float` | `2.0` | none | `0.5..30.0` | Per-attempt ICMP-ping timeout used by the adapter |
 | `device_checks.ip_ping.count_per_cycle` | `device_checks` | `int` | `1` | none | `1..10` | Number of ICMP echo requests sent per cycle inside the adapter probe |
-| `grid.session_poll_interval_sec` | `grid` | `int` | `30` | none | `1..300` | Interval for the direct-to-Appium session observation sweep that reconciles `Session` rows against live Appium state |
 | `grid.queue_timeout_sec` | `grid` | `int` | `300` | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `5..3600` | How long a queued new-session request may wait for a device before failing |
 | `grid.session_idle_timeout_sec` | `grid` | `int` | `1800` | `GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC` | `60..86400` | How long a running session may go without reported client activity before the observation sweep terminates it. Replaces the relay's idle timeout (driver enforcement of `newCommandTimeout` is config-dependent), so an abandoned client cannot pin its device busy forever. A client `appium:newCommandTimeout` above this value extends the window per session, up to `grid.session_idle_timeout_ceiling_sec` |
 | `grid.session_idle_timeout_ceiling_sec` | `grid` | `int` | `7200` | `GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_CEILING_SEC` | `60..86400` | Hard ceiling on how far a client's `appium:newCommandTimeout` may extend the idle reap window. `newCommandTimeout=0` ("never idle-kill") clamps here, preserving the zombie-session guarantee. Clients can extend the idle window, never shorten it |
@@ -50,20 +46,14 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
 | `appium_reconciler.restart_window_sec` | `grid` | `int` | `120` | none | `30..600` | Wall-clock window within which a fresh `restart_requested_at` watermark projects a node as `restarting` (read-time bounding); past this window a still-unsatisfied watermark self-clears at read time — no sweep |
-| `appium_reconciler.host_parallelism` | `grid` | `int` | `8` | none | `1..32` | Maximum number of hosts processed concurrently by the host sweep |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
 | `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hardware_health_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
 | `notifications.toast_auto_dismiss_sec` | `notifications` | `int` | `5` | none | `0..60` | Auto-dismiss delay for success toasts; `0` means manual dismissal |
 | `notifications.toast_severity_threshold` | `notifications` | `string` | `warning` | none | `info`, `warning`, `error` | Minimum toast severity shown in the UI |
 | `agent.min_version` | `agent` | `string` | `0.1.0` | `GRIDFLEET_MIN_AGENT_VERSION` | none | Minimum accepted agent version; empty disables the version check |
 | `agent.recommended_version` | `agent` | `string` | `""` | `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | none | Recommended `gridfleet-agent` version surfaced to agents and operators; empty disables recommendation messaging |
-| `agent.auto_accept_hosts` | `agent` | `bool` | `true` | `GRIDFLEET_HOST_AUTO_ACCEPT` | boolean | Whether self-registering hosts are automatically approved |
+| `agent.auto_accept_hosts` | `agent` | `bool` | `false` | none | boolean | Whether self-registering hosts are automatically approved; off by default |
 | `agent.default_port` | `agent` | `int` | `5100` | none | `1024..65535` | Default agent port for new hosts |
-| `agent.http_pool_enabled` | `agent` | `bool` | `true` | none | boolean | When true, pool one `httpx.AsyncClient` per (host, port) tuple for backend-to-agent calls. When false, every backend→agent call opens a fresh client — dev/debug only; do not disable in production. |
-| `agent.http_pool_max_keepalive` | `agent` | `int` | `10` | none | `1..100` | Max keepalive connections per pooled client |
-| `agent.http_pool_idle_seconds` | `agent` | `int` | `60` | none | `5..600` | Idle time (seconds) after which a pooled keepalive connection is closed |
-| `agent.circuit_breaker_failure_threshold` | `agent` | `int` | `5` | none | `1..50` | Consecutive backend-to-agent failures before the circuit opens |
-| `agent.circuit_breaker_cooldown_seconds` | `agent` | `int` | `30` | none | `5..600` | Seconds the circuit stays open before a probe is allowed |
 | `reservations.default_ttl_minutes` | `reservations` | `int` | `60` | none | `1..1440` | Default reservation TTL when callers omit it |
 | `reservations.max_ttl_minutes` | `reservations` | `int` | `180` | none | `1..1440` | Hard cap for reservation TTL |
 | `reservations.default_heartbeat_timeout_sec` | `reservations` | `int` | `120` | none | `30..600` | Default heartbeat timeout for runs |
@@ -78,5 +68,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `retention.jobs_days` | `retention` | `int` | `30` | none | `1..3650` | Delete completed or failed durable jobs older than N days |
 ## Notes
 
+- Registry defaults are code constants; env vars never seed them (removed 2026-07, WS-4.2).
 - Driver registry is an operator tool on the Settings screen, but it is not part of the persisted settings-key registry above.
 - `notifications.toast_events` is validated and normalized against the emitted event names documented in [events.md](events.md).

@@ -8,7 +8,6 @@ import pytest
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.http_pool import AgentHttpPool
-from tests.fakes import FakeSettingsReader
 
 _VALID_HEALTH_PAYLOAD: dict[str, object] = {
     "status": "ok",
@@ -55,7 +54,6 @@ async def test_backend_sends_basic_auth_when_configured() -> None:
         "agent.local",
         agent_port=5100,
         http_client_factory=factory,
-        settings=FakeSettingsReader(),
         pool=pool,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
@@ -74,7 +72,6 @@ async def test_backend_omits_authorization_when_unconfigured() -> None:
         "agent.local",
         agent_port=5100,
         http_client_factory=factory,
-        settings=FakeSettingsReader(),
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
