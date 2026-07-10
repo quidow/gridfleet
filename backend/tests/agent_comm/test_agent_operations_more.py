@@ -369,53 +369,6 @@ async def test_pack_device_health_includes_optional_probe_params() -> None:
     assert params["ip_ping_count"] == 3
 
 
-async def test_pack_device_telemetry_returns_none_for_404_and_passes_optional_params() -> None:
-    not_found = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/demo/telemetry",
-            status_code=404,
-            payload={"detail": "not found"},
-        )
-    )
-    assert (
-        await agent_operations.pack_device_telemetry(
-            "10.0.0.5",
-            5100,
-            "demo",
-            pack_id="pack",
-            platform_id="android",
-            device_type="real_device",
-            connection_type=None,
-            ip_address=None,
-            http_client_factory=_strict_client_factory(not_found),
-            settings=SETTINGS,
-            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-        )
-        is None
-    )
-
-    client = StrictAgentClient(
-        get_response=_response("GET", "http://10.0.0.5:5100/agent/pack/devices/demo/telemetry", payload={"ok": True})
-    )
-    assert await agent_operations.pack_device_telemetry(
-        "10.0.0.5",
-        5100,
-        "demo",
-        pack_id="pack",
-        platform_id="android",
-        device_type="real_device",
-        connection_type="usb",
-        ip_address="10.0.0.9",
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
-    ) == {"ok": True}
-    params = client.get_calls[0][1]["params"]
-    assert params["connection_type"] == "usb"
-    assert params["ip_address"] == "10.0.0.9"
-
-
 async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
     logs_client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/appium/4723/logs", payload=["bad"])

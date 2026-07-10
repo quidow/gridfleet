@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock
 
 import pytest
 
@@ -28,7 +27,7 @@ async def test_hardware_health_changed_queues_after_commit(
     _hw_settings = FakeSettingsReader(
         {"general.hardware_telemetry_consecutive_samples": 1, "general.hardware_temperature_critical_c": 40}
     )
-    _hw_svc = HardwareTelemetryService(publisher=event_bus, settings=_hw_settings, circuit_breaker=Mock())
+    _hw_svc = HardwareTelemetryService(publisher=event_bus, settings=_hw_settings)
 
     await _hw_svc.apply_telemetry_sample(
         db_session,
@@ -61,7 +60,7 @@ async def test_hardware_health_changed_dropped_on_rollback(
     _rollback_settings = FakeSettingsReader(
         {"general.hardware_telemetry_consecutive_samples": 1, "general.hardware_temperature_critical_c": 40}
     )
-    _rollback_svc = HardwareTelemetryService(publisher=event_bus, settings=_rollback_settings, circuit_breaker=Mock())
+    _rollback_svc = HardwareTelemetryService(publisher=event_bus, settings=_rollback_settings)
 
     await _rollback_svc.apply_telemetry_sample(
         db_session,

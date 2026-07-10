@@ -23,7 +23,7 @@ async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSess
         name="Pixel Healthy",
     )
 
-    svc = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    svc = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
     await svc.apply_telemetry_sample(
         db_session,
         device,
@@ -44,6 +44,41 @@ async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSess
     assert device.hardware_health_status == HardwareHealthStatus.healthy
 
 
+async def test_fold_applies_pushed_telemetry_maps_observed_at(db_session: AsyncSession) -> None:
+    host = await seed_host_named(db_session, "pixel-host-fold")
+    device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="pixel-fold",
+        connection_target="pixel-fold",
+        name="Pixel Fold",
+    )
+    await db_session.commit()
+
+    stamp = "2026-07-10T00:00:00+00:00"
+    section = {
+        "reported_at": stamp,
+        "devices": {
+            "pixel-fold": {
+                "support_status": "supported",
+                "battery_level_percent": 41,
+                "battery_temperature_c": 33.5,
+                "charging_state": "discharging",
+                "observed_at": stamp,
+            }
+        },
+    }
+    svc = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
+    await svc.fold_host_device_telemetry(db_session, host.id, section)
+
+    await db_session.refresh(device)
+    assert device.battery_level_percent == 41
+    assert device.charging_state == HardwareChargingState.discharging
+    # observed_at was mapped onto the persisted reported_at column.
+    assert device.hardware_telemetry_reported_at is not None
+    assert device.hardware_telemetry_reported_at.isoformat() == stamp
+
+
 async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
     db_session: AsyncSession,
 ) -> None:
@@ -62,8 +97,8 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
             "general.hardware_temperature_critical_c": 42,
         }
     )
-    svc = HardwareTelemetryService(publisher=Mock(), settings=_hw_settings, circuit_breaker=Mock())
-    svc_bus = HardwareTelemetryService(publisher=event_bus, settings=_hw_settings, circuit_breaker=Mock())
+    svc = HardwareTelemetryService(publisher=Mock(), settings=_hw_settings)
+    svc_bus = HardwareTelemetryService(publisher=event_bus, settings=_hw_settings)
 
     await svc.apply_telemetry_sample(
         db_session,

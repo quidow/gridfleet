@@ -148,32 +148,6 @@ async def test_get_pack_device_properties_returns_none_on_invalid_json() -> None
     assert result is None
 
 
-async def test_pack_device_telemetry_returns_none_on_invalid_json() -> None:
-    """pack_device_telemetry should return None when the body is not valid JSON."""
-    client = StrictAgentClient(
-        get_response=_text_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/dev-1/telemetry",
-            status_code=200,
-            text=_INVALID_JSON_TEXT,
-        ),
-    )
-    result = await agent_operations.pack_device_telemetry(
-        "10.0.0.5",
-        5100,
-        "dev-1",
-        pack_id="appium-uiautomator2",
-        platform_id="android",
-        device_type="real_device",
-        connection_type=None,
-        ip_address=None,
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-    assert result is None
-
-
 # ---------------------------------------------------------------------------
 # Raise-on-failure functions: JSONDecodeError -> AgentUnreachableError
 # ---------------------------------------------------------------------------

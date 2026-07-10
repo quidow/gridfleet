@@ -392,33 +392,6 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
     ]
 
 
-async def test_pack_device_telemetry_returns_none_for_404() -> None:
-    client = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/missing/telemetry",
-            status_code=404,
-            payload={"detail": "not found"},
-        )
-    )
-
-    payload = await agent_operations.pack_device_telemetry(
-        "10.0.0.5",
-        5100,
-        "missing",
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        device_type="real_device",
-        connection_type=None,
-        ip_address=None,
-        http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
-        circuit_breaker=_noop_breaker(),
-    )
-
-    assert payload is None
-
-
 async def test_agent_operations_short_circuit_after_repeated_transport_failures() -> None:
     current_time = 100.0
 

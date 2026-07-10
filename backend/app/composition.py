@@ -311,9 +311,7 @@ def compose_app(
         lifecycle=lifecycle_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
-            hardware_telemetry=HardwareTelemetryService(
-                publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
-            ),
+            hardware_telemetry=HardwareTelemetryService(publisher=bus, settings=settings_svc),
             resource_telemetry=HostResourceTelemetryService(settings=settings_svc),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
