@@ -76,6 +76,7 @@ async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pyt
     host = SimpleNamespace(
         id=row.host_id,
         status=HostStatus.online,
+        last_heartbeat=datetime.now(UTC),
         ip="10.0.0.9",
         agent_port=5100,
         capabilities=None,

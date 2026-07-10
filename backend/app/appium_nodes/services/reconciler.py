@@ -52,7 +52,8 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.hosts.models import Host, HostStatus
+from app.hosts.liveness import host_online, host_online_clause
+from app.hosts.models import Host
 from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
     is_reconciler_failure_residue,
@@ -113,8 +114,12 @@ def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
     )
 
 
-async def fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
-    stmt = _desired_select().join(Host, Host.id == Device.host_id).where(Host.status == HostStatus.online)
+async def fetch_desired_rows(db: AsyncSession, *, offline_after_sec: float) -> list[DesiredRow]:
+    stmt = (
+        _desired_select()
+        .join(Host, Host.id == Device.host_id)
+        .where(host_online_clause(offline_after_sec=offline_after_sec))
+    )
     rows = (await db.execute(stmt)).all()
     return [_row_to_desired(row) for row in rows]
 
@@ -585,7 +590,9 @@ class ReconcilerService:
             if row is None:
                 return None
             host = await read_db.get(Host, row.host_id)
-            if host is None or host.status != HostStatus.online:
+            if host is None or not host_online(
+                host, offline_after_sec=self._settings.get_float("general.host_offline_after_sec")
+            ):
                 return None
 
         # No agent start/stop/restart I/O here — just wake the agent's own
