@@ -24,6 +24,12 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
+    """True when a stage with its own interval is due on this sweep cycle."""
+    divisor = max(1, round(stage_interval / base_interval))
+    return cycle_index % divisor == 0
+
+
 class BackgroundLoop(ABC):
     """Periodic loop skeleton; subclasses fill in the cycle body and policy."""
 
