@@ -75,11 +75,3 @@ async def try_claim_value(db: AsyncSession, namespace: str, key: str, value: Con
     )
     result = await db.execute(returning_stmt)
     return result.scalar_one_or_none() is not None
-
-
-async def increment_counter(db: AsyncSession, namespace: str, key: str, delta: int = 1) -> int:
-    current = await get_value(db, namespace, key)
-    current_value = current if isinstance(current, int) and not isinstance(current, bool) else 0
-    next_value = current_value + delta
-    await set_value(db, namespace, key, next_value)
-    return next_value

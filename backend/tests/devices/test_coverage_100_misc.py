@@ -17,9 +17,6 @@ from app.appium_nodes.services import (
 from app.appium_nodes.services import (
     desired_state_writer,
 )
-from app.appium_nodes.services import (
-    reconciler_agent as appium_reconciler_agent,
-)
 from app.auth.config import AuthConfig
 from app.core.errors import PackDrainingError, _http_error_code
 from app.core.leader import advisory as control_plane_leader_module
@@ -515,10 +512,6 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
 
 
 async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    assert (
-        appium_reconciler_agent._short_session_factory(SimpleNamespace(bind=None))
-        is appium_reconciler_agent.async_session
-    )
     static_group = SimpleNamespace(
         id=uuid.uuid4(),
         name="static",

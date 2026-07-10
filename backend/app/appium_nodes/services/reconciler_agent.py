@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_comm import operations as agent_operations
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
@@ -34,7 +33,6 @@ from app.appium_nodes.services.common import (
     build_appium_driver_caps,
     node_state_severity,
 )
-from app.core.database import async_session
 from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
@@ -81,12 +79,6 @@ class NodeStartDetails:
     active_connection_target: str | None = None
     allocated_caps: dict[str, Any] | None = None
     started_at: datetime | None = None
-
-
-def _short_session_factory(db: AsyncSession) -> async_sessionmaker[AsyncSession]:
-    if db.bind is None:
-        return async_session
-    return async_sessionmaker(db.bind, expire_on_commit=False)
 
 
 __all__ = [
