@@ -25,7 +25,7 @@ from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 _settings = FakeSettingsReader({})
-_circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
+_circuit_breaker = AgentCircuitBreaker(publisher=event_bus)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,

@@ -28,7 +28,7 @@ from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
-_circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
+_circuit_breaker = AgentCircuitBreaker(publisher=event_bus)
 _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,

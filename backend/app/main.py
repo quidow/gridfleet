@@ -118,7 +118,7 @@ async def _build_and_start_app_services(
     register_events_gauge_refresher(bus)
     svc = SettingsService()
     pool = AgentHttpPool(agent_auth=build_agent_basic_auth(agent_settings))
-    breaker = AgentCircuitBreaker(publisher=bus, settings=svc, session_factory=session_factory)
+    breaker = AgentCircuitBreaker(publisher=bus, session_factory=session_factory)
 
     app_services = compose_app(
         session_factory=session_factory,

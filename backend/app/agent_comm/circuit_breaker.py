@@ -13,11 +13,15 @@ from app.hosts.models.host import Host
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
 
 logger = get_logger(__name__)
+
+# Plumbing constants (P5): backend→agent resilience tuning, not operator policy.
+# Tests pass small values via the constructor.
+FAILURE_THRESHOLD = 5
+COOLDOWN_SECONDS = 30.0
 
 
 async def _resolve_host_identity(
@@ -55,22 +59,24 @@ class AgentCircuitBreaker:
         self,
         *,
         publisher: EventPublisher,
-        settings: SettingsReader,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        failure_threshold: int = FAILURE_THRESHOLD,
+        cooldown_seconds: float = COOLDOWN_SECONDS,
     ) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
         self._publisher = publisher
-        self._settings = settings
         self._session_factory = session_factory
+        self._failure_threshold = failure_threshold
+        self._cooldown_seconds = cooldown_seconds
 
     def failure_threshold(self) -> int:
-        """Current failure threshold (reads from settings)."""
-        return self._settings.get_int("agent.circuit_breaker_failure_threshold")
+        """Consecutive failures before the circuit opens."""
+        return self._failure_threshold
 
     def cooldown_seconds(self) -> float:
-        """Current cooldown duration in seconds (reads from settings)."""
-        return self._settings.get_float("agent.circuit_breaker_cooldown_seconds")
+        """Seconds the circuit stays open before a probe is allowed."""
+        return self._cooldown_seconds
 
     async def before_request(self, host: str) -> float | None:
         async with self._lock:

@@ -406,7 +406,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr("app.agent_comm.circuit_breaker.monotonic", fake_monotonic)
         monkeypatch.setattr("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={}))
-        breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=SETTINGS, session_factory=AsyncMock())
+        breaker = AgentCircuitBreaker(publisher=AsyncMock(), session_factory=AsyncMock(), failure_threshold=threshold)
         monkeypatch.setattr(breaker, "failure_threshold", lambda: threshold)
         monkeypatch.setattr(breaker, "cooldown_seconds", lambda: 30.0)
 

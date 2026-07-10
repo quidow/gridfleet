@@ -100,7 +100,6 @@ def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
 
     _cb = importlib.import_module("app.agent_comm.circuit_breaker").AgentCircuitBreaker(
         publisher=test_event_bus,
-        settings=_ss,
     )
 
     def _reuse_cb(**_: object) -> object:
