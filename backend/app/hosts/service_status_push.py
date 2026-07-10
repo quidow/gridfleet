@@ -4,18 +4,15 @@ from typing import TYPE_CHECKING
 
 from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import record_host_status_push
-from app.core.observability import get_logger
 from app.core.timeutil import now_utc
-from app.hosts.models import Host, HostStatus
 from app.hosts.service import normalize_capabilities, update_missing_prerequisites_from_health
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.events.protocols import EventPublisher
+    from app.hosts.models import Host
     from app.hosts.schemas import HostStatusPush
-
-logger = get_logger(__name__)
 
 # One snapshot per host: the latest consolidated status push. Read by the
 # host_sweep liveness/convergence stages, host diagnostics, and the resource
@@ -41,19 +38,6 @@ class HostStatusPushService:
         # whatever the snapshot carried (mirrors the old health-poll order).
         if push.missing_prerequisites is not None:
             update_missing_prerequisites_from_health(host, push.missing_prerequisites)
-        if host.status == HostStatus.offline:
-            logger.info("Host %s (%s) is back online", host.hostname, host.ip)
-            self._publisher.queue_for_session(
-                db,
-                "host.status_changed",
-                {
-                    "host_id": str(host.id),
-                    "hostname": host.hostname,
-                    "old_status": host.status.value,
-                    "new_status": "online",
-                },
-            )
-            host.status = HostStatus.online
         await control_plane_state_store.set_value(
             db,
             HOST_STATUS_NAMESPACE,

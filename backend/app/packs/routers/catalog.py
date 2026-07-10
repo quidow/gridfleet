@@ -15,6 +15,7 @@ from app.packs.schemas import (
     RuntimePolicyPatch,
 )
 from app.packs.services.service import build_pack_out
+from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
@@ -30,9 +31,17 @@ async def get_pack(pack_id: str, session: DbDep, packs: PackServicesDep) -> Pack
 
 
 @router.get("/{pack_id}/hosts", response_model=DriverPackHostsOut)
-async def hosts(pack_id: str, session: DbDep, packs: PackServicesDep) -> DriverPackHostsOut:
+async def hosts(
+    pack_id: str,
+    session: DbDep,
+    packs: PackServicesDep,
+    settings_services: SettingsServicesDep,
+) -> DriverPackHostsOut:
     found_or_404(await packs.catalog.get_pack_detail(session, pack_id), f"Pack {pack_id!r} not found")
-    return DriverPackHostsOut.model_validate(await packs.status.get_driver_pack_host_status(session, pack_id))
+    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
+    return DriverPackHostsOut.model_validate(
+        await packs.status.get_driver_pack_host_status(session, pack_id, offline_after_sec=offline_after)
+    )
 
 
 @router.patch("/{pack_id}", response_model=PackOut)

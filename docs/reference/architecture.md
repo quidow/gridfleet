@@ -37,11 +37,12 @@ observed columns (`pid`, `active_connection_target`, health fields) — it never
 starts, stops, or restarts an agent process itself. The host agent's own
 `NodeStateLoop` pulls `GET /agent/appium-nodes/desired`, diffs it against its
 locally running processes, and owns start/stop/reconfigure for every host. The
-minimum orchestration contract is v5
-(`MIN_ORCHESTRATION_CONTRACT_VERSION`, `app/hosts/service.py`): a pre-v5 agent
-is rejected at registration with HTTP 426, and any already-registered pre-v5
-host is marked offline at scheduler startup. See
-`docs/design/04-backend-agent-contract.md` for the full contract.
+minimum orchestration contract is v6
+(`MIN_ORCHESTRATION_CONTRACT_VERSION`, `app/hosts/service.py`): a pre-v6 agent
+is rejected at registration with HTTP 426, and the same check runs on every
+`/agent/hosts/status` push — a stale-contract agent's push is rejected, it
+stops stamping `last_heartbeat`, and it reads offline within the recency
+window. See `docs/design/04-backend-agent-contract.md` for the full contract.
 
 Per host, after Appium-node convergence, `host_sweep` folds the push's
 observation sections (`node_health`, `device_health`, `device_telemetry`,
@@ -58,7 +59,7 @@ Each fact class has exactly one channel:
 
 | Fact | Channel | Cadence owner |
 |---|---|---|
-| Host liveness | status-push recency (`last_heartbeat`) | backend `general.host_offline_after_sec` |
+| Host liveness | status-push recency (`last_heartbeat`), computed at read time (`app/hosts/liveness.py`); the stored `Host.status` column is the enrollment axis (`pending`) + the sweep-written event ledger | backend `general.host_offline_after_sec` |
 | Appium process inventory + restart events | push `appium_processes` | agent push interval (10 s) |
 | Node Appium health | push `node_health` | agent constant (30 s) |
 | Device pack health | push `device_health` | agent constant (60 s) |

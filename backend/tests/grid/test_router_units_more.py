@@ -50,6 +50,7 @@ from app.events import Event
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
+from app.hosts.models import HostStatus
 from app.lifecycle import router as lifecycle
 from app.packs.routers import (
     agent_state as agent_driver_packs,
@@ -936,11 +937,12 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         hostname="host-1",
         ip="10.0.0.1",
         agent_port=5100,
-        status=SimpleNamespace(value="online"),
+        status=HostStatus.online,
+        last_heartbeat=datetime.now(UTC),
         devices=[device],
     )
 
-    mock_ss = _mock_settings_svc()
+    mock_ss = _mock_settings_svc(FakeSettingsReader({}))
     _tools_agent_comm = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
     _disc_pack_svc = SimpleNamespace(discovery=AsyncMock())
     fake_hs_none = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=None)))
@@ -1024,7 +1026,7 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         host_id, db=object(), host_services=fake_hs_tel_ok, settings_services=telemetry_ss
     ) == {"samples": []}
 
-    offline = SimpleNamespace(status=SimpleNamespace(value="offline"))
+    offline = SimpleNamespace(status=HostStatus.offline, last_heartbeat=None)
     fake_hs_offline = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=offline)))
     with pytest.raises(HTTPException) as exc:
         await hosts.get_host_tool_status(
@@ -2035,10 +2037,13 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
         await driver_packs.get_pack(pack_id, session=object(), packs=mock_packs_catalog)
     assert exc.value.status_code == 404
     assert await driver_packs.get_pack(pack_id, session=object(), packs=mock_packs_catalog) is pack_out
+    mock_ss = _mock_settings_svc(FakeSettingsReader({}))
     with pytest.raises(HTTPException) as exc:
-        await driver_packs.hosts(pack_id, session=object(), packs=mock_packs_catalog)
+        await driver_packs.hosts(pack_id, session=object(), packs=mock_packs_catalog, settings_services=mock_ss)
     assert exc.value.status_code == 404
-    assert (await driver_packs.hosts(pack_id, session=object(), packs=mock_packs_catalog)).hosts == []
+    assert (
+        await driver_packs.hosts(pack_id, session=object(), packs=mock_packs_catalog, settings_services=mock_ss)
+    ).hosts == []
 
     with pytest.raises(HTTPException) as exc:
         await driver_packs.update_pack(

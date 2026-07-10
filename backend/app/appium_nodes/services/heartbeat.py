@@ -543,6 +543,24 @@ class HeartbeatService:
                 await _ingest_appium_restart_events(db, host, payload, publisher=self._publisher)
             else:
                 payload = None
+            if host.status == HostStatus.offline and host.last_heartbeat is not None:
+                # Ledger edge: reads were already online (projection); this write
+                # exists for the exactly-once event, serialized in the scheduler.
+                # last_heartbeat guard: flip only on real push evidence — an
+                # agent-less offline host inside its created_at window must not
+                # emit a bogus online edge.
+                logger.info("Host %s (%s) is back online", host.hostname, host.ip)
+                self._publisher.queue_for_session(
+                    db,
+                    "host.status_changed",
+                    {
+                        "host_id": str(host.id),
+                        "hostname": host.hostname,
+                        "old_status": host.status.value,
+                        "new_status": "online",
+                    },
+                )
+                host.status = HostStatus.online
             return HostStatusEvaluation(alive=True, payload=payload, stale_for_sec=stale_for)
 
         if guard.active:

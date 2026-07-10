@@ -15,7 +15,8 @@ from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.reservation_query import active_reservation_exists
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.hosts.models import Host, HostStatus
+from app.hosts.liveness import host_online_clause
+from app.hosts.models import Host
 from app.sessions.filters import exclude_non_test_sessions
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -172,10 +173,10 @@ async def _count_schedulable_capacity(db: AsyncSession) -> int:
     return int((await db.execute(stmt)).scalar_one() or 0)
 
 
-async def _count_hosts(db: AsyncSession) -> tuple[int, int]:
+async def _count_hosts(db: AsyncSession, *, offline_after_sec: float) -> tuple[int, int]:
     stmt = select(
         func.count().label("total"),
-        func.count().filter(Host.status == HostStatus.online).label("online"),
+        func.count().filter(host_online_clause(offline_after_sec=offline_after_sec)).label("online"),
     ).select_from(Host)
     row = (await db.execute(stmt)).one()
     return int(row.total or 0), int(row.online or 0)
@@ -329,12 +330,13 @@ class FleetCapacityService:
         self,
         db: AsyncSession,
         *,
+        offline_after_sec: float,
         captured_at: datetime | None = None,
     ) -> AnalyticsCapacitySnapshot | None:
         active_sessions = await _count_active_sessions(db)
         queued_requests = await _count_queued_requests(db)
         total_capacity_slots = await _count_schedulable_capacity(db)
-        hosts_total, hosts_online = await _count_hosts(db)
+        hosts_total, hosts_online = await _count_hosts(db, offline_after_sec=offline_after_sec)
         devices_total, devices_available, devices_offline, devices_maintenance = await _count_devices(db)
 
         snapshot = AnalyticsCapacitySnapshot(
@@ -370,4 +372,5 @@ class FleetCapacityLoop(BackgroundLoop):
         return self._services.settings.get_float("general.fleet_capacity_snapshot_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.fleet_capacity.collect_capacity_snapshot_once(db)
+        offline_after = self._services.settings.get_float("general.host_offline_after_sec")
+        await self._services.fleet_capacity.collect_capacity_snapshot_once(db, offline_after_sec=offline_after)

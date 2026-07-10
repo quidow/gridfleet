@@ -421,6 +421,7 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
+        offline_after_sec=45,
         captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC),
     )
 
@@ -517,6 +518,7 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
+        offline_after_sec=45,
         captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC),
     )
 
@@ -558,6 +560,7 @@ async def test_count_devices_excludes_reserved_from_available(
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
+        offline_after_sec=45,
         captured_at=datetime(2026, 4, 18, 14, tzinfo=UTC),
     )
 
@@ -580,6 +583,7 @@ async def test_count_devices_counts_maintenance_by_operational_state(
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
+        offline_after_sec=45,
         captured_at=datetime(2026, 4, 18, 15, tzinfo=UTC),
     )
 

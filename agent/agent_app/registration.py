@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
 
-from agent_app import __version__
 from agent_app.config import agent_settings, secret_value
 from agent_app.grid_url import get_local_ip
 from agent_app.host import hardware_info
@@ -78,7 +77,6 @@ class RegistrationService:
             "ip": get_local_ip(),
             "os_type": _map_os_type(),
             "agent_port": agent_port,
-            "agent_version": __version__,
             "capabilities": capabilities,
             "host_info": hardware_info.collect(),
         }

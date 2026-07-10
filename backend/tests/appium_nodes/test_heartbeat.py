@@ -189,6 +189,79 @@ async def test_never_pushed_host_grace_from_created_at(db_session: AsyncSession)
     assert old.status == HostStatus.offline
 
 
+async def test_fresh_push_flips_ledger_online_and_emits_once(db_session: AsyncSession) -> None:
+    """Recovery edge: ledger offline + fresh push -> flip online, one event, then quiet."""
+    host = Host(
+        hostname="recovered-host", ip="10.0.0.7", os_type=OSType.linux, agent_port=5100, status=HostStatus.offline
+    )
+    host.last_heartbeat = now_utc()
+    db_session.add(host)
+    await db_session.commit()
+
+    publisher = Mock()
+    svc = _hb_svc(db_session, publisher=publisher)
+    guard = _unguarded_guard(svc)
+    evaluation = await svc.evaluate_host(db_session, host, guard=guard)
+
+    assert evaluation.alive is True
+    assert host.status == HostStatus.online
+    changed = [c for c in publisher.queue_for_session.call_args_list if c.args[1] == "host.status_changed"]
+    assert len(changed) == 1
+    assert changed[0].args[2]["new_status"] == "online"
+
+    # Second cycle, same freshness: ledger already online -> no second event.
+    await svc.evaluate_host(db_session, host, guard=svc.begin_cycle())
+    changed_again = [c for c in publisher.queue_for_session.call_args_list if c.args[1] == "host.status_changed"]
+    assert len(changed_again) == 1
+
+
+async def test_stale_then_stale_emits_one_offline_pair(db_session: AsyncSession) -> None:
+    """Offline edge fires once: cycle 1 flips + emits, cycle 2 (still stale) is quiet."""
+    host = Host(
+        hostname="stale-pair-host", ip="10.0.0.8", os_type=OSType.linux, agent_port=5100, status=HostStatus.online
+    )
+    host.last_heartbeat = now_utc() - timedelta(minutes=10)
+    db_session.add(host)
+    await db_session.commit()
+
+    publisher = Mock()
+    svc = _hb_svc(db_session, publisher=publisher)
+    guard = _unguarded_guard(svc)
+    await svc.evaluate_host(db_session, host, guard=guard)
+    await db_session.commit()
+
+    assert host.status == HostStatus.offline
+    names = [c.args[1] for c in publisher.queue_for_session.call_args_list]
+    assert names.count("host.status_changed") == 1
+    assert names.count("host.heartbeat_lost") == 1
+
+    # Cycle 2, still stale, ledger already offline -> no new events.
+    await svc.evaluate_host(db_session, host, guard=svc.begin_cycle())
+    names = [c.args[1] for c in publisher.queue_for_session.call_args_list]
+    assert names.count("host.status_changed") == 1
+    assert names.count("host.heartbeat_lost") == 1
+
+
+async def test_never_pushed_offline_host_emits_no_online_edge(db_session: AsyncSession) -> None:
+    """Operator-created row: ledger offline, no heartbeat, fresh created_at. The
+    fresh branch runs (created_at grace) but the edge's last_heartbeat guard holds."""
+    host = Host(
+        hostname="operator-host", ip="10.0.0.9", os_type=OSType.linux, agent_port=5100, status=HostStatus.offline
+    )
+    db_session.add(host)
+    await db_session.commit()
+    assert host.last_heartbeat is None
+
+    publisher = Mock()
+    svc = _hb_svc(db_session, publisher=publisher)
+    guard = _unguarded_guard(svc)
+    evaluation = await svc.evaluate_host(db_session, host, guard=guard)
+
+    assert evaluation.alive is True  # created_at grace
+    assert host.status == HostStatus.offline  # no flip
+    assert publisher.queue_for_session.call_args_list == []
+
+
 async def test_alive_evaluation_ingests_restart_events_from_snapshot_once(db_session: AsyncSession) -> None:
     """Cursor pin: seed the snapshot with one restart event, evaluate twice ->
     exactly one DeviceEvent (sequence cursor dedupes re-reads of the same snapshot)."""

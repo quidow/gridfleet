@@ -73,12 +73,32 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
     assert stored["payload"]["device_properties"]["reported_at"] == "2026-07-09T00:00:04+00:00"
 
 
-async def test_status_push_flips_offline_host_online(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_status_push_never_writes_status(client: AsyncClient, db_session: AsyncSession) -> None:
     offline_host = await _make_host(db_session, status=HostStatus.offline, hostname="status-push-offline")
     resp = await client.post("/agent/hosts/status", json={"host_id": str(offline_host.id)})
     assert resp.status_code == 204
     await db_session.refresh(offline_host)
-    assert offline_host.status == HostStatus.online
+    # Ledger untouched — the sweep's edge detector owns the online flip; reads compute online.
+    assert offline_host.status == HostStatus.offline
+    assert offline_host.last_heartbeat is not None
+
+
+async def test_status_push_rejects_stale_orchestration_contract(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-stale-contract")
+    body = {"host_id": str(host.id), "capabilities": {"orchestration_contract_version": 5}}
+    resp = await client.post("/agent/hosts/status", json=body)
+    assert resp.status_code == 426
+    await db_session.refresh(host)
+    # No liveness stamp -> the host goes stale -> reads offline within the recency window.
+    assert host.last_heartbeat is None
+
+
+async def test_status_push_without_capabilities_still_accepted(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-no-caps")
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(host.id)})
+    assert resp.status_code == 204
+    await db_session.refresh(host)
+    assert host.last_heartbeat is not None
 
 
 async def test_status_push_never_flips_pending_host(client: AsyncClient, db_session: AsyncSession) -> None:

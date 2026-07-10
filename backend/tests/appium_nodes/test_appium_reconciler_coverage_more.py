@@ -79,7 +79,7 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
     db_session.add(node)
     await db_session.commit()
 
-    desired = await appium_reconciler.fetch_desired_rows(db_session)
+    desired = await appium_reconciler.fetch_desired_rows(db_session, offline_after_sec=45)
     desired_one = await appium_reconciler._fetch_desired_row(db_session, device.id)
     missing = await appium_reconciler._fetch_desired_row(db_session, uuid.uuid4())
     backoff = await appium_reconciler.fetch_backoff_until(db_session)
@@ -93,6 +93,36 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
     device.lifecycle_policy_state = {"backoff_until": "not-a-date"}
     await db_session.commit()
     assert await appium_reconciler.fetch_backoff_until(db_session) == {}
+
+
+async def test_fetch_desired_rows_includes_recovered_host_before_ledger_flips(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    # Ledger still says offline (the sweep edge hasn't run yet) but the host is
+    # pushing again: its desired rows must converge in the same tick.
+    db_host.status = HostStatus.offline
+    db_host.last_heartbeat = datetime.now(UTC)
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Recovered Device",
+        identity_value="recovered-001",
+        connection_target="recovered-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
+
+    rows = await appium_reconciler.fetch_desired_rows(db_session, offline_after_sec=45)
+    assert any(r.host_id == db_host.id for r in rows)
 
 
 async def test_reconcile_host_filters_backoff_rows_from_explicit_health_payload(

@@ -12,17 +12,14 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
 
 from app import composition, main
-from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from pytest import LogCaptureFixture, MonkeyPatch
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class FakeLoop:
@@ -151,7 +148,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
-    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(test_event_bus, "configure", Mock())
     monkeypatch.setattr(test_event_bus, "register_handler", Mock())
     monkeypatch.setattr(test_event_bus, "start", AsyncMock())
@@ -218,7 +214,6 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
-    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(test_event_bus, "configure", Mock())
     monkeypatch.setattr(test_event_bus, "register_handler", Mock())
     monkeypatch.setattr(test_event_bus, "start", AsyncMock())
@@ -244,19 +239,6 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     assert create_task.call_count == 0
     assert pool_reopen.await_count == 1
     assert pool_close.await_count == 1
-
-
-async def test_startup_marks_unsupported_online_agent_contracts_offline(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    db_host.capabilities = {"orchestration_contract_version": 1}
-    await db_session.commit()
-
-    await main._validate_online_agent_contracts(db_session)
-
-    host = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalar_one()
-    assert host.status == HostStatus.offline
 
 
 async def test_cancel_and_wait_logs_non_cancelled_task_failure(caplog: LogCaptureFixture) -> None:

@@ -24,6 +24,7 @@ from app.core.background_loop import BackgroundLoop
 from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import APPIUM_RECONCILER_CYCLE_FAILURES, APPIUM_RECONCILER_LAST_CYCLE_SECONDS
 from app.core.observability import get_logger
+from app.hosts.liveness import host_online
 from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
@@ -107,8 +108,9 @@ async def run_host_sweep_once(
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
     guard = heartbeat.begin_cycle()
+    offline_after = settings.get_float("general.host_offline_after_sec")
     host_ids = list((await db.execute(select(Host.id).where(Host.status != HostStatus.pending))).scalars().all())
-    desired = await fetch_desired_rows(db)
+    desired = await fetch_desired_rows(db, offline_after_sec=offline_after)
     backoff = await fetch_backoff_until(db)
     rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
     for row in desired:
@@ -129,7 +131,7 @@ async def run_host_sweep_once(
                     if host is None:
                         return
                     evaluation = await heartbeat.evaluate_host(host_db, host, guard=guard)
-                    host_alive = evaluation.alive and host.status == HostStatus.online
+                    host_alive = host_online(host, offline_after_sec=offline_after)
                     host_ip, agent_port = host.ip, host.agent_port
                     await host_db.commit()
             except Exception:

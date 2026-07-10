@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.config import agent_settings
@@ -66,8 +65,6 @@ from app.grid import router_internal as grid_router_internal
 from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent as hosts_router_agent
-from app.hosts import service as host_service
-from app.hosts.models import Host, HostStatus
 from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
 from app.packs.services.drain import PackDrainLoop
@@ -86,8 +83,6 @@ from app.verification import router as verification_router
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     from app.composition import AppServices
 
 configure_logging()
@@ -100,29 +95,6 @@ DeviceIntentReconcilerLoop = intent_reconciler.DeviceIntentReconcilerLoop
 FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
 assess_devices_async = readiness.assess_devices_async
 is_ready_for_use_async = readiness.is_ready_for_use_async
-
-
-async def _validate_online_agent_contracts(db: AsyncSession) -> None:
-    result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
-    hosts = result.scalars().all()
-    downgraded = False
-    for host in hosts:
-        try:
-            host_service.validate_orchestration_contract(
-                host.capabilities,
-                host_label=f"{host.hostname} ({host.id})",
-            )
-        except ValueError as exc:
-            logger.warning(
-                "host_orchestration_contract_unsupported_marking_offline",
-                host_id=str(host.id),
-                hostname=host.hostname,
-                reason=str(exc),
-            )
-            host.status = HostStatus.offline
-            downgraded = True
-    if downgraded:
-        await db.commit()
 
 
 async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: str) -> None:
@@ -167,7 +139,6 @@ async def _build_and_start_app_services(
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
         await svc.initialize(db)
-        await _validate_online_agent_contracts(db)
 
     pool.configure_limits(
         max_keepalive=svc.get_int("agent.http_pool_max_keepalive"),

@@ -134,7 +134,7 @@ async def test_driver_pack_host_status_omits_incompatible_hosts(db_session: Asyn
     )
     await db_session.commit()
 
-    payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest")
+    payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest", offline_after_sec=45)
 
     assert payload["hosts"] == []
 
@@ -178,7 +178,7 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
     db_session.add_all([pack, doctor])
     await db_session.commit()
 
-    payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest")
+    payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest", offline_after_sec=45)
 
     assert payload["pack_id"] == "appium-xcuitest"
     assert payload["hosts"] == [
