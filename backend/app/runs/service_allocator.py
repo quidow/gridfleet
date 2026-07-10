@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.node_poke import poke_node_refresh
@@ -15,6 +15,7 @@ from app.appium_nodes.services.node_viability import device_node_is_viable, node
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
+from app.devices.services.claims import active_reservation_exists, reservation_active
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
@@ -75,12 +76,6 @@ async def _find_matching_devices(
     excluded_device_ids: set[uuid.UUID] | None = None,
 ) -> list[Device]:
     now = now_utc()
-    active_reservation_exists = exists(
-        select(DeviceReservation.id).where(
-            DeviceReservation.device_id == Device.id,
-            DeviceReservation.released_at.is_(None),
-        )
-    )
     candidate_stmt = (
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
@@ -90,7 +85,7 @@ async def _find_matching_devices(
         .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(Device.pack_id == requirement.pack_id)
         .where(Device.platform_id == requirement.platform_id)
-        .where(~active_reservation_exists)
+        .where(~active_reservation_exists())
         .order_by(Device.created_at, Device.id)
     )
     if requirement.os_version:
@@ -115,7 +110,7 @@ async def _find_matching_devices(
         .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
         .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
-        .where(~active_reservation_exists)
+        .where(~active_reservation_exists())
         .order_by(Device.created_at, Device.id)
         .with_for_update(of=Device, skip_locked=True)
         .execution_options(populate_existing=True)
@@ -221,7 +216,7 @@ async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceR
             await db.execute(
                 select(DeviceReservation.device_id, DeviceReservation.run_id).where(
                     DeviceReservation.device_id.in_([device.id for device in devices]),
-                    DeviceReservation.released_at.is_(None),
+                    reservation_active(),
                 )
             )
         )
