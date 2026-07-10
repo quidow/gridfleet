@@ -968,12 +968,14 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
                 # maintenance_id uses operational_state=maintenance (the new signal)
                 SimpleNamespace(
                     id=maintenance_id,
+                    pack_id=None,
                     operational_state=DeviceOperationalState.maintenance,
                     lifecycle_policy_state={"maintenance_reason": "test maintenance"},
                 ),
                 # not_reserved_id: device with no active reservation (was_reserved=False) and not busy
                 SimpleNamespace(
                     id=not_reserved_id,
+                    pack_id=None,
                     operational_state=DeviceOperationalState.available,
                     lifecycle_policy_state={},
                 ),

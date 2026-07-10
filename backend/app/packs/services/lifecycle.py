@@ -156,4 +156,23 @@ class PackLifecycleService:
         return result
 
 
+async def complete_drain_if_draining(db: AsyncSession, pack_id: str | None) -> None:
+    """Inline drain completion for session/run release paths.
+
+    Cheap unlocked pre-check so hot close paths never touch the pack row lock;
+    only a pack observed ``draining`` proceeds to ``try_complete_drain`` (whose
+    FOR UPDATE + recount is the correctness authority). A pack flipping to
+    draining just after the pre-check is caught by the janitor's backstop
+    stage. Deadlock-safe while draining: ``assert_runnable`` fails at the pack
+    gate before taking device row locks, so the allocator's pack→device order
+    never interleaves with this hook's device→pack order on a draining pack.
+    """
+    if pack_id is None:
+        return
+    state = await db.scalar(select(DriverPack.state).where(DriverPack.id == pack_id))
+    if state != PackState.draining:
+        return
+    await PackLifecycleService().try_complete_drain(db, pack_id)
+
+
 # ──────────────────────────────────────────────────────────────────────────────

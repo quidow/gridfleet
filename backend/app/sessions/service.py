@@ -15,6 +15,7 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.intent import IntentService
+from app.packs.services import lifecycle as pack_lifecycle
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.filters import SessionFilters, exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.live_session_predicate import live_session_predicate
@@ -218,6 +219,8 @@ async def close_running_session(
         # active_session intents no longer exist; reconcile so the device's node reflects
         # the post-session intent set (baseline/derived).
         await IntentService(db).reconcile_now(session.device_id, publisher=publisher)
+    if session.device is not None:
+        await pack_lifecycle.complete_drain_if_draining(db, session.device.pack_id)
 
 
 async def _has_session_rows(
@@ -448,6 +451,7 @@ class SessionCrudService:
                     publisher=self._publisher,
                 )
                 deferred_stop_target = locked_device
+            await pack_lifecycle.complete_drain_if_draining(db, locked_device.pack_id)
 
         if should_publish_ended:
             queue_session_ended_event(db, session, device=event_device, publisher=self._publisher)

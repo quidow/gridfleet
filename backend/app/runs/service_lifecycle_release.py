@@ -37,6 +37,7 @@ from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.reservation_query import device_is_reserved
 from app.grid import appium_direct
 from app.grid.allocation import resolve_router_target
+from app.packs.services import lifecycle as pack_lifecycle
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -149,6 +150,8 @@ class RunReleaseService:
                 publisher=self._publisher,
             )
             devices_pending_lifecycle_cleanup.append(device.id)
+        for pack_id in sorted({device.pack_id for device in locked_devices.values() if device.pack_id is not None}):
+            await pack_lifecycle.complete_drain_if_draining(db, pack_id)
         if commit:
             await db.commit()
         return devices_pending_lifecycle_cleanup
