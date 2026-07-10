@@ -36,9 +36,7 @@ async def test_poke_node_refresh_fires_and_swallows(
         db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus, pool=POOL
     )
 
-    poke.assert_awaited_once_with(
-        db_host.ip, db_host.agent_port, settings=SETTINGS, pool=POOL, circuit_breaker=CIRCUIT_BREAKER
-    )
+    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, pool=POOL, circuit_breaker=CIRCUIT_BREAKER)
 
 
 async def test_poke_node_refresh_no_host_is_a_noop(

@@ -602,7 +602,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             lifecycle=lifecycle,
             discovery=PackDiscoveryService(
                 agent_get_pack_devices=agent_operations.get_pack_devices,
-                settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 serializer=DevicePresenterService(settings=settings_service),
                 identity_guard=DeviceIdentityConflictService(),

@@ -149,7 +149,6 @@ async def device_health(
                 host.agent_port,
                 node.port,
                 http_client_factory=httpx.AsyncClient,
-                settings=settings_services.service,
                 circuit_breaker=agent_comm.circuit_breaker,
                 pool=agent_comm.http_pool,
             )
@@ -179,7 +178,6 @@ async def device_health(
             connection_type=device.connection_type.value if device.connection_type else None,
             ip_address=device.ip_address,
             http_client_factory=httpx.AsyncClient,
-            settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
             pool=agent_comm.http_pool,
         )
@@ -251,7 +249,6 @@ async def reconnect_device(
     data = await link_repair.dispatch_recommended_action(
         device,
         "reconnect",
-        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )
@@ -340,7 +337,6 @@ async def device_lifecycle_action(
         action=action,
         args=body or {},
         http_client_factory=httpx.AsyncClient,
-        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )
@@ -373,7 +369,6 @@ async def device_logs(
             node.port,
             lines=lines,
             http_client_factory=httpx.AsyncClient,
-            settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
             pool=agent_comm.http_pool,
         )

@@ -474,9 +474,9 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
 
     class DummyClient:
         async def get_pack_devices(
-            self, _host: str, _port: int, *, settings: object, circuit_breaker: object, pool: object = None
+            self, _host: str, _port: int, *, circuit_breaker: object, pool: object = None
         ) -> dict[str, object]:
-            del settings, circuit_breaker, pool
+            del circuit_breaker, pool
             return {"devices": []}
 
     discovery_db = AsyncMock()
@@ -486,7 +486,6 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
     result = await _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
-        settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         serializer=_DevicePresenterService(settings=FakeSettingsReader()),
         identity_guard=DeviceIdentityConflictService(),

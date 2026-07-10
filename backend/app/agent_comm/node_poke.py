@@ -42,8 +42,6 @@ async def poke_node_refresh(
     if host is None:
         return
     try:
-        await agent_operations.agent_nodes_refresh(
-            host.ip, host.agent_port, settings=settings, pool=pool, circuit_breaker=circuit_breaker
-        )
+        await agent_operations.agent_nodes_refresh(host.ip, host.agent_port, pool=pool, circuit_breaker=circuit_breaker)
     except Exception:  # noqa: BLE001 - poke is best-effort
         logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)

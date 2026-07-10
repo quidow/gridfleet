@@ -136,10 +136,6 @@ async def _build_and_start_app_services(
     async with session_factory() as db:
         await svc.initialize(db)
 
-    pool.configure_limits(
-        max_keepalive=svc.get_int("agent.http_pool_max_keepalive"),
-        keepalive_expiry=svc.get_int("agent.http_pool_idle_seconds"),
-    )
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
     await bus.start()

@@ -99,7 +99,6 @@ async def test_fold_continues_after_device_failure(
 def _discovery_service() -> PackDiscoveryService:
     return PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(return_value={"candidates": []}),
-        settings=MagicMock(),
         circuit_breaker=MagicMock(),
         serializer=MagicMock(),
         identity_guard=MagicMock(),

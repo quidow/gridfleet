@@ -75,8 +75,6 @@ def test_main_imports_in_fresh_interpreter() -> None:
 def _setting_value(key: str) -> int:
     values = {
         "appium.startup_timeout_sec": 30,
-        "agent.http_pool_max_keepalive": 10,
-        "agent.http_pool_idle_seconds": 60,
     }
     return values[key]
 

@@ -127,7 +127,6 @@ async def test_discovery_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
 
     service = PackDiscoveryService(
         agent_get_pack_devices=fetcher,
-        settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         serializer=Mock(),
         identity_guard=Mock(),

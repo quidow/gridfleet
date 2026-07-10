@@ -143,7 +143,6 @@ def compose_app(
     pack_status = PackStatusService()
     pack_discovery_svc = PackDiscoveryService(
         agent_get_pack_devices=get_pack_devices,
-        settings=settings_svc,
         circuit_breaker=circuit_breaker,
         serializer=presenter_svc,
         identity_guard=identity_conflict_svc,

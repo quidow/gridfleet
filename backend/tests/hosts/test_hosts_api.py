@@ -430,7 +430,7 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
     assert payload["host"]["node_provider"]["version"] == "fnm"
     assert payload["host"]["node"]["version"] == "24.14.1"
     assert payload["packs"] == {}
-    status_mock.assert_awaited_once_with("10.0.0.40", 5100, settings=ANY, circuit_breaker=ANY, pool=ANY)
+    status_mock.assert_awaited_once_with("10.0.0.40", 5100, circuit_breaker=ANY, pool=ANY)
 
 
 async def test_get_host_tool_status_requires_online_host(client: AsyncClient) -> None:

@@ -154,14 +154,3 @@ async def test_pool_close_logs_client_close_failures() -> None:
 
     entry_client.aclose.assert_awaited_once()
     assert pool.size() == 0
-
-
-@pytest.mark.asyncio
-async def test_configure_limits_applies_to_new_clients() -> None:
-    pool = AgentHttpPool()
-    pool.configure_limits(max_keepalive=5, keepalive_expiry=30.0)
-    await pool.reopen()
-    client = await pool.get_client("10.0.0.1", 5100)
-    assert client.is_closed is False
-    assert pool.size() == 1
-    await pool.close()

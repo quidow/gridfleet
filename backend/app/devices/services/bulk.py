@@ -332,7 +332,6 @@ class BulkOperationsService:
                         action="reconnect",
                         args={"ip_address": device.ip_address, "port": 5555},
                         http_client_factory=httpx.AsyncClient,
-                        settings=self._settings,
                         circuit_breaker=self._circuit_breaker,
                         pool=self._pool,
                     )

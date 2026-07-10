@@ -143,7 +143,6 @@ async def test_normalize_pack_device_returns_none_for_404() -> None:
             platform_id="android",
             raw_input={},
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
         is None
@@ -163,7 +162,6 @@ async def test_get_pack_devices_uses_discovery_timeout() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
@@ -191,7 +189,6 @@ async def test_appium_status_returns_none_for_non_200() -> None:
         5100,
         4723,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
@@ -213,7 +210,6 @@ async def test_appium_status_returns_none_for_invalid_payload() -> None:
         5100,
         4723,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
     assert result is None
@@ -231,7 +227,6 @@ async def test_agent_health_raises_response_error_for_non_200() -> None:
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
@@ -256,7 +251,6 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
             http_client_factory=_strict_client_factory(health_client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
@@ -270,7 +264,6 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
             action="reconnect",
             args={"ip_address": "10.0.0.20"},
             http_client_factory=_strict_client_factory(lifecycle_client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
@@ -296,7 +289,6 @@ async def test_pack_device_health_includes_optional_probe_params() -> None:
         ip_ping_timeout_sec=1.5,
         ip_ping_count=3,
         http_client_factory=_strict_client_factory(client),
-        settings=SETTINGS,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
     assert result["healthy"] is True
@@ -323,7 +315,6 @@ async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
             4723,
             lines=10,
             http_client_factory=_strict_client_factory(logs_client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
@@ -332,7 +323,6 @@ async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(tool_status_client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
@@ -355,7 +345,6 @@ async def test_pack_device_lifecycle_resolve_raises_for_invalid_payload() -> Non
             platform_id="android_mobile",
             action="resolve",
             http_client_factory=_strict_client_factory(client),
-            settings=SETTINGS,
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 

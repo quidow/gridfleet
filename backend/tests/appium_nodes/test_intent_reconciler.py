@@ -392,7 +392,7 @@ async def test_pull_host_metadata_change_pokes_instead_of_staging(
         db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
     )
 
-    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
+    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, pool=None, circuit_breaker=ANY)
 
 
 async def test_pull_host_watermark_only_change_pokes_agent(
@@ -428,7 +428,7 @@ async def test_pull_host_watermark_only_change_pokes_agent(
 
     await db_session.refresh(node)
     assert node.restart_requested_at == requested_at
-    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, settings=ANY, pool=None, circuit_breaker=ANY)
+    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, pool=None, circuit_breaker=ANY)
 
 
 async def test_scan_rederives_stale_available_device_without_intents(

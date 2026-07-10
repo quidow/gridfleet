@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.core.protocols import SettingsReader
 
 _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
@@ -71,7 +70,6 @@ async def _send_request(
     host: str,
     agent_port: int,
     timeout: float | int,
-    settings: SettingsReader,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     params: QueryParams = None,
     json_body: JsonBody = None,
@@ -79,9 +77,7 @@ async def _send_request(
     circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     auth = pool.auth if pool is not None else None
-    use_pool = (
-        pool is not None and http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled(settings=settings)
-    )
+    use_pool = pool is not None and http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY
     if use_pool:
         assert pool is not None  # narrowing for mypy
         client = await pool.get_client(host, agent_port, timeout=timeout)
@@ -99,9 +95,7 @@ async def _send_request(
             circuit_breaker=circuit_breaker,
         )
 
-    # Pool-disabled fallback (agent.http_pool_enabled=false): opens a fresh client per
-    # call, which can exhaust ephemeral ports under burst load. Dev/debug escape hatch
-    # only — production keeps the pool on (the default).
+    # Fresh-client fallback: no pool injected (tests, one-off callers) or a custom client factory.
     client_manager = http_client_factory(timeout=timeout)
     async with client_manager as fresh_client:
         return await agent_request(
@@ -117,13 +111,6 @@ async def _send_request(
             auth=auth,
             circuit_breaker=circuit_breaker,
         )
-
-
-def _pool_enabled(*, settings: SettingsReader) -> bool:
-    try:
-        return bool(settings.get("agent.http_pool_enabled"))
-    except KeyError, RuntimeError:
-        return False
 
 
 def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> None:
@@ -209,7 +196,6 @@ async def agent_health(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 5,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
@@ -221,7 +207,6 @@ async def agent_health(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -236,7 +221,6 @@ async def appium_logs(
     lines: int,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 10,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
@@ -249,7 +233,6 @@ async def appium_logs(
         http_client_factory=http_client_factory,
         params={"lines": lines},
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -263,7 +246,6 @@ async def appium_status(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 5,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
@@ -275,7 +257,6 @@ async def appium_status(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -288,7 +269,6 @@ async def agent_nodes_refresh(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = NODE_POKE_TIMEOUT_SEC,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> None:
@@ -305,7 +285,6 @@ async def agent_nodes_refresh(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -336,7 +315,6 @@ async def get_tool_status(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 15,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
@@ -348,7 +326,6 @@ async def get_tool_status(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -361,7 +338,6 @@ async def get_pack_devices(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 45,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
@@ -373,7 +349,6 @@ async def get_pack_devices(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -390,7 +365,6 @@ async def normalize_pack_device(
     raw_input: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
@@ -408,7 +382,6 @@ async def normalize_pack_device(
             "raw_input": raw_input,
         },
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -436,7 +409,6 @@ async def pack_device_health(
     has_live_session: bool | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
@@ -471,7 +443,6 @@ async def pack_device_health(
         http_client_factory=http_client_factory,
         params=params,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -489,7 +460,6 @@ async def pack_device_lifecycle_action(
     args: dict[str, Any] | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
@@ -503,7 +473,6 @@ async def pack_device_lifecycle_action(
         params={"pack_id": pack_id, "platform_id": platform_id},
         json_body=args or {},
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
@@ -518,7 +487,6 @@ async def pack_doctor(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> list[dict[str, Any]]:
@@ -530,7 +498,6 @@ async def pack_doctor(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
-        settings=settings,
         pool=pool,
         circuit_breaker=circuit_breaker,
     )

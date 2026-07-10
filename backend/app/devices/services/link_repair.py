@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.core.protocols import SettingsReader
     from app.devices.models import Device
 
 REPAIR_ATTEMPTS_NAMESPACE = "device_checks.repair_attempts"
@@ -56,7 +55,6 @@ async def dispatch_recommended_action(
     device: Device,
     action: str,
     *,
-    settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     pool: AgentHttpPool | None = None,
     extra_args: dict[str, Any] | None = None,
@@ -80,7 +78,6 @@ async def dispatch_recommended_action(
         # claimed_ports / live-session flags). Core never interprets them.
         args={"ip_address": device.ip_address, **(extra_args or {})},
         http_client_factory=httpx.AsyncClient,
-        settings=settings,
         circuit_breaker=circuit_breaker,
         pool=pool,
     )
