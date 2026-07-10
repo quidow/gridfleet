@@ -131,7 +131,7 @@ The router (`router/`) is a standalone Rust binary that listens on `:4444` and r
 The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operators.
 
 - Built with React + TypeScript + Vite.
-- Continuously polls API endpoints (5-15s intervals) to present real-time readiness matrices.
+- Stays fresh via a server-sent events stream (`/api/events`, mounted once in `Layout`) as the primary channel — it invalidates react-query caches and fires toasts on transitions. Per-hook polling is a labeled safety-net backstop: while the SSE stream is connected each hook relaxes to a 60s poll (`sseAdaptivePolling`), falling back to its 5–30s base interval only when the stream drops.
 - Serves as the interface for Device Onboarding/Intake (where discovered devices are promoted into the active fleet).
 - Exposes bulk actions and run/reservation overrides.
 
