@@ -185,13 +185,12 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(
         services=app_services.appium_nodes,
-        observation_folds=(ObservationFold("node_health", app_services.appium_nodes.node_health.fold_host_nodes),),
+        observation_folds=(
+            ObservationFold("node_health", app_services.appium_nodes.node_health.fold_host_nodes),
+            ObservationFold("device_health", app_services.devices.connectivity.fold_host_device_health),
+        ),
+        expire_cooldowns=app_services.devices.connectivity.check_expired_cooldowns,
         global_stages=(
-            SweepStage(
-                "connectivity",
-                "general.device_check_interval_sec",
-                app_services.devices.connectivity.run_connectivity_pass,
-            ),
             SweepStage(
                 "host_resource_telemetry",
                 "general.host_resource_telemetry_interval_sec",

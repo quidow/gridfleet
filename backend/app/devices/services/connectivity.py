@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
@@ -27,7 +26,7 @@ from app.devices.services.intent_reconciler import _gc_expired_intents, reconcil
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
-from app.hosts.models import Host, HostStatus
+from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
@@ -88,6 +87,9 @@ IP_PING_CHECK_ID = "ip_ping"
 # Phase-metric label for the connectivity pass, now a host-sweep stage rather than
 # its own loop. Kept for metric continuity (same convention as the node_health fold).
 LOOP_NAME = "device_connectivity"
+# ponytail: fixed dial width for the surviving lifecycle-state poll; was
+# general.probe_concurrency_per_host — re-knob only if a large host proves it.
+_LIFECYCLE_POLL_CONCURRENCY = 4
 
 
 def _audit_label(device: Device) -> str:
@@ -633,63 +635,22 @@ class ConnectivityService:
         else:
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
 
-    async def _probe_devices(
-        self,
-        devices: Sequence[Device],
-        *,
-        ip_ping_timeout: float | None,
-        ip_ping_count: int | None,
-        lifecycle_capable: set[uuid.UUID],
-        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
-        live_flag_by_id: dict[uuid.UUID, bool],
-    ) -> dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
-        """Concurrently probe every device's health (and, where the platform
-        declares a ``state`` action, lifecycle state) across ALL hosts in one
-        gather, bounded by a per-host semaphore so each host agent sees a
-        consistent concurrent load (mirrors the node-health fold's old fan-out).
+    async def _fetch_lifecycle_states(self, devices: Sequence[Device]) -> dict[uuid.UUID, str | None]:
+        """Poll the pack-owned lifecycle ``state`` action for capable devices.
+        Stays a dial: it is command surface the probe loop does not push
+        (WS-2.1 boundary). Pure agent I/O — no DB access in the gather."""
+        if not devices:
+            return {}
+        semaphore = asyncio.Semaphore(_LIFECYCLE_POLL_CONCURRENCY)
 
-        Pure agent I/O — NO DB access — so the shared session is untouched here and
-        the caller's apply loop owns every write. ``Device.host`` must be
-        eager-loaded by the caller. The per-host concurrency ceiling comes from
-        the settings registry (general.probe_concurrency_per_host), shared with
-        node_health and session_sync. The two fetches for one device run
-        concurrently inside its slot (independent agent reads, no shared state),
-        so the win is in-slot, cross-device, AND cross-host concurrency. The
-        semaphore still bounds the heavier health call to the configured
-        concurrency (one per slot).
-        """
-        probe_concurrency = self._settings.get_int("general.probe_concurrency_per_host")
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(probe_concurrency)
-        )
-
-        async def _maybe_lifecycle(device: Device) -> str | None:
-            if device.id not in lifecycle_capable:
-                return None
-            return await _fetch_lifecycle_state(
-                device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
-            )
-
-        async def _probe(device: Device) -> tuple[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
-            async with host_semaphores[device.host_id]:
-                # Independent agent reads — run them concurrently within the slot so
-                # a lifecycle-capable device costs max(lifecycle, health), not the sum.
-                health, lifecycle_state = await asyncio.gather(
-                    _get_device_health(
-                        device,
-                        ip_ping_timeout_sec=ip_ping_timeout,
-                        ip_ping_count=ip_ping_count,
-                        claimed_ports=claimed_ports_by_id.get(device.id),
-                        has_live_session=live_flag_by_id.get(device.id),
-                        settings=self._settings,
-                        circuit_breaker=self._circuit_breaker,
-                        pool=self._pool,
-                    ),
-                    _maybe_lifecycle(device),
+        async def _one(device: Device) -> tuple[uuid.UUID, str | None]:
+            async with semaphore:
+                state = await _fetch_lifecycle_state(
+                    device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
                 )
-                return device.id, (health, lifecycle_state)
+                return device.id, state
 
-        return dict(await asyncio.gather(*[_probe(device) for device in devices]))
+        return dict(await asyncio.gather(*(_one(device) for device in devices)))
 
     async def _record_disconnect_if_stable(self, db: AsyncSession, device: Device, *, held: bool) -> None:
         """Record a device disconnect unless its held/reserved classification flipped under the lock.
@@ -729,16 +690,15 @@ class ConnectivityService:
 
     async def _collect_prepass_devices(
         self, db: AsyncSession, hosts: Sequence[Host]
-    ) -> tuple[list[Device], set[uuid.UUID], dict[uuid.UUID, dict[str, int]], dict[uuid.UUID, bool]]:
+    ) -> tuple[list[Device], set[uuid.UUID], dict[uuid.UUID, dict[str, int]]]:
         # Phase 1 — sequential DB pre-pass over ALL online hosts (on the shared
-        # session, before the concurrent probe phase). Collects the devices to
-        # probe plus the driver-agnostic facts the adapters need. Device.host and
+        # session, before the lifecycle-state dial). Collects the devices to
+        # fold plus the driver-agnostic facts the adapters need. Device.host and
         # Device.appium_node are eager-loaded so the gather below never lazy-loads
         # on the shared session (an AsyncSession is not safe for concurrent use).
         all_devices: list[Device] = []
         lifecycle_capable: set[uuid.UUID] = set()
         claimed_ports_by_id: dict[uuid.UUID, dict[str, int]] = {}
-        live_flag_by_id: dict[uuid.UUID, bool] = {}
         for host in hosts:
             device_stmt = (
                 select(Device)
@@ -760,26 +720,12 @@ class ConnectivityService:
             for node_id, device_id in node_device_pairs:
                 if node_id in claims_by_node:
                     claimed_ports_by_id[device_id] = claims_by_node[node_id]
-            # has_live_session is False only on positive knowledge: no live/pending
-            # Session row AND no in-flight viability probe (the in-memory registry is
-            # valid here — this loop is leader-owned, same process as the probe runner).
-            live_ids = set(
-                (
-                    await db.scalars(
-                        select(Session.device_id).where(
-                            live_session_predicate(), Session.device_id.in_([d.id for d in devices])
-                        )
-                    )
-                ).all()
-            )
-            for d in devices:
-                live_flag_by_id[d.id] = d.id in live_ids or is_probe_inflight(str(d.id))
             all_devices.extend(devices)
-        # Release any pre-pass read transaction before the slow probe phase: no row
-        # lock may be held across an agent HTTP round-trip (measured holds reached
-        # seconds and starved the allocator's SKIP LOCKED matching).
+        # Release any pre-pass read transaction before the slow lifecycle dial: no
+        # row lock may be held across an agent HTTP round-trip (measured holds
+        # reached seconds and starved the allocator's SKIP LOCKED matching).
         await db.commit()
-        return all_devices, lifecycle_capable, claimed_ports_by_id, live_flag_by_id
+        return all_devices, lifecycle_capable, claimed_ports_by_id
 
     async def _resolve_device_verdict(
         self,
@@ -899,68 +845,51 @@ class ConnectivityService:
             )
             await self._record_disconnect_if_stable(db, device, held=False)
 
-    async def run_connectivity_pass(self, db: AsyncSession) -> None:
-        """One full connectivity pass: expired-cooldown cleanup, then the probe cycle."""
-        cooldowns_started = perf_counter()
-        await self.check_expired_cooldowns(db)
-        metrics.record_background_loop_phase(LOOP_NAME, "cooldowns", perf_counter() - cooldowns_started)
-        await self.check_connectivity(db)
-
-    async def check_connectivity(self, db: AsyncSession) -> None:
+    async def fold_host_device_health(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+        """Fold one host's pushed device_health section through the dial-era
+        verdict engine. Still dials (WS-2.1 boundary — actions/enumerations,
+        not observations): the pack lifecycle-state poll, repair dispatch and
+        its re-probe, and the presence sweep on probe-miss.
+        """
+        host = await db.get(Host, host_id)
+        if host is None:
+            return
         ip_ping_threshold = self._settings.get_int("device_checks.ip_ping.consecutive_fail_threshold")
-        ip_ping_timeout = self._settings.get_float("device_checks.ip_ping.timeout_sec")
-        ip_ping_count = self._settings.get_int("device_checks.ip_ping.count_per_cycle")
         probe_unanswered_threshold = int(
             self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
         )
         probe_failed_threshold = self._settings.get_int("device_checks.probe_failed.consecutive_fail_threshold")
 
-        stmt = select(Host).where(Host.status == HostStatus.online)
-        result = await db.execute(stmt)
-        hosts = result.scalars().all()
+        all_devices, lifecycle_capable, claimed_ports_by_id = await self._collect_prepass_devices(db, [host])
+        raw = section.get("devices")
+        observations: dict[str, Any] = raw if isinstance(raw, dict) else {}
 
-        prepass_started = perf_counter()
-        all_devices, lifecycle_capable, claimed_ports_by_id, live_flag_by_id = await self._collect_prepass_devices(
-            db, hosts
+        lifecycle_by_id = await self._fetch_lifecycle_states(
+            [device for device in all_devices if device.id in lifecycle_capable]
         )
-        prepass_sec = perf_counter() - prepass_started
+        health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]] = {}
+        for device in all_devices:
+            observed = observations.get(device.connection_target) if device.connection_target else None
+            health_by_device_id[device.id] = (
+                observed if isinstance(observed, dict) else None,
+                lifecycle_by_id.get(device.id),
+            )
 
-        # Phase 2 — probe every device's health concurrently across ALL hosts in
-        # one gather, bounded per host (mirrors the node-health fold's old fan-out). No DB
-        # access inside the gather — the apply loop below performs all writes.
-        probe_started = perf_counter()
-        health_by_device_id = await self._probe_devices(
-            all_devices,
-            ip_ping_timeout=ip_ping_timeout,
-            ip_ping_count=ip_ping_count,
-            lifecycle_capable=lifecycle_capable,
-            claimed_ports_by_id=claimed_ports_by_id,
-            live_flag_by_id=live_flag_by_id,
-        )
-        probe_sec = perf_counter() - probe_started
-
-        # Phase 3 — single serial apply loop over all devices on the shared session.
         apply_started = perf_counter()
-
         # WI-6 lazy presence: the agent enumeration (a discovery sweep — SSDP for
-        # network packs) runs at most once per host per cycle, only when a device's
-        # direct health probe does not confirm presence. Cached per host so the
-        # single cross-host apply loop never re-enumerates a host; a fleet of
+        # network packs) runs at most once per host, only when a device's pushed
+        # health observation does not confirm presence. Cached so a fleet of
         # healthy devices never pays for a sweep.
         connected_targets_by_host: dict[uuid.UUID, set[str] | None] = {}
-
         for device in all_devices:
-            # Device.host is Mapped[Any | None]; eager-loaded above and host_id is
-            # non-nullable, so it is always present. cast keeps host typed as Host.
-            host = cast("Host", device.host)
-            # Per-device commit (repo contract: observation loops commit per device
-            # after the locked write window). Without it the first written device row
-            # stays locked across every later device's agent HTTP call.
+            host_ref = cast("Host", device.host)
+            # Per-device commit (repo contract: observation loops commit per
+            # device after the locked write window).
             await db.commit()
             verdict = await self._resolve_device_verdict(
                 db,
                 device,
-                host,
+                host_ref,
                 health_by_device_id=health_by_device_id,
                 claimed_ports_by_id=claimed_ports_by_id,
                 ip_ping_threshold=ip_ping_threshold,
@@ -970,27 +899,19 @@ class ConnectivityService:
             if verdict is None:
                 continue
             healthy, ip_ping_entry, health_result = verdict
-
             if healthy:
-                # A device answering its own health probe is present — no discovery
-                # sweep needed (direct-first, sweep-on-miss).
                 await self._handle_healthy_device(
                     db, device, ip_ping_entry=ip_ping_entry, ip_ping_threshold=ip_ping_threshold
                 )
                 continue
-
             await self._handle_unhealthy_device(
                 db,
                 device,
-                host,
+                host_ref,
                 health_result=health_result,
                 connected_targets_by_host=connected_targets_by_host,
             )
-
-        apply_sec = perf_counter() - apply_started
-
-        for phase, seconds in (("db_prepass", prepass_sec), ("probe", probe_sec), ("apply", apply_sec)):
-            metrics.record_background_loop_phase(LOOP_NAME, phase, seconds)
+        metrics.record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
         await db.commit()
 
     async def check_expired_cooldowns(self, db: AsyncSession) -> None:

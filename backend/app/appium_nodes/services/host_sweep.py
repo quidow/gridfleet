@@ -102,7 +102,7 @@ async def _fold_observations(
         await db.commit()
 
 
-async def run_host_sweep_once(
+async def run_host_sweep_once(  # noqa: PLR0913, PLR0915  # transient: global_stages arg + stage loop removed in WS-2.2 Task 5
     db: AsyncSession,
     *,
     heartbeat: HeartbeatService,
@@ -111,6 +111,7 @@ async def run_host_sweep_once(
     session_factory: SessionFactory,
     observation_folds: Sequence[ObservationFold] = (),
     global_stages: Sequence[SweepStage] = (),
+    expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     cycle_index: int = 0,
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
@@ -173,6 +174,17 @@ async def run_host_sweep_once(
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
+    if expire_cooldowns is not None:
+        # DB-only cleanup with no push section; must run even with zero alive
+        # hosts. Every cycle (~10 s) instead of the old 60 s stage — earlier
+        # cooldown expiry is benign, and the intent reconciler GCs expired
+        # intents on its own tick anyway.
+        await db.commit()
+        try:
+            await expire_cooldowns(db)
+        except Exception:
+            logger.exception("host_sweep_cooldown_pass_failed")
+
     for stage in global_stages:
         if not stage_due(
             cycle_index, base_interval=base_interval, stage_interval=settings.get_float(stage.interval_setting)
@@ -202,10 +214,12 @@ class HostSweepLoop(BackgroundLoop):
         services: AppiumNodeServices,
         observation_folds: Sequence[ObservationFold] = (),
         global_stages: Sequence[SweepStage] = (),
+        expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     ) -> None:
         self._services = services
         self._observation_folds = tuple(observation_folds)
         self._global_stages = tuple(global_stages)
+        self._expire_cooldowns = expire_cooldowns
         self._cycle = 0
 
     @property
@@ -224,6 +238,7 @@ class HostSweepLoop(BackgroundLoop):
             session_factory=self._services.session_factory,
             observation_folds=self._observation_folds,
             global_stages=self._global_stages,
+            expire_cooldowns=self._expire_cooldowns,
             cycle_index=self._cycle,
         )
 

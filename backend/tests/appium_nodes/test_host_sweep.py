@@ -190,6 +190,7 @@ async def _run_sweep_with_recorders(
     reconcile_raises: bool = False,
     fold_raises: bool = False,
     connectivity_raises: bool = False,
+    record_cooldowns: bool = False,
     include_node_health: bool = True,
     node_health_reported_at: str = "2026-07-10T00:00:00+00:00",
 ) -> None:
@@ -232,6 +233,9 @@ async def _run_sweep_with_recorders(
         if connectivity_raises:
             raise RuntimeError("connectivity boom")
 
+    async def _record_cooldowns(_db: object) -> None:
+        calls.append("expire_cooldowns")
+
     monkeypatch.setattr(ReconcilerService, "reconcile_host", AsyncMock(side_effect=_record_reconcile))
     fold = ObservationFold("node_health", _record_fold)
     connectivity_stage = SweepStage("connectivity", "general.device_check_interval_sec", _record_connectivity)
@@ -244,6 +248,7 @@ async def _run_sweep_with_recorders(
         session_factory=db_session_maker,
         observation_folds=(fold,),
         global_stages=(connectivity_stage,),
+        expire_cooldowns=_record_cooldowns if record_cooldowns else None,
         cycle_index=cycle_index,
     )
 
@@ -386,6 +391,49 @@ async def test_fold_runs_after_convergence(
         cycle_index=1,
     )
     assert calls == ["reconcile_host", ("fold", "2026-07-10T00:00:00+00:00")]
+
+
+async def test_expire_cooldowns_runs_every_cycle_even_when_off_cadence(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cooldown expiry is a direct once-per-cycle call (no cadence gate): it runs
+    # on an off-cadence cycle where the connectivity stage does not.
+    calls: list[object] = []
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
+        record_cooldowns=True,
+    )
+    assert "expire_cooldowns" in calls
+    assert "run_connectivity_pass" not in calls  # off-cadence at cycle 1
+
+
+async def test_expire_cooldowns_runs_with_zero_alive_hosts(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # DB-only cleanup must run even when no host is alive (nothing else happens).
+    calls: list[object] = []
+    await _run_sweep_with_recorders(
+        monkeypatch,
+        db_session=db_session,
+        db_session_maker=db_session_maker,
+        db_host=db_host,
+        calls=calls,
+        cycle_index=1,
+        alive=False,
+        record_cooldowns=True,
+    )
+    assert calls == ["expire_cooldowns"]
 
 
 async def test_connectivity_stage_runs_after_fanout_on_due_cycle(

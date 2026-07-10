@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy import select
 
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.connectivity import ConnectivityService
@@ -56,18 +57,18 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         with (
             patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
             patch("app.devices.services.connectivity._fetch_lifecycle_state", new=AsyncMock(return_value=None)),
-            patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
         ):
             async with db_session_maker() as session:
+                # Empty section → device absent → unanswered-probe → disconnect path.
                 await ConnectivityService(
                     publisher=event_bus,
                     settings=FakeSettingsReader({}),
                     circuit_breaker=Mock(),
                     lifecycle_policy=AsyncMock(),
                     health=AsyncMock(),
-                ).check_connectivity(session)
+                ).fold_host_device_health(session, db_host.id, {"reported_at": now_utc().isoformat(), "devices": {}})
 
     async def racer() -> None:
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
@@ -128,18 +129,18 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         with (
             patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
             patch("app.devices.services.connectivity._fetch_lifecycle_state", new=AsyncMock(return_value=None)),
-            patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
         ):
             async with db_session_maker() as session:
+                # Empty section → device absent → unanswered-probe → disconnect path.
                 await ConnectivityService(
                     publisher=event_bus,
                     settings=FakeSettingsReader({}),
                     circuit_breaker=Mock(),
                     lifecycle_policy=mock_lifecycle_policy,
                     health=AsyncMock(),
-                ).check_connectivity(session)
+                ).fold_host_device_health(session, db_host.id, {"reported_at": now_utc().isoformat(), "devices": {}})
 
     async def racer() -> None:
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)

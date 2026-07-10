@@ -1,11 +1,10 @@
 """Per-phase duration metrics for slow observation loops.
 
 A loop-level duration histogram says a cycle was slow but not why. The phase
-histogram attributes cycle wall time (db_prepass / probe / apply / cooldowns)
+histogram attributes cycle wall time (the connectivity fold records apply)
 so a slow cycle can be pinned to a phase instead of guessed at.
 """
 
-import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
@@ -14,6 +13,7 @@ import pytest
 from prometheus_client import REGISTRY
 
 from app.core.metrics_recorders import record_background_loop_phase
+from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
@@ -69,19 +69,15 @@ async def test_connectivity_cycle_emits_phase_metrics(db_session: AsyncSession) 
     db_session.add(device)
     await db_session.commit()
 
-    before = {phase: _phase_count("device_connectivity", phase) for phase in ("db_prepass", "probe", "apply")}
+    # The fold folds a pushed observation; only the apply phase survives (the
+    # dial-era db_prepass/probe/cooldowns phases died with the dial pass).
+    before = _phase_count("device_connectivity", "apply")
 
-    async def healthy_probe(device: Device, **kwargs: object) -> dict[str, object]:
-        await asyncio.sleep(0)
-        return {"healthy": True}
-
-    with (
-        patch(
-            "app.devices.services.connectivity._get_agent_devices",
-            new_callable=AsyncMock,
-            return_value={"phase-dev-001"},
-        ),
-        patch("app.devices.services.connectivity._get_device_health", healthy_probe),
+    section = {"reported_at": now_utc().isoformat(), "devices": {"phase-dev-001": {"healthy": True}}}
+    with patch(
+        "app.devices.services.connectivity._get_agent_devices",
+        new_callable=AsyncMock,
+        return_value={"phase-dev-001"},
     ):
         await ConnectivityService(
             publisher=Mock(),
@@ -89,7 +85,6 @@ async def test_connectivity_cycle_emits_phase_metrics(db_session: AsyncSession) 
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
             health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        ).fold_host_device_health(db_session, host.id, section)
 
-    for phase in ("db_prepass", "probe", "apply"):
-        assert _phase_count("device_connectivity", phase) == before[phase] + 1, phase
+    assert _phase_count("device_connectivity", "apply") == before + 1
