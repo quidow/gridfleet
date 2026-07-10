@@ -32,9 +32,8 @@ from app.devices.services.decision import (
     parse_command,
 )
 from app.devices.services.event import record_event
-from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import load_packs_by_ids
-from app.devices.services.state import apply_derived_state, device_in_service
+from app.devices.services.state import WithdrawalFacts, apply_derived_state
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -175,10 +174,11 @@ async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime)
         if entry.excluded and entry.excluded_until is not None and entry.excluded_until > now:
             cooldown_active = True
             cooldown_reason = entry.exclusion_reason
+    withdrawal = WithdrawalFacts.from_device(device)
     return DecisionFacts(
-        in_maintenance=in_maintenance(device),
+        in_maintenance=withdrawal.in_maintenance,
         device_checks_unhealthy=device.device_checks_healthy is False,
-        in_service=device_in_service(device),
+        in_service=withdrawal.in_service(),
         reservation_run_id=reservation_run_id,
         cooldown_active=cooldown_active,
         cooldown_reason=cooldown_reason,

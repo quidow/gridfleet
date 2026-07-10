@@ -51,7 +51,7 @@ class Command:
 class DecisionFacts:
     in_maintenance: bool
     device_checks_unhealthy: bool  # device_checks_healthy IS FALSE
-    in_service: bool  # device_in_service(device): baseline eligibility (F-G1)
+    in_service: bool  # WithdrawalFacts.in_service(): baseline eligibility (F-G1)
     reservation_run_id: uuid.UUID | None  # None when unreserved OR indefinitely excluded
     cooldown_active: bool  # excluded AND excluded_until > now
     cooldown_reason: str | None
