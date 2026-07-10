@@ -13,9 +13,9 @@ from app.core.timeutil import parse_iso as _parse_timestamp
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import readiness as device_readiness
+from app.devices.services.claims import active_reservation_exists, device_is_reserved
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import verification_intent_source
-from app.devices.services.reservation_query import active_reservation_exists, device_is_reserved
 from app.grid import appium_direct
 from app.grid.allocation import node_target
 from app.sessions import probe_inflight

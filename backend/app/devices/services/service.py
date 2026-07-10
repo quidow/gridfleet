@@ -22,13 +22,13 @@ from app.devices.services import health as device_health
 from app.devices.services import link_repair
 from app.devices.services import readiness as device_readiness
 from app.devices.services import write as device_write
+from app.devices.services.claims import active_reservation_exists
 from app.devices.services.connectivity import (
     CONNECTIVITY_NAMESPACE,
     IP_PING_NAMESPACE,
     PROBE_FAILED_NAMESPACE,
     PROBE_UNANSWERED_NAMESPACE,
 )
-from app.devices.services.reservation_query import active_reservation_exists
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 

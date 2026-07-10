@@ -12,7 +12,7 @@ from app.appium_nodes.models import AppiumNode
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services.reservation_query import active_reservation_exists
+from app.devices.services.claims import active_reservation_exists
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.liveness import host_online_clause
 from app.hosts.models import Host

@@ -20,12 +20,12 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
+from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver

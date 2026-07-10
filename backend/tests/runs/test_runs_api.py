@@ -1220,7 +1220,7 @@ async def test_allocator_does_not_write_hold(
     row and leaves the device's operational axis untouched — the device is reserved per
     ``device_is_reserved``, with no hold write.
     """
-    from app.devices.services.reservation_query import device_is_reserved
+    from app.devices.services.claims import device_is_reserved
 
     device = await create_device_record(
         db_session,
