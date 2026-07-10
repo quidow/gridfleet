@@ -200,28 +200,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=20,
     ),
     SettingDefinition(
-        key="general.fleet_capacity_snapshot_interval_sec",
-        category="general",
-        setting_type="int",
-        default=60,
-        description="How often fleet capacity snapshots are recorded",
-        min_value=10,
-        max_value=3600,
-    ),
-    SettingDefinition(
-        key="general.background_loop_flush_interval_sec",
-        category="general",
-        setting_type="int",
-        default=15,
-        description=(
-            "How often the leader flushes in-memory background-loop heartbeat snapshots to the "
-            "control-plane state table. Lower values reduce reader staleness; higher values reduce "
-            "DB write volume."
-        ),
-        min_value=1,
-        max_value=300,
-    ),
-    SettingDefinition(
         key="general.lifecycle_recovery_backoff_base_sec",
         category="general",
         setting_type="int",
@@ -582,16 +560,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=30,
         max_value=600,
     ),
-    SettingDefinition(
-        key="reservations.reaper_interval_sec",
-        category="reservations",
-        setting_type="int",
-        default=15,
-        description="How often the stale run reaper runs",
-        env_var="GRIDFLEET_RUN_REAPER_INTERVAL_SEC",
-        min_value=5,
-        max_value=300,
-    ),
     # ── Data Retention ──
     SettingDefinition(
         key="retention.sessions_days",
@@ -673,15 +641,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Delete completed or failed durable jobs older than N days",
         min_value=1,
         max_value=3650,
-    ),
-    SettingDefinition(
-        key="retention.cleanup_interval_hours",
-        category="retention",
-        setting_type="int",
-        default=1,
-        description="How often the data cleanup task runs",
-        min_value=1,
-        max_value=168,
     ),
 ]
 

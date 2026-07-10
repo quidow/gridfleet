@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 from app.core import health
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -18,8 +17,7 @@ async def test_api_readiness_reports_but_does_not_fail_on_stalled_loops(monkeypa
     monkeypatch.setattr(health.shutdown_coordinator, "active_requests", lambda: 0)
     monkeypatch.setattr("app.core.health.get_background_loop_snapshots", AsyncMock(return_value={}))
 
-    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
-    payload, status_code = await health.check_readiness(db, settings=settings, fail_on_stalled_loops=False)
+    payload, status_code = await health.check_readiness(db, fail_on_stalled_loops=False)
 
     assert status_code == 200
     assert payload["status"] == "ok"

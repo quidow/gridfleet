@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, or_, select
 
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.core.background_loop import BackgroundLoop
-from app.core.observability import get_logger, schedule_background_loop
+from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.events.models import SystemEvent
@@ -30,12 +29,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import SessionFactory
-    from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
-LOOP_NAME = "data_cleanup"
 DELETE_BATCH_SIZE = 1000
 MAX_BATCHES_PER_TABLE = 10
 CleanupModel = (
@@ -283,31 +279,3 @@ class DataCleanupService:
                 "duration_seconds": round(time.monotonic() - started, 3),
             },
         )
-
-
-class DataCleanupLoop(BackgroundLoop):
-    """Background loop that periodically cleans up old data."""
-
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Data cleanup failed"
-    sleep_before_first_cycle = True  # never run cleanup immediately at boot
-
-    def __init__(self, *, services: DeviceServices) -> None:
-        self._services = services
-        self._interval_sec = 0.0
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    async def _on_start(self) -> None:
-        interval_hours: int = self._services.settings.get("retention.cleanup_interval_hours")
-        self._interval_sec = float(interval_hours * 3600)
-        # Pre-register the snapshot so readiness probes see the loop before its first (long) sleep.
-        await schedule_background_loop(LOOP_NAME, self._interval_sec)
-
-    def _interval(self) -> float:
-        return self._interval_sec
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        await self._services.data_cleanup.cleanup_old_data(db)

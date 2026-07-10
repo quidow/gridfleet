@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -21,6 +19,15 @@ from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
+
+
+def _fake_session_factory() -> Mock:
+    factory = Mock()
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+    cm.__aexit__ = AsyncMock(return_value=False)
+    factory.return_value = cm
+    return factory
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -214,23 +221,24 @@ async def test_run_pending_jobs_once_returns_false_when_no_jobs(db_session: Asyn
     assert result is False
 
 
-async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
-    class _Observation:
-        @asynccontextmanager
-        async def cycle(self) -> AsyncMock:
-            yield AsyncMock()
-
-    mock_service = AsyncMock(spec=DurableJobService)
+async def test_durable_job_worker_loop_wait_and_error_semantics() -> None:
+    mock_service = Mock()
     mock_service.reset_stale_running_jobs = AsyncMock(return_value=0)
-    mock_service.run_pending_once = AsyncMock(side_effect=[False, RuntimeError("boom"), asyncio.CancelledError()])
+    mock_service.run_pending_once = AsyncMock(side_effect=[True, RuntimeError("boom"), False])
+    loop = job_queue.DurableJobWorkerLoop(service=mock_service, session_factory=_fake_session_factory())
 
-    with (
-        patch("app.jobs.queue.observe_background_loop", return_value=_Observation()),
-        patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep,
-        pytest.raises(asyncio.CancelledError),
-    ):
-        loop = job_queue.DurableJobWorkerLoop(service=mock_service)
-        await loop.run()
-
+    await loop._on_start()
     assert mock_service.reset_stale_running_jobs.await_count == 2
-    sleep.assert_awaited()
+
+    # worked=True → no sleep between cycles
+    await loop._run_cycle(AsyncMock())
+    with patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep:
+        await loop._wait(1.0)
+    sleep.assert_not_awaited()
+
+    # a raising cycle must still sleep (worked resets to False before the call)
+    with pytest.raises(RuntimeError):
+        await loop._run_cycle(AsyncMock())
+    with patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep:
+        await loop._wait(1.0)
+    sleep.assert_awaited_once_with(1.0)

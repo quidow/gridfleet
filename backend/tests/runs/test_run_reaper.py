@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
@@ -10,7 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
-from app.runs.service_reaper import RunReaperLoop
+from app.runs.service_reaper import reap_stale_runs
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -25,16 +24,6 @@ _release_svc = RunReleaseService(
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
-
-
-def _make_reaper(lifecycle: object | None = None) -> RunReaperLoop:
-    """Build a RunReaperLoop with an optional mock lifecycle service."""
-    mock_services = SimpleNamespace(
-        lifecycle=lifecycle or _lifecycle_svc,
-        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 60}),
-        session_factory=None,
-    )
-    return RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
 
 
 async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSession) -> None:
@@ -52,8 +41,7 @@ async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSessio
 
     mock_lifecycle = AsyncMock()
     mock_lifecycle.expire_run = AsyncMock()
-    reaper = _make_reaper(mock_lifecycle)
-    await reaper._reap_stale_runs(db_session)
+    await reap_stale_runs(db_session, lifecycle=mock_lifecycle)
 
     mock_lifecycle.expire_run.assert_awaited_once()
     assert mock_lifecycle.expire_run.await_args is not None
@@ -76,8 +64,7 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
 
     mock_lifecycle = AsyncMock()
     mock_lifecycle.expire_run = AsyncMock()
-    reaper = _make_reaper(mock_lifecycle)
-    await reaper._reap_stale_runs(db_session)
+    await reap_stale_runs(db_session, lifecycle=mock_lifecycle)
 
     mock_lifecycle.expire_run.assert_awaited_once()
     assert mock_lifecycle.expire_run.await_args is not None
@@ -161,8 +148,7 @@ async def test_reap_stale_runs_ignores_terminal_and_fresh_runs(db_session: Async
 
     mock_lifecycle = AsyncMock()
     mock_lifecycle.expire_run = AsyncMock()
-    reaper = _make_reaper(mock_lifecycle)
-    await reaper._reap_stale_runs(db_session)
+    await reap_stale_runs(db_session, lifecycle=mock_lifecycle)
 
     mock_lifecycle.expire_run.assert_not_awaited()
 

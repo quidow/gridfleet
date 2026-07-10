@@ -18,7 +18,6 @@ from app.core.observability import (
     configure_logging,
     get_logger,
 )
-from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_ready_loop_snapshots
 
 if TYPE_CHECKING:
@@ -69,7 +68,7 @@ async def test_check_readiness_reports_db_failure() -> None:
     failing_db = AsyncMock()
     failing_db.execute.side_effect = RuntimeError("db unavailable")
 
-    payload, status_code = await check_readiness(failing_db, settings=FakeSettingsReader({}))
+    payload, status_code = await check_readiness(failing_db)
 
     assert status_code == 503
     assert payload["status"] == "unhealthy"

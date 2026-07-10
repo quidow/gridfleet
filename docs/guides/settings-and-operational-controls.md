@@ -126,8 +126,6 @@ Most important settings:
   - hard cap that prevents unusually long reservations
 - `reservations.default_heartbeat_timeout_sec`
   - how long a quiet run can go before the reaper expires it
-- `reservations.reaper_interval_sec`
-  - how often stale runs are checked for timeout or TTL expiry
 
 This tab directly changes how long devices stay reserved and how forgiving the manager is toward slow or flaky CI heartbeat behavior.
 

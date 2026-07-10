@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from app.appium_nodes.services.reconciler import fetch_backoff_until, fetch_desired_rows
-from app.core.background_loop import BackgroundLoop
+from app.core.background_loop import BackgroundLoop, stage_due
 from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import APPIUM_RECONCILER_CYCLE_FAILURES, APPIUM_RECONCILER_LAST_CYCLE_SECONDS
 from app.core.observability import get_logger
@@ -59,12 +59,6 @@ class ObservationFold:
     section: str  # push payload key
     fold: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]]
     stamp_key: str = "reported_at"
-
-
-def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
-    """True when a stage with its own interval setting is due on this sweep cycle."""
-    divisor = max(1, round(stage_interval / base_interval))
-    return cycle_index % divisor == 0
 
 
 async def _fold_observations(

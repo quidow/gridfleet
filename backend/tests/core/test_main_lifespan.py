@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, Mock
 from fastapi.responses import JSONResponse, Response
 
 from app import composition, main
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -168,23 +167,17 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "HostSweepLoop", _mock_loop)
     monkeypatch.setattr(main, "AppiumSweepLoop", _mock_loop)
     monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
-    monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
-    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
-    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
-    monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
-    monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
+    monkeypatch.setattr(main, "JanitorLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
             "host_sweep_loop",
             "appium_sweep_loop",
             "durable_job_worker_loop",
-            "run_reaper_loop",
-            "data_cleanup_loop",
-            "fleet_capacity_collector_loop",
-            "pack_drain_loop",
+            "grid_allocation_reaper_loop",
             "device_intent_reconciler_loop",
+            "janitor_loop",
         }
         task_names = {task.get_name() for task in created_tasks}
         assert task_names >= expected_leader_loop_names
@@ -263,9 +256,8 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert await main.live_health() == {"status": "ok"}
 
     monkeypatch.setattr(main, "check_readiness", AsyncMock(return_value=({"status": "ready"}, 202)))
-    fake_settings_services = SimpleNamespace(service=FakeSettingsReader({}))
-    ready = await main.ready_health(db=AsyncMock(), settings_services=fake_settings_services)
-    health = await main.health(db=AsyncMock(), settings_services=fake_settings_services)
+    ready = await main.ready_health(db=AsyncMock())
+    health = await main.health(db=AsyncMock())
     assert isinstance(ready, JSONResponse)
     assert isinstance(health, JSONResponse)
     assert ready.status_code == 202

@@ -15,7 +15,7 @@ from app.core.observability import BACKGROUND_LOOP_NAMES
 # Adding a loop here is a deliberate decision — document why in the PR that does so.
 # scheduler_stall_watchdog is not a heartbeat loop: it runs no observability
 # cycle and emits no snapshot, so readiness must not expect one for it.
-_NOT_READINESS_GATED = frozenset({"background_loop_flush", "scheduler_stall_watchdog"})
+_NOT_READINESS_GATED = frozenset({"scheduler_stall_watchdog"})
 
 
 def _normalize(name: str) -> str:
@@ -116,15 +116,6 @@ async def test_get_background_loop_snapshots_filters_non_dict_values() -> None:
     assert snapshots == {"heartbeat": {"ok": True}}
 
 
-async def test_schedule_background_loop_seeds_in_memory_snapshot() -> None:
-    await observability.schedule_background_loop("heartbeat", 30.0)
-
-    snapshots = dict(observability._heartbeat_buffer.snapshots)
-    assert snapshots["heartbeat"]["loop_name"] == "heartbeat"
-    assert snapshots["heartbeat"]["interval_seconds"] == 30.0
-    assert "next_expected_at" in snapshots["heartbeat"]
-
-
 def test_update_loop_snapshot_merges_previous_and_truncates_errors() -> None:
     # Pre-populate with an extra key to verify per-loop merge behavior.
     observability._heartbeat_buffer.snapshots["heartbeat"] = {
@@ -185,9 +176,9 @@ async def test_observe_background_loop_does_not_touch_database() -> None:
 
 
 async def test_flush_background_loop_snapshots_writes_set_many_once() -> None:
-    await observability.schedule_background_loop("heartbeat", 15.0)
-    await observability.schedule_background_loop("session_sync", 5.0)
-    await observability.schedule_background_loop("node_health", 30.0)
+    observability._heartbeat_buffer.update("heartbeat", interval_seconds=15.0)
+    observability._heartbeat_buffer.update("session_sync", interval_seconds=5.0)
+    observability._heartbeat_buffer.update("node_health", interval_seconds=30.0)
 
     store = AsyncMock()
     store.set_many = AsyncMock()
@@ -232,7 +223,7 @@ async def test_flush_is_noop_when_no_snapshots() -> None:
 
 async def test_flush_skips_when_no_changes_since_last_flush() -> None:
     """Repeated flushes without intervening cycles should not re-write."""
-    await observability.schedule_background_loop("heartbeat", 15.0)
+    observability._heartbeat_buffer.update("heartbeat", interval_seconds=15.0)
 
     store = AsyncMock()
     store.set_many = AsyncMock()
@@ -257,7 +248,7 @@ async def test_flush_skips_when_no_changes_since_last_flush() -> None:
 
 
 async def test_flush_remains_dirty_on_failure() -> None:
-    await observability.schedule_background_loop("heartbeat", 15.0)
+    observability._heartbeat_buffer.update("heartbeat", interval_seconds=15.0)
 
     store = AsyncMock()
     store.set_many = AsyncMock(side_effect=RuntimeError("db down"))

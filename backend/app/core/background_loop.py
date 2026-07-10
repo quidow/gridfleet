@@ -24,12 +24,17 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
+    """True when a stage with its own interval is due on this sweep cycle."""
+    divisor = max(1, round(stage_interval / base_interval))
+    return cycle_index % divisor == 0
+
+
 class BackgroundLoop(ABC):
     """Periodic loop skeleton; subclasses fill in the cycle body and policy."""
 
     loop_name: ClassVar[str]
     cycle_failed_message: ClassVar[str]
-    sleep_before_first_cycle: ClassVar[bool] = False
 
     @property
     @abstractmethod
@@ -61,8 +66,6 @@ class BackgroundLoop(ABC):
 
     async def run(self) -> None:
         await self._on_start()
-        if self.sleep_before_first_cycle:
-            await self._wait(self._interval())
         while True:
             interval = self._interval()
             cycle_start = time.monotonic()

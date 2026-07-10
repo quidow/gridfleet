@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import importlib
 import logging
 import os
@@ -26,9 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
     from contextlib import AbstractAsyncContextManager
 
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-    from app.core.protocols import SettingsReader
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -50,13 +47,12 @@ BACKGROUND_LOOP_NAMES = (
     "host_sweep",
     "appium_sweep",
     "durable_job_worker",
-    "run_reaper",
     "grid_allocation_reaper",
-    "data_cleanup",
-    "fleet_capacity_collector",
-    "pack_drain",
     "device_intent_reconciler",
+    "janitor",
 )
+# Janitor flush-stage cadence; also the readiness grace for heartbeat staleness.
+BACKGROUND_LOOP_FLUSH_INTERVAL_SEC = 15.0
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
 _GRIDFLEET_BACKEND_HANDLER_ATTR = "_gridfleet_backend_logging_handler"
@@ -204,7 +200,7 @@ async def get_background_loop_snapshots(db: AsyncSession) -> dict[str, dict[str,
 class _HeartbeatBuffer:
     """Per-process in-memory cache of the latest background-loop heartbeats.
 
-    The leader-owned flusher (see ``background_loop_flush_loop``) periodically
+    The leader-owned janitor flush stage periodically
     UPSERTs ``snapshots`` into the control-plane state table in a single round
     trip, instead of letting every loop cycle hit the database twice. Non-leader
     workers never run the loops so their buffer stays empty and they flush
@@ -277,15 +273,6 @@ class _HeartbeatBuffer:
 _heartbeat_buffer = _HeartbeatBuffer()
 
 
-async def schedule_background_loop(loop_name: str, interval_seconds: float) -> None:
-    """Seed an in-memory snapshot for ``loop_name`` so a flush picks it up.
-
-    Kept ``async`` for call-site backward compatibility with callers that
-    historically awaited a DB write.
-    """
-    _heartbeat_buffer.update(loop_name, interval_seconds=interval_seconds)
-
-
 async def flush_background_loop_snapshots(
     session_factory: SessionFactory | None = None,
 ) -> int:
@@ -324,35 +311,6 @@ def stalled_background_loop_names(*, now: datetime, extra_grace_seconds: float) 
         for name, snapshot in _heartbeat_buffer.snapshots.items()
         if not loop_heartbeat_fresh(snapshot, now=now, extra_grace_seconds=extra_grace_seconds)
     ]
-
-
-class BackgroundLoopFlushLoop:
-    def __init__(
-        self,
-        *,
-        session_factory: async_sessionmaker[AsyncSession],
-        settings: SettingsReader,
-    ) -> None:
-        self._session_factory = session_factory
-        self._settings = settings
-
-    async def run(self) -> None:
-        """Periodic flusher started by the leader. Cancels on task cancellation."""
-        while True:
-            try:
-                await flush_background_loop_snapshots(self._session_factory)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger = get_logger(__name__)
-                logger.exception("background_loop_flush_failed")
-            interval = float(current_background_loop_flush_interval_seconds(settings=self._settings))
-            await asyncio.sleep(interval)
-
-
-def current_background_loop_flush_interval_seconds(*, settings: SettingsReader) -> float:
-    """Read the active flush window from the settings registry."""
-    return settings.get_float("general.background_loop_flush_interval_sec")
 
 
 @dataclass

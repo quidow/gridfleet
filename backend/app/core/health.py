@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 
 from app.core.observability import (
+    BACKGROUND_LOOP_FLUSH_INTERVAL_SEC,
     BACKGROUND_LOOP_NAMES,
-    current_background_loop_flush_interval_seconds,
     get_background_loop_snapshots,
     loop_heartbeat_fresh,
 )
@@ -16,16 +16,12 @@ from app.core.timeutil import now_utc
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
-
 
 async def check_liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def check_readiness(
-    db: AsyncSession, *, settings: SettingsReader, fail_on_stalled_loops: bool = True
-) -> tuple[dict[str, Any], int]:
+async def check_readiness(db: AsyncSession, *, fail_on_stalled_loops: bool = True) -> tuple[dict[str, Any], int]:
     checks: dict[str, Any] = {}
     shutting_down = shutdown_coordinator.is_shutting_down()
     checks["shutdown"] = {
@@ -52,10 +48,11 @@ async def check_readiness(
 
     snapshots = await get_background_loop_snapshots(db)
     current_time = now_utc()
-    # Snapshots live in-memory on the leader and are batch-flushed every
-    # `background_loop_flush_interval_sec`; allow that full window as extra
-    # grace so a healthy loop is never reported stale during the flush gap.
-    flush_interval = current_background_loop_flush_interval_seconds(settings=settings)
+    # Snapshots live in-memory on the leader and are batch-flushed by the
+    # janitor flush stage every `BACKGROUND_LOOP_FLUSH_INTERVAL_SEC`; allow that
+    # full window as extra grace so a healthy loop is never reported stale
+    # during the flush gap.
+    flush_interval = BACKGROUND_LOOP_FLUSH_INTERVAL_SEC
     loop_checks: dict[str, Any] = {}
     leader_ready = True
 

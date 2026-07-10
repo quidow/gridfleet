@@ -6,6 +6,7 @@ from sqlalchemy import cast, func, literal, select, union
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import selectinload
 
+from app.core.observability import get_logger
 from app.devices.models import Device, DeviceReservation
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
@@ -14,6 +15,8 @@ from app.sessions.models import Session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = get_logger(__name__)
 
 
 def _pack_with_releases_options() -> tuple[Any, ...]:
@@ -92,6 +95,28 @@ class PackLifecycleService:
                 pack.state = PackState.disabled
         return pack
 
+    async def complete_draining_packs_once(self, db: AsyncSession) -> list[str]:
+        """Backstop scan (janitor stage): complete any draining pack whose last
+        active work released without hitting the inline drain hook."""
+        pack_ids = (
+            (
+                await db.execute(
+                    select(DriverPack.id).where(DriverPack.state == PackState.draining).order_by(DriverPack.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        completed: list[str] = []
+        for pack_id in pack_ids:
+            pack = await self.try_complete_drain(db, pack_id)
+            if pack.state == PackState.disabled:
+                completed.append(pack_id)
+        await db.commit()
+        if completed:
+            logger.info("Completed draining driver packs: %s", ", ".join(completed))
+        return completed
+
     async def transition_pack_state(
         self,
         db: AsyncSession,
@@ -129,6 +154,25 @@ class PackLifecycleService:
             await db.execute(select(DriverPack).where(DriverPack.id == pack_id).options(*_pack_with_releases_options()))
         ).scalar_one()
         return result
+
+
+async def complete_drain_if_draining(db: AsyncSession, pack_id: str | None) -> None:
+    """Inline drain completion for session/run release paths.
+
+    Cheap unlocked pre-check so hot close paths never touch the pack row lock;
+    only a pack observed ``draining`` proceeds to ``try_complete_drain`` (whose
+    FOR UPDATE + recount is the correctness authority). A pack flipping to
+    draining just after the pre-check is caught by the janitor's backstop
+    stage. Deadlock-safe while draining: ``assert_runnable`` fails at the pack
+    gate before taking device row locks, so the allocator's pack→device order
+    never interleaves with this hook's device→pack order on a draining pack.
+    """
+    if pack_id is None:
+        return
+    state = await db.scalar(select(DriverPack.state).where(DriverPack.id == pack_id))
+    if state != PackState.draining:
+        return
+    await PackLifecycleService().try_complete_drain(db, pack_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
