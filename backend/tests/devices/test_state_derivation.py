@@ -2,12 +2,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
-from app.devices.models import DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.state import (
     DeviceStateFacts,
+    derive_operational_state,
     evaluate_operational_state,
     gather_device_state_facts,
+    is_available_sql,
+    operational_state_sql,
 )
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
@@ -79,6 +83,16 @@ async def test_gather_facts_available_device(
     assert facts.stop_in_flight is False
     assert facts.ready is True
     assert evaluate_operational_state(facts) is DeviceOperationalState.available
+
+    now = datetime.now(UTC)
+    assert await derive_operational_state(db_session, device, now=now) is DeviceOperationalState.available
+    sql_state = (
+        await db_session.execute(select(operational_state_sql(now=now)).where(Device.id == device.id))
+    ).scalar_one()
+    assert sql_state == DeviceOperationalState.available.value
+    assert (
+        await db_session.execute(select(Device.id).where(Device.id == device.id, is_available_sql(now=now)))
+    ).scalar_one() == device.id
 
 
 @pytest.mark.db

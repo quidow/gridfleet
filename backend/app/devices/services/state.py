@@ -10,25 +10,36 @@ transaction rolls back.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from sqlalchemy import and_, case, exists, or_, select
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceOperationalState
-from app.devices.services.claims import device_has_live_session, device_has_verification_lease
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState
+from app.devices.services.claims import (
+    device_has_live_session,
+    device_has_verification_lease,
+    live_session_exists,
+    live_session_predicate,
+    verification_lease_exists,
+)
 from app.devices.services.health_view import device_allows_allocation
+from app.devices.services.intent_types import CommandKind
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids
+from app.sessions.models import Session
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import Session as OrmSession
+    from sqlalchemy.sql.expression import ColumnElement
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
@@ -222,6 +233,170 @@ async def gather_device_state_facts(
         stop_in_flight=appium_node_stop_in_flight(device),
         ready=ready,
     )
+
+
+# --- SQL twin of the evaluator (WS-7.2). Keep each leg in lockstep with the
+# --- corresponding fact in gather_device_state_facts.
+
+
+def maintenance_sql() -> ColumnElement[bool]:
+    """SQL form of ``WithdrawalFacts.in_maintenance``."""
+    return cast("ColumnElement[bool]", Device.lifecycle_policy_state["maintenance_reason"].astext.is_not(None))
+
+
+def stop_in_flight_sql() -> ColumnElement[bool]:
+    """SQL form of ``appium_node_stop_in_flight``."""
+    return exists(
+        select(AppiumNode.id).where(
+            AppiumNode.device_id == Device.id,
+            or_(AppiumNode.desired_state == AppiumDesiredState.stopped, AppiumNode.stop_pending.is_(True)),
+        )
+    )
+
+
+def allows_allocation_sql() -> ColumnElement[bool]:
+    """SQL form of ``device_allows_allocation``."""
+    node_present_not_running = exists(
+        select(AppiumNode.id).where(
+            AppiumNode.device_id == Device.id,
+            ~case(
+                (AppiumNode.health_running.is_not(None), AppiumNode.health_running),
+                else_=and_(AppiumNode.pid.is_not(None), AppiumNode.active_connection_target.is_not(None)),
+            ),
+        )
+    )
+    return and_(
+        Device.device_checks_healthy.is_not(False),
+        ~node_present_not_running,
+        or_(Device.session_viability_status.is_(None), Device.session_viability_status != "failed"),
+    )
+
+
+def _ready_sql() -> ColumnElement[bool]:
+    # SQL approximation of DeviceStateFacts.ready. The pack-manifest setup-fields
+    # axis of is_ready_for_use is not SQL-expressible; verified_at stands in.
+    return and_(
+        Device.verified_at.is_not(None),
+        ~maintenance_sql(),
+        Device.review_required.is_(False),
+        allows_allocation_sql(),
+    )
+
+
+def is_busyish_sql() -> ColumnElement[bool]:
+    return live_session_exists()
+
+
+def is_verifying_sql(*, now: datetime) -> ColumnElement[bool]:
+    return and_(~live_session_exists(), verification_lease_exists(now=now))
+
+
+def is_maintenance_sql(*, now: datetime) -> ColumnElement[bool]:
+    return and_(~live_session_exists(), ~verification_lease_exists(now=now), maintenance_sql())
+
+
+def is_offline_sql(*, now: datetime) -> ColumnElement[bool]:
+    return and_(
+        ~live_session_exists(),
+        ~verification_lease_exists(now=now),
+        ~maintenance_sql(),
+        or_(stop_in_flight_sql(), ~_ready_sql()),
+    )
+
+
+def is_available_sql(*, now: datetime) -> ColumnElement[bool]:
+    return and_(
+        ~live_session_exists(),
+        ~verification_lease_exists(now=now),
+        ~maintenance_sql(),
+        ~stop_in_flight_sql(),
+        _ready_sql(),
+    )
+
+
+def operational_state_sql(*, now: datetime) -> ColumnElement[str]:
+    """5-way CASE mirroring ``evaluate_operational_state``'s masking order."""
+    return case(
+        (live_session_exists(), DeviceOperationalState.busy.value),
+        (verification_lease_exists(now=now), DeviceOperationalState.verifying.value),
+        (maintenance_sql(), DeviceOperationalState.maintenance.value),
+        (or_(stop_in_flight_sql(), ~_ready_sql()), DeviceOperationalState.offline.value),
+        else_=DeviceOperationalState.available.value,
+    )
+
+
+def operational_state_rank_sql(*, now: datetime) -> ColumnElement[int]:
+    """ORDER BY key matching the native enum declaration order."""
+    return case(
+        (live_session_exists(), 1),
+        (verification_lease_exists(now=now), 3),
+        (maintenance_sql(), 4),
+        (or_(stop_in_flight_sql(), ~_ready_sql()), 2),
+        else_=0,
+    )
+
+
+async def derive_operational_state(
+    db: AsyncSession,
+    device: Device,
+    *,
+    now: datetime,
+    packs: dict[str, DriverPack] | None = None,
+) -> DeviceOperationalState:
+    """Read-time operational state for one loaded device row."""
+    return evaluate_operational_state(await gather_device_state_facts(db, device, now=now, packs=packs))
+
+
+async def derive_operational_states(
+    db: AsyncSession,
+    devices: Sequence[Device],
+    *,
+    now: datetime,
+    packs: dict[str, DriverPack] | None = None,
+) -> dict[uuid.UUID, DeviceOperationalState]:
+    """Batch read-time operational state with bulk claim lookups."""
+    ids = [device.id for device in devices]
+    if not ids:
+        return {}
+
+    live_ids = set(
+        (await db.execute(select(Session.device_id).where(Session.device_id.in_(ids), live_session_predicate())))
+        .scalars()
+        .all()
+    )
+    leased_ids = set(
+        (
+            await db.execute(
+                select(DeviceIntent.device_id).where(
+                    DeviceIntent.device_id.in_(ids),
+                    DeviceIntent.kind == CommandKind.verification_start,
+                    or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if packs is None:
+        packs = await load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
+
+    result: dict[uuid.UUID, DeviceOperationalState] = {}
+    for device in devices:
+        withdrawal = WithdrawalFacts.from_device(device)
+        ready = (
+            (await is_ready_for_use_async(db, device, packs=packs))
+            and device_allows_allocation(device)
+            and withdrawal.in_service()
+        )
+        facts = DeviceStateFacts(
+            has_running_session=device.id in live_ids,
+            has_verification_lease=device.id in leased_ids,
+            in_maintenance=withdrawal.in_maintenance,
+            stop_in_flight=appium_node_stop_in_flight(device),
+            ready=ready,
+        )
+        result[device.id] = evaluate_operational_state(facts)
+    return result
 
 
 async def apply_derived_state(
