@@ -7,12 +7,10 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select, text
 
 from app.core.coerce import coerce_float as _coerce_float
-from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
-from app.hosts.models import Host, HostResourceSample, HostStatus
+from app.hosts.models import Host, HostResourceSample
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
-from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -26,6 +24,11 @@ logger = get_logger(__name__)
 
 # Largest accepted telemetry bucket size: one day, expressed in minutes.
 _MAX_BUCKET_MINUTES = 1440
+
+# ponytail: fixed sample cadence, was general.host_resource_telemetry_interval_sec.
+# The push refreshes recorded_at every ~10 s; one row per minute is plenty for the
+# bucketed dashboards this table feeds.
+HOST_RESOURCE_SAMPLE_MIN_INTERVAL_SEC = 60.0
 
 
 def _coerce_int(value: object) -> int | None:
@@ -83,28 +86,27 @@ class HostResourceTelemetryService:
         await db.flush()
         return row
 
-    async def poll_once(self, db: AsyncSession) -> None:
-        result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
-        hosts = result.scalars().all()
-
-        for host in hosts:
-            try:
-                raw = await control_plane_state_store.get_value(db, HOST_STATUS_NAMESPACE, str(host.id))
-                payload = raw.get("payload") if isinstance(raw, dict) else None
-                sample = payload.get("host_telemetry") if isinstance(payload, dict) else None
-                if not isinstance(sample, dict):
-                    continue
-                recorded_at = parse_iso(sample.get("recorded_at"))
-                latest = await db.scalar(
-                    select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host.id)
-                )
-                if recorded_at is not None and latest is not None and recorded_at <= latest:
-                    continue  # agent stopped pushing — don't duplicate the stale sample
-                await self.apply_host_resource_sample(db, host, sample)
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                logger.exception("Unexpected host resource telemetry failure for host %s", host.hostname)
+    async def fold_host_telemetry(self, db: AsyncSession, host_id: UUID, section: dict[str, Any]) -> None:
+        """Fold the pushed host_telemetry sample, rate-limited so per-push stamps
+        do not multiply row volume over the old 60 s stage cadence."""
+        host = await db.get(Host, host_id)
+        if host is None:
+            return
+        # Capture before the write: a rollback expires the instance, so reading
+        # hostname in the except would trigger a sync lazy-load (MissingGreenlet).
+        hostname = host.hostname
+        try:
+            effective = parse_iso(section.get("recorded_at")) or now_utc()
+            latest = await db.scalar(
+                select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host.id)
+            )
+            if latest is not None and effective < latest + timedelta(seconds=HOST_RESOURCE_SAMPLE_MIN_INTERVAL_SEC):
+                return
+            await self.apply_host_resource_sample(db, host, section)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("Unexpected host resource telemetry failure for host %s", hostname)
 
     async def fetch_host_resource_telemetry(
         self,

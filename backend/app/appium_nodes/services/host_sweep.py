@@ -1,13 +1,14 @@
-"""One pushed observation per host per tick, feeding every host-scoped concern.
+"""One pushed observation per host per tick: recency liveness, convergence, then
+watermark-gated fact folds; a cadence-gated partition-probe diagnostic; cooldown
+expiry after the fan-out.
 
 Concerns run only for hosts this sweep pass proved alive: host liveness derives
 from status-push recency (evaluate_host), appium-node convergence reads the same
 latest pushed snapshot, and per-host observation folds consume stamped push
-sections afterward. The backend keeps a single cadence-gated reachability probe
-(probe_host) as a network-partition diagnostic. Cross-host passes (connectivity,
-telemetry, property refresh) run as cadence-gated global stages after the
-per-host fan-out completes — one SweepStage entry each, gated by its own
-interval setting (see stage_due).
+sections afterward — each fold gated by a per-host stamp watermark so one
+observation folds exactly once. The backend keeps a single cadence-gated
+reachability probe (probe_host) as a network-partition diagnostic (see
+stage_due). After the fan-out the sweep expires stale device cooldowns.
 """
 
 from __future__ import annotations
@@ -42,15 +43,6 @@ logger = get_logger(__name__)
 
 LOOP_NAME = "host_sweep"
 OBSERVATION_FOLD_NAMESPACE = "host_sweep.observation_fold"
-
-
-@dataclass(frozen=True)
-class SweepStage:
-    """A cross-host pass gated by its own interval setting, run after the fan-out."""
-
-    label: str  # structured-log stage name
-    interval_setting: str  # settings key read every cycle for the cadence
-    run: Callable[[AsyncSession], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -102,7 +94,7 @@ async def _fold_observations(
         await db.commit()
 
 
-async def run_host_sweep_once(  # noqa: PLR0913, PLR0915  # transient: global_stages arg + stage loop removed in WS-2.2 Task 5
+async def run_host_sweep_once(
     db: AsyncSession,
     *,
     heartbeat: HeartbeatService,
@@ -110,7 +102,6 @@ async def run_host_sweep_once(  # noqa: PLR0913, PLR0915  # transient: global_st
     settings: SettingsReader,
     session_factory: SessionFactory,
     observation_folds: Sequence[ObservationFold] = (),
-    global_stages: Sequence[SweepStage] = (),
     expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     cycle_index: int = 0,
 ) -> None:
@@ -185,22 +176,6 @@ async def run_host_sweep_once(  # noqa: PLR0913, PLR0915  # transient: global_st
         except Exception:
             logger.exception("host_sweep_cooldown_pass_failed")
 
-    for stage in global_stages:
-        if not stage_due(
-            cycle_index, base_interval=base_interval, stage_interval=settings.get_float(stage.interval_setting)
-        ):
-            continue
-        # End any open read transaction before a long pass — no snapshot or lock
-        # may span agent I/O (repo contract). The statuses each stage reads are the
-        # ones this cycle's liveness stage just wrote.
-        await db.commit()
-        try:
-            await stage.run(db)
-        except Exception:
-            # Stage isolation: one stage's failure must not fail the cycle or skip
-            # the stages after it.
-            logger.exception("host_sweep_stage_failed", stage=stage.label)
-
 
 class HostSweepLoop(BackgroundLoop):
     """Leader-owned shared host-observation loop."""
@@ -213,12 +188,10 @@ class HostSweepLoop(BackgroundLoop):
         *,
         services: AppiumNodeServices,
         observation_folds: Sequence[ObservationFold] = (),
-        global_stages: Sequence[SweepStage] = (),
         expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     ) -> None:
         self._services = services
         self._observation_folds = tuple(observation_folds)
-        self._global_stages = tuple(global_stages)
         self._expire_cooldowns = expire_cooldowns
         self._cycle = 0
 
@@ -237,7 +210,6 @@ class HostSweepLoop(BackgroundLoop):
             settings=self._services.settings,
             session_factory=self._services.session_factory,
             observation_folds=self._observation_folds,
-            global_stages=self._global_stages,
             expire_cooldowns=self._expire_cooldowns,
             cycle_index=self._cycle,
         )

@@ -4,12 +4,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.core.leader import state_store as control_plane_state_store
 from app.hosts.models import HostResourceSample
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
-from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
@@ -51,32 +49,21 @@ async def test_apply_host_resource_sample_persists_partial_fields(
     assert row.disk_percent is None
 
 
-async def test_poll_once_ingests_sample_from_pushed_snapshot(
+async def test_fold_ingests_pushed_sample(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    await control_plane_state_store.set_value(
-        db_session,
-        HOST_STATUS_NAMESPACE,
-        str(db_host.id),
-        {
-            "received_at": "2026-04-16T09:30:00+00:00",
-            "payload": {
-                "host_telemetry": {
-                    "recorded_at": "2026-04-16T09:30:00+00:00",
-                    "cpu_percent": 42.0,
-                    "memory_used_mb": 1024,
-                    "memory_total_mb": 2048,
-                    "disk_used_gb": 10.0,
-                    "disk_total_gb": 100.0,
-                    "disk_percent": 10.0,
-                },
-            },
-        },
-    )
-    await db_session.commit()
+    sample = {
+        "recorded_at": "2026-04-16T09:30:00+00:00",
+        "cpu_percent": 42.0,
+        "memory_used_mb": 1024,
+        "memory_total_mb": 2048,
+        "disk_used_gb": 10.0,
+        "disk_total_gb": 100.0,
+        "disk_percent": 10.0,
+    }
 
-    await _make_service().poll_once(db_session)
+    await _make_service().fold_host_telemetry(db_session, db_host.id, sample)
 
     rows = (
         (await db_session.execute(select(HostResourceSample).where(HostResourceSample.host_id == db_host.id)))
@@ -87,47 +74,35 @@ async def test_poll_once_ingests_sample_from_pushed_snapshot(
     assert rows[0].cpu_percent == pytest.approx(42.0)
 
 
-async def test_poll_once_skips_stale_sample(
+async def test_fold_appends_sample_and_rate_limits(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    recorded_at = datetime(2026, 4, 16, 9, 30, tzinfo=UTC)
-    db_session.add(
-        HostResourceSample(
-            host_id=db_host.id,
-            recorded_at=recorded_at,
-            cpu_percent=1.0,
-            memory_used_mb=1,
-            memory_total_mb=1,
-            disk_used_gb=1.0,
-            disk_total_gb=1.0,
-            disk_percent=1.0,
-        )
+    base = datetime(2026, 4, 16, 9, 30, tzinfo=UTC)
+    sample = {
+        "recorded_at": base.isoformat(),
+        "cpu_percent": 10.0,
+        "memory_used_mb": 1000,
+        "memory_total_mb": 2000,
+        "disk_used_gb": 5.0,
+        "disk_total_gb": 50.0,
+        "disk_percent": 10.0,
+    }
+    svc = _make_service()
+    await svc.fold_host_telemetry(db_session, db_host.id, sample)
+    # +10 s: skipped (< HOST_RESOURCE_SAMPLE_MIN_INTERVAL_SEC).
+    await svc.fold_host_telemetry(
+        db_session, db_host.id, {**sample, "recorded_at": (base + timedelta(seconds=10)).isoformat()}
     )
-    await control_plane_state_store.set_value(
-        db_session,
-        HOST_STATUS_NAMESPACE,
-        str(db_host.id),
-        {
-            "received_at": recorded_at.isoformat(),
-            "payload": {
-                "host_telemetry": {
-                    "recorded_at": recorded_at.isoformat(),
-                    "cpu_percent": 99.0,
-                },
-            },
-        },
+    # +70 s: appended.
+    await svc.fold_host_telemetry(
+        db_session, db_host.id, {**sample, "recorded_at": (base + timedelta(seconds=70)).isoformat()}
     )
-    await db_session.commit()
 
-    await _make_service().poll_once(db_session)
-
-    rows = (
-        (await db_session.execute(select(HostResourceSample).where(HostResourceSample.host_id == db_host.id)))
-        .scalars()
-        .all()
+    count = await db_session.scalar(
+        select(func.count()).select_from(HostResourceSample).where(HostResourceSample.host_id == db_host.id)
     )
-    assert len(rows) == 1  # the pre-existing row; no duplicate ingested
+    assert count == 2
 
 
 async def test_fetch_host_resource_telemetry_buckets_samples(
