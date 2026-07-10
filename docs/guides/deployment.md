@@ -46,7 +46,7 @@ Production auth and host trust:
 - keep `GRIDFLEET_AUTH_ENABLED=true` for production-style deployments
 - populate `GRIDFLEET_AUTH_USERNAME`, `GRIDFLEET_AUTH_PASSWORD`, `GRIDFLEET_AUTH_SESSION_SECRET`, `GRIDFLEET_MACHINE_AUTH_USERNAME`, and `GRIDFLEET_MACHINE_AUTH_PASSWORD` with deployment-specific secrets before exposing the stack
 - keep `GRIDFLEET_AUTH_COOKIE_SECURE=true` behind HTTPS/TLS
-- keep `GRIDFLEET_HOST_AUTO_ACCEPT=false` unless the manager and every registering host are on a tightly controlled trusted network
+- keep `agent.auto_accept_hosts` disabled unless the manager and every registering host are on a tightly controlled trusted network
 
 `GRIDFLEET_AUTH_ENABLED=false` is intended only for local development and isolated trusted-lab trials. It should not be used for a production-style deployment or any environment reachable by untrusted clients.
 
@@ -119,7 +119,7 @@ For headless Linux hosts, enable lingering so the user-scoped systemd service su
 sudo loginctl enable-linger "$USER"
 ```
 
-With the recommended production default `GRIDFLEET_HOST_AUTO_ACCEPT=false`, newly registered agents appear as pending hosts in the manager and must be approved by an operator before they can manage devices.
+With the secure default `agent.auto_accept_hosts=false`, newly registered agents appear as pending hosts in the manager and must be approved by an operator before they can manage devices.
 
 ### macOS
 

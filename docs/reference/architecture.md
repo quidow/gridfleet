@@ -31,7 +31,7 @@ channel. The scheduler's `host_sweep` evaluates each host's liveness from that
 push's recency (`general.host_offline_after_sec`, default 45 s) rather than
 dialing the agent, and passes the latest pushed snapshot to the reconciler for
 a host the recency check proved alive. A cadence-gated `GET /agent/health`
-reachability probe (`general.partition_probe_interval_sec`, default 60 s)
+reachability probe (60 s plumbing constant)
 still runs per host as a network-partition diagnostic, but it feeds no state —
 liveness and convergence are push-driven. The reconciler
 (`app/appium_nodes/services/reconciler*.py`) is observe-only: it matches the
@@ -53,7 +53,7 @@ observation sections (`node_health`, `device_health`, `device_telemetry`,
 a per-host stamp watermark (control-plane namespace
 `host_sweep.observation_fold`) so one observation folds exactly once. It then
 runs the cadence-gated `/agent/health` partition diagnostic
-(`general.partition_probe_interval_sec`; feeds no state). After the per-host
+(60 s plumbing cadence; feeds no state). After the per-host
 fan-out the sweep expires stale device cooldowns. The agent produces those
 observations locally on fixed cadences (30/60/300/600 s constants in
 `agent_app/probes.py`); the backend never dials an agent to observe.
@@ -71,7 +71,7 @@ Each fact class has exactly one channel:
 | Host resource telemetry | push `host_telemetry` | push interval, folded ≥ 60 s |
 | Pack install/doctor status | push `packs` | agent pack state loop |
 | Session liveness / orphans | direct-to-Appium (`appium_sweep`, action channel) | backend |
-| Network partition (diagnostic only) | backend dial `/agent/health` | `general.partition_probe_interval_sec` |
+| Network partition (diagnostic only) | backend dial `/agent/health` | 60 s plumbing cadence |
 
 The same convergence pass counts orphans. It parses
 `appium_processes.running_nodes` from the shared sweep payload and increments a

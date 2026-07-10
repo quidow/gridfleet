@@ -42,27 +42,7 @@ These configure the standalone Rust WebDriver router (`router/`). Each has an eq
 | `GRIDFLEET_ROUTER_PROXY_TIMEOUT` | `300` | router process | Per-command upstream Appium timeout, in seconds. |
 | `GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT` | `330` | router process | Overall cap on a new-session request including queueing, in seconds. |
 
-## Backend Settings-Registry Fallback Variables
-
-These are not the authoritative settings store. They only provide the initial session default when the settings registry has no DB override for that key.
-
-| Variable | Registry key | Default | Notes |
-| --- | --- | --- | --- |
-| `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Host-sweep cadence: how often the latest pushed agent status is evaluated (base tick for the stage intervals) |
-| `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
-| `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |
-| `GRIDFLEET_NODE_MAX_FAILURES` | `general.node_max_failures` | `3` | Failed node health checks before auto-restart |
-| `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `grid.queue_timeout_sec` | `300` | How long a queued new-session request waits for a device before failing |
-| `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `grid.claim_window_sec` | `120` | How long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it |
-| `GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC` | `grid.session_first_command_grace_sec` | `180` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep reaps it; measured from the allocation claim |
-| `GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_CEILING_SEC` | `grid.session_idle_timeout_ceiling_sec` | `7200` | Hard ceiling on the idle-reap extension a client may negotiate via `appium:newCommandTimeout` (0 = "never" clamps here) |
-| `GRIDFLEET_APPIUM_PORT_RANGE_START` | `appium.port_range_start` | `4723` | Managed Appium port range start |
-| `GRIDFLEET_APPIUM_PORT_RANGE_END` | `appium.port_range_end` | `4823` | Managed Appium port range end |
-| `GRIDFLEET_MIN_AGENT_VERSION` | `agent.min_version` | `0.1.0` | Empty string disables minimum-version enforcement |
-| `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | `agent.recommended_version` | empty | Seeds initial `agent.recommended_version` setting default (empty = disabled). |
-| `GRIDFLEET_HOST_AUTO_ACCEPT` | `agent.auto_accept_hosts` | `true` | Auto-approve self-registering hosts. Production compose sets this to `false` so operators approve new hosts explicitly. |
-
-For the full registry surface, including DB-backed settings that do not have env fallbacks, see [settings.md](settings.md).
+For the full registry surface, see [settings.md](settings.md). Registry defaults are code constants; environment variables configure process-level behavior only.
 
 ## Agent Process Variables
 
@@ -75,7 +55,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_HOST_ID` | unset | agent process | Pre-assigned host UUID. When set, the agent skips manager-issued identity and enables the pack state loop immediately. |
 | `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `300` | agent process | How often the agent re-registers to refresh mutable enrollment fields such as IP address and capabilities. Enrollment-only: this refresh does not touch `Host.status` or `last_heartbeat` — it no longer resurrects an offline host |
 | `AGENT_STATUS_PUSH_INTERVAL_SEC` | `10` | agent process | How often the agent pushes the consolidated status report (`POST /agent/hosts/status`) — nodes, restart events, start failures, pack status, host telemetry, agent version/capabilities |
-| `AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC` | `630` | agent process | uvicorn keep-alive timeout for the agent API. Must stay above the backend's `agent.http_pool_idle_seconds` setting (max 600) so pooled backend→agent connections never outlive the server's keep-alive (otherwise non-idempotent calls fail with `RemoteProtocolError`). |
+| `AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC` | `630` | agent process | uvicorn keep-alive timeout for the agent API. Keep this above the fixed backend pool keepalive expiry (60 s). |
 | `AGENT_MANAGER_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username used for manager API calls when the backend auth gate is enabled |
 | `AGENT_MANAGER_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password used for manager API calls when the backend auth gate is enabled |
 | `AGENT_API_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username; required together with `AGENT_API_AUTH_PASSWORD`. When set, the agent enforces HTTP Basic on all `/agent/*` HTTP routes. |

@@ -163,7 +163,7 @@ Current validation rules:
 
 ## Agent Local API
 
-The agent exposes a local `/agent/health` endpoint. It is now a network-partition diagnostic and the installer's self-update drain gate — the manager polls it on a cadence-gated basis (`general.partition_probe_interval_sec`) as a reachability probe only; it feeds no host-liveness or convergence state. The response includes a `version_guidance` object with fields cached from the latest successful manager registration:
+The agent exposes a local `/agent/health` endpoint. It is now a network-partition diagnostic and the installer's self-update drain gate — the manager polls it on a 60-second plumbing cadence as a reachability probe only; it feeds no host-liveness or convergence state. The response includes a `version_guidance` object with fields cached from the latest successful manager registration:
 
 - `version_guidance.required_agent_version`: minimum supported agent version from the last successful manager registration.
 - `version_guidance.recommended_agent_version`: recommended agent version from the last successful manager registration.

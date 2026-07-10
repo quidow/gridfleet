@@ -35,7 +35,7 @@ The `General` tab controls the manager's background loops and automatic recovery
 
 Most important settings:
 
-- `heartbeat_interval_sec`, `host_offline_after_sec`, and `partition_probe_interval_sec`
+- `host_offline_after_sec` (the sweep cadence and partition diagnostic cadence are plumbing constants)
   - together determine how host liveness is derived from agent status pushes (`host_offline_after_sec` since the last push) and how often the reachability probe checks for a network partition
 - `node_max_failures`
   - controls how many consecutive node-health failures trigger automatic restart behavior
@@ -73,7 +73,7 @@ The `Appium & Grid` tab controls the shared node process contract.
 
 Most important settings:
 
-- `grid.session_poll_interval_sec`
+- session observation is a fixed plumbing cadence and is not operator-tunable
   - how frequently the direct-to-Appium session observation sweep reconciles `Session` rows
 - `grid.queue_timeout_sec`
   - how long a queued new-session request waits for a device before failing
@@ -107,7 +107,7 @@ Most important settings:
 
 - `agent.min_version`
   - the minimum version shown as acceptable in Hosts and Host Detail
-- `agent.auto_accept_hosts`
+- `agent.auto_accept_hosts` (off by default; operators approve new hosts manually)
   - decides whether self-registering hosts appear immediately as `online` or first as `pending`
 - `agent.default_port`
   - the prefilled/default agent port for new host records

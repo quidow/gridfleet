@@ -4,7 +4,7 @@
 Appium process running.
 
 **Resolution:** wait one host-sweep cycle (default 15s, see
-`general.heartbeat_interval_sec`). The reconciler reaps orphans and converges
+the 15 s host-sweep tick (`HOST_SWEEP_INTERVAL_SEC`). The reconciler reaps orphans and converges
 divergence automatically. If it does not:
 
 1. Verify the scheduler is running its loops. Loops run in one dedicated

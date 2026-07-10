@@ -36,8 +36,8 @@ What the agent sends at registration:
 
 What happens next:
 
+- by default, `agent.auto_accept_hosts` is disabled and the new host is created as `pending` for operator approval
 - if `agent.auto_accept_hosts` is enabled, the new host is enrolled `online` and reads online immediately via the `created_at` recency grace until the first status push takes over
-- if `agent.auto_accept_hosts` is disabled, the new host is created as `pending`
 - successful accept also triggers background device discovery
 
 Use this path when the host is already running the installed agent from the deployment flow in [deployment.md](deployment.md).
@@ -133,7 +133,7 @@ Expected flow:
 
 ### Host stays pending
 
-Most likely cause: `agent.auto_accept_hosts` is disabled. Approve the host from Hosts or Host Detail.
+Most likely cause: `agent.auto_accept_hosts` is disabled. Approve the host from Hosts or Host Detail. For local development, enable it once in Settings → Agent or with `PUT /api/settings/agent.auto_accept_hosts {"value": true}`.
 
 ### Host shows outdated or unknown agent version
 
