@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceReservation
+from app.devices.services.claims import reservation_active
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.live_session_predicate import live_session_predicate
@@ -39,7 +40,7 @@ class PackLifecycleService:
             .where(
                 TestRun.state.notin_(TERMINAL_STATES),
                 Device.pack_id == pack_id,
-                DeviceReservation.released_at.is_(None),
+                reservation_active(),
             )
         )
 

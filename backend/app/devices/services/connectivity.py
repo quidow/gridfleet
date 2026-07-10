@@ -20,7 +20,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
-from app.devices.services.claims import device_is_reserved
+from app.devices.services.claims import device_is_reserved, reservation_active
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
@@ -925,7 +925,7 @@ class ConnectivityService:
                     .where(DeviceReservation.excluded.is_(True))
                     .where(DeviceReservation.excluded_until.isnot(None))
                     .where(DeviceReservation.excluded_until < now)
-                    .where(DeviceReservation.released_at.is_(None))
+                    .where(reservation_active())
                     .options(selectinload(DeviceReservation.device), selectinload(DeviceReservation.run))
                 )
             )
