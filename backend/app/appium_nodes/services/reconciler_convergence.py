@@ -56,7 +56,6 @@ ActionKind = Literal[
 class ConvergenceAction:
     kind: ActionKind
     port: int | None = None
-    stop_port: int | None = None
     start_port: int | None = None
     pid: int | None = None
     started_at: datetime | None = None

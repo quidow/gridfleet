@@ -38,7 +38,6 @@ async def test_network_device_does_not_require_ip_without_pack_field(
 
     assert readiness.readiness_state == "verification_required"
     assert readiness.missing_setup_fields == []
-    assert readiness.can_verify_now is True
 
 
 @pytest.mark.asyncio
@@ -82,7 +81,6 @@ async def test_network_device_requires_ip_when_pack_field_declares_it(
 
     assert readiness.readiness_state == "setup_required"
     assert readiness.missing_setup_fields == ["ip_address"]
-    assert readiness.can_verify_now is False
 
 
 def test_payload_requires_reverification_for_readiness_impacting_change() -> None:
@@ -273,7 +271,6 @@ async def test_readiness_error_detail_setup_and_verification_messages(monkeypatc
             return_value=device_readiness.DeviceReadiness(
                 readiness_state="setup_required",
                 missing_setup_fields=["ip_address", "os_version"],
-                can_verify_now=False,
             )
         ),
     )
@@ -285,7 +282,6 @@ async def test_readiness_error_detail_setup_and_verification_messages(monkeypatc
     device_readiness.assess_device_async.return_value = device_readiness.DeviceReadiness(
         readiness_state="verification_required",
         missing_setup_fields=[],
-        can_verify_now=True,
     )
     assert (
         await device_readiness.readiness_error_detail_async(session, device, action="start")

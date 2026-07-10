@@ -97,23 +97,6 @@ def test_pack_device_health_percent_encodes_connection_target() -> None:
     assert quote("serial/with spaces", safe="") == "serial%2Fwith%20spaces"
 
 
-def test_parse_agent_error_detail_handles_all_payload_shapes() -> None:
-    assert agent_operations.parse_agent_error_detail(None) == (None, "no response")
-    assert agent_operations.parse_agent_error_detail(
-        _text_response("GET", "http://example.test", status_code=502, text="plain")
-    ) == (None, "plain")
-    assert agent_operations.parse_agent_error_detail(_response("GET", "http://example.test", payload=["bad"])) == (
-        None,
-        "['bad']",
-    )
-    assert agent_operations.parse_agent_error_detail(
-        _response("GET", "http://example.test", payload={"detail": {"code": "port_occupied", "message": "busy"}})
-    ) == ("port_occupied", "busy")
-    assert agent_operations.parse_agent_error_detail(
-        _response("GET", "http://example.test", status_code=503, payload={})
-    ) == (None, "HTTP 503")
-
-
 def test_raise_for_status_wraps_http_errors() -> None:
     response = _response("GET", "http://example.test", status_code=503, payload={"detail": "boom"})
 
@@ -347,8 +330,3 @@ async def test_pack_device_lifecycle_resolve_raises_for_invalid_payload() -> Non
             http_client_factory=_strict_client_factory(client),
             circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
-
-
-def test_response_json_dict_returns_empty_dict_for_non_mapping_payload() -> None:
-    response = _response("GET", "http://example.test", payload=["not", "a", "dict"])
-    assert agent_operations.response_json_dict(response) == {}

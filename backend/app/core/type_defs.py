@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
-type JsonObject = dict[str, JsonValue]
 type SettingValue = Any
 type ControlPlaneValue = Any
 type AsyncTaskFactory = Callable[..., Coroutine[object, object, None]]

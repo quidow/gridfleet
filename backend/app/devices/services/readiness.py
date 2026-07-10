@@ -113,7 +113,6 @@ READINESS_IMPACTING_FIELDS = frozenset(
 class DeviceReadiness:
     readiness_state: ReadinessState
     missing_setup_fields: list[str]
-    can_verify_now: bool
 
 
 async def load_packs_by_ids(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, DriverPack]:
@@ -136,7 +135,6 @@ def _assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceR
         return DeviceReadiness(
             readiness_state="setup_required",
             missing_setup_fields=["driver_pack"],
-            can_verify_now=False,
         )
     release = selected_release(pack.releases, pack.current_release) if pack is not None else None
     platform = (
@@ -148,7 +146,6 @@ def _assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceR
         return DeviceReadiness(
             readiness_state="setup_required",
             missing_setup_fields=["driver_pack"],
-            can_verify_now=False,
         )
     fields = _device_fields_for_type(platform.data, _device_type_value(device))
     assessment = assess_device_from_required_fields(device, fields)
@@ -156,16 +153,14 @@ def _assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceR
         return DeviceReadiness(
             readiness_state="setup_required",
             missing_setup_fields=assessment.missing_setup_fields,
-            can_verify_now=False,
         )
     if assessment.readiness_state == "verification_required":
         return DeviceReadiness(
             readiness_state="verification_required",
             missing_setup_fields=[],
-            can_verify_now=True,
         )
     if assessment.readiness_state == "verified":
-        return DeviceReadiness(readiness_state="verified", missing_setup_fields=[], can_verify_now=True)
+        return DeviceReadiness(readiness_state="verified", missing_setup_fields=[])
     raise ValueError(f"Unknown readiness state {assessment.readiness_state!r}")
 
 

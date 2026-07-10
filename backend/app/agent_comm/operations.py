@@ -176,20 +176,6 @@ def decode_or_none_unless_200(
     return _decode_validated_payload(response, model=model)
 
 
-def decode_or_none_on_404(
-    response: httpx.Response, *, host: str, action: str, model: type[BaseModel]
-) -> dict[str, Any] | None:
-    """None on 404; raise on other error statuses; None on bad JSON / schema mismatch."""
-    if response.status_code == HTTPStatus.NOT_FOUND:
-        return None
-    _raise_for_status(response, host=host, action=action)
-    return _decode_validated_payload(response, model=model)
-
-
-def _as_dict(payload: object) -> dict[str, Any] | None:
-    return payload if isinstance(payload, dict) else None
-
-
 async def agent_health(
     host: str,
     agent_port: int,
@@ -289,24 +275,6 @@ async def agent_nodes_refresh(
         circuit_breaker=circuit_breaker,
     )
     _raise_for_status(response, host=host, action="poke node refresh")
-
-
-def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | None, str]:
-    """Return (code, message) parsed from an agent failure response."""
-    if response is None:
-        return None, "no response"
-    try:
-        payload = response.json()
-    except ValueError:
-        return None, response.text or f"HTTP {response.status_code}"
-    if not isinstance(payload, dict):
-        return None, str(payload)
-    detail = payload.get("detail")
-    if isinstance(detail, dict):
-        code = detail.get("code") if isinstance(detail.get("code"), str) else None
-        message = detail.get("message")
-        return code, str(message) if message is not None else str(detail)
-    return None, str(detail) if detail is not None else f"HTTP {response.status_code}"
 
 
 async def get_tool_status(
@@ -510,8 +478,3 @@ async def pack_doctor(
     if not isinstance(checks, list):
         raise AgentUnreachableError(host, f"Agent pack doctor failed on host {host} (invalid checks payload)")
     return checks
-
-
-def response_json_dict(response: httpx.Response) -> dict[str, Any]:
-    payload = _as_dict(response.json())
-    return payload if payload is not None else {}
