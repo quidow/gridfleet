@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, or_, select
 
+from app.core.background_loop import BackgroundLoop
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
     from app.jobs.protocols import RecoveryJobRunner, VerificationJobRunner
 
@@ -178,20 +180,39 @@ class DurableJobService:
         return True
 
 
-class DurableJobWorkerLoop:
-    def __init__(self, *, service: DurableJobService) -> None:
-        self._service = service
+class DurableJobWorkerLoop(BackgroundLoop):
+    """Job-queue poller on the shared loop skeleton.
 
-    async def run(self) -> None:
+    ``_wait`` drains back-to-back: it skips the poll sleep while the previous
+    cycle found work, so a burst of queued jobs is not throttled to one per
+    poll interval.
+    """
+
+    loop_name = LOOP_NAME
+    cycle_failed_message = "Durable job worker error"
+
+    def __init__(self, *, service: DurableJobService, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._service = service
+        self._sf = session_factory
+        self._worked = False
+
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._sf
+
+    def _interval(self) -> float:
+        return float(JOB_POLL_INTERVAL_SEC)
+
+    async def _on_start(self) -> None:
         async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
             await self._service.reset_stale_running_jobs()
             await self._service.reset_stale_running_jobs(kind=JOB_KIND_DEVICE_RECOVERY)
-        while True:
-            try:
-                async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
-                    worked = await self._service.run_pending_once()
-                if not worked:
-                    await asyncio.sleep(JOB_POLL_INTERVAL_SEC)
-            except Exception:
-                logger.exception("Durable job worker error")
-                await asyncio.sleep(JOB_POLL_INTERVAL_SEC)
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        del db  # DurableJobService opens its own session per claim/run
+        self._worked = False  # reset first so a raising cycle still sleeps in _wait
+        self._worked = await self._service.run_pending_once()
+
+    async def _wait(self, interval: float) -> None:
+        if not self._worked:
+            await asyncio.sleep(interval)

@@ -383,7 +383,8 @@ def compose_app(
                 circuit_breaker=circuit_breaker,
                 verification_runner=verification_runner_svc,
                 recovery_runner=recovery_runner_svc,
-            )
+            ),
+            session_factory=session_factory,
         ),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
     )
