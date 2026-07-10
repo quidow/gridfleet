@@ -32,22 +32,22 @@ const displayNames: Record<string, string> = {
 function createSettingsState(): MockSetting[] {
   return [
     {
-      key: 'general.heartbeat_interval_sec',
+      key: 'general.host_offline_after_sec',
       category: 'general',
       type: 'int',
-      description: 'Heartbeat interval for hosts in seconds.',
-      default_value: 15,
-      value: 15,
-      validation: { min: 5, max: 120 },
+      description: 'Seconds without a status push before a host is marked offline',
+      default_value: 45,
+      value: 45,
+      validation: { min: 15, max: 3600 },
     },
     {
-      key: 'grid.session_poll_interval_sec',
+      key: 'appium.port_range_start',
       category: 'grid',
       type: 'int',
-      description: 'Interval of the direct-to-Appium session observation sweep.',
-      default_value: 30,
-      value: 30,
-      validation: { min: 1, max: 300 },
+      description: 'Start of Appium port range',
+      default_value: 4723,
+      value: 4723,
+      validation: { min: 1024, max: 65535 },
     },
     {
       key: 'notifications.toast_events',
@@ -330,7 +330,7 @@ test.describe('Settings Page', () => {
   test('loads with all 9 tabs visible in grouped tab strip', async ({ page }) => {
     await page.goto('/settings');
 
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 
     for (const label of [
       'General',
@@ -348,7 +348,7 @@ test.describe('Settings Page', () => {
 
   test('Reset All Settings is a danger button that opens confirmation and cancels safely', async ({ page }) => {
     await page.goto('/settings');
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 
     // Should be a visible danger-styled button (not a plain link)
     const resetBtn = page.getByRole('button', { name: 'Reset All Settings' });
@@ -367,10 +367,10 @@ test.describe('Settings Page', () => {
   test('each tab shows its expected fields and management views', async ({ page }) => {
     await page.goto('/settings');
 
-    await expect(page.locator('input[name="general.heartbeat_interval_sec"]')).toBeVisible();
+    await expect(page.locator('input[name="general.host_offline_after_sec"]')).toBeVisible();
 
     await page.getByRole('button', { name: 'Appium & Allocation' }).click();
-    await expect(page.locator('input[name="grid.session_poll_interval_sec"]')).toBeVisible();
+    await expect(page.locator('input[name="appium.port_range_start"]')).toBeVisible();
 
     await page.getByRole('button', { name: 'Notifications' }).click();
     await expect(page.locator('input[name="notifications.toast_auto_dismiss_sec"]')).toBeVisible();
@@ -396,7 +396,7 @@ test.describe('Settings Page', () => {
     await expect(page.getByRole('heading', { name: 'Heartbeat & Host Health' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Appium & Allocation' }).click();
-    await expect(page.getByRole('heading', { name: 'Grid Routing' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Appium Node Pool' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Notifications' }).click();
     await expect(page.getByRole('heading', { name: 'Toast Events' })).toBeVisible();
@@ -406,10 +406,10 @@ test.describe('Settings Page', () => {
   test('changing and saving a setting persists after reload', async ({ page }) => {
     await page.goto('/settings');
 
-    const heartbeatInput = page.locator('input[name="general.heartbeat_interval_sec"]');
-    await expect(heartbeatInput).toHaveValue('15');
+    const heartbeatInput = page.locator('input[name="general.host_offline_after_sec"]');
+    await expect(heartbeatInput).toHaveValue('45');
 
-    await heartbeatInput.fill('20');
+    await heartbeatInput.fill('50');
     await page.getByRole('button', { name: 'Save Changes' }).click();
 
     await expect(page.getByText('Settings saved')).toBeVisible();
@@ -417,29 +417,29 @@ test.describe('Settings Page', () => {
 
     await page.reload();
 
-    await expect(page.locator('input[name="general.heartbeat_interval_sec"]')).toHaveValue('20');
+    await expect(page.locator('input[name="general.host_offline_after_sec"]')).toHaveValue('50');
     await expect(page.getByText('Modified')).toBeVisible();
   });
 
   test('reset to default restores the original value', async ({ page }) => {
     await page.goto('/settings');
 
-    const heartbeatInput = page.locator('input[name="general.heartbeat_interval_sec"]');
+    const heartbeatInput = page.locator('input[name="general.host_offline_after_sec"]');
     await heartbeatInput.fill('22');
     await page.getByRole('button', { name: 'Save Changes' }).click();
     await expect(page.getByText('Modified')).toBeVisible();
 
-    const heartbeatField = page.locator('div').filter({ has: page.getByText('Heartbeat Interval Sec') }).first();
+    const heartbeatField = page.locator('div').filter({ has: page.getByText('Host Offline After Sec') }).first();
     await heartbeatField.getByTitle('Reset to default').click();
 
     await expect(page.getByText('Setting reset to default')).toBeVisible();
-    await expect(page.locator('input[name="general.heartbeat_interval_sec"]')).toHaveValue('15');
+    await expect(page.locator('input[name="general.host_offline_after_sec"]')).toHaveValue('45');
     await expect(page.getByText('Modified')).toHaveCount(0);
   });
 
   test('settings tab is URL-addressable and restores on reload', async ({ page }) => {
     await page.goto('/settings?tab=backup');
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Export configuration')).toBeVisible();
 
     // Switch to Notifications and URL should update
