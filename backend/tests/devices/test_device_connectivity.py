@@ -1254,7 +1254,6 @@ def _stub_settings(
     monkeypatch.setattr(settings_service, "get", dispatcher)
     return FakeSettingsReader(
         {
-            "general.device_check_interval_sec": dispatcher("general.device_check_interval_sec"),
             "device_checks.ip_ping.consecutive_fail_threshold": dispatcher(
                 "device_checks.ip_ping.consecutive_fail_threshold"
             ),
@@ -1266,8 +1265,6 @@ def _stub_settings(
 
 def _settings_dispatch(*, threshold: int, timeout: float, count: int) -> Callable[[str], object]:
     def _get(key: str) -> object:
-        if key == "general.device_check_interval_sec":
-            return 60
         if key == "device_checks.ip_ping.consecutive_fail_threshold":
             return threshold
         if key == "device_checks.ip_ping.timeout_sec":
@@ -1589,7 +1586,6 @@ def _roku_payload(*, reachable: bool) -> dict[str, object]:
 def _debounce_settings(threshold: int = 3) -> FakeSettingsReader:
     return FakeSettingsReader(
         {
-            "general.device_check_interval_sec": 60,
             "device_checks.ip_ping.consecutive_fail_threshold": 3,
             "device_checks.ip_ping.timeout_sec": 2.0,
             "device_checks.ip_ping.count_per_cycle": 1,

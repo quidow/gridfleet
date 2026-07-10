@@ -60,7 +60,7 @@ async def test_register_host_races_concurrent_same_hostname(
                     agent_version="0.3.0",
                     status=HostStatus.online,
                     capabilities={
-                        "orchestration_contract_version": 5,
+                        "orchestration_contract_version": 6,
                     },
                 )
                 side.add(peer)
@@ -83,7 +83,7 @@ async def test_register_host_races_concurrent_same_hostname(
                     os_type=OSType.linux,
                     agent_port=5100,
                     agent_version="0.3.0",
-                    capabilities={"orchestration_contract_version": 5},
+                    capabilities={"orchestration_contract_version": 6},
                 ),
             )
         except IntegrityError as exc:

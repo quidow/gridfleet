@@ -42,6 +42,10 @@ logger = get_logger(__name__)
 # alive without spending a per-session GET each sweep tick.
 ACTIVITY_FRESH_WINDOW_SEC = 30.0
 
+# ponytail: fixed direct-to-Appium probe fan-out width per host; was the
+# general.probe_concurrency_per_host knob (deleted with the dial-out stages).
+_PROBE_CONCURRENCY_PER_HOST = 4
+
 SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "gridfleet_session_sync_wake_source",
     "Why session_sync_loop ran a cycle: doorbell (bus event) or tick (timeout).",
@@ -295,9 +299,7 @@ class SessionSyncService:
         )
         running_sessions = (await db.execute(running_stmt)).scalars().all()
 
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(
-            self._settings.get_int("general.probe_concurrency_per_host")
-        )
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(_PROBE_CONCURRENCY_PER_HOST)
         sessions_with_device = [s for s in running_sessions if s.device is not None]
 
         def _reap_reason(session: Session) -> str | None:
@@ -511,9 +513,7 @@ class SessionSyncService:
         # Probe phase: enumerate every candidate node's live sessions concurrently,
         # bounded per host, so a hung node cannot stall the sweep wall time (#10). No
         # DB access inside the gather.
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(
-            self._settings.get_int("general.probe_concurrency_per_host")
-        )
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(_PROBE_CONCURRENCY_PER_HOST)
 
         async def _enumerate(target: str, host_id: uuid.UUID) -> list[str] | None:
             async with host_semaphores[host_id]:
