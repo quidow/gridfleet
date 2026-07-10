@@ -51,11 +51,7 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Host-sweep cadence: how often the latest pushed agent status is evaluated (base tick for the stage intervals) |
 | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
 | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |
-| `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |
-| `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `general.node_check_interval_sec` | `30` | Appium node health-check cadence |
 | `GRIDFLEET_NODE_MAX_FAILURES` | `general.node_max_failures` | `3` | Failed node health checks before auto-restart |
-| `GRIDFLEET_PROBE_CONCURRENCY_PER_HOST` | `general.probe_concurrency_per_host` | `4` | Per-host probe concurrency in observation loops (seeds the registry default) |
-| `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `general.device_check_interval_sec` | `60` | Device connectivity verification cadence |
 | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `grid.queue_timeout_sec` | `300` | How long a queued new-session request waits for a device before failing |
 | `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `grid.claim_window_sec` | `120` | How long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it |
 | `GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC` | `grid.session_first_command_grace_sec` | `180` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep reaps it; measured from the allocation claim |

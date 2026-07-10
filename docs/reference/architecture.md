@@ -43,12 +43,31 @@ is rejected at registration with HTTP 426, and any already-registered pre-v5
 host is marked offline at scheduler startup. See
 `docs/design/04-backend-agent-contract.md` for the full contract.
 
-After the per-host fan-out, `host_sweep` runs its cadence-gated stages
-(`stage_due`): node health per alive host (`general.node_check_interval_sec`),
-then the cross-host global stages in order — connectivity
-(`general.device_check_interval_sec`), host-resource telemetry, hardware
-telemetry, and property refresh (each gated by its own interval setting) —
-against the host statuses this same sweep cycle just wrote.
+Per host, after Appium-node convergence, `host_sweep` folds the push's
+observation sections (`node_health`, `device_health`, `device_telemetry`,
+`device_properties`, `host_telemetry`) into durable facts — each fold gated by
+a per-host stamp watermark (control-plane namespace
+`host_sweep.observation_fold`) so one observation folds exactly once. It then
+runs the cadence-gated `/agent/health` partition diagnostic
+(`general.partition_probe_interval_sec`; feeds no state). After the per-host
+fan-out the sweep expires stale device cooldowns. The agent produces those
+observations locally on fixed cadences (30/60/300/600 s constants in
+`agent_app/probes.py`); the backend never dials an agent to observe.
+
+Each fact class has exactly one channel:
+
+| Fact | Channel | Cadence owner |
+|---|---|---|
+| Host liveness | status-push recency (`last_heartbeat`) | backend `general.host_offline_after_sec` |
+| Appium process inventory + restart events | push `appium_processes` | agent push interval (10 s) |
+| Node Appium health | push `node_health` | agent constant (30 s) |
+| Device pack health | push `device_health` | agent constant (60 s) |
+| Device hardware telemetry | push `device_telemetry` | agent constant (300 s) |
+| Device properties | push `device_properties` | agent constant (600 s) |
+| Host resource telemetry | push `host_telemetry` | push interval, folded ≥ 60 s |
+| Pack install/doctor status | push `packs` | agent pack state loop |
+| Session liveness / orphans | direct-to-Appium (`appium_sweep`, action channel) | backend |
+| Network partition (diagnostic only) | backend dial `/agent/health` | `general.partition_probe_interval_sec` |
 
 The same convergence pass counts orphans. It parses
 `appium_processes.running_nodes` from the shared sweep payload and increments a

@@ -27,13 +27,7 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       id: 'node-health',
       title: 'Node Health',
       description: 'Appium node health checks and restart thresholds.',
-      settingKeys: ['general.node_check_interval_sec', 'general.node_max_failures'],
-    },
-    {
-      id: 'device-connectivity',
-      title: 'Device Connectivity & Refresh',
-      description: 'Connectivity checks and background property refresh cadence.',
-      settingKeys: ['general.device_check_interval_sec', 'general.property_refresh_interval_sec'],
+      settingKeys: ['general.node_max_failures'],
     },
     {
       id: 'session-management',
