@@ -11,7 +11,6 @@ from sqlalchemy.exc import NoResultFound
 from app.appium_nodes.services import node_health
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.devices.services import (
-    data_cleanup,
     intent_reconciler,
 )
 from app.devices.services.bulk import BulkOperationsService
@@ -153,65 +152,3 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     )
 
     db.commit.assert_awaited_once()
-
-
-async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(data_cleanup, "schedule_background_loop", AsyncMock())
-    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        data_cleanup.DataCleanupService, "cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom"))
-    )
-    sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
-    monkeypatch.setattr(background_loop.asyncio, "sleep", sleep)
-
-    _svc_settings_4 = FakeSettingsReader({})
-    _svc_pub_4 = AsyncMock()
-    _svc_maint_4 = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
-    _svc_crud_4 = DeviceCrudService(
-        settings=_svc_settings_4, identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
-    loop = data_cleanup.DataCleanupLoop(
-        services=DeviceServices(
-            fleet_capacity=FleetCapacityService(),
-            data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
-            property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_4, crud=_svc_crud_4),
-            maintenance=_svc_maint_4,
-            bulk=BulkOperationsService(
-                publisher=_svc_pub_4,
-                settings=_svc_settings_4,
-                circuit_breaker=Mock(),
-                maintenance=_svc_maint_4,
-                crud=_svc_crud_4,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_svc_settings_4, publisher=event_bus
-                ),
-            ),
-            presenter=DevicePresenterService(settings=_svc_settings_4),
-            test_data=TestDataService(publisher=_svc_pub_4),
-            crud=_svc_crud_4,
-            capability=DeviceCapabilityService(),
-            connectivity=ConnectivityService(
-                publisher=_svc_pub_4,
-                settings=_svc_settings_4,
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=AsyncMock(),
-            ),
-            publisher=_svc_pub_4,
-            settings=_svc_settings_4,
-            session_factory=_fake_session,
-            circuit_breaker=Mock(),
-            health=AsyncMock(),
-        )
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        await loop.run()
-
-    data_cleanup.schedule_background_loop.assert_awaited_once_with(data_cleanup.LOOP_NAME, 3600.0)
-    sleep.assert_any_await(3600.0)

@@ -35,7 +35,6 @@ class BackgroundLoop(ABC):
 
     loop_name: ClassVar[str]
     cycle_failed_message: ClassVar[str]
-    sleep_before_first_cycle: ClassVar[bool] = False
 
     @property
     @abstractmethod
@@ -67,8 +66,6 @@ class BackgroundLoop(ABC):
 
     async def run(self) -> None:
         await self._on_start()
-        if self.sleep_before_first_cycle:
-            await self._wait(self._interval())
         while True:
             interval = self._interval()
             cycle_start = time.monotonic()

@@ -24,7 +24,6 @@ from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.appium_nodes.services_container import AppiumNodeServices
-from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
@@ -106,7 +105,6 @@ class AppServices:
     grid: GridServices
     appium_nodes: AppiumNodeServices
     jobs: DurableJobWorkerLoop
-    background_loop_flush: BackgroundLoopFlushLoop
 
 
 def compose_app(
@@ -386,5 +384,4 @@ def compose_app(
             ),
             session_factory=session_factory,
         ),
-        background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
     )

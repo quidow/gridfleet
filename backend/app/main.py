@@ -31,10 +31,12 @@ from app.core.database import engine
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
 from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
+from app.core.janitor import JANITOR_BASE_INTERVAL_SEC, JanitorLoop, JanitorStage
 from app.core.leader.advisory import control_plane_leader
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import (
+    BACKGROUND_LOOP_FLUSH_INTERVAL_SEC,
     configure_logging,
     flush_background_loop_snapshots,
     get_logger,
@@ -49,13 +51,11 @@ from app.devices.dependencies import (
 )
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import (
-    data_cleanup,
-    fleet_capacity,
-    intent_reconciler,
-    readiness,
+    health as device_health,
 )
 from app.devices.services import (
-    health as device_health,
+    intent_reconciler,
+    readiness,
 )
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
@@ -67,21 +67,19 @@ from app.hosts import router as hosts
 from app.hosts import router_agent as hosts_router_agent
 from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
-from app.packs.services.drain import PackDrainLoop
 from app.portability import router as portability_router
 from app.runs import router as runs_router
-from app.runs.service_reaper import RunReaperLoop
+from app.runs.service_reaper import reap_stale_runs
 from app.sessions import router as sessions_router
 from app.sessions.appium_sweep import AppiumSweepLoop
 from app.settings import router as settings
-from app.settings.dependencies import (
-    SettingsServicesDep,  # noqa: TC001 - FastAPI resolves Annotated dependency at runtime.
-)
 from app.settings.service import SettingsService
 from app.verification import router as verification_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.composition import AppServices
 
@@ -90,9 +88,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
-DataCleanupLoop = data_cleanup.DataCleanupLoop
 DeviceIntentReconcilerLoop = intent_reconciler.DeviceIntentReconcilerLoop
-FleetCapacityLoop = fleet_capacity.FleetCapacityLoop
 assess_devices_async = readiness.assess_devices_async
 is_ready_for_use_async = readiness.is_ready_for_use_async
 
@@ -150,9 +146,42 @@ async def _build_and_start_app_services(
     return bus, svc, pool, app_services
 
 
+def _build_janitor(app_services: AppServices) -> JanitorLoop:
+    """Housekeeping stages: cadences are plumbing constants (design P5)."""
+    devices = app_services.devices
+
+    async def _run_reaper_stage(db: AsyncSession) -> None:
+        await reap_stale_runs(db, lifecycle=app_services.runs.lifecycle)
+
+    async def _fleet_capacity_stage(db: AsyncSession) -> None:
+        await devices.fleet_capacity.collect_capacity_snapshot_once(
+            db, offline_after_sec=devices.settings.get_float("general.host_offline_after_sec")
+        )
+
+    async def _pack_drain_stage(db: AsyncSession) -> None:
+        # Backstop only: release paths complete drains inline (event-driven).
+        await app_services.packs.lifecycle.complete_draining_packs_once(db)
+
+    async def _data_cleanup_stage(db: AsyncSession) -> None:
+        await devices.data_cleanup.cleanup_old_data(db)
+
+    async def _flush_stage(db: AsyncSession) -> None:
+        del db  # flushes through its own session
+        await flush_background_loop_snapshots(session_factory)
+
+    return JanitorLoop(
+        session_factory=session_factory,
+        stages=(
+            JanitorStage("run_reaper", JANITOR_BASE_INTERVAL_SEC, _run_reaper_stage),
+            JanitorStage("fleet_capacity", 60.0, _fleet_capacity_stage),
+            JanitorStage("pack_drain", 60.0, _pack_drain_stage),
+            JanitorStage("data_cleanup", 3600.0, _data_cleanup_stage, skip_first_cycle=True),
+            JanitorStage("flush", BACKGROUND_LOOP_FLUSH_INTERVAL_SEC, _flush_stage),
+        ),
+    )
+
+
 def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[None]]:
-    data_cleanup = DataCleanupLoop(services=app_services.devices)
-    fleet_capacity = FleetCapacityLoop(services=app_services.devices)
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(
         services=app_services.appium_nodes,
@@ -170,24 +199,17 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
         expire_cooldowns=app_services.devices.connectivity.check_expired_cooldowns,
     )
     appium_sweep = AppiumSweepLoop(services=app_services.sessions)
-
-    run_reaper = RunReaperLoop(services=app_services.runs)
     allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
-    pack_drain = PackDrainLoop(services=app_services.packs)
     job_worker = app_services.jobs
-    background_loop_flush = app_services.background_loop_flush
+    janitor = _build_janitor(app_services)
 
     _leader_loops: list[tuple[Any, str]] = [
         (host_sweep.run(), "host_sweep_loop"),
         (appium_sweep.run(), "appium_sweep_loop"),
         (job_worker.run(), "durable_job_worker_loop"),
-        (run_reaper.run(), "run_reaper_loop"),
         (allocation_reaper.run(), "grid_allocation_reaper_loop"),
-        (data_cleanup.run(), "data_cleanup_loop"),
-        (fleet_capacity.run(), "fleet_capacity_collector_loop"),
-        (pack_drain.run(), "pack_drain_loop"),
         (intent_reconciler.run(), "device_intent_reconciler_loop"),
-        (background_loop_flush.run(), "background_loop_flush_loop"),
+        (janitor.run(), "janitor_loop"),
     ]
     return [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
 
@@ -327,18 +349,14 @@ async def live_health() -> dict[str, str]:
 
 
 @app.get("/health/ready", response_model=HealthStatusRead)
-async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(
-        db, settings=settings_services.service, fail_on_stalled_loops=process_settings.run_background_loops
-    )
+async def ready_health(db: DbDep) -> JSONResponse:
+    payload, status_code = await check_readiness(db, fail_on_stalled_loops=process_settings.run_background_loops)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
-async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(
-        db, settings=settings_services.service, fail_on_stalled_loops=process_settings.run_background_loops
-    )
+async def health(db: DbDep) -> JSONResponse:
+    payload, status_code = await check_readiness(db, fail_on_stalled_loops=process_settings.run_background_loops)
     return JSONResponse(content=payload, status_code=status_code)
 
 

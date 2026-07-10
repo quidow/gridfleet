@@ -6,24 +6,9 @@ import pytest
 from app.appium_nodes.services import host_sweep
 from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services_container import AppiumNodeServices
-from app.devices.services import fleet_capacity
-from app.devices.services.bulk import BulkOperationsService
-from app.devices.services.capability import DeviceCapabilityService
-from app.devices.services.connectivity import ConnectivityService
-from app.devices.services.data_cleanup import DataCleanupService
-from app.devices.services.fleet_capacity import FleetCapacityService
-from app.devices.services.groups import DeviceGroupsService
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.presenter import DevicePresenterService
-from app.devices.services.property_refresh import PropertyRefreshService
-from app.devices.services.service import DeviceCrudService
-from app.devices.services.test_data import TestDataService
-from app.devices.services_container import DeviceServices
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.sessions.appium_sweep import AppiumSweepLoop
 from app.sessions.services_container import SessionServices
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -91,62 +76,3 @@ async def test_appium_sweep_loop_one_successful_iteration(monkeypatch: pytest.Mo
 
     mock_sync.sync.assert_awaited_once()
     viability_mock.check_due_devices.assert_awaited_once()
-
-
-async def test_capacity_loop_covers_retry_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core import background_loop
-
-    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(
-        fleet_capacity.FleetCapacityService,
-        "collect_capacity_snapshot_once",
-        AsyncMock(side_effect=[RuntimeError("boom"), None]),
-    )
-    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
-
-    _fc_settings = FakeSettingsReader({})
-    _fc_publisher = AsyncMock()
-    _fc_maintenance = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
-    _fc_crud = DeviceCrudService(settings=_fc_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
-    loop = fleet_capacity.FleetCapacityLoop(
-        services=DeviceServices(
-            fleet_capacity=FleetCapacityService(),
-            data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
-            property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_fc_publisher, crud=_fc_crud),
-            maintenance=_fc_maintenance,
-            bulk=BulkOperationsService(
-                publisher=_fc_publisher,
-                settings=_fc_settings,
-                circuit_breaker=Mock(),
-                maintenance=_fc_maintenance,
-                crud=_fc_crud,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_fc_settings, publisher=event_bus
-                ),
-            ),
-            presenter=DevicePresenterService(settings=_fc_settings),
-            test_data=TestDataService(publisher=_fc_publisher),
-            crud=_fc_crud,
-            capability=DeviceCapabilityService(),
-            connectivity=ConnectivityService(
-                publisher=_fc_publisher,
-                settings=_fc_settings,
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=AsyncMock(),
-            ),
-            publisher=_fc_publisher,
-            settings=_fc_settings,
-            session_factory=_Session,
-            circuit_breaker=Mock(),
-            health=AsyncMock(),
-        )
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        await loop.run()
-
-    assert fleet_capacity.FleetCapacityService.collect_capacity_snapshot_once.await_count == 2

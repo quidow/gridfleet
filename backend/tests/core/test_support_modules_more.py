@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import httpx2 as httpx
 import pytest
@@ -18,8 +17,6 @@ from app.core.leader.models import ControlPlaneStateEntry
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
-from app.runs import service_reaper as run_reaper
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -113,8 +110,7 @@ async def test_check_readiness_short_circuits_when_shutting_down(monkeypatch: Mo
     monkeypatch.setattr(health.shutdown_coordinator, "is_shutting_down", lambda: True)
     monkeypatch.setattr(health.shutdown_coordinator, "active_requests", lambda: 2)
 
-    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
-    payload, status = await health.check_readiness(AsyncMock(), settings=settings)
+    payload, status = await health.check_readiness(AsyncMock())
 
     assert status == 503
     assert payload["checks"]["shutdown"]["shutting_down"] is True
@@ -133,8 +129,7 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
         lambda snapshot, now, extra_grace_seconds=0.0: False,
     )
 
-    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
-    payload, status = await health.check_readiness(db, settings=settings)
+    payload, status = await health.check_readiness(db)
 
     assert status == 503
     assert payload["checks"]["control_plane_leader"] is False
@@ -163,41 +158,6 @@ async def test_get_db_uses_async_session_context(monkeypatch: MonkeyPatch) -> No
     assert await anext(generator) is yielded
     with pytest.raises(StopAsyncIteration):
         await anext(generator)
-
-
-async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
-    from app.core import background_loop
-
-    class _Observation:
-        @asynccontextmanager
-        async def cycle(self) -> AsyncGenerator[AsyncMock]:
-            yield AsyncMock()
-
-    @asynccontextmanager
-    async def fake_session() -> AsyncGenerator[AsyncMock]:
-        yield AsyncMock()
-
-    from types import SimpleNamespace
-
-    mock_services = SimpleNamespace(
-        lifecycle=AsyncMock(),
-        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
-        session_factory=fake_session,
-    )
-    with (
-        patch.object(background_loop, "observe_background_loop", return_value=_Observation()),
-        patch.object(
-            run_reaper.RunReaperLoop,
-            "_reap_stale_runs",
-            new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
-        ),
-        patch.object(background_loop.asyncio, "sleep", new=AsyncMock()) as sleep,
-        pytest.raises(asyncio.CancelledError),
-    ):
-        loop = run_reaper.RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
-        await loop.run()
-
-    sleep.assert_awaited()
 
 
 async def test_control_plane_state_store_round_trip(db_session: AsyncSession) -> None:

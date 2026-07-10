@@ -78,12 +78,8 @@ def test_resolve_default_prefers_env_override_and_deep_copies_defaults(monkeypat
 
 
 def test_capacity_snapshot_settings_are_registered() -> None:
-    snapshot_interval = settings_registry.SETTINGS_REGISTRY["general.fleet_capacity_snapshot_interval_sec"]
     snapshot_retention = settings_registry.SETTINGS_REGISTRY["retention.capacity_snapshots_days"]
 
-    assert snapshot_interval.default == 60
-    assert snapshot_interval.min_value == 10
-    assert snapshot_interval.max_value == 3600
     assert snapshot_retention.default == 30
     assert snapshot_retention.min_value == 1
     assert snapshot_retention.max_value == 3650

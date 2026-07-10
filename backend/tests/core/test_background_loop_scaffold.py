@@ -94,15 +94,6 @@ async def test_generic_exception_is_contained_and_loop_continues() -> None:
     assert len(loop.ends) >= 2  # _on_cycle_end fired on the failure path too
 
 
-async def test_sleep_before_first_cycle() -> None:
-    class _SleepFirstLoop(_RecordingLoop):
-        sleep_before_first_cycle = True
-
-    loop = _SleepFirstLoop()
-    await _run_cycles(loop, until=lambda: loop.cycles >= 1)
-    assert loop.events[0] == "wait"  # waited before any cycle
-
-
 async def test_on_start_runs_once_before_everything() -> None:
     class _StartLoop(_RecordingLoop):
         async def _on_start(self) -> None:

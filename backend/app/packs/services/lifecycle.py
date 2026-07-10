@@ -6,6 +6,7 @@ from sqlalchemy import cast, func, literal, select, union
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import selectinload
 
+from app.core.observability import get_logger
 from app.devices.models import Device, DeviceReservation
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
@@ -14,6 +15,8 @@ from app.sessions.models import Session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = get_logger(__name__)
 
 
 def _pack_with_releases_options() -> tuple[Any, ...]:
@@ -91,6 +94,28 @@ class PackLifecycleService:
             if recheck["active_runs"] == 0 and recheck["live_sessions"] == 0:
                 pack.state = PackState.disabled
         return pack
+
+    async def complete_draining_packs_once(self, db: AsyncSession) -> list[str]:
+        """Backstop scan (janitor stage): complete any draining pack whose last
+        active work released without hitting the inline drain hook."""
+        pack_ids = (
+            (
+                await db.execute(
+                    select(DriverPack.id).where(DriverPack.state == PackState.draining).order_by(DriverPack.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        completed: list[str] = []
+        for pack_id in pack_ids:
+            pack = await self.try_complete_drain(db, pack_id)
+            if pack.state == PackState.disabled:
+                completed.append(pack_id)
+        await db.commit()
+        if completed:
+            logger.info("Completed draining driver packs: %s", ", ".join(completed))
+        return completed
 
     async def transition_pack_state(
         self,

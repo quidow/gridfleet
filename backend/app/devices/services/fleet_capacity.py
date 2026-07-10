@@ -9,7 +9,6 @@ from sqlalchemy import and_, func, or_, select, text
 from app.analytics import schemas as analytics_schemas
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumNode
-from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState
@@ -24,11 +23,7 @@ from app.sessions.models import Session, SessionStatus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.type_defs import SessionFactory
-    from app.devices.services_container import DeviceServices
-
 logger = get_logger(__name__)
-LOOP_NAME = "fleet_capacity_collector"
 DEFAULT_BUCKET_MINUTES = 1
 MAX_BUCKET_MINUTES = 1440
 
@@ -355,22 +350,3 @@ class FleetCapacityService:
         await db.commit()
         await db.refresh(snapshot)
         return snapshot
-
-
-class FleetCapacityLoop(BackgroundLoop):
-    loop_name = LOOP_NAME
-    cycle_failed_message = "Fleet capacity collector failed"
-
-    def __init__(self, *, services: DeviceServices) -> None:
-        self._services = services
-
-    @property
-    def _session_factory(self) -> SessionFactory:
-        return self._services.session_factory
-
-    def _interval(self) -> float:
-        return self._services.settings.get_float("general.fleet_capacity_snapshot_interval_sec")
-
-    async def _run_cycle(self, db: AsyncSession) -> None:
-        offline_after = self._services.settings.get_float("general.host_offline_after_sec")
-        await self._services.fleet_capacity.collect_capacity_snapshot_once(db, offline_after_sec=offline_after)
