@@ -137,8 +137,8 @@ class HostCrudService:
         host.os_type = data.os_type
         if data.agent_port is not None:
             host.agent_port = data.agent_port
-        host.agent_version = data.agent_version
-        host.capabilities = normalize_capabilities(data.capabilities)
+        # agent_version / capabilities are push-owned runtime facts; registration
+        # never writes them (capabilities is only the 426 gate input above).
         _apply_host_info(host, data.host_info)
         await db.commit()
         await db.refresh(host)
@@ -162,8 +162,6 @@ class HostCrudService:
             ip=data.ip,
             os_type=data.os_type,
             agent_port=agent_port,
-            agent_version=data.agent_version,
-            capabilities=normalize_capabilities(data.capabilities),
             status=status,
         )
         _apply_host_info(host, data.host_info)

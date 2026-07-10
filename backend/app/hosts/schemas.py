@@ -52,7 +52,9 @@ class HostRegister(BaseModel):
     ip: str
     os_type: OSType
     agent_port: int | None = None
-    agent_version: str | None = None
+    # capabilities is retained solely as the 426 orchestration-contract gate
+    # input; it is not persisted at registration (the status push owns the
+    # capabilities column). agent_version is push-owned and no longer accepted.
     capabilities: dict[str, Any] | None = None
     host_info: HostHardwareInfo | None = None
 

@@ -501,9 +501,10 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert resp.status_code == 201
     data = resp.json()
     assert data["required_agent_version"] == "0.33.0"
-    assert data["agent_version_status"] == "outdated"
-    assert data["recommended_agent_version"] == "0.3.0"
-    assert data["agent_update_available"] is True
+    # agent_version is push-owned: the legacy registration payload field is
+    # ignored, so version is unknown until the first status push.
+    assert data["agent_version_status"] == "unknown"
+    assert data["agent_update_available"] is False
     host_id = UUID(data["id"])
     assert len(scheduled) == 1
     assert scheduled[0][0] is _auto_discover
@@ -569,13 +570,22 @@ async def test_hosts_list_and_detail_include_recommended_agent_version(client: A
                 "ip": "192.168.1.120",
                 "os_type": "linux",
                 "agent_port": 5100,
-                "agent_version": "0.2.0",
                 "capabilities": {"orchestration_contract_version": 6},
             },
         )
 
     assert create_resp.status_code == 201
     host_id = create_resp.json()["id"]
+    # agent_version arrives on the push channel, not registration.
+    push_resp = await client.post(
+        "/agent/hosts/status",
+        json={
+            "host_id": host_id,
+            "agent_version": "0.2.0",
+            "capabilities": {"orchestration_contract_version": 6},
+        },
+    )
+    assert push_resp.status_code == 204
 
     list_resp = await client.get("/api/hosts")
     assert list_resp.status_code == 200
@@ -598,16 +608,27 @@ async def test_agent_update_available_false_when_current(client: AsyncClient) ->
                 "ip": "192.168.1.121",
                 "os_type": "linux",
                 "agent_port": 5100,
-                "agent_version": "0.3.0",
                 "capabilities": {"orchestration_contract_version": 6},
             },
         )
 
     assert create_resp.status_code == 201
-    assert create_resp.json()["agent_update_available"] is False
+    host_id = create_resp.json()["id"]
+    push_resp = await client.post(
+        "/agent/hosts/status",
+        json={
+            "host_id": host_id,
+            "agent_version": "0.3.0",
+            "capabilities": {"orchestration_contract_version": 6},
+        },
+    )
+    assert push_resp.status_code == 204
+    detail_resp = await client.get(f"/api/hosts/{host_id}")
+    assert detail_resp.json()["agent_update_available"] is False
 
 
 async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) -> None:
+    # Registration enrolls only; capabilities/prerequisites arrive on the push channel.
     with patch("app.hosts.router._fire_and_forget"):
         resp = await client.post(
             "/api/hosts/register",
@@ -616,25 +637,30 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
                 "ip": "192.168.1.112",
                 "os_type": "linux",
                 "agent_port": 5100,
-                "agent_version": "0.1.0",
-                "capabilities": {
-                    "platforms": ["android_mobile", "roku"],
-                    "tools": {"appium": "3.0.0"},
-                    "missing_prerequisites": ["java"],
-                    "orchestration_contract_version": 6,
-                },
+                "capabilities": {"orchestration_contract_version": 6},
             },
         )
-
     assert resp.status_code == 201
-    data = resp.json()
-    assert data["missing_prerequisites"] == ["java"]
-    assert data["capabilities"]["missing_prerequisites"] == ["java"]
-    assert "appium" not in data["capabilities"]["tools"]
+    host_id = resp.json()["id"]
 
-    detail_resp = await client.get(f"/api/hosts/{data['id']}")
+    push_resp = await client.post(
+        "/agent/hosts/status",
+        json={
+            "host_id": host_id,
+            "capabilities": {
+                "platforms": ["android_mobile", "roku"],
+                "tools": {"appium": "3.0.0"},
+                "missing_prerequisites": ["java"],
+                "orchestration_contract_version": 6,
+            },
+        },
+    )
+    assert push_resp.status_code == 204
+
+    detail_resp = await client.get(f"/api/hosts/{host_id}")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["missing_prerequisites"] == ["java"]
+    assert detail_resp.json()["capabilities"]["missing_prerequisites"] == ["java"]
     assert "appium" not in detail_resp.json()["capabilities"]["tools"]
 
 
@@ -660,7 +686,6 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
                 "ip": "192.168.1.111",
                 "os_type": "linux",
                 "agent_port": 5100,
-                "agent_version": "0.33.0",
                 "capabilities": {"orchestration_contract_version": 6},
             },
         )
@@ -670,7 +695,8 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
         approve_resp = await client.post(f"/api/hosts/{host_id}/approve")
 
     assert approve_resp.status_code == 200
-    assert approve_resp.json()["agent_version_status"] == "ok"
+    # agent_version is push-owned; the just-approved host has not pushed yet.
+    assert approve_resp.json()["agent_version_status"] == "unknown"
     host_id = UUID(approve_resp.json()["id"])
     assert len(scheduled) == 1
     assert scheduled[0][0] is _auto_discover

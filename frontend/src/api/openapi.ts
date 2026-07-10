@@ -3762,8 +3762,6 @@ export interface components {
         HostRegister: {
             /** Agent Port */
             agent_port?: number | null;
-            /** Agent Version */
-            agent_version?: string | null;
             /** Capabilities */
             capabilities?: {
                 [key: string]: unknown;

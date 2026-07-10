@@ -103,7 +103,6 @@ async def test_register_host_does_not_resurrect_offline_host(db_session: AsyncSe
             ip="10.0.0.99",
             os_type=OSType.macos,
             agent_port=None,
-            agent_version="2.0.0",
             capabilities={**CAPS_V6, "missing_prerequisites": ["adb", 5]},
         ),
     )
@@ -113,7 +112,53 @@ async def test_register_host_does_not_resurrect_offline_host(db_session: AsyncSe
     assert registered.os_type == OSType.macos
     # only a status push flips a host online
     assert registered.status == HostStatus.offline
-    assert registered.capabilities == {**CAPS_V6, "missing_prerequisites": ["adb"]}
+    # capabilities is a push-owned fact — registration never writes the column
+    assert registered.capabilities is None
+
+
+async def test_register_host_does_not_write_push_owned_facts(db_session: AsyncSession) -> None:
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({"agent.auto_accept_hosts": True}))
+    host, is_new = await svc.register_host(
+        db_session,
+        HostRegister(hostname="enroll-only", ip="10.0.0.70", os_type=OSType.linux, capabilities=CAPS_V6),
+    )
+    assert is_new is True
+    assert host.agent_version is None
+    assert host.capabilities is None
+
+
+async def test_reregister_does_not_clobber_push_written_facts(db_session: AsyncSession) -> None:
+    seeded = Host(
+        hostname="push-facts-host",
+        ip="10.0.0.71",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        agent_version="7.7.7",
+        capabilities={**CAPS_V6, "tools": {"adb": "1.0.41"}},
+    )
+    db_session.add(seeded)
+    await db_session.commit()
+
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    updated, is_new = await svc.register_host(
+        db_session,
+        HostRegister(
+            hostname="push-facts-host",
+            ip="10.0.0.72",
+            os_type=OSType.macos,
+            agent_port=5200,
+            capabilities={**CAPS_V6, "tools": {"adb": "9.9.9"}},
+        ),
+    )
+
+    assert is_new is False
+    assert updated.ip == "10.0.0.72"
+    assert updated.os_type == OSType.macos
+    assert updated.agent_port == 5200
+    # push-owned columns are untouched by re-registration
+    assert updated.agent_version == "7.7.7"
+    assert updated.capabilities == {**CAPS_V6, "tools": {"adb": "1.0.41"}}
 
 
 async def test_register_host_creates_pending_or_online_host_based_on_setting(
