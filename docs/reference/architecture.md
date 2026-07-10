@@ -7,13 +7,16 @@ GridFleet uses a host-first orchestration model to manage Appium workflows. Its 
 The backend is a multi-worker stateless group of HTTP API servers. State is stored entirely in PostgreSQL. 
 
 ### The Scheduler Process and Background Loops
-Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts 10 background loops (`host_sweep`, `appium_sweep`, `grid_allocation_reaper`, etc.) that:
+Background maintenance loops run in a single dedicated **scheduler process** — in production the `backend-scheduler` Compose service (one worker, `GRIDFLEET_RUN_BACKGROUND_LOOPS=true`); in local or single-container runs the API process itself (the flag defaults to `true`). A **PostgreSQL advisory lock** (`CONTROL_PLANE_LEADER_LOCK_ID = 6001`, held on a dedicated connection for the process lifetime) is a singleton launch guard against an accidental second loop-runner — **not** a leader election. There is no heartbeat row, watcher, or cross-process preemption. Failover is restart-based: the supervisor (`restart: unless-stopped`) restarts a dead container and it re-acquires the lock on lifespan entry, and an in-process stall watchdog `os._exit(70)`s the scheduler when its loops wedge so the supervisor can restart it. The `app.main` lifespan starts 6 background loops (`host_sweep`, `appium_sweep`, `durable_job_worker`, `grid_allocation_reaper`, `device_intent_reconciler`, `janitor`) that:
 
 - Derive host liveness from the recency of the agent's consolidated status push.
 - Evaluate node health via direct-to-Appium probes.
 - Sync stray sessions on Appium that don't belong to the internal state.
 - Expire stale router allocation tickets (`grid_allocation_reaper`).
-- Transition device maintenance lifecycles.
+- Transition device maintenance lifecycles (`device_intent_reconciler`).
+- Run trivial periodic chores as `stage_due` stages of the `janitor` loop (base tick 15 s): `run_reaper`, `fleet_capacity` (60 s), `pack_drain` backstop (60 s), `data_cleanup` (hourly, skips boot), and the heartbeat-snapshot flush (15 s).
+
+**Scheduling doctrine:** a `BackgroundLoop` per independent lifecycle; `stage_due` stages only as sub-cadences of an owning sweep (host_sweep's partition probe; the janitor's stages above). Stage cadences are plumbing constants, never registry settings. Pack drain is event-driven — session/run release paths call `complete_drain_if_draining` inline so a pack disables on the release commit; the janitor's `pack_drain` stage is only the backstop.
 
 ### Appium node lifecycle
 
