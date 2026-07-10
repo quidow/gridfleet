@@ -155,3 +155,30 @@ async def test_gather_facts_skip_reload_matches_reload_path(
 
     assert facts_loaded == facts_unloaded
     assert facts_loaded.stop_in_flight is True  # non-trivial: derived from the node row
+
+
+@pytest.mark.db
+async def test_gather_facts_maintenance_masks_not_ready(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The ready fold consumes the whole WithdrawalFacts group, so a maintenance
+    device gathers ready=False — and the evaluator's masking order still derives
+    maintenance, never offline, exactly as before the fold."""
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="facts-maint-01",
+        name="Facts Maintenance Device",
+        verified=True,
+        lifecycle_policy_state={"maintenance_reason": "operator"},
+    )
+
+    facts = await gather_device_state_facts(db_session, device, now=datetime.now(UTC))
+
+    assert facts.in_maintenance is True
+    # in_service() folds ¬in_maintenance into ready; before the fold this was True.
+    assert facts.ready is False
+    assert evaluate_operational_state(facts) is DeviceOperationalState.maintenance

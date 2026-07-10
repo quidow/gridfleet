@@ -119,6 +119,37 @@ def appium_node_stop_in_flight(device: Device) -> bool:
 
 
 @dataclass(frozen=True)
+class WithdrawalFacts:
+    """The operator-withdrawal fact group — everything that pulls a device out
+    of service, and nothing about node health (row-local, no IO).
+
+    ``device_in_service`` (the ``baseline:idle`` gate, F-G1) is the projection
+    over exactly this group: a withdrawn device must never receive a
+    baseline-started node. Node health is deliberately not a member —
+    ``device_allows_allocation`` inspects the node, so gating baseline starts
+    on it would deadlock a stopped node against ever baseline-starting. The
+    full-readiness projection folds this same group into
+    ``DeviceStateFacts.ready`` (see ``gather_device_state_facts``), so a fact
+    added here reaches both projections structurally.
+    """
+
+    verified: bool  # verified_at IS NOT NULL
+    in_maintenance: bool  # lifecycle_policy_state["maintenance_reason"] set
+    review_required: bool
+
+    @classmethod
+    def from_device(cls, device: Device) -> WithdrawalFacts:
+        return cls(
+            verified=device.verified_at is not None,
+            in_maintenance=in_maintenance(device),
+            review_required=device.review_required,
+        )
+
+    def in_service(self) -> bool:
+        return self.verified and not self.in_maintenance and not self.review_required
+
+
+@dataclass(frozen=True)
 class DeviceStateFacts:
     """All inputs the device-state derivation needs, pre-gathered (no IO here)."""
 
@@ -126,7 +157,7 @@ class DeviceStateFacts:
     has_verification_lease: bool  # an active verification intent (§16 task 4)
     in_maintenance: bool  # lifecycle_policy_state["maintenance_reason"] set (§16.1)
     stop_in_flight: bool  # appium_node_stop_in_flight(device)
-    ready: bool  # is_ready_for_use ∧ device_allows_allocation ∧ ¬review_required
+    ready: bool  # is_ready_for_use ∧ device_allows_allocation ∧ WithdrawalFacts.in_service()
 
 
 def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalState:
@@ -143,17 +174,10 @@ def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalStat
 
 
 def device_in_service(device: Device) -> bool:
-    """Eligibility gate for ``baseline:idle`` node starts (F-G1).
-
-    A device withdrawn from service must never receive a baseline-started
-    node. Withdrawal facts only (``verified_at``, ``maintenance_reason``,
-    ``review_required``) — deliberately NOT the full ``ready`` fact:
-    ``device_allows_allocation`` inspects node health, so using full
-    readiness here would deadlock a stopped node against ever
-    baseline-starting. Keep in lockstep with the withdrawal facts in
-    ``gather_device_state_facts``.
-    """
-    return device.verified_at is not None and not in_maintenance(device) and not device.review_required
+    """Eligibility gate for ``baseline:idle`` node starts (F-G1) — the
+    ``WithdrawalFacts`` projection. See that class's docstring for the
+    node-health exclusion rationale."""
+    return WithdrawalFacts.from_device(device).in_service()
 
 
 async def gather_device_state_facts(
@@ -179,17 +203,22 @@ async def gather_device_state_facts(
     has_running_session = await device_has_live_session(db, device.id)
     has_verification_lease = await device_has_verification_lease(db, device.id, now=now)
 
-    device_in_maintenance = in_maintenance(device)
+    withdrawal = WithdrawalFacts.from_device(device)
+    # in_service() adds only implied or masked conjuncts over the previous
+    # formula (verified is implied by is_ready_for_use; ¬in_maintenance is
+    # masked by the evaluator's maintenance rung, and ready has no other
+    # consumer) — kept so the withdrawal group is consumed whole and a new
+    # withdrawal fact cannot reach one projection without the other.
     ready = (
         await is_ready_for_use_async(db, device, packs=packs)
         and device_allows_allocation(device)
-        and not device.review_required
+        and withdrawal.in_service()
     )
 
     return DeviceStateFacts(
         has_running_session=has_running_session,
         has_verification_lease=has_verification_lease,
-        in_maintenance=device_in_maintenance,
+        in_maintenance=withdrawal.in_maintenance,
         stop_in_flight=appium_node_stop_in_flight(device),
         ready=ready,
     )
