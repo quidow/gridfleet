@@ -7,6 +7,7 @@ import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover
@@ -86,6 +87,29 @@ async def test_get_host_with_devices(client: AsyncClient, db_session: AsyncSessi
 async def test_get_host_not_found(client: AsyncClient) -> None:
     resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
+
+
+async def test_silent_agent_reads_offline_before_any_sweep(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    # Ledger still says online and no sweep has run, but the last push is stale:
+    # the API computes offline from recency.
+    host = Host(
+        hostname="silent-agent-host",
+        ip="192.168.1.140",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        last_heartbeat=now_utc() - timedelta(minutes=10),
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+
+    resp = await client.get(f"/api/hosts/{host.id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "offline"
 
 
 async def test_get_host_filters_legacy_global_appium_capability(

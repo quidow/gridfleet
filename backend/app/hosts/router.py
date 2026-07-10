@@ -23,6 +23,7 @@ from app.events.dependencies import EventServicesDep
 from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning
 from app.hosts.dependencies import HostServicesDep
+from app.hosts.liveness import effective_host_status, host_online
 from app.hosts.models import Host
 from app.hosts.schemas import (
     DiscoveryConfirm,
@@ -91,6 +92,8 @@ def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[
     rec_version = settings_services.service.get("agent.recommended_version")
     recommended_version = host_versioning.normalize_agent_version_setting(rec_version)
     payload = HostRead.model_validate(host).model_dump()
+    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
+    payload["status"] = effective_host_status(host, offline_after_sec=offline_after)
     payload["required_agent_version"] = required_version
     payload["recommended_agent_version"] = recommended_version
     payload["agent_version_status"] = host_versioning.get_agent_version_status(host.agent_version, required_version)
@@ -288,7 +291,8 @@ async def trigger_driver_doctor(
     pack_services: PackServicesDep,
 ) -> list[pack_schemas.HostPackDoctorOut]:
     host = found_or_404(await db.get(Host, host_id), "host not found")
-    if host.status.value != "online":
+    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
+    if not host_online(host, offline_after_sec=offline_after):
         raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
 
     checks = await agent_operations.pack_doctor(
@@ -355,7 +359,8 @@ async def get_host_tool_status(
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
-    if host.status.value != "online":
+    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
+    if not host_online(host, offline_after_sec=offline_after):
         raise HTTPException(status_code=400, detail="Host must be online to fetch tool status")
     return await get_agent_tool_status(
         host.ip,

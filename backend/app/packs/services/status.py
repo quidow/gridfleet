@@ -7,6 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
+from app.hosts.liveness import effective_host_status
 from app.hosts.models import Host
 from app.packs.models import (
     DriverPack,
@@ -205,7 +206,9 @@ class PackStatusService:
             ],
         }
 
-    async def get_driver_pack_host_status(self, db: AsyncSession, pack_id: str) -> dict[str, Any]:
+    async def get_driver_pack_host_status(
+        self, db: AsyncSession, pack_id: str, *, offline_after_sec: float
+    ) -> dict[str, Any]:
         rows = (
             await db.execute(
                 select(HostPackInstallation, Host)
@@ -249,7 +252,7 @@ class PackStatusService:
                 {
                     "host_id": str(pack_row.host_id),
                     "hostname": host.hostname,
-                    "status": host.status,
+                    "status": effective_host_status(host, offline_after_sec=offline_after_sec),
                     "pack_release": pack_row.pack_release,
                     "runtime_id": pack_row.runtime_id,
                     "pack_status": pack_row.status,
