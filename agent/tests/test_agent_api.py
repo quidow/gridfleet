@@ -191,44 +191,6 @@ async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -
     assert ctx.ip_ping_count == 2
 
 
-async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -> None:
-    desired_pack = _make_adb_desired_pack()
-    adapter = _FakeAdapter()
-    registry = AdapterRegistry()
-    registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
-    app.state.adapter_registry = registry
-
-    with _latest_desired_override(desired_pack):
-        resp = await client.get(
-            "/agent/pack/devices/serial-1/telemetry",
-            params={
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "device_type": "real_device",
-            },
-        )
-
-    assert resp.status_code == 200
-    assert resp.json()["battery_level_percent"] == 84
-    assert adapter.telemetry_calls == [("serial-1", "serial-1")]
-
-
-async def test_pack_device_telemetry_returns_404_when_none(client: AsyncClient) -> None:
-    desired_pack = _make_adb_desired_pack()
-    app.state.adapter_registry = AdapterRegistry()
-    with _latest_desired_override(desired_pack):
-        resp = await client.get(
-            "/agent/pack/devices/missing/telemetry",
-            params={
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "device_type": "real_device",
-            },
-        )
-
-    assert resp.status_code == 404
-
-
 def _make_adb_desired_pack() -> DesiredPack:
     from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 

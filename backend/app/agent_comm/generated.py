@@ -134,18 +134,6 @@ class PackDeviceLifecycleResponse(BaseModel):
     success: Annotated[bool, Field(title="Success")]
 
 
-class PackDevicePropertiesResponse(BaseModel):
-    model_config = ConfigDict(
-        extra="allow",
-    )
-
-
-class PackDeviceTelemetryResponse(BaseModel):
-    model_config = ConfigDict(
-        extra="allow",
-    )
-
-
 class PackDevicesResponse(BaseModel):
     model_config = ConfigDict(
         extra="allow",

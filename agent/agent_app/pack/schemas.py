@@ -45,12 +45,6 @@ class PackDevicesResponse(BaseModel):
     candidates: list[PackDeviceCandidate] = Field(default_factory=list)
 
 
-class PackDevicePropertiesResponse(BaseModel):
-    """Adapter-defined property bag. Schema is intentionally open."""
-
-    model_config = ConfigDict(extra="allow")
-
-
 class HealthCheckResult(BaseModel):
     """One check in a pack device's health response."""
 
@@ -70,12 +64,6 @@ class PackDeviceHealthResponse(BaseModel):
     healthy: bool | None
     checks: list[HealthCheckResult] = Field(default_factory=list)
     recommended_action: str | None = None
-
-
-class PackDeviceTelemetryResponse(BaseModel):
-    """Adapter telemetry blob."""
-
-    model_config = ConfigDict(extra="allow")
 
 
 class PackDeviceLifecycleResponse(BaseModel):
