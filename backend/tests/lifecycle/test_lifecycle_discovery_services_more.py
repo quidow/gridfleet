@@ -153,7 +153,6 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
 
     svc = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
-        agent_get_pack_device_properties=AsyncMock(return_value=None),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         serializer=DevicePresenterService(settings=FakeSettingsReader()),

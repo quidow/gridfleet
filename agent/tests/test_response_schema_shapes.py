@@ -10,9 +10,7 @@ from agent_app.host.schemas import HealthResponse, HostTelemetryResponse
 from agent_app.pack.schemas import (
     PackDeviceHealthResponse,
     PackDeviceLifecycleResponse,
-    PackDevicePropertiesResponse,
     PackDevicesResponse,
-    PackDeviceTelemetryResponse,
 )
 from agent_app.tools.schemas import ToolsStatusResponse
 
@@ -59,12 +57,6 @@ def test_pack_devices_response_accepts_route_shape() -> None:
     PackDevicesResponse.model_validate({"candidates": []})
 
 
-def test_pack_device_properties_response_accepts_route_shape() -> None:
-    PackDevicePropertiesResponse.model_validate(
-        {"pack_id": "pack", "pack_release": "1.0.0", "properties": {"foo": "bar"}}
-    )
-
-
 def test_pack_device_health_response_accepts_route_shape() -> None:
     PackDeviceHealthResponse.model_validate(
         {
@@ -72,10 +64,6 @@ def test_pack_device_health_response_accepts_route_shape() -> None:
             "checks": [{"check_id": "adapter_unavailable", "ok": False, "message": "no adapter"}],
         }
     )
-
-
-def test_pack_device_telemetry_response_accepts_route_shape() -> None:
-    PackDeviceTelemetryResponse.model_validate({"pack_id": "pack", "pack_release": "1.0.0", "metrics": {"cpu": 0.1}})
 
 
 def test_pack_device_lifecycle_response_accepts_route_shape() -> None:

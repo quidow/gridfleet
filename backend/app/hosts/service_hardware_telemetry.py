@@ -3,21 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import httpx2 as httpx
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from app.agent_comm import operations as agent_operations
 from app.core.coerce import coerce_float as _coerce_float
 from app.core.coerce import coerce_int as _coerce_int
-from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.devices.models import (
     Device,
     DeviceEventType,
-    DeviceOperationalState,
     DeviceType,
     HardwareChargingState,
     HardwareHealthStatus,
@@ -25,13 +20,12 @@ from app.devices.models import (
 )
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.event import record_event
-from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_comm.http_pool import AgentHttpPool
-    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
@@ -48,9 +42,6 @@ def _hardware_severity(old_status: str | None, new_status: str) -> EventSeverity
     if new_status == "ok" and old_status in ("warning", "critical"):
         return "success"
     return "warning"
-
-
-fetch_pack_device_telemetry = agent_operations.pack_device_telemetry
 
 
 def _health_rank(status: HardwareHealthStatus) -> int:
@@ -209,13 +200,9 @@ class HardwareTelemetryService:
         *,
         publisher: EventPublisher,
         settings: SettingsReader,
-        circuit_breaker: CircuitBreakerProtocol,
-        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
-        self._circuit_breaker = circuit_breaker
-        self._pool = pool
 
     async def apply_telemetry_sample(
         self,
@@ -256,50 +243,32 @@ class HardwareTelemetryService:
 
         return next_status
 
-    async def _get_device_telemetry(self, device: Device) -> dict[str, Any] | None:
-        host = device.host
-        if host is None or device.connection_target is None:
-            return None
-
-        try:
-            return await fetch_pack_device_telemetry(
-                host.ip,
-                host.agent_port,
-                device.connection_target,
-                pack_id=device.pack_id,
-                platform_id=device.platform_id,
-                device_type=device.device_type.value,
-                connection_type=device.connection_type.value if device.connection_type is not None else None,
-                ip_address=device.ip_address,
-                http_client_factory=httpx.AsyncClient,
-                settings=self._settings,
-                circuit_breaker=self._circuit_breaker,
-                pool=self._pool,
-            )
-        except AgentCallError:
-            return None
-
-    async def poll_once(self, db: AsyncSession) -> None:
-        stmt = (
-            select(Device)
-            .join(Host)
-            .where(
-                Host.status == HostStatus.online,
-                Device.device_type == DeviceType.real_device,
-                Device.operational_state != DeviceOperationalState.offline,
-            )
-            .options(selectinload(Device.host))
+    async def fold_host_device_telemetry(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+        """Fold the pushed device_telemetry section (agent probes real devices
+        on its own cadence). The pushed per-device stamp is ``observed_at``;
+        apply_telemetry_sample persists ``reported_at`` — mapped here."""
+        raw = section.get("devices")
+        if not isinstance(raw, dict) or not raw:
+            return
+        stmt = select(Device.id, Device.connection_target).where(
+            Device.host_id == host_id,
+            Device.connection_target.in_(list(raw)),
         )
-        result = await db.execute(stmt)
-        devices = result.scalars().all()
-
-        for device in devices:
+        # Snapshot ids up front: the per-device commit/rollback below expires
+        # every instance in the session, so iterating live ORM rows would trigger
+        # a sync lazy-load (MissingGreenlet) after the first rollback. Re-fetch
+        # each device fresh inside its own commit window instead.
+        targets = [(device_id, target) for device_id, target in (await db.execute(stmt)).all()]
+        for device_id, target in targets:
+            sample = raw.get(target)
+            if not isinstance(sample, dict):
+                continue
+            device = await db.get(Device, device_id)
+            if device is None:
+                continue
             try:
-                telemetry = await self._get_device_telemetry(device)
-                if telemetry is None:
-                    continue
-                await self.apply_telemetry_sample(db, device, telemetry)
+                await self.apply_telemetry_sample(db, device, {**sample, "reported_at": sample.get("observed_at")})
                 await db.commit()
             except Exception:
                 await db.rollback()
-                logger.exception("Failed to poll hardware telemetry for device %s", device.identity_value)
+                logger.exception("Failed to fold hardware telemetry for device %s", device_id)

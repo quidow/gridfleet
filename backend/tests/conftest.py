@@ -472,7 +472,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             hardware_telemetry=HardwareTelemetryService(
                 publisher=test_event_bus,
                 settings=settings_service,
-                circuit_breaker=test_circuit_breaker,
             ),
             resource_telemetry=HostResourceTelemetryService(
                 settings=settings_service,
@@ -611,7 +610,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             lifecycle=lifecycle,
             discovery=PackDiscoveryService(
                 agent_get_pack_devices=agent_operations.get_pack_devices,
-                agent_get_pack_device_properties=agent_operations.get_pack_device_properties,
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 serializer=DevicePresenterService(settings=settings_service),
@@ -643,8 +641,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             node_health=NodeHealthService(
                 publisher=test_event_bus,
                 settings=settings_service,
-                pool=test_http_pool,
-                circuit_breaker=test_circuit_breaker,
                 recovery_control=Mock(),
                 health=DeviceHealthService(publisher=test_event_bus),
                 incidents=LifecycleIncidentService(),

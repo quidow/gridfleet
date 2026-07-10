@@ -9,6 +9,7 @@ import pytest_asyncio
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import connectivity as device_connectivity
 from app.devices.services.connectivity import (
     ConnectivityService,
     _fetch_lifecycle_state,
@@ -36,6 +37,29 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.devices.services.connectivity._lifecycle_state_capable", AsyncMock(return_value=False))
     monkeypatch.setattr("app.devices.services.connectivity._fetch_lifecycle_state", AsyncMock(return_value=None))
+
+
+async def _run_connectivity_fold(service: ConnectivityService, db: AsyncSession) -> None:
+    """Fold the pushed device_health section once per online host — the fan-out
+    the deleted check_connectivity pass used to do. Each device's observation is
+    sourced from the (mocked) _get_device_health so the legacy per-device mocks
+    keep working; the fold's internal post-repair re-probe still dials the same
+    mock, consuming the next side_effect element."""
+    from sqlalchemy import select as _select
+
+    from app.core.timeutil import now_utc as _now_utc
+
+    hosts = (await db.execute(_select(Host).where(Host.status == HostStatus.online))).scalars().all()
+    for _host in hosts:
+        _devices = (await db.execute(_select(Device).where(Device.host_id == _host.id))).scalars().all()
+        _observations: dict[str, object] = {}
+        for _d in _devices:
+            _payload = await device_connectivity._get_device_health(_d)
+            if _payload is not None and _d.connection_target:
+                _observations[_d.connection_target] = _payload
+        await service.fold_host_device_health(
+            db, _host.id, {"reported_at": _now_utc().isoformat(), "devices": _observations}
+        )
 
 
 async def _setup_host_and_device(
@@ -134,13 +158,16 @@ async def test_connected_device_stays_available(db_session: AsyncSession) -> Non
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -160,13 +187,16 @@ async def test_healthy_available_device_triggers_self_heal_clear(db_session: Asy
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     lifecycle_policy.clear_escalation_residue_on_self_heal.assert_awaited_once()
 
@@ -185,13 +215,16 @@ async def test_healthy_available_device_attempts_run_restore(db_session: AsyncSe
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     lifecycle_policy.restore_run_after_self_heal.assert_awaited_once()
 
@@ -206,13 +239,16 @@ async def test_disconnected_device_skips_self_heal_clear(db_session: AsyncSessio
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     lifecycle_policy.clear_escalation_residue_on_self_heal.assert_not_awaited()
 
@@ -240,13 +276,16 @@ async def test_endpoint_only_device_stays_available_when_health_passes(db_sessio
             return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]},
         ) as health,
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -282,13 +321,16 @@ async def test_endpoint_only_offline_device_auto_starts_when_health_passes(db_se
             return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     mock_recover.assert_called_once()
     _, kwargs = mock_recover.call_args
@@ -334,13 +376,16 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
     monkeypatch.setattr("app.devices.services.connectivity._get_device_health", endpoint_health)
 
     mock_lifecycle_policy = AsyncMock()
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=mock_lifecycle_policy,
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     await db_session.refresh(failing)
     await db_session.refresh(ping_miss)
@@ -410,13 +455,16 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
 
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=mock_lifecycle_policy,
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     assert "endpoint-not-ready" not in await get_connectivity_control_plane_state(db_session)
     assert "endpoint-manual" in await get_connectivity_control_plane_state(db_session)
@@ -446,13 +494,16 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -484,13 +535,16 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -550,13 +604,16 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -575,13 +632,16 @@ async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) 
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -604,13 +664,16 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -629,13 +692,16 @@ async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available  # unchanged
@@ -661,13 +727,16 @@ async def test_reappeared_device_auto_starts(db_session: AsyncSession) -> None:
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     mock_recover.assert_called_once()
     assert "dc-001" not in await get_connectivity_control_plane_state(db_session)
@@ -691,13 +760,16 @@ async def test_offline_device_auto_starts_on_startup_recovery(db_session: AsyncS
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     mock_recover.assert_called_once()
     assert "dc-001" not in await get_connectivity_control_plane_state(db_session)
@@ -719,13 +791,16 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline  # still offline
@@ -742,13 +817,16 @@ async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.maintenance  # unchanged
@@ -784,13 +862,16 @@ async def test_connectivity_maintenance_disconnect_skipped_silently(
     monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
 
     mock_lifecycle_policy = AsyncMock()
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=mock_lifecycle_policy,
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
     await db_session.refresh(device)
@@ -823,13 +904,16 @@ async def test_connectivity_marks_busy_device_offline(
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
     monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -866,13 +950,16 @@ async def test_connectivity_reserved_device_takes_warning_path_not_idle(
     monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
 
     mock_lifecycle_policy = AsyncMock()
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=mock_lifecycle_policy,
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     # Reserved device routes through note_connectivity_loss (warning path), not the idle path.
     mock_lifecycle_policy.note_connectivity_loss.assert_awaited_once()
@@ -895,13 +982,16 @@ async def test_unhealthy_connected_device_triggers_policy_stop(db_session: Async
             return_value={"healthy": False, "detail": "ADB not responsive"},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     mock_handle.assert_called_once()
     await db_session.refresh(device)
@@ -940,13 +1030,16 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
     monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.maintenance
@@ -1019,7 +1112,7 @@ async def test_disconnect_records_exactly_one_connectivity_lost_event(
         lifecycle_policy=AsyncMock(),
         health=SimpleNamespace(update_device_checks=fake_update_device_checks),
     )
-    await service.check_connectivity(db_session)
+    await _run_connectivity_fold(service, db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -1042,7 +1135,7 @@ async def test_disconnect_records_exactly_one_connectivity_lost_event(
     assert await connectivity_lost_count() == 1
 
     # A second pass while the device stays disconnected must not add a row.
-    await service.check_connectivity(db_session)
+    await _run_connectivity_fold(service, db_session)
     assert await connectivity_lost_count() == 1
 
 
@@ -1081,13 +1174,16 @@ async def test_disconnect_of_busy_device_records_connectivity_lost(
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
     monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.busy  # session mask holds
@@ -1158,7 +1254,6 @@ def _stub_settings(
     monkeypatch.setattr(settings_service, "get", dispatcher)
     return FakeSettingsReader(
         {
-            "general.device_check_interval_sec": dispatcher("general.device_check_interval_sec"),
             "device_checks.ip_ping.consecutive_fail_threshold": dispatcher(
                 "device_checks.ip_ping.consecutive_fail_threshold"
             ),
@@ -1170,8 +1265,6 @@ def _stub_settings(
 
 def _settings_dispatch(*, threshold: int, timeout: float, count: int) -> Callable[[str], object]:
     def _get(key: str) -> object:
-        if key == "general.device_check_interval_sec":
-            return 60
         if key == "device_checks.ip_ping.consecutive_fail_threshold":
             return threshold
         if key == "device_checks.ip_ping.timeout_sec":
@@ -1348,13 +1441,16 @@ async def test_ip_ping_first_miss_keeps_healthy(
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is True
@@ -1382,13 +1478,16 @@ async def test_ip_ping_threshold_flips_unhealthy(
     mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     for _ in range(3):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=settings,
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=settings,
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
@@ -1417,13 +1516,16 @@ async def test_ip_ping_success_clears_counter(
     _stub_get_health_sequence(monkeypatch, payloads)
 
     for _ in range(3):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=settings,
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=settings,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is True
@@ -1445,13 +1547,16 @@ async def test_ip_ping_other_check_failure_no_hysteresis(
     _stub_get_health(monkeypatch, healthy_payload(adb=False, ip_ping=True))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
@@ -1481,7 +1586,6 @@ def _roku_payload(*, reachable: bool) -> dict[str, object]:
 def _debounce_settings(threshold: int = 3) -> FakeSettingsReader:
     return FakeSettingsReader(
         {
-            "general.device_check_interval_sec": 60,
             "device_checks.ip_ping.consecutive_fail_threshold": 3,
             "device_checks.ip_ping.timeout_sec": 2.0,
             "device_checks.ip_ping.count_per_cycle": 1,
@@ -1507,13 +1611,16 @@ async def test_debounceable_check_blip_first_miss_keeps_healthy(
     mock_lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock(return_value=False)
     mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=_debounce_settings(threshold=3),
-        circuit_breaker=Mock(),
-        lifecycle_policy=mock_lifecycle_policy,
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=_debounce_settings(threshold=3),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is True
@@ -1537,13 +1644,16 @@ async def test_debounceable_check_flips_unhealthy_at_threshold(
     mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     for _ in range(3):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=_debounce_settings(threshold=3),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=_debounce_settings(threshold=3),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
@@ -1573,13 +1683,16 @@ async def test_debounceable_check_recovery_clears_counter(
     mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
 
     for _ in range(3):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=_debounce_settings(threshold=3),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=_debounce_settings(threshold=3),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is True
@@ -1614,13 +1727,16 @@ async def test_hard_check_failure_flips_immediately_despite_debounceable_sibling
     mock_lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock(return_value=False)
     mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=_debounce_settings(threshold=3),
-        circuit_breaker=Mock(),
-        lifecycle_policy=mock_lifecycle_policy,
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=_debounce_settings(threshold=3),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
@@ -1641,13 +1757,16 @@ async def test_ip_ping_absent_no_counter_writes(
     _stub_get_health(monkeypatch, healthy_payload(adb=True))  # no ip_ping entry
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
     assert counter is None
@@ -1672,13 +1791,16 @@ async def test_ip_ping_skipped_for_held_device(
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
     assert counter is None
@@ -1700,13 +1822,16 @@ async def test_ip_ping_health_result_none_preserves_counter(
     await db_session.commit()
     _stub_get_health(monkeypatch, None)  # agent unreachable
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
     assert counter == 2
@@ -1723,13 +1848,16 @@ async def test_ip_ping_settings_threshold_one_flips_immediately(
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    ).check_connectivity(db_session)
+    await _run_connectivity_fold(
+        ConnectivityService(
+            publisher=Mock(),
+            settings=settings,
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ),
+        db_session,
+    )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
@@ -1789,13 +1917,16 @@ async def test_healthy_probe_skips_enumeration(db_session: AsyncSession) -> None
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -1821,13 +1952,16 @@ async def test_healthy_probe_trumps_enumeration_absence(db_session: AsyncSession
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -1850,13 +1984,16 @@ async def test_unhealthy_probe_absent_marks_disconnected_after_probe(db_session:
             return_value={"healthy": False, "checks": [{"check_id": "adb", "ok": False}]},
         ) as health,
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     health.assert_awaited_once()
     mock_lifecycle_policy.note_connectivity_loss.assert_awaited_once()
@@ -1883,13 +2020,16 @@ async def test_unhealthy_probe_present_marks_health_failure(db_session: AsyncSes
             return_value={"healthy": False, "checks": [{"check_id": "adb", "ok": False}]},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     mock_lifecycle_policy.handle_health_failure.assert_awaited_once()
     mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
@@ -1928,13 +2068,16 @@ async def test_enumeration_fetched_once_per_host_for_multiple_misses(db_session:
             return_value={"healthy": False, "checks": [{"check_id": "adb", "ok": False}]},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     enumeration.assert_awaited_once()
 
@@ -1955,13 +2098,16 @@ async def test_agent_unreachable_skips_remaining_devices(db_session: AsyncSessio
             return_value=None,
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -1983,13 +2129,16 @@ async def test_healthy_non_offline_device_clears_previously_offline_flag(db_sess
             return_value={"healthy": True},
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
@@ -2015,39 +2164,19 @@ async def test_absent_device_hard_failure_does_not_touch_ip_ping_counter(db_sess
             },
         ),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dc-001")
     assert counter is None
-
-
-async def test_connectivity_probe_sends_expected_identity(db_session: AsyncSession) -> None:
-    """The connectivity probe passes the device identity so adapters that can
-    verify it detect a different device answering at the stored address."""
-    _host, _device, _ = await _setup_host_and_device(db_session)
-
-    probe = AsyncMock(return_value={"healthy": True})
-    with (
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
-        patch("app.devices.services.connectivity.fetch_pack_device_health", probe),
-    ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
-
-    probe.assert_awaited_once()
-    assert probe.await_args is not None
-    assert probe.await_args.kwargs["identity_value"] == "dc-001"
 
 
 # ---------------------------------------------------------------------------
@@ -2098,13 +2227,16 @@ async def test_recommended_action_dispatches_repair_for_available_device(db_sess
         ),
         patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     dispatch.assert_awaited_once()
     await db_session.refresh(device)
@@ -2139,13 +2271,16 @@ async def test_repair_reprobe_missing_healthy_key_is_not_treated_as_recovered(db
         ),
         patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     dispatch.assert_awaited_once()
     # Budget consumed and NOT reset => the empty re-probe was not treated as recovery.
@@ -2177,13 +2312,16 @@ async def test_recommended_action_dispatches_for_offline_wedged_device(db_sessio
         ),
         patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     dispatch.assert_awaited_once()
     assert "repair_attempted" in await _device_event_types(db_session, device.id)
@@ -2216,13 +2354,16 @@ async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession
         ),
         patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     dispatch.assert_not_awaited()
 
@@ -2252,13 +2393,16 @@ async def test_repair_budget_exhausts_then_records_failed(db_session: AsyncSessi
         ),
         patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     dispatch.assert_not_awaited()
     assert "repair_failed" in await _device_event_types(db_session, device.id)
@@ -2285,10 +2429,10 @@ async def test_unanswered_probe_marks_unhealthy_on_threshold(db_session: AsyncSe
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await svc.check_connectivity(db_session)
-        await svc.check_connectivity(db_session)
+        await _run_connectivity_fold(svc, db_session)
+        await _run_connectivity_fold(svc, db_session)
         lifecycle_policy.handle_health_failure.assert_not_awaited()  # 2 of 3, below threshold
-        await svc.check_connectivity(db_session)
+        await _run_connectivity_fold(svc, db_session)
 
     lifecycle_policy.handle_health_failure.assert_awaited()  # threshold reached
 
@@ -2315,7 +2459,7 @@ async def test_answered_probe_resets_unanswered_counter(db_session: AsyncSession
         ),
     ):
         for _ in range(4):
-            await svc.check_connectivity(db_session)
+            await _run_connectivity_fold(svc, db_session)
 
     lifecycle_policy.handle_health_failure.assert_not_awaited()
 
@@ -2348,13 +2492,16 @@ async def test_disconnected_already_recorded_device_skips_reconcile(
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     assert calls == []  # already-recorded disconnect did not re-enqueue
 
@@ -2386,13 +2533,16 @@ async def test_disconnected_first_observation_still_reconciles(
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     assert len(calls) >= 1  # the connected→disconnected transition was handled
 
@@ -2454,13 +2604,16 @@ async def test_repair_event_records_curing_rung(db_session: AsyncSession) -> Non
         ),
         patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
-        await ConnectivityService(
-            publisher=Mock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=DeviceHealthService(publisher=Mock()),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=Mock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=DeviceHealthService(publisher=Mock()),
+            ),
+            db_session,
+        )
 
     dispatch.assert_awaited_once()
     payload = await _device_event_payload(db_session, device.id, "repair_attempted")

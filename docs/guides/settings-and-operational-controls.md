@@ -37,16 +37,14 @@ Most important settings:
 
 - `heartbeat_interval_sec`, `host_offline_after_sec`, and `partition_probe_interval_sec`
   - together determine how host liveness is derived from agent status pushes (`host_offline_after_sec` since the last push) and how often the reachability probe checks for a network partition
-- `node_check_interval_sec` and `node_max_failures`
-  - control how fast node-health failures trigger automatic restart behavior
-- `device_check_interval_sec`
-  - controls how quickly transport loss is reflected in device state
-- `property_refresh_interval_sec`
-  - controls how often the manager refreshes dynamic version facts such as OS and software versions
-- `hardware_telemetry_interval_sec`, `hardware_telemetry_stale_timeout_sec`, and `hardware_telemetry_consecutive_samples`
-  - control how often physical-device battery telemetry is refreshed, when it becomes stale in the UI, and how many repeated hot samples are required before escalating a hardware alert
-- `host_resource_telemetry_interval_sec` and `host_resource_telemetry_window_minutes`
-  - control how often host CPU/memory/disk telemetry is sampled and the default Host Detail chart window
+- `node_max_failures`
+  - controls how many consecutive node-health failures trigger automatic restart behavior
+- `hardware_telemetry_stale_timeout_sec` and `hardware_telemetry_consecutive_samples`
+  - control when battery telemetry becomes stale in the UI and how many repeated hot samples are required before escalating a hardware alert
+- `host_resource_telemetry_window_minutes`
+  - sets the default Host Detail chart window
+
+The observation cadences themselves (node health, device connectivity, property refresh, hardware and host-resource telemetry) are no longer settings: the agent gathers those observations locally on fixed 30/60/300/600 s constants in `agent_app/probes.py` and pushes them in its consolidated status; the manager folds each pushed section into durable facts.
 - `hardware_temperature_warning_c` and `hardware_temperature_critical_c`
   - define the warning and critical overheating thresholds used for `device.hardware_health_changed` events and the Devices UI
 - `session_viability_interval_sec` and `session_viability_timeout_sec`

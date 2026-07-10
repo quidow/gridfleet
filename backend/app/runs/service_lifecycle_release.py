@@ -43,8 +43,8 @@ from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
 # Bound concurrent Appium DELETEs per host during run release so a single hung
-# node cannot stall the whole release. Mirrors the observation loops' per-host
-# probe ceiling (settings key general.probe_concurrency_per_host).
+# node cannot stall the whole release. Mirrors the session-sync probe ceiling
+# (_PROBE_CONCURRENCY_PER_HOST in app/sessions/service_sync.py).
 TERMINATE_CONCURRENCY_PER_HOST = 2
 # One brief retry on an indeterminate (network-error) liveness probe before
 # treating the session as a survivor. Force-release is rare, so a short fixed

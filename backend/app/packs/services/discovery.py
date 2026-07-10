@@ -33,21 +33,6 @@ class PackDevicesFetcher(Protocol):
     ) -> dict[str, object]: ...
 
 
-class PackDevicePropertiesFetcher(Protocol):
-    async def __call__(
-        self,
-        host: str,
-        agent_port: int,
-        connection_target: str,
-        pack_id: str,
-        *,
-        identity_value: str | None = None,
-        settings: SettingsReader,
-        circuit_breaker: CircuitBreakerProtocol,
-        pool: AgentHttpPool | None = None,
-    ) -> dict[str, object] | None: ...
-
-
 IdentityKey = tuple[str, str, str]
 
 
@@ -56,7 +41,6 @@ class PackDiscoveryService:
         self,
         *,
         agent_get_pack_devices: PackDevicesFetcher,
-        agent_get_pack_device_properties: PackDevicePropertiesFetcher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         serializer: DeviceSerializer,
@@ -64,7 +48,6 @@ class PackDiscoveryService:
         pool: AgentHttpPool | None = None,
     ) -> None:
         self._agent_get_pack_devices = agent_get_pack_devices
-        self._agent_get_pack_device_properties = agent_get_pack_device_properties
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._serializer = serializer
@@ -166,19 +149,6 @@ class PackDiscoveryService:
             new_devices=new_devices,
             updated_devices=updated_devices,
             removed_identity_values=removed_identity_values,
-        )
-
-    async def fetch_pack_device_properties(self, host: Host, device: Device) -> dict[str, object] | None:
-        refresh_target = device.connection_target or device.identity_value
-        return await self._agent_get_pack_device_properties(
-            host.ip,
-            host.agent_port,
-            refresh_target,
-            device.pack_id,
-            identity_value=device.identity_value,
-            settings=self._settings,
-            circuit_breaker=self._circuit_breaker,
-            pool=self._pool,
         )
 
     async def apply_pack_device_properties(

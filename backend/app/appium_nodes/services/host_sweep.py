@@ -1,25 +1,27 @@
-"""One pushed observation per host per tick, feeding every host-scoped concern.
+"""One pushed observation per host per tick: recency liveness, convergence, then
+watermark-gated fact folds; a cadence-gated partition-probe diagnostic; cooldown
+expiry after the fan-out.
 
 Concerns run only for hosts this sweep pass proved alive: host liveness derives
-from status-push recency (evaluate_host), and appium-node convergence reads the
-same latest pushed snapshot, then node health as a cadence-gated per-host stage.
-The backend keeps a single cadence-gated reachability probe (probe_host) as a
-network-partition diagnostic. Cross-host passes (connectivity, telemetry,
-property refresh) run as cadence-gated global stages after the per-host fan-out
-completes — one SweepStage entry each, gated by its own interval setting (see
-stage_due).
+from status-push recency (evaluate_host), appium-node convergence reads the same
+latest pushed snapshot, and per-host observation folds consume stamped push
+sections afterward — each fold gated by a per-host stamp watermark so one
+observation folds exactly once. The backend keeps a single cadence-gated
+reachability probe (probe_host) as a network-partition diagnostic (see
+stage_due). After the fan-out the sweep expires stale device cooldowns.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
 from app.appium_nodes.services.reconciler import fetch_backoff_until, fetch_desired_rows
 from app.core.background_loop import BackgroundLoop
+from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import APPIUM_RECONCILER_CYCLE_FAILURES, APPIUM_RECONCILER_LAST_CYCLE_SECONDS
 from app.core.observability import get_logger
 from app.hosts.models import Host, HostStatus
@@ -32,7 +34,6 @@ if TYPE_CHECKING:
 
     from app.appium_nodes.protocols import ReconcilerProtocol
     from app.appium_nodes.services.heartbeat import HeartbeatService
-    from app.appium_nodes.services.node_health import NodeHealthService
     from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
@@ -41,15 +42,22 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 LOOP_NAME = "host_sweep"
+OBSERVATION_FOLD_NAMESPACE = "host_sweep.observation_fold"
 
 
 @dataclass(frozen=True)
-class SweepStage:
-    """A cross-host pass gated by its own interval setting, run after the fan-out."""
+class ObservationFold:
+    """A per-host fact fold fed by one status-push section.
 
-    label: str  # structured-log stage name
-    interval_setting: str  # settings key read every cycle for the cadence
-    run: Callable[[AsyncSession], Awaitable[None]]
+    Runs only when the section's stamp differs from the stored per-host
+    watermark: each push re-sends the agent's latest probe cache, and the
+    failure-hysteresis counters downstream count per observation — re-folding
+    an unchanged section would multiply them.
+    """
+
+    section: str  # push payload key
+    fold: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]]
+    stamp_key: str = "reported_at"
 
 
 def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) -> bool:
@@ -58,15 +66,43 @@ def stage_due(cycle_index: int, *, base_interval: float, stage_interval: float) 
     return cycle_index % divisor == 0
 
 
+async def _fold_observations(
+    db: AsyncSession,
+    host_id: uuid.UUID,
+    payload: dict[str, Any],
+    folds: Sequence[ObservationFold],
+) -> None:
+    raw = await control_plane_state_store.get_value(db, OBSERVATION_FOLD_NAMESPACE, str(host_id))
+    watermarks: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    for entry in folds:
+        section = payload.get(entry.section)
+        if not isinstance(section, dict):
+            continue
+        stamp = section.get(entry.stamp_key)
+        if not isinstance(stamp, str) or stamp == watermarks.get(entry.section):
+            continue
+        try:
+            await entry.fold(db, host_id, section)
+        except Exception:
+            # Fold isolation (stage-isolation successor): one section's failure
+            # must not starve the others. Watermark not advanced — retried next
+            # cycle (at-least-once; the restart-event ingest accepts the same).
+            logger.exception("host_sweep_fold_failed", section=entry.section, host_id=str(host_id))
+            continue
+        watermarks[entry.section] = stamp
+        await control_plane_state_store.set_value(db, OBSERVATION_FOLD_NAMESPACE, str(host_id), watermarks)
+        await db.commit()
+
+
 async def run_host_sweep_once(
     db: AsyncSession,
     *,
     heartbeat: HeartbeatService,
     reconciler: ReconcilerProtocol,
-    node_health: NodeHealthService,
     settings: SettingsReader,
     session_factory: SessionFactory,
-    global_stages: Sequence[SweepStage] = (),
+    observation_folds: Sequence[ObservationFold] = (),
+    expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     cycle_index: int = 0,
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
@@ -79,11 +115,6 @@ async def run_host_sweep_once(
         rows_by_host.setdefault(row.host_id, []).append(row)
     semaphore = asyncio.Semaphore(settings.get_int("appium_reconciler.host_parallelism"))
     base_interval = settings.get_float("general.heartbeat_interval_sec")
-    node_health_due = stage_due(
-        cycle_index,
-        base_interval=base_interval,
-        stage_interval=settings.get_float("general.node_check_interval_sec"),
-    )
     probe_due = stage_due(
         cycle_index,
         base_interval=base_interval,
@@ -125,30 +156,25 @@ async def run_host_sweep_once(
                     # Stage isolation: a convergence failure must not poison other
                     # hosts' sweep NOR this host's remaining stages.
                     logger.exception("host_sweep_convergence_failed", host_id=str(host_id))
-            if node_health_due:
+            if evaluation.payload is not None and observation_folds:
                 try:
-                    async with session_factory() as nh_db:
-                        await node_health.check_host_nodes(nh_db, host_id=host_id)
+                    async with session_factory() as fold_db:
+                        await _fold_observations(fold_db, host_id, evaluation.payload, observation_folds)
                 except Exception:
-                    logger.exception("host_sweep_node_health_failed", host_id=str(host_id))
+                    logger.exception("host_sweep_fold_pass_failed", host_id=str(host_id))
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
-    for stage in global_stages:
-        if not stage_due(
-            cycle_index, base_interval=base_interval, stage_interval=settings.get_float(stage.interval_setting)
-        ):
-            continue
-        # End any open read transaction before a long pass — no snapshot or lock
-        # may span agent I/O (repo contract). The statuses each stage reads are the
-        # ones this cycle's liveness stage just wrote.
+    if expire_cooldowns is not None:
+        # DB-only cleanup with no push section; must run even with zero alive
+        # hosts. Every cycle (~10 s) instead of the old 60 s stage — earlier
+        # cooldown expiry is benign, and the intent reconciler GCs expired
+        # intents on its own tick anyway.
         await db.commit()
         try:
-            await stage.run(db)
+            await expire_cooldowns(db)
         except Exception:
-            # Stage isolation: one stage's failure must not fail the cycle or skip
-            # the stages after it.
-            logger.exception("host_sweep_stage_failed", stage=stage.label)
+            logger.exception("host_sweep_cooldown_pass_failed")
 
 
 class HostSweepLoop(BackgroundLoop):
@@ -157,9 +183,16 @@ class HostSweepLoop(BackgroundLoop):
     loop_name = LOOP_NAME
     cycle_failed_message = "host_sweep_cycle_failed"
 
-    def __init__(self, *, services: AppiumNodeServices, global_stages: Sequence[SweepStage] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        services: AppiumNodeServices,
+        observation_folds: Sequence[ObservationFold] = (),
+        expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
+    ) -> None:
         self._services = services
-        self._global_stages = tuple(global_stages)
+        self._observation_folds = tuple(observation_folds)
+        self._expire_cooldowns = expire_cooldowns
         self._cycle = 0
 
     @property
@@ -174,10 +207,10 @@ class HostSweepLoop(BackgroundLoop):
             db,
             heartbeat=self._services.heartbeat,
             reconciler=self._services.reconciler,
-            node_health=self._services.node_health,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
-            global_stages=self._global_stages,
+            observation_folds=self._observation_folds,
+            expire_cooldowns=self._expire_cooldowns,
             cycle_index=self._cycle,
         )
 

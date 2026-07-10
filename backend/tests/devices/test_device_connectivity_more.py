@@ -18,6 +18,28 @@ from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
 
+async def _run_connectivity_fold(service: ConnectivityService, db: AsyncSession) -> None:
+    """Fold the pushed device_health section once per online host — the fan-out
+    the deleted check_connectivity pass used to do. Each device's observation is
+    sourced from the (mocked) _get_device_health so the legacy per-device mocks
+    keep working."""
+    from sqlalchemy import select as _select
+
+    from app.core.timeutil import now_utc as _now_utc
+
+    hosts = (await db.execute(_select(Host).where(Host.status == HostStatus.online))).scalars().all()
+    for _host in hosts:
+        _devices = (await db.execute(_select(Device).where(Device.host_id == _host.id))).scalars().all()
+        _observations: dict[str, object] = {}
+        for _d in _devices:
+            _payload = await device_connectivity._get_device_health(_d)
+            if _payload is not None and _d.connection_target:
+                _observations[_d.connection_target] = _payload
+        await service.fold_host_device_health(
+            db, _host.id, {"reported_at": _now_utc().isoformat(), "devices": _observations}
+        )
+
+
 def _device(
     *,
     device_type: DeviceType = DeviceType.real_device,
@@ -197,13 +219,16 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
             new=AsyncMock(),
         ) as delete_value,
     ):
-        await ConnectivityService(
-            publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=AsyncMock(),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
+            ),
+            db_session,
+        )
 
     # The healthy probe also clears the repair-attempt and probe-unanswered keys; this
     # test asserts the specific "previously offline" clear for the not-ready device.
@@ -242,13 +267,16 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         patch("app.devices.services.connectivity._fetch_lifecycle_state", new=AsyncMock(return_value="booted")),
         patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value={"healthy": True})),
     ):
-        await ConnectivityService(
-            publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=AsyncMock(),
-            health=health_stub,
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=health_stub,
+            ),
+            db_session,
+        )
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
 
@@ -306,12 +334,15 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
             ),
         ),
     ):
-        await ConnectivityService(
-            publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            lifecycle_policy=mock_lifecycle_policy,
-            health=AsyncMock(),
-        ).check_connectivity(db_session)
+        await _run_connectivity_fold(
+            ConnectivityService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                lifecycle_policy=mock_lifecycle_policy,
+                health=AsyncMock(),
+            ),
+            db_session,
+        )
 
     assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"

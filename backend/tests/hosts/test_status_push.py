@@ -49,7 +49,7 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
     body = {
         "host_id": str(online_host.id),
         "agent_version": "9.9.9",
-        "capabilities": {"tools": {"node": "22.1.0"}, "orchestration_contract_version": 5},
+        "capabilities": {"tools": {"node": "22.1.0"}, "orchestration_contract_version": 6},
         "missing_prerequisites": ["adb"],
         "appium_processes": {"running_nodes": [{"port": 4723, "pid": 111}]},
         "host_telemetry": {"recorded_at": "2026-07-09T00:00:00+00:00", "cpu_percent": 1.0},

@@ -93,7 +93,7 @@ class _FakeAdapter:
         return LifecycleActionResult(ok=True, state="reconnecting")
 
 
-async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_404(client: AsyncClient) -> None:
+async def test_pack_device_health_endpoint_covers_forwarding(client: AsyncClient) -> None:
     from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 
     desired_pack = DesiredPack(
@@ -133,33 +133,6 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
 
     assert resp.status_code == 200
     assert adapter.health_calls == [("abc123", True)]
-
-    with _latest_desired_override(desired_pack):
-        resp = await client.get(
-            "/agent/pack/devices/abc123/telemetry",
-            params={
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "device_type": "emulator",
-            },
-        )
-
-    assert resp.status_code == 200
-    assert resp.json()["battery_level_percent"] == 84
-    assert adapter.telemetry_calls == [("abc123", "abc123")]
-
-    app.state.adapter_registry = AdapterRegistry()
-    with _latest_desired_override(desired_pack):
-        missing_resp = await client.get(
-            "/agent/pack/devices/missing-device/telemetry",
-            params={
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "device_type": "emulator",
-            },
-        )
-
-    assert missing_resp.status_code == 404
 
 
 async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:

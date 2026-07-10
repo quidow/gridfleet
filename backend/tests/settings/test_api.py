@@ -73,13 +73,6 @@ async def test_get_lifecycle_recovery_backoff_setting(client: AsyncClient) -> No
 
 
 async def test_host_resource_telemetry_settings_are_registered(client: AsyncClient) -> None:
-    interval = await client.get("/api/settings/general.host_resource_telemetry_interval_sec")
-    assert interval.status_code == 200
-    assert interval.json()["value"] == 60
-    v = interval.json()["validation"]
-    assert v["min"] == 15
-    assert v["max"] == 3600
-
     window = await client.get("/api/settings/general.host_resource_telemetry_window_minutes")
     assert window.status_code == 200
     assert window.json()["value"] == 60

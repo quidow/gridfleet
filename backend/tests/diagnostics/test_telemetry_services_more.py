@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from app.core.errors import AgentCallError
+from app.core.timeutil import now_utc
 from app.devices.models import (
     ConnectionType,
     DeviceType,
@@ -188,7 +188,6 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
                     "general.hardware_telemetry_consecutive_samples": 1,
                 }
             ),
-            circuit_breaker=Mock(),
         )
         status = await svc.apply_telemetry_sample(
             db,
@@ -263,61 +262,39 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
     delete_value.assert_awaited_once()
 
 
-async def test_get_device_telemetry_handles_missing_host_and_agent_errors() -> None:
-    svc = HardwareTelemetryService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-    )
-    assert await svc._get_device_telemetry(_telemetry_device(host=None)) is None
-    host = SimpleNamespace(ip="10.0.0.1", agent_port=5100)
-    device = _telemetry_device(host=host)
-    with patch(
-        "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
-        new=AsyncMock(side_effect=AgentCallError("10.0.0.1", "failed")),
-    ):
-        assert await svc._get_device_telemetry(device) is None
-    with patch(
-        "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
-        new=AsyncMock(return_value={"battery_level_percent": 80}),
-    ) as fetch:
-        assert await svc._get_device_telemetry(device) == {"battery_level_percent": 80}
-    fetch.assert_awaited_once()
+async def test_fold_hardware_telemetry_commits_samples_and_rolls_back_failures() -> None:
+    # d1 applies (commit), d2 raises (rollback). The fold snapshots ids then
+    # re-fetches each device via db.get inside its own commit window.
+    d1 = _telemetry_device(connection_target="d1")
+    d2 = _telemetry_device(connection_target="d2")
+    by_id = {d1.id: d1, d2.id: d2}
 
-
-async def test_poll_hardware_telemetry_commits_samples_and_rolls_back_failures() -> None:
-    devices = [_telemetry_device(), _telemetry_device(), _telemetry_device()]
-
-    class Result:
-        def scalars(self) -> Result:
-            return self
-
-        def all(self) -> list[object]:
-            return devices
+    class Rows:
+        def all(self) -> list[tuple[object, str]]:
+            return [(d1.id, "d1"), (d2.id, "d2")]
 
     class PollSession(FlushSession):
-        async def execute(self, *_args: object, **_kwargs: object) -> Result:
-            return Result()
+        async def execute(self, *_args: object, **_kwargs: object) -> Rows:
+            return Rows()
+
+        async def get(self, _model: object, device_id: object, **_kwargs: object) -> object:
+            return by_id.get(device_id)
 
     db = PollSession()
-    svc = HardwareTelemetryService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-    )
-    with (
-        patch.object(
-            svc,
-            "_get_device_telemetry",
-            new=AsyncMock(side_effect=[None, {"battery_level_percent": 80}, {"battery_level_percent": 70}]),
-        ),
-        patch.object(
-            svc,
-            "apply_telemetry_sample",
-            new=AsyncMock(side_effect=[HardwareHealthStatus.healthy, RuntimeError("boom")]),
-        ),
+    svc = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
+    section = {
+        "reported_at": now_utc().isoformat(),
+        "devices": {
+            "d1": {"battery_level_percent": 80, "observed_at": now_utc().isoformat()},
+            "d2": {"battery_level_percent": 70, "observed_at": now_utc().isoformat()},
+        },
+    }
+    with patch.object(
+        svc,
+        "apply_telemetry_sample",
+        new=AsyncMock(side_effect=[HardwareHealthStatus.healthy, RuntimeError("boom")]),
     ):
-        await svc.poll_once(db)
+        await svc.fold_host_device_telemetry(db, uuid.uuid4(), section)
 
     assert db.committed is True
     assert db.rolled_back is True

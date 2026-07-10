@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from app.events.event_bus import EventBus
     from app.settings.service import SettingsService
 
-from app.agent_comm.operations import get_pack_device_properties, get_pack_devices
+from app.agent_comm.operations import get_pack_devices
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
@@ -145,7 +145,6 @@ def compose_app(
     pack_status = PackStatusService()
     pack_discovery_svc = PackDiscoveryService(
         agent_get_pack_devices=get_pack_devices,
-        agent_get_pack_device_properties=get_pack_device_properties,
         settings=settings_svc,
         circuit_breaker=circuit_breaker,
         serializer=presenter_svc,
@@ -311,9 +310,7 @@ def compose_app(
         lifecycle=lifecycle_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
-            hardware_telemetry=HardwareTelemetryService(
-                publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
-            ),
+            hardware_telemetry=HardwareTelemetryService(publisher=bus, settings=settings_svc),
             resource_telemetry=HostResourceTelemetryService(settings=settings_svc),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
@@ -364,8 +361,6 @@ def compose_app(
             node_health=NodeHealthService(
                 publisher=bus,
                 settings=settings_svc,
-                pool=http_pool,
-                circuit_breaker=circuit_breaker,
                 recovery_control=lifecycle_policy_svc,
                 health=device_health_svc,
                 incidents=incidents_svc,

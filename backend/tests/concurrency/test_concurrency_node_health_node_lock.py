@@ -61,15 +61,11 @@ async def test_node_health_failure_path_locks_appium_node(
 
             locked_device = await device_locking.lock_device(session, device_id)
             with patch("app.appium_nodes.services.node_health.record_event", racing_record_event):
-                from unittest.mock import Mock
-
                 from app.appium_nodes.services.node_health import NodeHealthService
 
                 await NodeHealthService(
                     publisher=event_bus,
                     settings=FakeSettingsReader({}),
-                    pool=Mock(),
-                    circuit_breaker=Mock(),
                     recovery_control=AsyncMock(),
                     health=AsyncMock(),
                     incidents=AsyncMock(),

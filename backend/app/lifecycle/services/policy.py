@@ -69,6 +69,10 @@ logger = logging.getLogger(__name__)
 # clobbered by a transient healthy probe racing in between (regression S10).
 _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR = 2.0  # at least two connectivity check intervals
 _SELF_HEAL_MIN_AGE_FLOOR_SEC = 120.0  # absolute floor (= factor x default 60s interval)
+# Agent-local device-health probes arrive on a fixed 60 s cadence
+# (DEVICE_HEALTH_INTERVAL_SEC, agent_app/probes.py); the configurable
+# general.device_check_interval_sec knob died with the dial-out stages.
+_DEVICE_HEALTH_OBSERVATION_INTERVAL_SEC = 60.0
 
 
 class LifecyclePolicyService:
@@ -688,11 +692,13 @@ class LifecyclePolicyService:
         device = await _reload_device(db, device)
         if await operator_stop_active(db, device.id):
             return False
-        check_interval = self._settings.get_float("general.device_check_interval_sec")
         # Residue must survive at least two connectivity ticks before we treat it
         # as stale, so an in-flight failure sequence (backoff → auto-stop) is
         # never wiped by a transient healthy probe landing between the two.
-        min_age_seconds = max(_SELF_HEAL_MIN_AGE_FLOOR_SEC, _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR * check_interval)
+        min_age_seconds = max(
+            _SELF_HEAL_MIN_AGE_FLOOR_SEC,
+            _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR * _DEVICE_HEALTH_OBSERVATION_INTERVAL_SEC,
+        )
         cleared = clear_stale_escalation_residue(device, min_age_seconds=min_age_seconds)
         if not cleared:
             return False

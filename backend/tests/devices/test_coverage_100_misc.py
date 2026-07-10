@@ -486,7 +486,6 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
     result = await _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
-        agent_get_pack_device_properties=AsyncMock(return_value=None),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         serializer=_DevicePresenterService(settings=FakeSettingsReader()),

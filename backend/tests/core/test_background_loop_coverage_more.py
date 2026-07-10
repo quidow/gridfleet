@@ -114,7 +114,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
 async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     device = Mock(id=__import__("uuid").uuid4(), host_id=__import__("uuid").uuid4())
-    node = Mock(device=device, port=4723, pid=123, active_connection_target="serial")
+    node = Mock(device=device, device_id=device.id, port=4723, pid=123, active_connection_target="serial")
 
     class Result:
         def scalars(self) -> Result:
@@ -126,7 +126,6 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     db = AsyncMock()
     db.execute = AsyncMock(return_value=Result())
     db.commit = AsyncMock()
-    monkeypatch.setattr(NodeHealthService, "_bounded_check_node_health", AsyncMock(return_value={"healthy": True}))
     monkeypatch.setattr(node_health.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     from tests.fakes import FakeSettingsReader
@@ -134,12 +133,24 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     await NodeHealthService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
-    ).check_host_nodes(db, host_id=device.host_id)
+    ).fold_host_nodes(
+        db,
+        device.host_id,
+        {
+            "reported_at": "2026-07-10T00:00:00+00:00",
+            "nodes": [
+                {
+                    "port": node.port,
+                    "pid": node.pid,
+                    "connection_target": node.active_connection_target,
+                    "running": True,
+                }
+            ],
+        },
+    )
 
     db.commit.assert_awaited_once()
 

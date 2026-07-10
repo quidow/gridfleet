@@ -24,9 +24,7 @@ from app.agent_comm.generated import (
     NormalizeDeviceResponse,
     PackDeviceHealthResponse,
     PackDeviceLifecycleResponse,
-    PackDevicePropertiesResponse,
     PackDevicesResponse,
-    PackDeviceTelemetryResponse,
     ToolsStatusResponse,
 )
 from app.core.errors import AgentResponseError, AgentUnreachableError
@@ -382,40 +380,6 @@ async def get_pack_devices(
     return _decode_model_payload(response, host=host, action="list pack devices", model=PackDevicesResponse)
 
 
-async def get_pack_device_properties(
-    host: str,
-    agent_port: int,
-    connection_target: str,
-    pack_id: str,
-    *,
-    identity_value: str | None = None,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any] | None:
-    params: dict[str, str] = {"pack_id": pack_id}
-    if identity_value:
-        params["identity_value"] = identity_value
-    response = await _send_request(
-        "GET",
-        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/properties",
-        endpoint="pack_device_properties",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        params=params,
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    return decode_or_none_on_404(
-        response, host=host, action="fetch pack device properties", model=PackDevicePropertiesResponse
-    )
-
-
 async def normalize_pack_device(
     host: str,
     agent_port: int,
@@ -512,49 +476,6 @@ async def pack_device_health(
         circuit_breaker=circuit_breaker,
     )
     return _decode_model_payload(response, host=host, action="fetch pack device health", model=PackDeviceHealthResponse)
-
-
-async def pack_device_telemetry(
-    host: str,
-    agent_port: int,
-    connection_target: str,
-    *,
-    pack_id: str,
-    platform_id: str,
-    device_type: str,
-    connection_type: str | None,
-    ip_address: str | None,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any] | None:
-    params: dict[str, Any] = {
-        "pack_id": pack_id,
-        "platform_id": platform_id,
-        "device_type": device_type,
-    }
-    if connection_type is not None:
-        params["connection_type"] = connection_type
-    if ip_address is not None:
-        params["ip_address"] = ip_address
-    response = await _send_request(
-        "GET",
-        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/telemetry",
-        endpoint="pack_device_telemetry",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        params=params,
-        timeout=timeout,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-    )
-    return decode_or_none_on_404(
-        response, host=host, action="fetch pack device telemetry", model=PackDeviceTelemetryResponse
-    )
 
 
 async def pack_device_lifecycle_action(

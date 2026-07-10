@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         DeviceVerificationUpdate,
     )
     from app.devices.schemas.filters import DeviceQueryFilters
-    from app.hosts.models import Host
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
@@ -33,9 +32,8 @@ class ReviewProtocol(Protocol):
 
 
 class PackDevicePropertiesProvider(Protocol):
-    """Narrow cross-domain view of pack discovery needed by the property-refresh loop."""
+    """Narrow cross-domain view of pack discovery needed by the property-refresh fold."""
 
-    async def fetch_pack_device_properties(self, host: Host, device: Device) -> dict[str, object] | None: ...
     async def apply_pack_device_properties(
         self, session: AsyncSession, device: Device, data: dict[str, object]
     ) -> None: ...

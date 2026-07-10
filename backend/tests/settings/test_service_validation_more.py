@@ -114,12 +114,12 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
 
     monkeypatch.setattr(settings_module, "_queue_settings_changed", lambda *_args, **_kwargs: None)
     db = UpdateSession()
-    response = await service.update(db, "general.device_check_interval_sec", 11, publisher=event_bus)  # type: ignore[arg-type]
+    response = await service.update(db, "general.heartbeat_interval_sec", 11, publisher=event_bus)  # type: ignore[arg-type]
     assert response["value"] == 11
     assert row.value == 11
     assert db.committed is True
 
-    bulk_response = await service.bulk_update(db, {"general.device_check_interval_sec": 12}, publisher=event_bus)  # type: ignore[arg-type]
+    bulk_response = await service.bulk_update(db, {"general.heartbeat_interval_sec": 12}, publisher=event_bus)  # type: ignore[arg-type]
     assert bulk_response[0]["value"] == 12
     assert row.value == 12
 
