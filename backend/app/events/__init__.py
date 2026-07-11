@@ -1,5 +1,4 @@
 from app.events.catalog import (
-    DEFAULT_TOAST_EVENT_NAMES,
     EVENT_CATEGORY_DISPLAY_NAMES,
     PUBLIC_EVENT_CATALOG,
     PUBLIC_EVENT_NAME_SET,
@@ -13,7 +12,6 @@ from app.events.event_bus import (
 )
 
 __all__ = [
-    "DEFAULT_TOAST_EVENT_NAMES",
     "EVENT_CATEGORY_DISPLAY_NAMES",
     "PUBLIC_EVENT_CATALOG",
     "PUBLIC_EVENT_NAMES",

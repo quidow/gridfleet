@@ -6,8 +6,6 @@ import copy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from app.events import DEFAULT_TOAST_EVENT_NAMES, PUBLIC_EVENT_NAMES
-
 if TYPE_CHECKING:
     from app.core.type_defs import SettingValue
 
@@ -29,7 +27,6 @@ class SettingDefinition:
 CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "general": "General",
     "grid": "Appium & Allocation",
-    "notifications": "Notifications",
     "agent": "Agent",
     "reservations": "Reservations",
     "retention": "Data Retention",
@@ -375,31 +372,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Whether managed Appium nodes should force-close lingering sessions before opening a new one",
     ),
     # ── Notifications ──
-    SettingDefinition(
-        key="notifications.toast_events",
-        category="notifications",
-        setting_type="json",
-        default=list(DEFAULT_TOAST_EVENT_NAMES),
-        description="Which event types trigger toast notifications",
-        item_allowed_values=list(PUBLIC_EVENT_NAMES),
-    ),
-    SettingDefinition(
-        key="notifications.toast_auto_dismiss_sec",
-        category="notifications",
-        setting_type="int",
-        default=5,
-        description="Auto-dismiss delay for success toasts (0 = manual only)",
-        min_value=0,
-        max_value=60,
-    ),
-    SettingDefinition(
-        key="notifications.toast_severity_threshold",
-        category="notifications",
-        setting_type="string",
-        default="warning",
-        description="Minimum severity for toasts: info, warning, error",
-        allowed_values=["info", "warning", "error"],
-    ),
     # ── Agent ──
     SettingDefinition(
         key="agent.min_version",

@@ -10,20 +10,8 @@ from tests.helpers import test_event_bus as event_bus
 
 def test_settings_service_validation_and_normalization_edges() -> None:
     service = settings_module.SettingsService()
-    service._defaults = {"notifications.toast_events": ["host.status_changed"]}
-
-    assert service._normalize_value("notifications.toast_events", ["device.availability_changed"]) == [
-        "device.operational_state_changed",
-    ]
-    assert service._normalize_value("notifications.toast_events", ["unknown.event"]) == ["host.status_changed"]
 
     assert "Expected boolean" in (service._validate_value("agent.auto_accept_hosts", "true") or "")
-    assert "not in allowed values" in (
-        service._validate_value("notifications.toast_severity_threshold", "verbose") or ""
-    )
-    assert "Expected list" in (service._validate_value("notifications.toast_events", "host.status_changed") or "")
-    assert "item" in (service._validate_value("notifications.toast_events", [""]) or "")
-    assert "item" in (service._validate_value("notifications.toast_events", ["unknown.event"]) or "")
 
 
 async def test_settings_service_event_refresh_and_cancel_paths(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,9 +81,6 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     with pytest.raises(KeyError, match="Unknown setting"):
         await service.bulk_update(AsyncMock(), {"missing.setting": 1}, publisher=event_bus)
 
-    assert "item" in (service._validate_value("notifications.toast_events", [object()]) or "")
-    assert "Unknown item" in (service._validate_value("notifications.toast_events", ["../private.event"]) or "")
-
     row = SimpleNamespace(value=None)
 
     class Result:
@@ -122,6 +107,3 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     bulk_response = await service.bulk_update(db, {"general.session_viability_timeout_sec": 12}, publisher=event_bus)  # type: ignore[arg-type]
     assert bulk_response[0]["value"] == 12
     assert row.value == 12
-
-    validation = service.get_setting_response("notifications.toast_events")["validation"]
-    assert validation["item_allowed_values"]

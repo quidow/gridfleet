@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
-from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names
 from app.settings.invariants import cross_invariant_errors
 from app.settings.models import Setting
 
@@ -37,21 +36,6 @@ if TYPE_CHECKING:
     from app.settings.registry import SettingDefinition
 
 logger = logging.getLogger(__name__)
-
-_LEGACY_EVENT_RENAMES = {
-    "device.availability_changed": "device.operational_state_changed",
-}
-
-
-def _migrate_legacy_event_names(values: list[str]) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for name in values:
-        replacement = _LEGACY_EVENT_RENAMES.get(name, name)
-        if replacement not in seen:
-            out.append(replacement)
-            seen.add(replacement)
-    return out
 
 
 def _validate_int(key: str, value: SettingValue, defn: SettingDefinition) -> str | None:
@@ -128,17 +112,9 @@ class SettingsService:
         # Load DB overrides
         result = await db.execute(select(Setting))
         overrides: dict[str, SettingValue] = {}
-        dirty = False
         for row in result.scalars().all():
             if row.key in SETTINGS_REGISTRY:
-                normalized = self._normalize_value(row.key, row.value)
-                if normalized != row.value:
-                    row.value = normalized
-                    dirty = True
-                overrides[row.key] = normalized
-
-        if dirty:
-            await db.commit()
+                overrides[row.key] = row.value
 
         # Build cache: override if present, else default
         cache: dict[str, SettingValue] = {}
@@ -180,15 +156,6 @@ class SettingsService:
             return
         async with self._refresh_lock, self._session_factory() as db:
             await self.initialize(db)
-
-    def _normalize_value(self, key: str, value: SettingValue) -> SettingValue:
-        if key == "notifications.toast_events":
-            migrated = _migrate_legacy_event_names(value if isinstance(value, list) else [])
-            normalized = normalize_public_event_names(migrated)
-            if normalized:
-                return normalized
-            return list(self._defaults.get(key, DEFAULT_TOAST_EVENT_NAMES))
-        return value
 
     def get(self, key: str) -> SettingValue:
         """Get a setting value (synchronous, from cache)."""
@@ -242,8 +209,7 @@ class SettingsService:
         error = self._validate_value(key, value)
         if error:
             raise ValueError(error)
-        normalized_value = self._normalize_value(key, value)
-        cross = self._cross_errors_with({key: normalized_value})
+        cross = self._cross_errors_with({key: value})
         if cross:
             raise ValueError("; ".join(cross))
 
@@ -254,18 +220,18 @@ class SettingsService:
         result = await db.execute(select(Setting).where(Setting.key == key))
         row = result.scalar_one_or_none()
         if row:
-            row.value = normalized_value
+            row.value = value
         else:
-            db.add(Setting(key=key, value=normalized_value, category=defn.category))
-        _queue_settings_changed(db, {"key": key, "value": normalized_value}, publisher=publisher)
+            db.add(Setting(key=key, value=value, category=defn.category))
+        _queue_settings_changed(db, {"key": key, "value": value}, publisher=publisher)
         await db.commit()
         # Cache mutations after commit so a rollback does not leave the in-memory
         # state inconsistent with the database. A concurrent refresh_from_store
         # triggered by an earlier queued settings.changed event runs on a
         # separate session and reads committed state, so it cannot observe a
         # transient pre-commit cache write.
-        self._overrides[key] = normalized_value
-        self._cache[key] = normalized_value
+        self._overrides[key] = value
+        self._cache[key] = value
         return self.get_setting_response(key)
 
     async def bulk_update(
@@ -287,25 +253,24 @@ class SettingsService:
         await self._cancel_refresh_task()
 
         # Persist all
-        normalized_pairs: list[tuple[str, SettingValue]] = []
+        updated_pairs: list[tuple[str, SettingValue]] = []
         for key, value in updates.items():
             defn = SETTINGS_REGISTRY[key]
-            normalized_value = self._normalize_value(key, value)
             result = await db.execute(select(Setting).where(Setting.key == key))
             row = result.scalar_one_or_none()
             if row:
-                row.value = normalized_value
+                row.value = value
             else:
-                db.add(Setting(key=key, value=normalized_value, category=defn.category))
-            normalized_pairs.append((key, normalized_value))
+                db.add(Setting(key=key, value=value, category=defn.category))
+            updated_pairs.append((key, value))
 
         _queue_settings_changed(db, {"keys": list(updates.keys())}, publisher=publisher)
         await db.commit()
 
         # Cache mutations after commit (see ``update`` for the rationale).
-        for key, normalized_value in normalized_pairs:
-            self._overrides[key] = normalized_value
-            self._cache[key] = normalized_value
+        for key, value in updated_pairs:
+            self._overrides[key] = value
+            self._cache[key] = value
 
         return [self.get_setting_response(key) for key in updates]
 

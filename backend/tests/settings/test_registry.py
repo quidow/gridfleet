@@ -7,7 +7,13 @@ from app.settings.registry import SETTINGS_REGISTRY
 
 
 def test_resolve_default_deep_copies_mutable_defaults() -> None:
-    definition = settings_registry.SETTINGS_REGISTRY["notifications.toast_events"]
+    definition = settings_registry.SettingDefinition(
+        key="test.mutable",
+        category="test",
+        setting_type="json",
+        default=["value"],
+        description="test",
+    )
     value = settings_registry.resolve_default(definition)
     assert isinstance(value, list)
     value.append("mutated")
