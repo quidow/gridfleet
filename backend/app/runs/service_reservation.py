@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceReservation
+from app.devices.models import DeviceReservation, ExclusionKind
 from app.devices.services.claims import reservation_active
 from app.devices.services.intent import IntentService
 from app.runs.models import TERMINAL_STATES, TestRun
@@ -177,6 +177,7 @@ class RunReservationService:
                 await db.commit()
             return run
         locked_entry.excluded = True
+        locked_entry.exclusion_kind = ExclusionKind.exclusion
         locked_entry.exclusion_reason = reason
         locked_entry.excluded_at = now_utc()
         locked_entry.excluded_until = None
@@ -205,6 +206,7 @@ class RunReservationService:
                 await db.commit()
             return run
         locked_entry.excluded = False
+        locked_entry.exclusion_kind = None
         locked_entry.exclusion_reason = None
         locked_entry.excluded_at = None
         locked_entry.excluded_until = None
@@ -262,6 +264,7 @@ class RunReservationService:
         locked_entry.released_at = now_utc()
         locked_entry.exclusion_reason = reason
         locked_entry.excluded = False
+        locked_entry.exclusion_kind = None
         locked_entry.excluded_at = None
         locked_entry.excluded_until = None
         try:

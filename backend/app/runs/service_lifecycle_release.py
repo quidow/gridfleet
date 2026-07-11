@@ -121,6 +121,7 @@ class RunReleaseService:
             if device is None:
                 reservation.released_at = released_at
                 reservation.excluded = False
+                reservation.exclusion_kind = None
                 reservation.excluded_at = None
                 reservation.excluded_until = None
                 logger.warning(
@@ -136,6 +137,7 @@ class RunReleaseService:
             # Released rows must not stay excluded (invariant: not (released_at and excluded)).
             # The reconciler used to clear this via the reservation axis; it no longer does.
             reservation.excluded = False
+            reservation.exclusion_kind = None
             reservation.excluded_at = None
             reservation.excluded_until = None
             if in_maintenance(device):

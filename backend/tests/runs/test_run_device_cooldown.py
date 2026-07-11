@@ -101,6 +101,7 @@ async def test_cooldown_device_success(client: AsyncClient, db_session: AsyncSes
     assert entry.cooldown_count == 1
     assert entry.exclusion_reason == "flaky connection"
     assert entry.excluded_until is not None
+    assert entry.exclusion_kind == "cooldown"
 
 
 async def test_cooldown_device_not_found_run(client: AsyncClient) -> None:

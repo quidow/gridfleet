@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.node_poke import poke_node_refresh
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEventType, DeviceReservation
+from app.devices.models import Device, DeviceEventType, DeviceReservation, ExclusionKind
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.claims import reservation_active
 from app.devices.services.intent import IntentService
@@ -215,6 +215,7 @@ class RunFailureService:
         excluded_at = now_utc()
         excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
         entry.excluded = True
+        entry.exclusion_kind = ExclusionKind.cooldown
         entry.exclusion_reason = clean_reason
         entry.excluded_at = excluded_at
         entry.excluded_until = excluded_until

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
+from app.devices.models import ExclusionKind
 from app.runs import service_reservation as run_reservation_service
 from tests.fakes import build_review_service
 
@@ -73,6 +74,38 @@ async def test_exclude_device_from_run_updates_entry_without_commit(monkeypatch:
     assert entry.exclusion_reason == "bad"
     assert entry.excluded_at is not None
     assert entry.excluded_until is None
+    assert entry.exclusion_kind is ExclusionKind.exclusion
+
+
+async def test_restore_device_to_run_clears_exclusion_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    device_id = uuid.uuid4()
+    run = SimpleNamespace(id=uuid.uuid4())
+    entry = SimpleNamespace(
+        excluded=True,
+        exclusion_kind=ExclusionKind.exclusion,
+        exclusion_reason="bad",
+        excluded_at=datetime.now(UTC),
+        excluded_until=None,
+        cooldown_count=2,
+    )
+    monkeypatch.setattr(
+        run_reservation_service,
+        "get_device_reservation_with_entry",
+        AsyncMock(return_value=(run, entry)),
+    )
+    monkeypatch.setattr(
+        run_reservation_service,
+        "_lock_active_reservation_entry",
+        AsyncMock(return_value=entry),
+    )
+
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
+    result = await svc.restore_device_to_run(FakeSession(), device_id, commit=False)
+
+    assert result is run
+    assert entry.excluded is False
+    assert entry.exclusion_kind is None
+    assert entry.cooldown_count == 0
 
 
 async def test_exclude_device_from_run_noops_when_already_excluded_for_same_reason(
