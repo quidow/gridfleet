@@ -55,6 +55,8 @@ if TYPE_CHECKING:
     from app.packs.services_container import PackServices
 
 HOST_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
+# Default Host Detail telemetry window when the client sends no since/until.
+HOST_TELEMETRY_WINDOW_MINUTES = 60
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"], responses=HOST_ERROR_RESPONSES)
 logger = logging.getLogger(__name__)
@@ -327,14 +329,12 @@ async def get_host_resource_telemetry(
     host_id: uuid.UUID,
     db: DbDep,
     host_services: HostServicesDep,
-    settings_services: SettingsServicesDep,
     since: datetime | None = None,
     until: datetime | None = None,
     bucket_minutes: Annotated[int, Query(ge=1, le=1440)] = 5,
 ) -> HostResourceTelemetryResponse:
     window_end = until or now_utc()
-    default_window_minutes = int(settings_services.service.get("general.host_resource_telemetry_window_minutes"))
-    window_start = since or (window_end - timedelta(minutes=default_window_minutes))
+    window_start = since or (window_end - timedelta(minutes=HOST_TELEMETRY_WINDOW_MINUTES))
     try:
         payload = await host_services.resource_telemetry.fetch_host_resource_telemetry(
             db,
