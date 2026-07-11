@@ -11,15 +11,15 @@ export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
 
 ## Cause
 
-`Device.lifecycle_policy_state.stop_pending` was set to `true` by `lifecycle_policy.handle_health_failure` when a health probe failed during a running client session. Historically only one session-end path cleared the flag. Other session-end paths (PATCH `/api/sessions/{id}/status`, register-with-terminal-status, run release) left the flag set, so the dashboard kept rendering the device as "affected".
+`Device.lifecycle_policy_state.deferred_stop` was set to `true` by `lifecycle_policy.handle_health_failure` when a health probe failed during a running client session. Historically only one session-end path cleared the flag. Other session-end paths (PATCH `/api/sessions/{id}/status`, register-with-terminal-status, run release) left the flag set, so the dashboard kept rendering the device as "affected".
 
 ## Automatic recovery
 
 As of the fix in this release:
 
 - Each session-end path (`PATCH /api/sessions/{id}/status`, run release / cancel / force-release / expire, the router `POST /internal/grid/sessions/ended` close, and `session_sync` end-of-session) calls `lifecycle_policy.complete_deferred_stop_if_session_ended`. The helper delegates to `handle_session_finished`, which re-reads the device under a row lock so a concurrent fresh session cannot be raced past.
-- `update_session_status` runs the helper on terminal status updates regardless of current device availability — `maintenance` and `offline` rows with stale `stop_pending` are healed too, not just `busy`.
-- The `session_sync` background loop runs `_sweep_stale_stop_pending` every cycle as a backstop. The sweep relies on DB state only and runs **independent of device/Appium reachability** — historical stale rows are healed within one poll interval even when a device's Appium server is unreachable. The observation sweep uses the 30 s `SESSION_POLL_INTERVAL_SEC` plumbing constant and the doorbell wakes it early.
+- `update_session_status` runs the helper on terminal status updates regardless of current device availability — `maintenance` and `offline` rows with stale `deferred_stop` are healed too, not just `busy`.
+- The `session_sync` background loop runs `_sweep_stale_deferred_stop` every cycle as a backstop. The sweep relies on DB state only and runs **independent of device/Appium reachability** — historical stale rows are healed within one poll interval even when a device's Appium server is unreachable. The observation sweep uses the 30 s `SESSION_POLL_INTERVAL_SEC` plumbing constant and the doorbell wakes it early.
 - When health recovers before the session ends (e.g. via `node_health` recovery), the deferred-stop intent is cleared in place and the device stays up — the audit trail records a dedicated `lifecycle_recovered` event, and `last_action` advances to `node_monitor_recovered` (the in-session recovery path) so the dashboard does not show a stale `auto_stop_deferred`. The session-end (CLEARED_RECOVERED) path instead stamps `last_action` = `auto_stop_cleared`. Either way the stale `auto_stop_deferred` is gone.
 - The session-end helper trusts the typed health columns plus `AppiumNode` row as the canonical health source. If the derived summary reads healthy but `last_failure_*` still describes a recent failure, the intent is cleared rather than auto-stopping a device the row says is working. A subsequent failed probe will re-arm the deferred stop.
 
@@ -36,7 +36,7 @@ Focus on:
 - `operational_state`
 - `is_reserved` (and the `reservation` object, if present) — the reservation indicator
 - `lifecycle_policy_summary.state` — should be `deferred_stop` for this scenario
-- `appium_node.lifecycle_policy_state.stop_pending`, `stop_pending_reason`, `stop_pending_since` — the raw stop-pending fields live under the nested `appium_node` object, not at the device top level
+- `appium_node.lifecycle_policy_state.deferred_stop`, `deferred_stop_reason`, `deferred_stop_since` — the raw deferred-stop fields live under the nested `appium_node` object, not at the device top level
 
 Confirm there is no running session against the device:
 
@@ -54,11 +54,11 @@ If the periodic sweep has not yet caught the row and you cannot wait for the nex
 UPDATE devices
 SET lifecycle_policy_state = jsonb_set(
       jsonb_set(
-        jsonb_set(lifecycle_policy_state, '{stop_pending}', 'false'),
-        '{stop_pending_reason}', 'null'),
-      '{stop_pending_since}', 'null')
+        jsonb_set(lifecycle_policy_state, '{deferred_stop}', 'false'),
+        '{deferred_stop_reason}', 'null'),
+      '{deferred_stop_since}', 'null')
 WHERE id = 'DEVICE_UUID'
-  AND (lifecycle_policy_state->>'stop_pending')::bool;
+  AND (lifecycle_policy_state->>'deferred_stop')::bool;
 ```
 
 The column is a Postgres `JSONB` column, so `jsonb_set` operates on it natively — no casts are needed. The `WHERE` guard makes the statement a no-op when the row is already clean.

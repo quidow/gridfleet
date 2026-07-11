@@ -102,7 +102,7 @@ API `effective_state` as the derived read model.
 
 ### Probe Sessions
 
-The scheduler's `appium_sweep` is the single origin for scheduled direct-to-Appium session traffic. Every cycle runs session observation first, including liveness checks, orphan cleanup, idle reaping, and the stale `stop_pending` backstop. It then scans for due session-viability probes no more than once every 60 seconds. Per-device due timestamps remain in the control-plane state store, so doorbell churn does not bunch probes together. Manual, recovery, and verification probes still bypass the sweep.
+The scheduler's `appium_sweep` is the single origin for scheduled direct-to-Appium session traffic. Every cycle runs session observation first, including liveness checks, orphan cleanup, idle reaping, and the stale `deferred_stop` backstop. It then scans for due session-viability probes no more than once every 60 seconds. Per-device due timestamps remain in the control-plane state store, so doorbell churn does not bunch probes together. Manual, recovery, and verification probes still bypass the sweep.
 
 Session-viability and device-verification probes create a short-lived session directly against the device's Appium server, with no Grid involved. Each probe is persisted as a single terminal `Session` row by its caller via `app.sessions.service_probes.record_probe_session`. Probe rows carry `test_name == "__gridfleet_probe__"` and a `requested_capabilities["gridfleet:probeCheckedBy"]` source attribution (`scheduled`, `manual`, `recovery`, or `verification`).
 

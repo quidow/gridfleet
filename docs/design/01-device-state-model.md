@@ -141,7 +141,7 @@ Current fields:
 | --- | --- |
 | `last_failure_source` / `last_failure_reason` | Most recent lifecycle-relevant failure signal |
 | `last_action` / `last_action_at` | Most recent lifecycle policy action |
-| `stop_pending` / `stop_pending_reason` / `stop_pending_since` | Deferred auto-stop intent while a client session is still running |
+| `deferred_stop` / `deferred_stop_reason` / `deferred_stop_since` | Deferred auto-stop intent while a client session is still running |
 | `backoff_until` / `recovery_backoff_attempts` | Automatic recovery backoff state |
 
 "Why automatic recovery is currently blocked" is no longer stored here — it is
