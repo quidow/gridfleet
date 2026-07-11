@@ -43,9 +43,10 @@ def test_serve_allows_host_and_port_override(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_serve_sets_keepalive_above_backend_pool_idle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The agent must hold keep-alives longer than the backend's max pool idle
-    (agent.http_pool_idle_seconds <= 600), otherwise pooled backend connections
-    go stale and non-idempotent calls fail with RemoteProtocolError (DEBT-6)."""
+    """The agent must hold keep-alives longer than the backend's pool idle
+    (POOL_KEEPALIVE_EXPIRY_SEC = 60 in backend app/agent_comm/http_pool.py),
+    otherwise pooled backend connections go stale and non-idempotent calls
+    fail with RemoteProtocolError (DEBT-6)."""
     captured: dict[str, object] = {}
 
     def fake_run(app: str, **kwargs: object) -> None:

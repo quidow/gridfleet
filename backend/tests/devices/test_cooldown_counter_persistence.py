@@ -164,23 +164,22 @@ async def test_restore_device_to_run_resets_cooldown_counter(db_session: AsyncSe
     assert reservation.cooldown_count == 0
 
 
-async def test_legacy_expired_cooldown_sweep_preserves_counter(
+async def test_expired_cooldown_sweep_preserves_counter(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression: ``_check_expired_cooldowns`` (legacy compatibility sweep)
+    """Regression: ``check_expired_cooldowns`` (the cooldown TTL-clear sweep)
     must not zero ``cooldown_count``.
 
     Symptom seen in production: operators set escalation threshold = 3, ran a
     long test run, devices accrued 5/6/11 cooldowns yet never escalated to
     maintenance. Each TTL window expired between cooldowns; the connectivity
-    loop's transitional sweep was finding those rows and resetting the
+    TTL-clear sweep was finding those rows and resetting the
     counter back to 0, so ``cooldown_device``'s ``cooldown_count_after >=
     threshold`` check could never fire on subsequent increments.
 
-    Design contract (``_clear_reservation_exclusion``): the counter persists
-    across exclusion clears. Only operator-driven ``restore_device_to_run``
-    resets it.
+    Design contract: the counter persists across exclusion clears. Only
+    operator-driven ``restore_device_to_run`` resets it.
     """
     from app.devices.services.connectivity import ConnectivityService
 

@@ -20,10 +20,11 @@ class CoreSettings(BaseSettings):
     status_push_interval_sec: float = 10.0
     advertise_ip: str | None = None
     host_id: str | None = None
-    # Must exceed the backend's largest pooled-connection idle time
-    # (agent.http_pool_idle_seconds registry max = 600): if the server-side
-    # keep-alive is shorter, the backend pool hands out connections the agent
-    # already closed and non-idempotent calls die with RemoteProtocolError.
+    # Must exceed the backend's pooled-connection idle time
+    # (POOL_KEEPALIVE_EXPIRY_SEC = 60 in backend app/agent_comm/http_pool.py):
+    # if the server-side keep-alive is shorter, the backend pool hands out
+    # connections the agent already closed and non-idempotent calls die with
+    # RemoteProtocolError.
     http_keepalive_timeout_sec: int = 630
 
 

@@ -140,10 +140,10 @@ async def request(
                 # Stale keepalive reuse: agents older than the
                 # AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC fix run uvicorn's default 5s
                 # keep-alive, shorter than our pool idle
-                # (agent.http_pool_idle_seconds, up to 600s), so the pool can
+                # (POOL_KEEPALIVE_EXPIRY_SEC, 60s), so the pool can
                 # return a connection the server already closed -> it disconnects
                 # before reading our request. Upgraded agents hold keep-alives
-                # for 630s (> pool idle max), so this should no longer trigger;
+                # for 630s (> pool idle), so this should no longer trigger;
                 # retained as defense-in-depth for mixed-version fleets. httpx
                 # has evicted the dead connection, so one retry reuses the pool
                 # on a fresh one. Only idempotent methods are safe (the request
