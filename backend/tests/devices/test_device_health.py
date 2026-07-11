@@ -120,12 +120,12 @@ async def test_update_session_viability_persists_columns(db_with_device: tuple[A
 @pytest.mark.asyncio
 async def test_failed_health_signal_marks_offline(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="lost")
     await db.commit()
     await db.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 @pytest.mark.db
@@ -139,13 +139,13 @@ async def test_healthy_signal_does_not_change_busy_device(
     The background reconciler will eventually correct it on the next cycle.
     """
     db, device = db_with_device
-    device.operational_state = DeviceOperationalState.busy
+    device.operational_state_last_emitted = DeviceOperationalState.busy
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="ok")
     await db.commit()
     await db.refresh(device)
     # Healthy signal on busy: state unchanged (no immediate reconcile on success path).
-    assert device.operational_state == DeviceOperationalState.busy
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy
 
 
 @pytest.mark.db
@@ -312,7 +312,7 @@ async def test_apply_node_state_transition_mark_offline_false_preserves_hysteres
     background reconciler.
     """
     db, device = db_with_device
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     node = AppiumNode(
         device_id=device.id,
         port=4723,
@@ -335,7 +335,7 @@ async def test_apply_node_state_transition_mark_offline_false_preserves_hysteres
     await db.refresh(device, attribute_names=["appium_node"])
     # mark_offline=False with health_running=False: no immediate reconcile (hysteresis).
     # Device stays available; the background reconciler will eventually apply the signal.
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert device.appium_node.observed_running is True  # pid/connection_target still set
     assert device.appium_node.health_state == "error"
 

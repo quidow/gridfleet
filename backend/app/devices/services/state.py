@@ -1,4 +1,4 @@
-"""Writers + helpers for the device operational-state axis.
+"""Read-time projection and event-ledger helpers for the device operational-state axis.
 
 operational_state -- what the device is doing (available/busy/verifying/maintenance/offline).
 
@@ -69,33 +69,6 @@ def _transition_severity(old: DeviceOperationalState, new: DeviceOperationalStat
     if new is DeviceOperationalState.available and old is not DeviceOperationalState.busy:
         return "success"
     return "info"
-
-
-async def set_operational_state(
-    device: Device,
-    new_state: DeviceOperationalState,
-    *,
-    publish_event: bool = True,
-    publisher: EventPublisher,
-) -> bool:
-    session = _persistent_session(device)
-    old = device.operational_state
-    if old == new_state:
-        return False
-    device.operational_state = new_state
-    if publish_event:
-        publisher.queue_for_session(
-            session,
-            "device.operational_state_changed",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "old_operational_state": old.value,
-                "new_operational_state": new_state.value,
-            },
-            severity=_transition_severity(old, new_state),
-        )
-    return True
 
 
 def appium_node_stop_in_flight(device: Device) -> bool:
@@ -396,7 +369,7 @@ async def derive_operational_states(
     return result
 
 
-async def apply_derived_state(
+async def emit_operational_state_transition(
     db: AsyncSession,
     device: Device,
     *,
@@ -404,22 +377,26 @@ async def apply_derived_state(
     publisher: EventPublisher,
     packs: dict[str, DriverPack] | None = None,
 ) -> bool:
-    """Derive ``operational_state`` and write it when it differs from the persisted column.
+    """Emit one edge and advance the ledger when the projected state changes.
 
-    Emits the operational bus event when the axis changes. Transitions are uncaused: causes
-    are recorded once, at the observation sites that know them (connectivity sweep, host
-    heartbeat loss, lifecycle escalation, maintenance service). The reconciler records no
-    DeviceEvent audit rows — a not-ready offline transition could be a connectivity loss, a
-    node crash, a health-probe failure or a verification failure, and guessing here would
-    corrupt the analytics reliability counts.
-
-    Returns True if the operational axis was written.
+    The caller must hold the device row lock. Fact-site events carry causes;
+    this edge detector intentionally compares only the durable projection.
     """
-    facts = await gather_device_state_facts(db, device, now=now, packs=packs)
-    derived_op = evaluate_operational_state(facts)
-
-    if derived_op is device.operational_state:
+    derived_op = await derive_operational_state(db, device, now=now, packs=packs)
+    old = device.operational_state_last_emitted
+    if derived_op is old:
         return False
-
-    await set_operational_state(device, derived_op, publisher=publisher)
+    session = _persistent_session(device)
+    device.operational_state_last_emitted = derived_op
+    publisher.queue_for_session(
+        session,
+        "device.operational_state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_operational_state": old.value,
+            "new_operational_state": derived_op.value,
+        },
+        severity=_transition_severity(old, derived_op),
+    )
     return True

@@ -41,5 +41,5 @@ async def test_create_device_persists_initial_operational_state(db_session: Asyn
         initial_operational_state=DeviceOperationalState.verifying,
     )
 
-    assert device.operational_state is DeviceOperationalState.verifying
+    assert device.operational_state_last_emitted is DeviceOperationalState.verifying
     assert device.verified_at is None

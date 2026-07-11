@@ -28,7 +28,7 @@ async def test_lock_device_returns_row_with_for_update(
     locked = await lock_device(db_session, device.id)
 
     assert locked.id == device.id
-    assert locked.operational_state == DeviceOperationalState.offline
+    assert locked.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_lock_devices_orders_by_id_to_avoid_deadlock(

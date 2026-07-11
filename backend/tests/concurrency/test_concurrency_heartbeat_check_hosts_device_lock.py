@@ -11,7 +11,7 @@ from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import state as device_state
+from app.devices.services import intent_reconciler
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, run_one_heartbeat_cycle
 
@@ -49,20 +49,20 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
     race_committed = asyncio.Event()
 
     # The host-offline write now derives through update_device_checks -> reconcile ->
-    # apply_derived_state, which calls set_operational_state in app.devices.services.state
-    # (heartbeat no longer calls it directly). The row lock is still acquired by
+    # the edge detector in intent_reconciler. The row lock is still acquired by
     # evaluate_host's lock_devices before that derivation, so gate on the
     # state-module call to prove the lock window covers the offline write.
-    original_set_operational_state = device_state.set_operational_state
+    original_emit_transition = intent_reconciler.emit_operational_state_transition
 
-    async def gated_set_operational_state(
+    async def gated_emit_transition(
+        db: AsyncSession,
         device: Device,
-        operational_state: DeviceOperationalState,
         *,
-        publish_event: bool = True,
-        publisher: object = None,
-    ) -> None:
-        if device.id == device_id and operational_state == DeviceOperationalState.offline:
+        now: object,
+        publisher: object,
+        packs: object = None,
+    ) -> bool:
+        if device.id == device_id:
             inside_offline_branch.set()
             await asyncio.wait_for(race_attempted_lock.wait(), timeout=2.0)
             # Pre-fix, the racing writer can acquire and commit during this
@@ -71,15 +71,16 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
             # the timeout lets the fixed path continue without deadlocking.
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(race_committed.wait(), timeout=0.5)
-        await original_set_operational_state(
+        return await original_emit_transition(
+            db,
             device,
-            operational_state,
-            publish_event=publish_event,
-            publisher=publisher,
+            now=now,
+            publisher=publisher,  # type: ignore[arg-type]
+            packs=packs,  # type: ignore[arg-type]
         )
 
     async def heartbeat_caller() -> None:
-        with patch.object(device_state, "set_operational_state", new=gated_set_operational_state):
+        with patch.object(intent_reconciler, "emit_operational_state_transition", new=gated_emit_transition):
             async with db_session_maker() as db:
                 svc = HeartbeatService(
                     publisher=Mock(),
@@ -106,9 +107,11 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
     await asyncio.wait_for(asyncio.gather(heartbeat_caller(), race_writer()), timeout=5.0)
 
     async with db_session_maker() as db:
-        final = (await db.execute(select(Device.operational_state, Device.model).where(Device.id == device_id))).one()
+        final = (
+            await db.execute(select(Device.operational_state_last_emitted, Device.model).where(Device.id == device_id))
+        ).one()
 
-    assert final.operational_state == DeviceOperationalState.offline
+    assert final.operational_state_last_emitted == DeviceOperationalState.offline
     assert final.model == "race-marker", (
         f"Host sweep did not lock device rows before the offline "
         f"write; final model={final.model} indicates the host-offline "

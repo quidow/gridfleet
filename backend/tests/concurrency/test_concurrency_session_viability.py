@@ -267,7 +267,7 @@ async def test_session_viability_restore_handles_external_reservation(
 
     # The key invariant is that the probe completed without raising errors under
     # concurrent lock contention (observed_target is correct).
-    assert device_row.operational_state in (
+    assert device_row.operational_state_last_emitted in (
         DeviceOperationalState.available,
         DeviceOperationalState.offline,
-    ), f"Unexpected device state after probe: {device_row.operational_state}"
+    ), f"Unexpected device state after probe: {device_row.operational_state_last_emitted}"

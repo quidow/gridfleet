@@ -21,6 +21,7 @@ from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
@@ -139,7 +140,7 @@ async def test_stale_push_marks_host_offline_and_cascades_devices(db_session: As
     assert evaluation.alive is False
     assert host.status == HostStatus.offline
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert await derive_operational_state(db_session, device, now=now_utc()) is DeviceOperationalState.offline
 
     events = {call.args[1]: call.args[2] for call in publisher.queue_for_session.call_args_list}
     assert events["host.status_changed"]["new_status"] == "offline"
@@ -620,6 +621,7 @@ async def test_restart_succeeded_eager_fills_active_connection_target(db_session
     assert node.observed_running
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
     host = Host(hostname="agent-host", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)
@@ -636,6 +638,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         os_version="14",
         host_id=host.id,
         operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -649,6 +652,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         desired_state=AppiumDesiredState.running,
         desired_port=4724,
         active_connection_target="",
+        health_running=True,
     )
     db_session.add(node)
     await db_session.commit()
@@ -691,7 +695,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     await db_session.refresh(node)
     await db_session.refresh(device)
     assert node.observed_running
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted is DeviceOperationalState.available
 
     events = (
         (

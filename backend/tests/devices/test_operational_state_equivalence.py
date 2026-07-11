@@ -12,7 +12,7 @@ from app.devices.services.fleet_capacity import _count_devices
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.state import (
-    apply_derived_state,
+    emit_operational_state_transition,
     evaluate_operational_state,
     gather_device_state_facts,
     is_available_sql,
@@ -62,6 +62,21 @@ class _Pub:
         pass
 
 
+class _RecordingPub(_Pub):
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def queue_for_session(
+        self,
+        _db: AsyncSession | OrmSession,
+        _event_type: str,
+        data: dict[str, Any],
+        *,
+        severity: EventSeverity | None = None,
+    ) -> None:
+        self.events.append({**data, "severity": severity})
+
+
 async def _add_node(
     db_session: AsyncSession,
     device: Device,
@@ -88,15 +103,14 @@ async def _add_node(
 
 
 @pytest.mark.db
-async def test_operational_state_evaluator_sql_and_stored_column_agree(
+async def test_operational_state_evaluator_and_sql_agree(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """The old stored projection, evaluator, SQL CASE, and predicates agree before cut-over."""
+    """The evaluator, SQL CASE, and predicates agree across the fact matrix."""
     await seed_test_packs(db_session)
     host = await create_host(client)
     now = datetime.now(UTC)
-    publisher = _Pub()
     scenarios: list[tuple[str, Device, DeviceOperationalState]] = []
 
     async def add_device(name: str, expected: DeviceOperationalState, **overrides: object) -> Device:
@@ -213,8 +227,6 @@ async def test_operational_state_evaluator_sql_and_stored_column_agree(
         )
         assert member.first() is not None, f"{scenario}: per-state predicate disagrees with CASE {sql_value}"
 
-        await apply_derived_state(db_session, device, now=now, publisher=publisher)
-        assert device.operational_state is evaluated
         evaluated_by_id[device.id] = evaluated
 
     total, available, offline, maintenance = await _count_devices(db_session)
@@ -255,3 +267,37 @@ async def test_operational_state_evaluator_sql_and_stored_column_agree(
     assert (
         await db_session.execute(select(is_available_sql(now=now)).where(Device.id == drift.id))
     ).scalar_one() is True
+
+
+@pytest.mark.db
+async def test_operational_state_edge_detector_is_exact_under_jitter(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="equivalence-edge",
+        name="edge detector",
+        verified=True,
+    )
+    publisher = _RecordingPub()
+    now = datetime.now(UTC)
+
+    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is True
+    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is False
+    assert len(publisher.events) == 1
+    assert publisher.events[0]["old_operational_state"] == DeviceOperationalState.offline.value
+    assert publisher.events[0]["new_operational_state"] == DeviceOperationalState.available.value
+    assert device.operational_state_last_emitted is DeviceOperationalState.available
+
+    device.lifecycle_policy_state = {"maintenance_reason": "operator"}
+    await db_session.flush()
+    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is True
+    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is False
+    assert len(publisher.events) == 2
+    assert publisher.events[-1]["old_operational_state"] == DeviceOperationalState.available.value
+    assert publisher.events[-1]["new_operational_state"] == DeviceOperationalState.maintenance.value
+    assert device.operational_state_last_emitted is DeviceOperationalState.maintenance

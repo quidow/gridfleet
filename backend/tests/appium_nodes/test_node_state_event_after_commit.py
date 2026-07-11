@@ -35,11 +35,10 @@ async def test_mark_node_started_queues_state_changed_after_availability(
     await settle_after_commit_tasks()
 
     types_in_order = [name for name, _ in event_bus_capture]
-    assert "device.operational_state_changed" in types_in_order
     assert "node.state_changed" in types_in_order
-    avail_idx = types_in_order.index("device.operational_state_changed")
     node_idx = types_in_order.index("node.state_changed")
-    assert avail_idx < node_idx, f"FIFO order: availability must precede node.state_changed; got {types_in_order}"
+    assert "device.operational_state_changed" not in types_in_order
+    assert node_idx == len(types_in_order) - 1, f"unexpected event order: {types_in_order}"
 
     node_payload = next(p for n, p in event_bus_capture if n == "node.state_changed")
     assert node_payload["new_state"] == "running"

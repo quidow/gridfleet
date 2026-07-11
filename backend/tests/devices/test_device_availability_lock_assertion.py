@@ -3,8 +3,7 @@
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services.state import set_operational_state
-from tests.helpers import test_event_bus as event_bus
+from app.devices.services.state import _persistent_session
 
 pytestmark = pytest.mark.asyncio
 
@@ -22,18 +21,13 @@ def _transient_device() -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     return device
 
 
-async def test_set_operational_state_rejects_transient_device() -> None:
-    """A Device that is not persistent in a session should trigger an assertion."""
+async def test_edge_detector_requires_a_persistent_device() -> None:
+    """A Device that is not persistent in a session cannot queue an edge."""
     device = _transient_device()
 
     with pytest.raises(AssertionError, match="must be persistent in a session"):
-        await set_operational_state(
-            device,
-            DeviceOperationalState.offline,
-            publish_event=False,
-            publisher=event_bus,
-        )
+        _persistent_session(device)

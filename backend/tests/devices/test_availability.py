@@ -7,6 +7,7 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.state import derive_operational_state
 from app.runs.models import RunState, TestRun
 
 if TYPE_CHECKING:
@@ -184,7 +185,7 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
         mark_offline=True,
     )
     await db_session.commit()
-    assert device.operational_state == DeviceOperationalState.offline
+    assert await derive_operational_state(db_session, device, now=datetime.now(UTC)) is DeviceOperationalState.offline
 
     _health_svc = DeviceHealthService(publisher=Mock())
     await _health_svc.update_device_checks(db_session, device, healthy=True, summary="Healthy")
@@ -199,7 +200,7 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     await db_session.commit()
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert await derive_operational_state(db_session, device, now=datetime.now(UTC)) is DeviceOperationalState.available
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 1})
     assert resp.status_code == 200

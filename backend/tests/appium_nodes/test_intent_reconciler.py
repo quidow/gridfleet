@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
@@ -20,6 +21,7 @@ from app.devices.services.intent_reconciler import (
 )
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+from app.devices.services.state import derive_operational_state
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.fakes.review import build_review_service
@@ -447,7 +449,7 @@ async def test_scan_rederives_stale_available_device_without_intents(
     await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
     await db_session.refresh(device)
-    assert device.operational_state != DeviceOperationalState.offline  # settled healthy
+    assert await derive_operational_state(db_session, device, now=now_utc()) is not DeviceOperationalState.offline
 
     device.device_checks_healthy = False  # simulate an unswept fact flip
     await db_session.commit()
@@ -460,7 +462,7 @@ async def test_scan_rederives_stale_available_device_without_intents(
     )
     refreshed = await db_session.get(Device, device.id)
     assert refreshed is not None
-    assert refreshed.operational_state == DeviceOperationalState.offline
+    assert await derive_operational_state(db_session, refreshed, now=now_utc()) is DeviceOperationalState.offline
 
 
 async def test_gc_expired_intents_deletes_rows_only(db_session: AsyncSession, db_host: Host) -> None:
@@ -630,7 +632,7 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     node.active_connection_target = "target"
     node.health_running = True
     device.device_checks_healthy = True
-    device.operational_state = DeviceOperationalState.offline  # the drift
+    device.operational_state_last_emitted = DeviceOperationalState.offline  # the drift
     await db_session.commit()
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", AsyncMock())
@@ -639,7 +641,7 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
         db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
     )
     await db_session.refresh(device)
-    assert device.operational_state != DeviceOperationalState.offline  # drift corrected
+    assert device.operational_state_last_emitted != DeviceOperationalState.offline  # drift corrected
 
 
 async def test_steady_state_reconcile_does_not_poke(db_session: AsyncSession, db_host: Host) -> None:

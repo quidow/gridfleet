@@ -12,6 +12,7 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.connectivity import ConnectivityService
+from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
@@ -75,14 +76,15 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
             session.add(Session(session_id="conn-race-became-live", device_id=device_id, status=SessionStatus.running))
-            locked.operational_state = DeviceOperationalState.busy
+            locked.device_checks_healthy = False
             await session.commit()
         racer_done.set()
 
     await asyncio.gather(runner(), racer())
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).scalar_one()
+        final_device = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+        final = await derive_operational_state(verify, final_device, now=now_utc())
 
     assert final == DeviceOperationalState.busy, (
         f"Expected busy but got {final.value} - _check_connectivity overwrote "
@@ -149,7 +151,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             live_session = (await session.execute(select(Session).where(Session.device_id == device_id))).scalar_one()
             live_session.status = SessionStatus.passed
             live_session.ended_at = datetime.now(UTC)
-            locked.operational_state = DeviceOperationalState.available
+            locked.operational_state_last_emitted = DeviceOperationalState.available
             await session.commit()
         racer_done.set()
 
@@ -158,6 +160,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
     note_connectivity_loss.assert_not_awaited()
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).scalar_one()
+        final_device = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+        final = await derive_operational_state(verify, final_device, now=now_utc())
 
     assert final == DeviceOperationalState.available

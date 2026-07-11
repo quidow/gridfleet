@@ -33,7 +33,7 @@ from app.devices.services.decision import (
 )
 from app.devices.services.event import record_event
 from app.devices.services.readiness import load_packs_by_ids
-from app.devices.services.state import WithdrawalFacts, apply_derived_state
+from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -213,8 +213,8 @@ async def reconcile_device(
         # so operational_state / hold stay consistent with durable facts.
         try:
             now = now_utc()
-            await apply_derived_state(db, device, now=now, publisher=publisher, packs=packs)
-        except Exception:  # noqa: BLE001 - state derivation must never break reconcile
+            await emit_operational_state_transition(db, device, now=now, publisher=publisher, packs=packs)
+        except Exception:  # noqa: BLE001 - event emission is best-effort; a skipped edge retries next tick
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return False
 
@@ -311,8 +311,8 @@ async def reconcile_device(
     await db.flush()
 
     try:
-        await apply_derived_state(db, device, now=now, publisher=publisher, packs=packs)
-    except Exception:  # noqa: BLE001 - state derivation must never break reconcile
+        await emit_operational_state_transition(db, device, now=now, publisher=publisher, packs=packs)
+    except Exception:  # noqa: BLE001 - event emission is best-effort; a skipped edge retries next tick
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 
     return changed

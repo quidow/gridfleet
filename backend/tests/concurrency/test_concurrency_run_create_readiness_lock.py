@@ -87,4 +87,4 @@ async def test_create_run_rechecks_readiness_after_lock(
         final_device = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     assert reservation is None
-    assert final_device.operational_state == DeviceOperationalState.available
+    assert final_device.operational_state_last_emitted == DeviceOperationalState.available

@@ -218,7 +218,7 @@ async def _mark_device_available(
 
     device = await db.get(_Device, device_id)  # type: ignore[attr-defined]
     assert device is not None
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
 
 
 async def _make_offline_verified_device(db_session: AsyncSession, db_host: Host, name: str) -> Device:

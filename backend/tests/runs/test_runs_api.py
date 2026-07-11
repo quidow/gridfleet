@@ -367,7 +367,7 @@ async def test_create_run_does_not_reserve_unhealthy_available_device(
 
     assert resp.status_code == 409
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_create_run_rejects_removed_wait_field(client: AsyncClient) -> None:
@@ -622,7 +622,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
     assert session.status == SessionStatus.error
     assert session.error_type == "run_released"
     assert session.ended_at is not None
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
 
 
 async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
@@ -665,7 +665,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     await db_session.refresh(device)
     assert session.status == SessionStatus.running
     assert session.ended_at is None
-    assert device.operational_state == DeviceOperationalState.busy
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy
 
     reservation = (
         await db_session.execute(
@@ -767,7 +767,7 @@ async def test_force_release_restores_busy_run_devices(
     )
     device_row = await db_session.get(Device, device_id)
     assert device_row is not None
-    device_row.operational_state = DeviceOperationalState.busy
+    device_row.operational_state_last_emitted = DeviceOperationalState.busy
     await db_session.commit()
 
     async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
@@ -787,7 +787,7 @@ async def test_force_release_restores_busy_run_devices(
     # running (no agent in-test to confirm teardown) the device derives ``offline``
     # via the stop-in-flight gate until the agent reconciles. The reservation is
     # released and the session terminated regardless (asserted below).
-    assert device_row.operational_state == DeviceOperationalState.offline
+    assert device_row.operational_state_last_emitted == DeviceOperationalState.offline
 
     session_result = await db_session.execute(
         select(Session).where(Session.session_id == "force-release-running-session")

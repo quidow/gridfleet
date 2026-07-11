@@ -19,7 +19,7 @@ def _transient_device() -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     device.lifecycle_policy_state = {}
     return device
 

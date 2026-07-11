@@ -72,7 +72,7 @@ async def test_operator_stop_records_no_auto_stopped_device_event(db_session: As
     from app.lifecycle.services.operator_node import operator_stop_intents
 
     device = await create_device(db_session, host_id=db_host.id, name="op-stop-events")
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     await _seed_node(db_session, device.id)
     await db_session.commit()
 

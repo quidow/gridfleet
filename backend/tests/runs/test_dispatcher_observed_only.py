@@ -24,7 +24,7 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="disp-fence", verified=True)
-    device.operational_state = DeviceOperationalState.offline
+    device.operational_state_last_emitted = DeviceOperationalState.offline
     db_session.add(
         AppiumNode(
             device_id=device.id,
@@ -51,7 +51,7 @@ async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_st
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="disp-pid", verified=True)
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     db_session.add(
         AppiumNode(
             device_id=device.id,
@@ -78,7 +78,7 @@ async def test_dispatcher_does_not_pick_device_when_pid_null(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="disp-no-pid", verified=True)
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     db_session.add(
         AppiumNode(
             device_id=device.id,

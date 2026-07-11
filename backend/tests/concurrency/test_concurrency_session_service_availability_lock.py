@@ -74,8 +74,10 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
         await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).one()
+        final = (
+            await verify.execute(select(Device.operational_state_last_emitted).where(Device.id == device_id))
+        ).one()
 
     # After session end, device is offline (no running node, not verified pack available).
     # The reconciler derives the correct state from durable facts.
-    assert final.operational_state in (DeviceOperationalState.available, DeviceOperationalState.offline)
+    assert final.operational_state_last_emitted in (DeviceOperationalState.available, DeviceOperationalState.offline)

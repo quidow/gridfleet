@@ -80,7 +80,7 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
     assert updated.ended_at is not None
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
 
 
 async def test_update_session_status_preserves_busy_when_another_session_is_running(
@@ -110,7 +110,7 @@ async def test_update_session_status_preserves_busy_when_another_session_is_runn
 
     assert updated is not None
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.busy
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy
 
 
 async def test_update_session_status_restores_reserved_when_active_run_owns_device(
@@ -251,7 +251,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     # Simulate an operator (or another loop) flipping the device into
     # maintenance while the session row is still ``running``.
     await db_session.refresh(device)
-    device.operational_state = DeviceOperationalState.maintenance
+    device.operational_state_last_emitted = DeviceOperationalState.maintenance
     await db_session.commit()
 
     crud = SessionCrudService(publisher=Mock(), lifecycle=_make_real_lifecycle())
@@ -327,7 +327,7 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     assert op_events[0]["new_operational_state"] == "offline"
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_update_session_status_emits_single_offline_when_stop_in_flight(
@@ -406,7 +406,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     assert "reason" not in op_events[0]
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_device_has_running_session_counts_pending(

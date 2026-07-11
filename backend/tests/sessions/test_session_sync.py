@@ -172,7 +172,7 @@ async def test_dead_session_closed_and_device_freed(
     assert session.status == SessionStatus.passed
     assert session.ended_at is not None
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     # The session.ended event was queued.
     ended_calls = [c for c in publisher.queue_for_session.call_args_list if c.args[1] == "session.ended"]
     assert len(ended_calls) >= 1
@@ -195,7 +195,7 @@ async def test_indeterminate_session_left_alone(
     assert session.status == SessionStatus.running
     assert session.ended_at is None
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.busy
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy
 
 
 async def test_pending_session_never_probed(
@@ -340,7 +340,7 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
     await _make_sync_service().sync(db_session)
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 # --------------------------------------------------------------------------- #
@@ -391,7 +391,7 @@ async def test_idle_session_over_threshold_reaped(
     assert session.status == SessionStatus.passed
     assert session.ended_at is not None
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert after == before + 1
 
 
@@ -427,7 +427,7 @@ async def test_idle_session_terminate_failure_defers_close(
     assert session.status == SessionStatus.running
     assert session.ended_at is None
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.busy
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy
     assert service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get() == before
 
 
@@ -532,7 +532,7 @@ async def test_never_commanded_session_over_grace_reaped(
     assert session.status == SessionStatus.passed
     assert session.ended_at is not None
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert after_grace == before_grace + 1
     assert after_idle == before_idle
 

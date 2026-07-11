@@ -1100,7 +1100,7 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
 
     assert maintenance_device.id in pending
     # Operational state must not be overwritten — device stays in maintenance.
-    assert maintenance_device.operational_state == DeviceOperationalState.maintenance
+    assert maintenance_device.operational_state_last_emitted == DeviceOperationalState.maintenance
 
 
 @pytest.mark.db
@@ -1234,7 +1234,7 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
     # Incident still recorded.
     incidents.record_lifecycle_incident.assert_awaited_once()
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
 
 
 async def test_report_preparation_failure_releases_and_maintains_when_enabled(

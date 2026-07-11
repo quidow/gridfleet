@@ -113,7 +113,7 @@ async def test_allocate_creates_pending_and_busy(
     assert row.ticket_id == ticket.id
     assert await db_session.get(GridSessionQueueTicket, ticket.id) is None
     await db_session.refresh(seeded_available_device)
-    assert seeded_available_device.operational_state == DeviceOperationalState.busy
+    assert seeded_available_device.operational_state_last_emitted == DeviceOperationalState.busy
 
 
 @pytest.mark.db

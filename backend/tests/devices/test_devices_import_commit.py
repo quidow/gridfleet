@@ -74,7 +74,7 @@ async def test_commit_creates_device_and_enqueues_verification(
     device = (await db_session.execute(select(Device).where(Device.id == device_id))).scalar_one()
     assert device.host_id == host.id
     assert device.identity_value == "R58"
-    assert device.operational_state.value == "offline"
+    assert device.operational_state_last_emitted.value == "offline"
 
     jobs = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_VERIFICATION))).scalars().all()
     assert len(jobs) == 1

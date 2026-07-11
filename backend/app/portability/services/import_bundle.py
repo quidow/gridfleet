@@ -152,7 +152,7 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
         "name": device.name,
         "os_version": "unknown",
         "host_id": target_host_id,
-        "operational_state": DeviceOperationalState.offline,
+        "operational_state_last_emitted": DeviceOperationalState.offline,
         "device_type": device.device_type,
         "connection_type": device.connection_type,
         "tags": dict(device.tags),

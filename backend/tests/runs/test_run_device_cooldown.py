@@ -347,7 +347,7 @@ async def test_cooldown_does_not_mutate_operational_state(
     # After Task 10: reconciler derives state from facts. Without a real running
     # session, the device stays available (not busy). The cooldown intent is
     # registered but does not change operational_state.
-    assert device.operational_state in (
+    assert device.operational_state_last_emitted in (
         DeviceOperationalState.available,
         DeviceOperationalState.busy,
         DeviceOperationalState.offline,
@@ -435,7 +435,7 @@ async def test_cooldown_keeps_device_warm_and_reports_cooldown(
     # The soft-gate is the only out-of-rotation lever now.
     assert node.accepting_new_sessions is False
     # The device no longer derives offline during cooldown.
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
 
     got = await client.get(f"/api/devices/{device.id}")
     assert got.status_code == 200
@@ -707,7 +707,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
 
     # Operator puts device in maintenance after cooldown began
     device.lifecycle_policy_state = {"maintenance_reason": "manual"}
-    device.operational_state = DeviceOperationalState.maintenance
+    device.operational_state_last_emitted = DeviceOperationalState.maintenance
     await db_session.commit()
 
     await ConnectivityService(

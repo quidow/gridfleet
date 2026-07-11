@@ -83,7 +83,7 @@ async def test_remote_start_node_attaches_node_to_device_instance(
     assert loaded_device.appium_node is not None
     assert not loaded_device.appium_node.observed_running
     assert loaded_device.appium_node.desired_state == AppiumDesiredState.running
-    assert loaded_device.operational_state == DeviceOperationalState.offline
+    assert loaded_device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_start_node_with_verification_caller_skips_readiness(

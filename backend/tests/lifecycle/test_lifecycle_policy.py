@@ -102,7 +102,7 @@ def _derive_state_for_unit_objects(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _derive(db: object, device: object, *, now: object) -> DeviceOperationalState:
         if isinstance(device, Device):
             return await real_derive(db, device, now=now)  # type: ignore[arg-type]
-        return device.operational_state  # type: ignore[union-attr,no-any-return]
+        return device.operational_state_last_emitted  # type: ignore[union-attr,no-any-return]
 
     monkeypatch.setattr(lifecycle_policy_module, "derive_operational_state", _derive)
     monkeypatch.setattr("app.lifecycle.services.actions.derive_operational_state", _derive)
@@ -151,7 +151,7 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
 
     await db_session.refresh(device)
     assert result == "stopped"
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["last_failure_reason"] == "ADB not responsive"
     assert policy["last_action"] == "auto_stopped"
@@ -183,7 +183,7 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
 
     await db_session.refresh(device)
     assert result == "deferred"
-    assert device.operational_state == DeviceOperationalState.busy
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["stop_pending"] is True
     assert policy["recovery_state"] == "waiting_for_session_end"
@@ -236,7 +236,7 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
 
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     assert run.reserved_devices[0]["exclusion_reason"] == "Health probe failed"
@@ -301,7 +301,7 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     policy = await build_lifecycle_policy(db_session, device)
@@ -675,7 +675,7 @@ async def test_recovery_reloads_device_before_starting_node(
     async with db_session_maker() as other_session:
         current = await other_session.get(Device, device.id)
         assert current is not None
-        current.operational_state = DeviceOperationalState.available
+        current.operational_state_last_emitted = DeviceOperationalState.available
         other_session.add(
             AppiumNode(
                 device_id=device.id,
@@ -782,7 +782,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     await db_session.refresh(run, ["device_reservations"])
     await db_session.refresh(device)
     assert recovered is False
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     assert run.device_reservations[0].excluded is True
@@ -894,7 +894,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
 
     await db_session.refresh(reloaded)
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
-    assert reloaded.operational_state == DeviceOperationalState.offline
+    assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
 
@@ -1214,7 +1214,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     # stop_in_flight is True → offline is the correct derived value here.
     # Restoration to available/busy is the session_sync caller's responsibility
     # (covered by test_session_sync_restores_busy_after_healthy_drop).
-    assert reloaded.operational_state == DeviceOperationalState.offline
+    assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_handle_session_finished_executes_stop_when_unhealthy(
@@ -1268,7 +1268,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-    assert reloaded.operational_state == DeviceOperationalState.offline  # complete_auto_stop ran
+    assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline  # complete_auto_stop ran
 
 
 async def test_handle_session_finished_executes_stop_when_node_not_running(
@@ -1325,7 +1325,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-    assert reloaded.operational_state == DeviceOperationalState.offline
+    assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_handle_session_finished_returns_no_pending_when_intent_absent(
@@ -1495,7 +1495,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     assert reloaded.lifecycle_policy_state["stop_pending"] is True
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_deferred"
     # Device must still be busy — caller (session_sync) leaves the new session in charge.
-    assert reloaded.operational_state == DeviceOperationalState.busy
+    assert reloaded.operational_state_last_emitted == DeviceOperationalState.busy
 
 
 async def test_handle_session_finished_clears_intent_on_healthy_projection(

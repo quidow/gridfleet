@@ -2,7 +2,7 @@
 
 See ``docs/superpowers/specs/2026-05-20-backend-bug-audit.md#bug-3``.
 
-``run_session_viability_probe`` reads ``device.operational_state`` and the
+``run_session_viability_probe`` reads ``device.operational_state_last_emitted`` and the
 device's reservation state *without* a row lock, then re-locks and re-checks
 both before proceeding. A concurrent reservation created between the unlocked
 check and the FOR UPDATE must not be silently ignored — the post-lock re-check

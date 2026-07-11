@@ -1,7 +1,8 @@
-"""Tests for the new operational_state + hold writers."""
+"""Tests for the read-time operational-state projection and edge detector."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,7 +30,7 @@ async def _persisted_device(db: AsyncSession, host_id: str) -> Device:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_set_operational_state_writes_and_queues_event(
+async def test_emit_operational_state_transition_queues_event(
     db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     device = await _persisted_device(db_session, default_host_id)
@@ -42,9 +43,11 @@ async def test_set_operational_state_writes_and_queues_event(
 
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", fake_queue)
 
-    changed = await device_state.set_operational_state(device, DeviceOperationalState.available, publisher=event_bus)
+    changed = await device_state.emit_operational_state_transition(
+        db_session, device, now=datetime.now(UTC), publisher=event_bus
+    )
     assert changed is True
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted is DeviceOperationalState.available
     assert any(name == "device.operational_state_changed" for name, _, _ in captured)
     payload = captured[0][1]
     assert payload["new_operational_state"] == DeviceOperationalState.available.value
@@ -54,10 +57,16 @@ async def test_set_operational_state_writes_and_queues_event(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_set_operational_state_noop_when_unchanged(db_session: AsyncSession, default_host_id: str) -> None:
+async def test_emit_operational_state_transition_noop_when_unchanged(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    changed = await device_state.set_operational_state(
-        device, DeviceOperationalState.offline, publish_event=False, publisher=event_bus
+    changed = await device_state.emit_operational_state_transition(
+        db_session, device, now=datetime.now(UTC), publisher=event_bus
+    )
+    assert changed is True
+    changed = await device_state.emit_operational_state_transition(
+        db_session, device, now=datetime.now(UTC), publisher=event_bus
     )
     assert changed is False
 

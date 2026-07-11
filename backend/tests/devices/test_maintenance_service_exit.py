@@ -107,8 +107,12 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
     # After Task 10: exit_maintenance registers a verification intent, so the
     # reconciler derives verifying (not offline). The important check is that
     # maintenance_reason is cleared (committed) even when enqueue fails.
-    assert result.operational_state in (DeviceOperationalState.offline, DeviceOperationalState.verifying), (
-        f"operational_state must be offline or verifying after exit_maintenance, got {result.operational_state}"
+    assert result.operational_state_last_emitted in (
+        DeviceOperationalState.offline,
+        DeviceOperationalState.verifying,
+    ), (
+        "operational_state must be offline or verifying after exit_maintenance, "
+        f"got {result.operational_state_last_emitted}"
     )
 
     # A warning must have been logged so ops can triage.

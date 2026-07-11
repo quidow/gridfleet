@@ -83,7 +83,7 @@ class DeviceCrudService:
         payload = await self.prepare_device_create_payload(db, data)
         if mark_verified:
             payload["verified_at"] = now_utc()
-        payload["operational_state"] = initial_operational_state
+        payload["operational_state_last_emitted"] = initial_operational_state
         await self._identity.ensure_device_payload_identity_available(db, payload)
         try:
             return await device_write.create_device_record(db, payload)

@@ -118,7 +118,7 @@ async def test_exclude_run_if_needed_excludes_without_maintenance(
     assert entry is not None
     assert entry.excluded is True
     # Auto-exclusion must not silently escalate the device into maintenance.
-    assert device.operational_state != DeviceOperationalState.maintenance
+    assert device.operational_state_last_emitted != DeviceOperationalState.maintenance
 
 
 async def test_exclude_run_if_needed_no_run_is_noop(
@@ -136,7 +136,7 @@ async def test_exclude_run_if_needed_no_run_is_noop(
     returned_run, _entry = await _actions.exclude_run_if_needed(db_session, device, reason="No run", source="test")
 
     assert returned_run is None
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
 
 
 async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
@@ -146,10 +146,10 @@ async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
     device, _run = device_with_active_run
 
     await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.operational_state != DeviceOperationalState.maintenance
+    assert device.operational_state_last_emitted != DeviceOperationalState.maintenance
 
     await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.operational_state != DeviceOperationalState.maintenance
+    assert device.operational_state_last_emitted != DeviceOperationalState.maintenance
 
 
 async def test_exclude_run_if_needed_clears_desired_grid_run_id(

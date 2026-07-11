@@ -146,7 +146,7 @@ async def create_device_record(
         device_config=device_config,
         test_data=resolved_test_data,
     )
-    device.operational_state = (
+    device.operational_state_last_emitted = (
         operational_state
         if isinstance(operational_state, DeviceOperationalState)
         else DeviceOperationalState(operational_state)

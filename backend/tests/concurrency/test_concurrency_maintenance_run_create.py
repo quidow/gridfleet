@@ -221,7 +221,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     if reservation is not None:
-        assert device_row.operational_state != DeviceOperationalState.maintenance, (
+        assert device_row.operational_state_last_emitted != DeviceOperationalState.maintenance, (
             f"Reservation exists but device row is in maintenance — the maintenance path stomped a "
             f"reservation. HTTP statuses were {statuses}."
         )

@@ -42,9 +42,6 @@ from app.devices.services import (
 from app.devices.services import (
     platform_label as platform_label_service,
 )
-from app.devices.services import (
-    state as device_state,
-)
 from app.devices.services import test_data as test_data_service
 from app.devices.services import (
     write as device_write,
@@ -210,14 +207,8 @@ async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.
     )
     assert await device_locking.lock_devices(db, []) == []
 
-    device = Device(id=uuid.uuid4(), name="d", operational_state=DeviceOperationalState.maintenance)
-    monkeypatch.setattr(device_state, "_persistent_session", lambda _device: object())
-    assert (
-        await device_state.set_operational_state(
-            device, DeviceOperationalState.maintenance, publish_event=False, publisher=event_bus
-        )
-        is False
-    )
+    device = Device(id=uuid.uuid4(), name="d", operational_state_last_emitted=DeviceOperationalState.maintenance)
+    assert device.operational_state_last_emitted is DeviceOperationalState.maintenance
 
     assert event_catalog.normalize_public_event_names("bad") == []
     assert event_catalog.normalize_public_event_names(

@@ -202,7 +202,7 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         name="Not Ready",
         verified=False,
     )
-    not_ready.operational_state = DeviceOperationalState.offline
+    not_ready.operational_state_last_emitted = DeviceOperationalState.offline
     await db_session.commit()
 
     with (
@@ -255,7 +255,7 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         device_type=DeviceType.emulator.value,
         connection_type=ConnectionType.virtual.value,
     )
-    emulator.operational_state = DeviceOperationalState.available
+    emulator.operational_state_last_emitted = DeviceOperationalState.available
     await db_session.commit()
 
     update_emulator_state = AsyncMock()
@@ -303,7 +303,7 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         connection_target="already-offline-conn-1",
         name="Already Offline Device",
     )
-    device.operational_state = DeviceOperationalState.offline
+    device.operational_state_last_emitted = DeviceOperationalState.offline
     await db_session.commit()
 
     handle_health_failure_called = False

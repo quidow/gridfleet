@@ -135,7 +135,7 @@ async def test_reconcile_now_derives_state_inline(db_session: AsyncSession, db_h
     await db_session.commit()
     refreshed = await db_session.get(Device, device.id)
     assert refreshed is not None
-    assert refreshed.operational_state == DeviceOperationalState.offline
+    assert refreshed.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db_host: Host) -> None:

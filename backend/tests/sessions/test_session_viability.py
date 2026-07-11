@@ -229,7 +229,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
     assert persisted is not None
     assert persisted["status"] == "passed"
     assert persisted["last_succeeded_at"] == persisted["last_attempted_at"]
-    assert loaded_device.operational_state == DeviceOperationalState.available
+    assert loaded_device.operational_state_last_emitted == DeviceOperationalState.available
     probe_mock.assert_awaited_once()
     probe_capabilities = probe_mock.await_args.args[0]
     assert probe_capabilities["platformName"] == "Android"
@@ -293,7 +293,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
 
     assert result["status"] == "passed"
     await db_session.refresh(loaded_device)
-    assert loaded_device.operational_state == DeviceOperationalState.available
+    assert loaded_device.operational_state_last_emitted == DeviceOperationalState.available
 
 
 async def test_run_session_viability_probe_uses_running_avd_active_target(
@@ -1177,7 +1177,7 @@ async def test_viability_escalates_after_threshold_consecutive_failures(
         for _ in range(3):
             # Each probe leaves the device offline; the recovery branch is what
             # lets the next iteration re-enter the probe path.
-            device.operational_state = DeviceOperationalState.available
+            device.operational_state_last_emitted = DeviceOperationalState.available
             await _run_failing_probe(db_session, device, monkeypatch, error="grid hiccup", threshold=3, handler=handler)
     finally:
         _svc.configure_health_failure_handler(None)
@@ -1210,7 +1210,7 @@ async def test_passing_probe_resets_viability_failure_counter(
         # Two consecutive failures get to count=2.
         monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, "transient")))
         for _ in range(2):
-            device.operational_state = DeviceOperationalState.available
+            device.operational_state_last_emitted = DeviceOperationalState.available
             await run_session_viability_probe(
                 db_session,
                 device,
@@ -1227,7 +1227,7 @@ async def test_passing_probe_resets_viability_failure_counter(
 
         # A passing probe must reset the counter back to 0.
         monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
-        device.operational_state = DeviceOperationalState.available
+        device.operational_state_last_emitted = DeviceOperationalState.available
         await run_session_viability_probe(
             db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
         )
@@ -1236,7 +1236,7 @@ async def test_passing_probe_resets_viability_failure_counter(
 
         # One more failure must start the count over, not jump straight to threshold.
         monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, "transient again")))
-        device.operational_state = DeviceOperationalState.available
+        device.operational_state_last_emitted = DeviceOperationalState.available
         await run_session_viability_probe(
             db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
         )
@@ -1293,7 +1293,7 @@ async def test_write_session_viability_persists_error_category(
     # A passing probe must clear ``error_category`` so a recovered device does
     # not keep an old infra tag attached.
     monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     await run_session_viability_probe(
         db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
     )
@@ -1394,7 +1394,7 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
         f"got spurious offline event(s) {spurious_offline}"
     )
     await db_session.refresh(loaded_device)
-    assert loaded_device.operational_state == DeviceOperationalState.available
+    assert loaded_device.operational_state_last_emitted == DeviceOperationalState.available
 
 
 def test_probe_always_match_routes_on_device_id_not_udid() -> None:

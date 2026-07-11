@@ -101,7 +101,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                 )
                 racer_acquired_b.set()
                 # Touch the row so the lock attempt is observable.
-                locked.operational_state = DeviceOperationalState.offline
+                locked.operational_state_last_emitted = DeviceOperationalState.offline
                 await racer_db.commit()
             except TimeoutError:
                 # Expected post-fix: per-task session holds B's lock during A's gate.
@@ -142,6 +142,6 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
 
     async with db_session_maker() as verify:
         device_b_row = (await verify.execute(select(Device).where(Device.id == device_b_id))).scalar_one()
-    assert device_b_row.operational_state != DeviceOperationalState.offline, (
+    assert device_b_row.operational_state_last_emitted != DeviceOperationalState.offline, (
         "racer's offline write landed on device_b - confirms shared-session lock release"
     )

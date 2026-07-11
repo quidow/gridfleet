@@ -51,7 +51,7 @@ async def test_exception_path_calls_reconcile_now(
     monkeypatch.setattr(
         service_viability,
         "derive_operational_state",
-        AsyncMock(side_effect=lambda _db, device, *, now: device.operational_state),
+        AsyncMock(side_effect=lambda _db, device, *, now: device.operational_state_last_emitted),
     )
     monkeypatch.setattr(service_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(service_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
@@ -107,7 +107,7 @@ async def test_exception_path_from_offline_calls_mark_dirty(
     monkeypatch.setattr(
         service_viability,
         "derive_operational_state",
-        AsyncMock(side_effect=lambda _db, device, *, now: device.operational_state),
+        AsyncMock(side_effect=lambda _db, device, *, now: device.operational_state_last_emitted),
     )
     monkeypatch.setattr(service_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(service_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
@@ -168,7 +168,7 @@ async def test_gating_failure_after_claim_still_releases_lock(
     monkeypatch.setattr(
         service_viability,
         "derive_operational_state",
-        AsyncMock(side_effect=lambda _db, device, *, now: device.operational_state),
+        AsyncMock(side_effect=lambda _db, device, *, now: device.operational_state_last_emitted),
     )
     # The readiness gate runs after the lock is claimed but before the probe body.
     # Blowing it up models a disconnect/transient failure in that window.

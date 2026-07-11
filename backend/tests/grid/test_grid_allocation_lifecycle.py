@@ -144,7 +144,7 @@ async def test_fail_releases_device(
     assert allocated_pending.error_type == "allocation_failed"
     assert allocated_pending.ended_at is not None
     await db_session.refresh(seeded_available_device)
-    assert seeded_available_device.operational_state == DeviceOperationalState.available
+    assert seeded_available_device.operational_state_last_emitted == DeviceOperationalState.available
     # idempotent: failing again (or failing a confirmed/unknown id) is a no-op
     await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="again")
     await allocation_service.fail(db_session, allocation_id=uuid.uuid4(), message="missing")
@@ -183,7 +183,7 @@ async def test_fail_after_confirm_is_noop_device_stays_busy(
     now-running session or free a still-busy device (#4)."""
     await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="confirmed-id")
     await db_session.refresh(seeded_available_device)
-    assert seeded_available_device.operational_state == DeviceOperationalState.busy
+    assert seeded_available_device.operational_state_last_emitted == DeviceOperationalState.busy
 
     await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
 
@@ -192,7 +192,7 @@ async def test_fail_after_confirm_is_noop_device_stays_busy(
     assert allocated_pending.session_id == "confirmed-id"
     assert allocated_pending.ended_at is None
     await db_session.refresh(seeded_available_device)
-    assert seeded_available_device.operational_state == DeviceOperationalState.busy
+    assert seeded_available_device.operational_state_last_emitted == DeviceOperationalState.busy
 
 
 @pytest.mark.db
@@ -208,7 +208,7 @@ async def test_mark_ended_closes_running_and_frees_device(
     assert allocated_pending.ended_at is not None
     assert allocated_pending.status == SessionStatus.passed
     await db_session.refresh(seeded_available_device)
-    assert seeded_available_device.operational_state == DeviceOperationalState.available
+    assert seeded_available_device.operational_state_last_emitted == DeviceOperationalState.available
     # unknown session id is a no-op
     await allocation_service.mark_ended(db_session, appium_session_id="never-existed")
 

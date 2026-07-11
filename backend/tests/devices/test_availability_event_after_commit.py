@@ -8,13 +8,13 @@ must now queue events on the session and dispatch only after the outer commit su
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from app.devices import locking as device_locking
-from app.devices.models import DeviceOperationalState
-from app.devices.services.state import set_operational_state
+from app.devices.services.state import emit_operational_state_transition
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -29,9 +29,10 @@ async def test_event_dispatches_after_commit(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="after-commit-1")
+    device.device_checks_healthy = False
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
-    await set_operational_state(locked, DeviceOperationalState.offline, publisher=event_bus)
+    await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     # Pre-commit: nothing dispatched yet.
     await settle_after_commit_tasks()
     assert event_bus_capture == [], f"Helper must not dispatch before commit; got {event_bus_capture}"
@@ -42,7 +43,7 @@ async def test_event_dispatches_after_commit(
 
     avail = [(n, p) for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert len(avail) == 1, f"Expected one event after commit; got {avail}"
-    assert avail[0][1]["new_operational_state"] == "offline"
+    assert avail[0][1]["new_operational_state"] == "available"
 
 
 async def test_event_dropped_on_rollback(
@@ -50,9 +51,10 @@ async def test_event_dropped_on_rollback(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="rollback-1")
+    device.device_checks_healthy = False
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
-    await set_operational_state(locked, DeviceOperationalState.offline, publisher=event_bus)
+    await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.rollback()
     await settle_after_commit_tasks()
@@ -68,10 +70,12 @@ async def test_multiple_events_dispatch_in_queue_order(
     """Events queued on one session dispatch in FIFO order after commit."""
     _, d1 = await seed_host_and_device(db_session, identity="multi-a")
     _, d2 = await seed_host_and_device(db_session, identity="multi-b")
+    d1.device_checks_healthy = False
+    d2.device_checks_healthy = False
     event_bus_capture.clear()
     for d in (d1, d2):
         locked = await device_locking.lock_device(db_session, d.id)
-        await set_operational_state(locked, DeviceOperationalState.offline, publisher=event_bus)
+        await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.commit()
     await settle_after_commit_tasks()
@@ -80,4 +84,4 @@ async def test_multiple_events_dispatch_in_queue_order(
     assert [p["device_name"] for p in avail] == ["Device multi-a", "Device multi-b"], (
         f"Events must dispatch in queue order; got {[p['device_name'] for p in avail]}"
     )
-    assert all(p["new_operational_state"] == "offline" for p in avail)
+    assert all(p["new_operational_state"] == "available" for p in avail)

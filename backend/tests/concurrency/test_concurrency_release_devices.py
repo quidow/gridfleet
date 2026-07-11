@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import set_operational_state
+from app.devices.services.state import derive_operational_state
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle_release import RunReleaseService
@@ -91,12 +91,7 @@ async def test_release_devices_does_not_stomp_offline_writer(
         async with db_session_maker() as session:
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
-            await set_operational_state(
-                device_obj,
-                DeviceOperationalState.offline,
-                publish_event=False,
-                publisher=event_bus,
-            )
+            device_obj.device_checks_healthy = False
             await session.commit()
             proceed.set()
 
@@ -109,7 +104,8 @@ async def test_release_devices_does_not_stomp_offline_writer(
         ).scalar_one()
 
     assert reservation_row.released_at is not None
-    assert device_row.operational_state in {
+    derived = await derive_operational_state(verify, device_row, now=datetime.now(UTC))
+    assert derived in {
         DeviceOperationalState.available,
         DeviceOperationalState.offline,
     }
@@ -193,12 +189,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
         await stomper_can_go.wait()
         async with db_session_maker() as session:
             device_obj = (await session.execute(select(Device).where(Device.id == device_id))).scalar_one()
-            await set_operational_state(
-                device_obj,
-                DeviceOperationalState.offline,
-                publish_event=False,
-                publisher=event_bus,
-            )
+            device_obj.device_checks_healthy = False
             await session.commit()
 
     await asyncio.gather(releaser(), stomper())
@@ -218,7 +209,8 @@ async def test_release_devices_serializes_with_concurrent_writer(
     # After Task 6 adds SELECT FOR UPDATE: the releaser holds the row lock,
     # the stomper's UPDATE blocks until the releaser commits, so the final
     # committed state (after both transactions complete) is "offline".
-    assert device_row.operational_state == DeviceOperationalState.offline, (
-        f"Expected offline but got {device_row.operational_state.value} — "
+    derived = await derive_operational_state(verify, device_row, now=datetime.now(UTC))
+    assert derived == DeviceOperationalState.offline, (
+        f"Expected offline but got {derived.value} — "
         "_release_devices stomped the concurrent offline write (missing row lock)"
     )

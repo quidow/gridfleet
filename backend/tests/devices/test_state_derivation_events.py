@@ -1,4 +1,4 @@
-"""apply_derived_state records NO DeviceEvent audit rows — transitions are uncaused (plan 4b).
+"""The operational edge detector records NO DeviceEvent audit rows — transitions are uncaused.
 
 Causes are recorded once, at the observation sites that know them: the connectivity sweep and
 host heartbeat loss record connectivity_lost, lifecycle escalation records node_crash /
@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
-from app.devices.services.state import _transition_severity, apply_derived_state
+from app.devices.services.state import _transition_severity, emit_operational_state_transition
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -47,10 +47,10 @@ async def test_offline_transition_records_no_audit_row(client: AsyncClient, db_s
         device_checks_healthy=False,
     )
 
-    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
-    assert device.operational_state is DeviceOperationalState.offline
+    assert device.operational_state_last_emitted is DeviceOperationalState.offline
     assert await _event_types(db_session, device.id) == []
 
 
@@ -70,10 +70,10 @@ async def test_maintenance_transition_records_no_audit_row(client: AsyncClient, 
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
-    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
-    assert device.operational_state is DeviceOperationalState.maintenance
+    assert device.operational_state_last_emitted is DeviceOperationalState.maintenance
     assert await _event_types(db_session, device.id) == []
 
 

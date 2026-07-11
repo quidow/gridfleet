@@ -41,7 +41,7 @@ async def _mark_device_available(
     del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
     if node is not None:
         node.pid = 12345

@@ -57,7 +57,7 @@ async def _make_device_available(
     del intents, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
-    device.operational_state = DeviceOperationalState.available
+    device.operational_state_last_emitted = DeviceOperationalState.available
     node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
     if node is not None:
         node.pid = 12345
@@ -177,7 +177,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     # Now simulate enter_maintenance(allow_reserved=True) — maintenance_reason is the signal;
     # hold is no longer written directly (Task 6: signal-based maintenance).
     locked = await device_locking.lock_device(db_session, device.id)
-    locked.operational_state = DeviceOperationalState.offline
+    locked.operational_state_last_emitted = DeviceOperationalState.offline
     from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 
     set_maintenance_reason(locked, "Operator entered maintenance")
@@ -209,7 +209,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
         db = _self._db
         dev = await db.get(Device, device_id)
         if dev is not None:
-            dev.operational_state = DeviceOperationalState.available
+            dev.operational_state_last_emitted = DeviceOperationalState.available
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
         if node is not None:
             node.pid = 12345
@@ -275,8 +275,8 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     assert worked is True
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available, (
-        f"Expected available, got {device.operational_state}"
+    assert device.operational_state_last_emitted == DeviceOperationalState.available, (
+        f"Expected available, got {device.operational_state_last_emitted}"
     )
     active_reservation = (
         await db_session.execute(

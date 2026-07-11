@@ -14,10 +14,10 @@ BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 # deleted; constructor keyword writes and SQLAlchemy Core updates remain outside
 # the assignment scan, matching the runtime guard's existing limits.
 PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
-    "operational_state": frozenset(
+    "operational_state_last_emitted": frozenset(
         {
             "app/devices/services/state.py",
-            # Device creation paths set initial state before a prior state exists.
+            # Device creation paths seed the first emitted edge.
             "app/devices/services/write.py",
         }
     ),
@@ -99,10 +99,11 @@ def test_protected_column_written_only_by_sanctioned_modules(attr: str) -> None:
     )
 
 
-_CALL_RE = re.compile(r"\bset_operational_state\s*\(")
+_CALL_RE = re.compile(r"\bemit_operational_state_transition\s*\(")
 CALL_EXEMPT_FILES = {
-    # The definition and its sole sanctioned caller (apply_derived_state) live here.
+    # The definition and the reconciler edge-detector call live here.
     BACKEND_APP / "devices" / "services" / "state.py",
+    BACKEND_APP / "devices" / "services" / "intent_reconciler.py",
 }
 
 
@@ -117,12 +118,11 @@ def _scan_calls() -> list[tuple[Path, int, str]]:
     return findings
 
 
-def test_set_operational_state_called_only_from_state_module() -> None:
+def test_operational_state_transition_called_only_by_edge_detector() -> None:
     findings = _scan_calls()
     formatted = "\n".join(f"  {path}:{lineno}: {line}" for path, lineno, line in findings)
     assert not findings, (
-        "set_operational_state must only be called by apply_derived_state in "
-        "app/devices/services/state.py. Write the durable fact and call "
-        "IntentService.reconcile_now (or register/revoke intents) instead:\n"
+        "emit_operational_state_transition must only be called by the edge detector "
+        "and intent reconciler:\n"
         f"{formatted}"
     )

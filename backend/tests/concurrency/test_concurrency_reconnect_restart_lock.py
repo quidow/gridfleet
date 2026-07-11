@@ -102,11 +102,13 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).one()
+        final = (
+            await verify.execute(select(Device.operational_state_last_emitted).where(Device.id == device_id))
+        ).one()
 
     # §4 (Phase 2): the concurrent maintenance signal derives onto the operational axis and
     # outranks the offline that the reconnect/restart race would otherwise produce.
-    assert final.operational_state == DeviceOperationalState.maintenance
+    assert final.operational_state_last_emitted == DeviceOperationalState.maintenance
     # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal instead
     from sqlalchemy import select as sa_select
 

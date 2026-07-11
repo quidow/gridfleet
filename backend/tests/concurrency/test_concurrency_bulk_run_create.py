@@ -225,7 +225,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
 
     for reservation in reservations:
         device_row = next(d for d in active_devices if d.id == reservation.device_id)
-        assert device_row.operational_state != DeviceOperationalState.maintenance, (
+        assert device_row.operational_state_last_emitted != DeviceOperationalState.maintenance, (
             f"Device {device_row.id} has an active reservation but was escalated to maintenance "
             f"— the maintenance path stomped a reservation. HTTP statuses were {statuses}."
         )

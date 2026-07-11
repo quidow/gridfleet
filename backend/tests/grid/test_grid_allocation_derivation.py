@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.devices.models import DeviceOperationalState
-from app.devices.services.state import apply_derived_state
+from app.devices.services.state import emit_operational_state_transition
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
@@ -44,6 +44,6 @@ async def test_pending_session_derives_busy(client: AsyncClient, db_session: Asy
     )
     await db_session.flush()
 
-    await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
-    assert device.operational_state is DeviceOperationalState.busy
+    assert device.operational_state_last_emitted is DeviceOperationalState.busy

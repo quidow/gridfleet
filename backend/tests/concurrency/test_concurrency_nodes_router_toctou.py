@@ -221,7 +221,7 @@ async def test_start_node_locks_device_before_reservation_check(
 
     # After Task 10: reconciler derives state; after node start, device may be
     # offline (node desired_state=running but pid not yet set → not running yet).
-    assert device_row.operational_state in {
+    assert device_row.operational_state_last_emitted in {
         DeviceOperationalState.available,
         DeviceOperationalState.offline,
-    }, f"unexpected final status {device_row.operational_state}"
+    }, f"unexpected final status {device_row.operational_state_last_emitted}"

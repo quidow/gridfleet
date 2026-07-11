@@ -19,6 +19,7 @@ from app.devices.services.connectivity import (
 )
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import get_connectivity_control_plane_state, track_previously_offline_device
@@ -171,7 +172,7 @@ async def test_connected_device_stays_available(db_session: AsyncSession) -> Non
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert await derive_operational_state(db_session, device, now=datetime.now(UTC)) is DeviceOperationalState.available
 
 
 async def test_healthy_available_device_triggers_self_heal_clear(db_session: AsyncSession) -> None:
@@ -289,7 +290,7 @@ async def test_endpoint_only_device_stays_available_when_health_passes(db_sessio
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     health.assert_awaited_once()
     assert host.status == HostStatus.online
 
@@ -507,7 +508,7 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
@@ -548,7 +549,7 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
@@ -617,7 +618,7 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
@@ -645,7 +646,7 @@ async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) 
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
@@ -677,7 +678,7 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
@@ -705,7 +706,7 @@ async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available  # unchanged
+    assert device.operational_state_last_emitted == DeviceOperationalState.available  # unchanged
 
 
 async def test_reappeared_device_auto_starts(db_session: AsyncSession) -> None:
@@ -804,7 +805,7 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline  # still offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline  # still offline
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)  # still tracked for next attempt
 
 
@@ -830,7 +831,7 @@ async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.maintenance  # unchanged
+    assert device.operational_state_last_emitted == DeviceOperationalState.maintenance  # unchanged
 
 
 async def test_connectivity_maintenance_disconnect_skipped_silently(
@@ -876,7 +877,7 @@ async def test_connectivity_maintenance_disconnect_skipped_silently(
 
     mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.maintenance
+    assert device.operational_state_last_emitted == DeviceOperationalState.maintenance
 
 
 async def test_connectivity_marks_busy_device_offline(
@@ -917,7 +918,7 @@ async def test_connectivity_marks_busy_device_offline(
     )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
 
 async def test_connectivity_reserved_device_takes_warning_path_not_idle(
@@ -1043,7 +1044,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.maintenance
+    assert device.operational_state_last_emitted == DeviceOperationalState.maintenance
 
     # No connectivity_lost event recorded
     events = (
@@ -1116,7 +1117,7 @@ async def test_disconnect_records_exactly_one_connectivity_lost_event(
     await _run_connectivity_fold(service, db_session)
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.offline
+    assert device.operational_state_last_emitted == DeviceOperationalState.offline
 
     async def connectivity_lost_count() -> int:
         rows = (
@@ -1187,7 +1188,7 @@ async def test_disconnect_of_busy_device_records_connectivity_lost(
     )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.busy  # session mask holds
+    assert device.operational_state_last_emitted == DeviceOperationalState.busy  # session mask holds
 
     rows = (
         (
@@ -1930,7 +1931,7 @@ async def test_healthy_probe_skips_enumeration(db_session: AsyncSession) -> None
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     enumeration.assert_not_awaited()
 
 
@@ -1965,7 +1966,7 @@ async def test_healthy_probe_trumps_enumeration_absence(db_session: AsyncSession
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
 
 
@@ -2111,7 +2112,7 @@ async def test_agent_unreachable_skips_remaining_devices(db_session: AsyncSessio
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
     mock_lifecycle_policy.handle_health_failure.assert_not_awaited()
 
@@ -2142,7 +2143,7 @@ async def test_healthy_non_offline_device_clears_previously_offline_flag(db_sess
         )
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert "dc-001" not in await get_connectivity_control_plane_state(db_session)
 
 
@@ -2241,7 +2242,7 @@ async def test_recommended_action_dispatches_repair_for_available_device(db_sess
 
     dispatch.assert_awaited_once()
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert "repair_attempted" in await _device_event_types(db_session, device.id)
 
 

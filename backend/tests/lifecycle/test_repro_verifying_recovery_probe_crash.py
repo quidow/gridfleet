@@ -120,7 +120,7 @@ async def test_recovery_probe_admits_verifying_and_clears_lease(
     assert result["status"] == "passed"
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state_last_emitted == DeviceOperationalState.available
 
     lease = (
         await db_session.execute(

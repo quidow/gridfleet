@@ -921,7 +921,7 @@ async def test_existing_running_device_verification_can_enter_verifying(
         identity_scope="host",
         os_version="14",
     )
-    device.operational_state = DeviceOperationalState.busy
+    device.operational_state_last_emitted = DeviceOperationalState.busy
     node = AppiumNode(
         device_id=device.id,
         port=4723,

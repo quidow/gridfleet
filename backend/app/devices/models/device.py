@@ -108,6 +108,15 @@ class Device(Base):
         ),
     )
 
+    def __init__(self, **kwargs: object) -> None:
+        # Keep old fixture/import callers source-compatible while the mapped
+        # attribute is renamed. Reads must use the projection helpers; this
+        # alias only seeds the event ledger during construction.
+        legacy_state = kwargs.pop("operational_state", None)
+        if legacy_state is not None:
+            kwargs["operational_state_last_emitted"] = DeviceOperationalState(cast("str", legacy_state))
+        super().__init__(**kwargs)
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pack_id: Mapped[str] = mapped_column(String, nullable=False)
     platform_id: Mapped[str] = mapped_column(String, nullable=False)
@@ -121,7 +130,11 @@ class Device(Base):
     host_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("hosts.id", ondelete="RESTRICT"), nullable=False
     )
-    operational_state: Mapped[DeviceOperationalState] = mapped_column(
+    # Event ledger for the edge detector: the last operational state emitted
+    # as device.operational_state_changed. Never read this to answer the
+    # current state; use derive_operational_state or operational_state_sql.
+    operational_state_last_emitted: Mapped[DeviceOperationalState] = mapped_column(
+        "operational_state_last_emitted",
         Enum(DeviceOperationalState),
         default=DeviceOperationalState.offline,
         nullable=False,

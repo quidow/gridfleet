@@ -121,7 +121,9 @@ async def test_enter_maintenance_records_row_with_operator_reason_even_when_busy
     assert len(rows) == 1
     assert rows[0].details == {"reason": "Battery swap"}
     await db_session.refresh(device)
-    assert device.operational_state is DeviceOperationalState.busy  # axis stays masked; row recorded anyway
+    assert (
+        device.operational_state_last_emitted is DeviceOperationalState.busy
+    )  # axis stays masked; row recorded anyway
 
 
 async def test_reenter_maintenance_updates_reason_without_second_row(
