@@ -8,7 +8,7 @@ from sqlalchemy import inspect, select
 from app.appium_nodes.services.node_viability import device_node_accepting_new_sessions, device_node_is_viable
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.timeutil import now_utc
-from app.devices.models import DeviceIntent
+from app.devices.models import DeviceIntent, ExclusionKind
 from app.devices.schemas.device import DeviceReservationRead
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
@@ -42,7 +42,11 @@ if TYPE_CHECKING:
 
 
 def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int | None:
-    if reservation_entry is None or reservation_entry.excluded_until is None:
+    if (
+        reservation_entry is None
+        or reservation_entry.exclusion_kind != ExclusionKind.cooldown
+        or reservation_entry.excluded_until is None
+    ):
         return None
     remaining = int((reservation_entry.excluded_until - now_utc()).total_seconds())
     return max(0, remaining)

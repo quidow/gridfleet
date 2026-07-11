@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation, ExclusionKind
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -559,6 +559,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC) - timedelta(seconds=120),
         excluded_until=datetime.now(UTC) - timedelta(seconds=1),
@@ -621,6 +622,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC),
         excluded_until=datetime.now(UTC) + timedelta(seconds=300),

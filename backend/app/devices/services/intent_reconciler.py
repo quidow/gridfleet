@@ -22,6 +22,7 @@ from app.devices.models import (
     DeviceEventType,
     DeviceIntent,
     DeviceReservation,
+    ExclusionKind,
 )
 from app.devices.services.claims import reservation_active
 from app.devices.services.decision import (
@@ -166,12 +167,16 @@ async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime)
     reservation_run_id = None
     cooldown_active = False
     cooldown_reason: str | None = None
-    if entry is not None and not (entry.excluded and entry.excluded_until is None):
+    if entry is not None and entry.exclusion_kind != ExclusionKind.exclusion:
         # An indefinite (health-failure) exclusion removes the device from run
         # routing entirely; a timed exclusion (cooldown) keeps the run bound
         # but blocks new sessions — both verbatim from the retired synthesis.
         reservation_run_id = entry.run_id
-        if entry.excluded and entry.excluded_until is not None and entry.excluded_until > now:
+        if (
+            entry.exclusion_kind == ExclusionKind.cooldown
+            and entry.excluded_until is not None
+            and entry.excluded_until > now
+        ):
             cooldown_active = True
             cooldown_reason = entry.exclusion_reason
     withdrawal = WithdrawalFacts.from_device(device)

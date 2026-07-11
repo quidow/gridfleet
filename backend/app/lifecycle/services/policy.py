@@ -12,7 +12,7 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEventType, DeviceOperationalState
+from app.devices.models import Device, DeviceEventType, DeviceOperationalState, ExclusionKind
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
 from app.devices.services.event import record_event
@@ -753,7 +753,12 @@ class LifecyclePolicyService:
             return False
         if not run_reservation_service.reservation_entry_is_excluded(entry):
             return False
-        if entry is not None and entry.excluded_until is not None and entry.excluded_until > now():
+        if (
+            entry is not None
+            and entry.exclusion_kind == ExclusionKind.cooldown
+            and entry.excluded_until is not None
+            and entry.excluded_until > now()
+        ):
             return False  # active cooldown — intentional backoff, leave it
         await self._actions.restore_run_if_needed(db, device, run, entry, reason=reason, source="self_heal")
         return True
