@@ -661,6 +661,16 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         device_operational_state=DeviceOperationalState.offline,
         with_node=True,
     )
+    # Read-time projection: the leftover-node park is written by the
+    # disconnect-record path (device_checks_healthy -> False -> connectivity
+    # park), which the fold reaches only for a device that is not ALREADY
+    # offline (line ~829 short-circuits an already-offline device). The offline
+    # seed stamps session_viability_status="failed"; clear it so the device
+    # derives available until the disconnect records it offline — the scenario
+    # this test exercises (pre-projection it derived available from a
+    # materialized column too, then this fold flipped it offline).
+    device.session_viability_status = None
+    await db_session.commit()
 
     with (
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),

@@ -44,7 +44,7 @@ async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pyte
         )
 
     assert "verified_at" in prepared
-    assert prepared["operational_state"] == DeviceOperationalState.available
+    assert prepared["operational_state_last_emitted"] == DeviceOperationalState.available
     assert ensure.await_count == 2
     db.rollback.assert_awaited_once()
 

@@ -11,12 +11,16 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _persisted_device(db: AsyncSession, host_id: str) -> Device:
+    # Seed the pack so a verified device derives `available` (is_ready_for_use
+    # consults the pack manifest — an unseeded pack yields setup_required/offline).
+    await seed_test_packs(db)
     device = await create_device_record(
         db,
         host_id=host_id,

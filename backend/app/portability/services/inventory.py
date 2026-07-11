@@ -16,8 +16,10 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import Select, select
 from sqlalchemy.orm import selectinload
 
+from app.core.timeutil import now_utc
 from app.devices.models import Device
 from app.devices.services.service import _apply_device_filters
+from app.devices.services.state import operational_state_sql
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -67,8 +69,12 @@ def _host_column_value(device: Device, v: str) -> object:
     return device.host.hostname if device.host else None
 
 
-def _column_value(device: Device, column: InventoryColumn) -> object:
+def _column_value(device: Device, column: InventoryColumn, operational_state: str) -> object:  # noqa: PLR0911 - flat column dispatch, one return per column family
     v = column.value
+    if v == "operational_state":
+        # Read-time projection (WS-7.2): the value is computed by the SQL twin in
+        # the streaming query, not read off a stored column.
+        return operational_state
     if v in ("host.id", "host.hostname"):
         return _host_column_value(device, v)
     if v == "identity.scheme":
@@ -102,10 +108,10 @@ def _normalize_scalar(raw: object) -> object:
     return raw
 
 
-def _row_to_json_dict(device: Device, columns: list[InventoryColumn]) -> dict[str, Any]:
+def _row_to_json_dict(device: Device, columns: list[InventoryColumn], operational_state: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for col in columns:
-        raw = _column_value(device, col)
+        raw = _column_value(device, col, operational_state)
         if isinstance(raw, (dict, list)):
             _nested_set(out, col.value, raw)
         else:
@@ -113,10 +119,10 @@ def _row_to_json_dict(device: Device, columns: list[InventoryColumn]) -> dict[st
     return out
 
 
-def _row_to_csv_values(device: Device, columns: list[InventoryColumn]) -> list[str]:
+def _row_to_csv_values(device: Device, columns: list[InventoryColumn], operational_state: str) -> list[str]:
     out: list[str] = []
     for col in columns:
-        raw = _column_value(device, col)
+        raw = _column_value(device, col, operational_state)
         if raw is None:
             out.append("")
             continue
@@ -131,11 +137,13 @@ def _row_to_csv_values(device: Device, columns: list[InventoryColumn]) -> list[s
     return out
 
 
-def _base_query(filters: DeviceQueryFilters | None) -> Select[tuple[Device]]:
+def _base_query(filters: DeviceQueryFilters | None) -> Select[tuple[Device, str]]:
     stmt: Select[tuple[Device]] = select(Device).options(selectinload(Device.host)).order_by(Device.created_at.asc())
     if filters is not None:
         stmt = cast("DeviceListStatement", _apply_device_filters(stmt, filters))
-    return stmt
+    # operational_state is a read-time projection (WS-7.2): compute it in-SQL via
+    # the twin so each streamed row carries its derived state without a stored column.
+    return stmt.add_columns(operational_state_sql(now=now_utc()).label("operational_state"))
 
 
 class InventoryExportService:
@@ -153,8 +161,8 @@ class InventoryExportService:
         yield "["
         first = True
         async for partition in result.partitions(_CHUNK):
-            for (device,) in partition:
-                payload = _row_to_json_dict(device, columns)
+            for device, operational_state in partition:
+                payload = _row_to_json_dict(device, columns, operational_state)
                 chunk = json.dumps(payload, ensure_ascii=False)
                 yield ("" if first else ",") + chunk
                 first = False
@@ -177,8 +185,8 @@ class InventoryExportService:
         stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
         result = await session.stream(stmt)
         async for partition in result.partitions(_CHUNK):
-            for (device,) in partition:
-                writer.writerow(_row_to_csv_values(device, columns))
+            for device, operational_state in partition:
+                writer.writerow(_row_to_csv_values(device, columns, operational_state))
             yield buffer.getvalue()
             buffer.seek(0)
             buffer.truncate(0)

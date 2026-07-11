@@ -362,6 +362,14 @@ class SessionViabilityService:
                     sources=[verification_intent_source(device.id)],
                 )
 
+            # Derive the post-probe state inline: the probe created and deleted a
+            # Grid session but left no running Session row, and a recovery probe
+            # just revoked the verification lease. This reconcile advances the
+            # operational-state ledger (available on pass, offline on genuine
+            # failure) and emits the transition now — without it the device reads
+            # `verifying`/stale until the backstop reconciler scan.
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+
             await db.commit()
             if config_changed:
                 await db.commit()

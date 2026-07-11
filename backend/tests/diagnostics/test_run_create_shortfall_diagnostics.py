@@ -75,7 +75,10 @@ async def test_shortfall_409_reports_operational_state_breakdown(
         db_session,
         host_id=default_host_id,
         name="shortfall-offline",
+        # operational_state is a read-time projection: a failed viability fact
+        # makes the verified device derive ``offline`` for the breakdown count.
         operational_state=DeviceOperationalState.offline,
+        session_viability_status="failed",
         verified=True,
     )
     await db_session.commit()

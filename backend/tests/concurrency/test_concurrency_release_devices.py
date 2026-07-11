@@ -103,12 +103,15 @@ async def test_release_devices_does_not_stomp_offline_writer(
             await verify.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
         ).scalar_one()
 
-    assert reservation_row.released_at is not None
-    derived = await derive_operational_state(verify, device_row, now=datetime.now(UTC))
-    assert derived in {
-        DeviceOperationalState.available,
-        DeviceOperationalState.offline,
-    }
+        assert reservation_row.released_at is not None
+        # derive_operational_state issues queries (readiness/pack lookup), so it must
+        # run while `verify` is open — outside the context the session's transaction
+        # is never closed and its idle connection deadlocks the teardown DROP SCHEMA.
+        derived = await derive_operational_state(verify, device_row, now=datetime.now(UTC))
+        assert derived in {
+            DeviceOperationalState.available,
+            DeviceOperationalState.offline,
+        }
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -199,9 +202,6 @@ async def test_release_devices_serializes_with_concurrent_writer(
         "is_ready_for_use_async; the mock injection point is no longer valid"
     )
 
-    async with db_session_maker() as verify:
-        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
-
     # Without FOR UPDATE in _release_devices: the releaser reads "reserved",
     # the stomper commits "offline", then the releaser commits "available" —
     # stomping the offline.  The assertion fails on "available".
@@ -209,7 +209,12 @@ async def test_release_devices_serializes_with_concurrent_writer(
     # After Task 6 adds SELECT FOR UPDATE: the releaser holds the row lock,
     # the stomper's UPDATE blocks until the releaser commits, so the final
     # committed state (after both transactions complete) is "offline".
-    derived = await derive_operational_state(verify, device_row, now=datetime.now(UTC))
+    #
+    # derive_operational_state issues queries, so it must run while `verify` is open —
+    # outside the context the session's idle transaction deadlocks the teardown.
+    async with db_session_maker() as verify:
+        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+        derived = await derive_operational_state(verify, device_row, now=datetime.now(UTC))
     assert derived == DeviceOperationalState.offline, (
         f"Expected offline but got {derived.value} — "
         "_release_devices stomped the concurrent offline write (missing row lock)"

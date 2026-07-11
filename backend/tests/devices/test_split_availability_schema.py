@@ -3,7 +3,8 @@
 Uses a dedicated Alembic-driven engine (NOT the metadata.create_all-based
 db_session fixture) so this guards the migration, not the model.
 
-After migration, `devices` has the `operational_state` column, the legacy
+After migration, `devices` has the `operational_state_last_emitted` ledger
+column (renamed from `operational_state` by WS-7.2), the legacy
 `availability_status` and `hold` columns are gone, and the enum types
 `deviceavailabilitystatus` and `devicehold` are dropped from Postgres.
 """
@@ -73,10 +74,11 @@ async def test_devices_has_operational_state_and_hold(alembic_session: AsyncSess
     def _inspect(sync_conn: Connection) -> None:
         insp = inspect(sync_conn)
         cols = {c["name"]: c for c in insp.get_columns("devices")}
-        assert "operational_state" in cols, "operational_state must exist"
+        assert "operational_state_last_emitted" in cols, "operational_state_last_emitted ledger must exist"
+        assert "operational_state" not in cols, "operational_state must be renamed to the ledger"
         assert "hold" not in cols, "hold must be dropped"
         assert "availability_status" not in cols, "Legacy availability_status must be dropped"
-        assert cols["operational_state"]["nullable"] is False
+        assert cols["operational_state_last_emitted"]["nullable"] is False
 
     await alembic_session.run_sync(lambda s: _inspect(s.connection()))
 

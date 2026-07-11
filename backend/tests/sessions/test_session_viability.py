@@ -293,7 +293,9 @@ async def test_recovery_session_viability_probe_allows_offline_device(
 
     assert result["status"] == "passed"
     await db_session.refresh(loaded_device)
-    assert loaded_device.operational_state_last_emitted is DeviceOperationalState.offline
+    # A passed recovery probe on a healthy node derives (and emits) available:
+    # the post-probe reconcile advances the ledger, matching pre-projection behavior.
+    assert loaded_device.operational_state_last_emitted is DeviceOperationalState.available
 
 
 async def test_run_session_viability_probe_uses_running_avd_active_target(

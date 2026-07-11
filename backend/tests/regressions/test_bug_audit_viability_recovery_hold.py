@@ -91,15 +91,18 @@ async def test_recovery_probe_on_non_recoverable_state_raises_not_permitted(
     client: AsyncClient,
 ) -> None:
     """A recovery probe against a device that is NOT ``offline``/``verifying`` (here
-    ``busy``) is rejected with the typed ``SessionViabilityProbeNotPermittedError`` (a
-    ``ValueError`` subclass, so manual HTTP callers still surface 409). The distinct type
-    lets the recovery loop treat the gate rejection as a skip, not a health failure."""
+    ``maintenance``) is rejected with the typed ``SessionViabilityProbeNotPermittedError``
+    (a ``ValueError`` subclass, so manual HTTP callers still surface 409). The distinct
+    type lets the recovery loop treat the gate rejection as a skip, not a health failure."""
     host = await create_host(client)
     device = await create_device(
         db_session,
         host_id=uuid.UUID(host["id"]),
-        name="viability-recovery-busy",
-        operational_state=DeviceOperationalState.busy,
+        name="viability-recovery-maintenance",
+        # operational_state is a read-time projection: a maintenance_reason fact
+        # makes the device derive ``maintenance`` — a non-recoverable state that
+        # is not in the recovery-probe-admissible set (offline/verifying).
+        lifecycle_policy_state={"maintenance_reason": "operator maintenance"},
         verified=True,
     )
     await db_session.commit()

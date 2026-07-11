@@ -43,7 +43,7 @@ async def test_event_dispatches_after_commit(
 
     avail = [(n, p) for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert len(avail) == 1, f"Expected one event after commit; got {avail}"
-    assert avail[0][1]["new_operational_state"] == "available"
+    assert avail[0][1]["new_operational_state"] == "offline"
 
 
 async def test_event_dropped_on_rollback(
@@ -84,4 +84,4 @@ async def test_multiple_events_dispatch_in_queue_order(
     assert [p["device_name"] for p in avail] == ["Device multi-a", "Device multi-b"], (
         f"Events must dispatch in queue order; got {[p['device_name'] for p in avail]}"
     )
-    assert all(p["new_operational_state"] == "available" for p in avail)
+    assert all(p["new_operational_state"] == "offline" for p in avail)
