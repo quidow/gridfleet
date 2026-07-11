@@ -213,12 +213,12 @@ class SessionViabilityService:
         device: Device,
         *,
         checked_by: SessionViabilityCheckedBy,
-    ) -> DeviceOperationalState:
+    ) -> None:
         locked = await device_locking.lock_device(db, device.id)
         # Re-validate can_probe under the row lock. The pre-lock check
         # ran on an unlocked snapshot, so a concurrent allocation (a new
-        # reservation) or a writer of ``Device.operational_state``
-        # may have changed the state between the gate and this lock.
+        # reservation) or a fact write may have changed the derived
+        # state between the gate and this lock.
         # Raise to match the pre-lock branch's contract: manual callers
         # surface as HTTP 409, recovery callers retry via the policy
         # loop. Writing a ``failed`` viability record here would bump
@@ -234,9 +234,7 @@ class SessionViabilityService:
             raise SessionViabilityProbeNotPermittedError(
                 "Session viability checks only run for available devices (state changed concurrently)"
             )
-        previous_state = locked_state
         await db.commit()
-        return previous_state
 
     async def _escalate_probe_failure(
         self,
