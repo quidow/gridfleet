@@ -5,3 +5,7 @@ Additions require justification in the PR description.
 
 # BackgroundLoop._on_cycle_end framework-hook parameter consumed by subclasses.
 elapsed_seconds  # noqa: F821
+
+# Protocol compatibility keyword retained for callers; the projection no longer
+# needs this flag to trigger an inline reconcile.
+mark_offline

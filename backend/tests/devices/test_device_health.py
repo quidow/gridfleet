@@ -473,7 +473,7 @@ async def test_apply_node_state_transition_recovery_reconciles(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """error → running is a column change and must reconcile (restore path)."""
+    """error → running updates durable node health; projection reads stay fresh."""
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
@@ -502,7 +502,7 @@ async def test_apply_node_state_transition_recovery_reconciles(
         db, device, health_running=True, health_state=None, mark_offline=False
     )
     await db.commit()
-    assert len(calls) >= 1  # recovery transition reconciled
+    assert calls == []
 
 
 @pytest.mark.db
@@ -511,8 +511,7 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A caller that makes no health statement (UNSET, e.g. mark_node_started) must
-    still reconcile even though the public verdict did not change."""
+    """A caller that makes no health statement leaves projection work to the scan."""
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
@@ -540,7 +539,7 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
     # No health_running/health_state args → UNSET sentinel.
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(db, device, mark_offline=False)
     await db.commit()
-    assert len(calls) >= 1  # UNSET caller still reconciles
+    assert calls == []
 
 
 @pytest.mark.db
@@ -549,7 +548,7 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
     db_with_device: tuple[AsyncSession, Device],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """mark_offline=True must always reconcile even when health columns are unchanged."""
+    """mark_offline=True records the observation; projection is read-time."""
     db, device = db_with_device
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
@@ -574,13 +573,13 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
 
     monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
 
-    # Health columns are unchanged (True/None == True/None), but mark_offline=True
-    # must still force reconcile regardless.
+    # Health columns are unchanged (True/None == True/None); no inline reconcile
+    # is needed for the read-time projection.
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db, device, health_running=True, health_state=None, mark_offline=True
     )
     await db.commit()
-    assert len(calls) >= 1  # mark_offline=True always reconciles
+    assert calls == []
 
 
 async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:

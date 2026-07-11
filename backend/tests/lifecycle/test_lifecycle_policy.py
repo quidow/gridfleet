@@ -102,7 +102,7 @@ def _derive_state_for_unit_objects(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _derive(db: object, device: object, *, now: object) -> DeviceOperationalState:
         if isinstance(device, Device):
             return await real_derive(db, device, now=now)  # type: ignore[arg-type]
-        return device.operational_state_last_emitted  # type: ignore[union-attr,no-any-return]
+        return device.operational_state  # type: ignore[union-attr,no-any-return]
 
     monkeypatch.setattr(lifecycle_policy_module, "derive_operational_state", _derive)
     monkeypatch.setattr("app.lifecycle.services.actions.derive_operational_state", _derive)
@@ -1756,8 +1756,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         "reservation_entry_is_excluded",
         lambda _entry: True,
     )
-    # After Task 10: _MACHINE and ready_operational_state removed from lifecycle_policy.
-    # The code now calls IntentService(db).reconcile_now(device.id, ...).
+    # The busy branch is now projection-only; no inline reconcile is needed.
     mark_dirty = AsyncMock()
     monkeypatch.setattr(
         lifecycle_policy_module.IntentService,
@@ -1766,7 +1765,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     )
 
     assert await svc.attempt_auto_recovery(db, busy, source="checks", reason="reconnected") is True
-    mark_dirty.assert_awaited()
+    mark_dirty.assert_not_awaited()
 
 
 async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
@@ -1871,8 +1870,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
-    # After Task 10: ready_operational_state and _MACHINE removed from lifecycle_policy.
-    # reconcile_now is called instead.
+    # Read-time projection removes the need for an inline reconcile here.
     mark_dirty2 = AsyncMock()
     monkeypatch.setattr(lifecycle_policy_module.IntentService, "reconcile_now", mark_dirty2)
     monkeypatch.setattr(LifecycleIncidentService, "record_lifecycle_incident", AsyncMock())
@@ -1913,8 +1911,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )  # type: ignore[arg-type]
     assert db.added
     IntentService.register_intents_and_reconcile.assert_awaited()
-    # After Task 10: _MACHINE removed; reconcile_now is called instead.
-    mark_dirty2.assert_awaited()
+    mark_dirty2.assert_not_awaited()
     # wait_for_node_running must fire before run_session_viability_probe; probing
     # before agent start-up yields false negatives.
     assert probe_order == ["wait", "probe"]

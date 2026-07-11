@@ -114,6 +114,7 @@ class DeviceHealthService:
         health_state: str | None | UnsetType = UNSET,
         mark_offline: bool = True,
     ) -> None:
+        del mark_offline
         locked = await _lock(db, device)
         if locked is None:
             return

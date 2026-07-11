@@ -2,50 +2,38 @@
 
 ## Writer model (Phase 2B and later)
 
-`Device.operational_state` is **derived** by the `device_intent_reconciler` loop
-(`app/devices/services/intent_reconciler.py`) — the authoritative writer for every
-observation-driven transition and for the normal verification pass / update-failure
-terminals.  `operational_state` is a 5-value enum: `available`, `busy`, `verifying`,
-`offline`, `maintenance`.  Reservation is an orthogonal concern surfaced as the
-`is_reserved` flag computed from the `device_reservations` table; there is no `hold`
+`operational_state` is a read-time projection over durable facts. The pure evaluator
+and its SQL twin live in `app/devices/services/state.py`; the five values are
+`available`, `busy`, `verifying`, `offline`, and `maintenance`. Reservation is an
+orthogonal `is_reserved` flag computed from `device_reservations`; there is no `hold`
 column.
+
+`Device.operational_state_last_emitted` is only the event ledger: it records the last
+projected value emitted as `device.operational_state_changed`. It is not a source of
+truth for current state and is written only by
+`emit_operational_state_transition` in the locked intent reconciler path.
 
 ### Derivation flow
 
-1. **Observation loops** (`device_connectivity`, `node_health`, `session_sync`,
-   `session_viability`) write durable facts — health flags, session rows,
-   `maintenance_reason` in `lifecycle_policy_state` — and reconcile inline only
-   when the criterion below holds. Anything that skips the inline reconcile is
-   re-derived by the reconciler's full scan, which runs every
-   reconciler tick (5 s plumbing constant) as the backstop.
-2. **Reconciler tick** calls `apply_derived_state` in
-   `app/devices/services/state.py`, which:
+1. **Fact writers** (`device_connectivity`, `node_health`, `session_sync`,
+   `session_viability`, and lifecycle services) write durable health, session,
+   intent, and maintenance facts. Reads derive state immediately from those facts;
+   the intent reconciler scan remains the backstop every 5 seconds.
+2. **Read paths** call `derive_operational_state` / `derive_operational_states`, or
+   use the SQL predicates and CASE for filtering, counts, and ordering. They:
    - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
      intent, reservation row, maintenance flag, readiness, stop-in-flight).
    - Evaluates `evaluate_operational_state(facts)` → `DeviceOperationalState`.
-   - Writes the new value through `set_operational_state`
-     (`app.devices.services.state`) only when the derived value differs from the
-     persisted column.
-   - Emits the mapped event if the value actually changed.
-
-`apply_derived_state` (invoked by `reconcile_device` / `IntentService.reconcile_now` /
-`IntentService.*_and_reconcile`) is the **only** runtime writer of `operational_state`.
-There are no direct (non-reconciler) callers of `set_operational_state` left: observation
-and lifecycle sites — host-offline cascade, run release, session registration, verification
-entry — write durable facts (health flags, session rows, `maintenance_reason`,
-verification-lease intents) and trigger an inline reconcile via `IntentService.reconcile_now` /
-`register_intents_and_reconcile`, so the state is still written synchronously before
-commit, just via derivation. Device-creation paths still set the initial value at
-construction time (`app.devices.services.write`). The static test
-`tests/contracts/test_no_direct_device_state_writes.py` enforces both rules with a
-call-site scan and a table-driven attribute-assignment scan.
+   - The SQL form uses the same masking order and shared claim predicates.
+3. **The edge detector** runs in the locked intent reconciler scan, compares the
+   computed value with `operational_state_last_emitted`, queues one transition event
+   on change, and advances the ledger. A skipped event retries on the next scan.
 
 ### When to reconcile inline (criterion)
 
-The full scan re-derives every device every reconciler tick (5 s plumbing constant)
-tick (default 5 s), so an inline `reconcile_now` buys at most one tick of
-freshness. Add one only when at least one of these holds — otherwise write the
-fact, commit, and rely on the scan:
+The full scan runs every 5 seconds, but inline reconciliation is now justified only
+when it changes agent-visible desired state or is required for an atomic intent
+operation. Otherwise write the fact, commit, and rely on the scan:
 
 1. **Read-your-writes** — the same flow reads the derived state or desired node
    columns after the write (e.g. `update_session_status` re-locks and acts on
@@ -55,23 +43,16 @@ fact, commit, and rely on the scan:
 2. **Intent registration/revocation** — `register_intents_and_reconcile` /
    `revoke_intents_and_reconcile` are one atomic operation under one device-row
    lock; never split the register from its reconcile.
-3. **Tick-visible latency** — a human or the router observes the derived state
-   within one tick: allocation claim/fail, session terminal transitions, run
-   release/exclusion/cooldown, operator mutations (maintenance, node
-   start/stop), and observation writes that gate allocation (a node observed
-   stopped; a failed health or viability verdict).
-
-Steady-state and below-threshold observation writes deliberately defer to the
-scan — see the asymmetric reconcile-on-failure/defer-on-success pattern and its
-comments in `app/devices/services/health.py`. Existing inline call sites carry
-comments naming what the reconcile derives; give a new call site a comment
-naming which arm of this criterion it satisfies.
+3. **Read-your-writes for agent state** — a flow immediately consumes desired
+   node fields or must make intent registration/revocation atomic. Current-state
+   presentation never needs an inline reconcile.
 
 ### Derived axes at a glance
 
 | Axis | Derived from |
 |------|-------------|
 | `operational_state` | Session row, verification intent, appium-node stop-in-flight, device readiness, `maintenance_reason` in `lifecycle_policy_state` |
+| `operational_state_last_emitted` | Last state transition event emitted by the reconciler edge detector |
 | `is_reserved` (computed) | Existence of an active `DeviceReservation` row — not a column on `Device` |
 
 ### Reading `operational_state`
@@ -89,18 +70,17 @@ fact. A busy device can therefore still be in maintenance.
 
 ### Key rules
 
-- **Observation loops MUST NOT write `operational_state` directly.**
-  Instead they write facts and call `reconcile_now` (or let the every-tick
-  reconciler scan re-derive) so the reconciler owns the state write.
+- **Observation loops MUST NOT write `operational_state` directly.** They write
+  facts; read paths derive the projection and the reconciler owns only the event ledger.
 - **Maintenance mode** is driven by the `maintenance_reason` signal in
   `lifecycle_policy_state`.  `enter_maintenance` / `exit_maintenance` write to that
   JSON column; the reconciler derives `operational_state=maintenance` from that flag.
 - **Reservation** is derived from the existence of an active `DeviceReservation` row
   and exposed as the computed `is_reserved` field on read DTOs — there is no `hold`
   column.
-- **Direct attribute assignment** (`device.operational_state = ...`) is forbidden
-  outside the sanctioned writers. The static contract test scans production code
-  for assignments to every protected column.
+- **Direct attribute assignment** to `operational_state_last_emitted` is forbidden
+  outside the edge detector and creation seed. The static contract test scans
+  production code for assignments to every protected column.
 
 ### Sanctioned writers
 
@@ -112,7 +92,7 @@ contract test for the full per-column enumeration.
 
 | Column | Sanctioned module |
 |--------|------------------|
-| `Device.operational_state` | `app.devices.services.state` (called by `apply_derived_state`); `app.devices.services.write` (initial device creation only) |
+| `Device.operational_state_last_emitted` | `app.devices.services.state` (edge detector); `app.devices.services.write` (initial creation seed) |
 | `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` |
 | `AppiumNode.desired_state` / `desired_port` | `app.appium_nodes.services.desired_state_writer` |
 | `AppiumNode.restart_requested_at` (restart watermark) | `app.appium_nodes.services.desired_state_writer` (no clearing protocol — a satisfied watermark is inert) |
@@ -131,7 +111,7 @@ change as the production write.
 
 ### Row locking
 
-Any code that writes `Device.operational_state` or `Device.lifecycle_policy_state`
+Any code that writes `Device.operational_state_last_emitted` or `Device.lifecycle_policy_state`
 MUST acquire the row lock first via `app.devices.locking.lock_device` (or
 `lock_devices` for batch) inside the same transaction.  Routers should use `get_device_for_update_or_404` for state-mutating
 endpoints.  Background loops commit per device after the locked write window.  The
