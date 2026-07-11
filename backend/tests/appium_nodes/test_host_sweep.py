@@ -108,59 +108,6 @@ def test_stage_due_divisor_rounding() -> None:
     assert stage_due(5, base_interval=15.0, stage_interval=60.0) is False
 
 
-async def _run_sweep_with_cooldown_recorder(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-    calls: list[str],
-    *,
-    alive: bool,
-) -> None:
-    if alive:
-        db_host.last_heartbeat = now_utc()
-    else:
-        db_host.last_heartbeat = now_utc() - timedelta(minutes=10)
-    await db_session.commit()
-    monkeypatch.setattr(heartbeat_module, "_ping_agent", AsyncMock(return_value=_alive_ping()))
-
-    async def expire_cooldowns(_db: AsyncSession) -> None:
-        calls.append("expire_cooldowns")
-
-    await run_host_sweep_once(
-        db_session,
-        heartbeat=_heartbeat_service(settings=FakeSettingsReader(), session_factory=db_session_maker),
-        reconciler=_reconciler_service(settings=FakeSettingsReader(), session_factory=db_session_maker),
-        settings=FakeSettingsReader(),
-        session_factory=db_session_maker,
-        expire_cooldowns=expire_cooldowns,
-    )
-
-
-async def test_expire_cooldowns_runs_every_cycle(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    await _run_sweep_with_cooldown_recorder(db_session, db_session_maker, db_host, monkeypatch, calls, alive=True)
-
-    assert calls == ["expire_cooldowns"]
-
-
-async def test_expire_cooldowns_runs_with_zero_alive_hosts(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    await _run_sweep_with_cooldown_recorder(db_session, db_session_maker, db_host, monkeypatch, calls, alive=False)
-
-    assert calls == ["expire_cooldowns"]
-
-
 async def test_probe_stage_gated_by_partition_probe_interval(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

@@ -18,20 +18,18 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType, ExclusionKind
+from app.devices.models import Device, DeviceOperationalState, DeviceType
 from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
-from app.devices.services.claims import device_is_reserved, reservation_active
+from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.runs.models import RunState
 from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session
 from app.sessions.probe_inflight import is_probe_inflight
@@ -967,43 +965,4 @@ class ConnectivityService:
                 connected_targets_by_host=connected_targets_by_host,
             )
         metrics.record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
-        await db.commit()
-
-    async def check_expired_cooldowns(self, db: AsyncSession) -> None:
-        """GC expired deny intents, then clear elapsed reservation-row cooldowns."""
-        # Bulk-delete expired intent rows; the affected devices re-derive on the
-        # next intent reconciler scan tick (<= general.intent_reconcile_interval_sec).
-        await _gc_expired_intents(db)
-        now = now_utc()
-        # Cooldown TTL-clear. cooldown_device writes the cooldown window to the
-        # active reservation row as the source of truth (deny intents are derived
-        # from it); this sweep is the only path that resets the exclusion fields
-        # once excluded_until elapses. Indefinite health exclusions
-        # (exclusion_kind = 'exclusion') are deliberately not matched.
-        expired_cooldowns = (
-            (
-                await db.execute(
-                    select(DeviceReservation)
-                    .where(DeviceReservation.exclusion_kind == ExclusionKind.cooldown)
-                    .where(DeviceReservation.excluded_until < now)
-                    .where(reservation_active())
-                    .options(selectinload(DeviceReservation.device), selectinload(DeviceReservation.run))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for entry in expired_cooldowns:
-            if entry.run is not None and entry.run.state in (RunState.completed, RunState.cancelled, RunState.failed):
-                continue
-            entry.excluded = False
-            entry.exclusion_kind = None
-            entry.exclusion_reason = None
-            entry.excluded_at = None
-            entry.excluded_until = None
-            # ``cooldown_count`` is sticky across TTL clears. Zeroing here
-            # makes the escalation threshold unreachable for slow-burn flakes
-            # where each cooldown TTL expires before the next failure lands.
-            # Only ``restore_device_to_run`` (operator-driven) resets the counter.
-            await reconcile_device(db, entry.device_id, publisher=self._publisher)
         await db.commit()

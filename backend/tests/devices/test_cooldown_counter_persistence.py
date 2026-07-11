@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceReservation, ExclusionKind
+from app.devices.services.intent_reconciler import _clear_elapsed_cooldowns
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_lifecycle_failures import RunFailureService
@@ -96,7 +97,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     assert reservation.excluded is True
 
     # Simulate the cooldown TTL elapsing by backdating the reservation row's
-    # exclusion bounds, then run the connectivity sweep that clears expired
+    # exclusion bounds, then run the intent reconciler pass that clears expired
     # timed exclusions. The reservation should be un-excluded, but
     # cooldown_count must stay sticky (cleared exclusion, not restore).
     past = datetime.now(UTC) - timedelta(seconds=1)
@@ -107,15 +108,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     reservation.excluded_until = past
     await db_session.commit()
 
-    from app.devices.services.connectivity import ConnectivityService
-
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=AsyncMock(),
-    ).check_expired_cooldowns(db_session)
+    await _clear_elapsed_cooldowns(db_session, publisher=event_bus)
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False
@@ -164,25 +157,22 @@ async def test_restore_device_to_run_resets_cooldown_counter(db_session: AsyncSe
     assert reservation.cooldown_count == 0
 
 
-async def test_expired_cooldown_sweep_preserves_counter(
+async def test_expired_cooldown_preserves_counter(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression: ``check_expired_cooldowns`` (the cooldown TTL-clear sweep)
-    must not zero ``cooldown_count``.
+    """Regression: cooldown TTL clearing must not zero ``cooldown_count``.
 
     Symptom seen in production: operators set escalation threshold = 3, ran a
     long test run, devices accrued 5/6/11 cooldowns yet never escalated to
-    maintenance. Each TTL window expired between cooldowns; the connectivity
-    TTL-clear sweep was finding those rows and resetting the
+    maintenance. Each TTL window expired between cooldowns; the TTL-clear
+    TTL-clear pass was finding those rows and resetting the
     counter back to 0, so ``cooldown_device``'s ``cooldown_count_after >=
     threshold`` check could never fire on subsequent increments.
 
     Design contract: the counter persists across exclusion clears. Only
     operator-driven ``restore_device_to_run`` resets it.
     """
-    from app.devices.services.connectivity import ConnectivityService
-
     device = await create_device(db_session, host_id=db_host.id, name="legacy-sweep-no-reset")
     await _seed_node(db_session, device.id)
     await create_reserved_run(db_session, name="legacy-sweep-no-reset-run", devices=[device])
@@ -197,17 +187,10 @@ async def test_expired_cooldown_sweep_preserves_counter(
     reservation.cooldown_count = 2
     await db_session.commit()
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=AsyncMock(),
-    ).check_expired_cooldowns(db_session)
+    await _clear_elapsed_cooldowns(db_session, publisher=event_bus)
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False
     assert reservation.cooldown_count == 2, (
-        "legacy expired-cooldown sweep must not zero the counter — "
-        "escalation threshold must remain reachable across flakes"
+        "expired-cooldown pass must not zero the counter — escalation threshold must remain reachable across flakes"
     )

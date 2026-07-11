@@ -1,6 +1,5 @@
-"""The silence detector: host liveness edges from status-push recency, a
-cadence-gated partition-probe diagnostic, and cooldown expiry after the
-fan-out.
+"""The silence detector: host liveness edges from status-push recency and a
+cadence-gated partition-probe diagnostic.
 
 Everything observational moved to the push ingest path (WS-11.1): restart
 ingest, appium-node convergence, and the fact folds run at push time in
@@ -23,7 +22,6 @@ from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,7 +48,6 @@ async def run_host_sweep_once(
     reconciler: ReconcilerProtocol,
     settings: SettingsReader,
     session_factory: SessionFactory,
-    expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     cycle_index: int = 0,
 ) -> None:
     """Fetch and process one shared agent-health observation per host."""
@@ -88,17 +85,6 @@ async def run_host_sweep_once(
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
-    if expire_cooldowns is not None:
-        # DB-only cleanup with no push section; must run even with zero alive
-        # hosts. Every cycle (~10 s) instead of the old 60 s stage — earlier
-        # cooldown expiry is benign, and the intent reconciler GCs expired
-        # intents on its own tick anyway.
-        await db.commit()
-        try:
-            await expire_cooldowns(db)
-        except Exception:
-            logger.exception("host_sweep_cooldown_pass_failed")
-
 
 class HostSweepLoop(BackgroundLoop):
     """Leader-owned shared host-observation loop."""
@@ -110,10 +96,8 @@ class HostSweepLoop(BackgroundLoop):
         self,
         *,
         services: AppiumNodeServices,
-        expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     ) -> None:
         self._services = services
-        self._expire_cooldowns = expire_cooldowns
         self._cycle = 0
 
     @property
@@ -130,7 +114,6 @@ class HostSweepLoop(BackgroundLoop):
             reconciler=self._services.reconciler,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
-            expire_cooldowns=self._expire_cooldowns,
             cycle_index=self._cycle,
         )
 

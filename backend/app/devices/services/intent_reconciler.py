@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import NoResultFound
+from sqlalchemy.orm import selectinload
 
 from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState
@@ -35,6 +36,7 @@ from app.devices.services.decision import (
 from app.devices.services.event import record_event
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
+from app.runs.models import RunState
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -112,6 +114,13 @@ async def run_device_intent_reconciler_once(
     pool: AgentHttpPool | None = None,
 ) -> None:
     await _gc_expired_intents(db)
+    try:
+        await _clear_elapsed_cooldowns(db, publisher=publisher)
+    except Exception:
+        # Same containment the host_sweep venue gave this pass: a failing
+        # cooldown clear must not block this tick's full reconcile scan.
+        logger.exception("intent_reconciler_cooldown_clear_failed")
+        await db.rollback()
     await _reconcile_all_devices(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool)
 
 
@@ -121,6 +130,47 @@ async def _gc_expired_intents(db: AsyncSession) -> None:
     re-derives every device — no per-device reconcile is needed here."""
     now = now_utc()
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
+    await db.commit()
+
+
+async def _clear_elapsed_cooldowns(db: AsyncSession, *, publisher: EventPublisher) -> None:
+    """Clear elapsed reservation-row cooldowns (moved from host_sweep, WS-13.3).
+
+    cooldown_device writes the cooldown window to the active reservation row as
+    the source of truth (deny intents are derived from it); this pass is the
+    only path that resets the exclusion fields once excluded_until elapses.
+    Indefinite health exclusions (exclusion_kind = 'exclusion') are deliberately
+    not matched. Decisions do NOT depend on this reset — cooldown_active
+    re-derives from excluded_until > now at read time; this is row hygiene plus
+    the immediate warm-reentry reconcile for the affected devices.
+    """
+    now = now_utc()
+    expired_cooldowns = (
+        (
+            await db.execute(
+                select(DeviceReservation)
+                .where(DeviceReservation.exclusion_kind == ExclusionKind.cooldown)
+                .where(DeviceReservation.excluded_until < now)
+                .where(reservation_active())
+                .options(selectinload(DeviceReservation.run))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for entry in expired_cooldowns:
+        if entry.run is not None and entry.run.state in (RunState.completed, RunState.cancelled, RunState.failed):
+            continue
+        entry.excluded = False
+        entry.exclusion_kind = None
+        entry.exclusion_reason = None
+        entry.excluded_at = None
+        entry.excluded_until = None
+        # ``cooldown_count`` is sticky across TTL clears. Zeroing here
+        # makes the escalation threshold unreachable for slow-burn flakes
+        # where each cooldown TTL expires before the next failure lands.
+        # Only ``restore_device_to_run`` (operator-driven) resets the counter.
+        await reconcile_device(db, entry.device_id, publisher=publisher)
     await db.commit()
 
 
