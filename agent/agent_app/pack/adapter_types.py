@@ -1,9 +1,7 @@
 """Adapter contract types for DriverPackAdapter hooks.
 
-Mirrors the type definitions in ``backend/app/pack/adapter.py`` so the agent
-can validate adapter return values without depending on the backend package.
 These dataclasses define the wire contract that every DriverPackAdapter must
-honour.
+honour. The JSON-lines encoding lives in :mod:`agent_app.pack.worker_protocol`.
 """
 
 from __future__ import annotations
