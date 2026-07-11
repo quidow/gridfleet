@@ -291,6 +291,11 @@ HOST_STATUS_PUSHES = Counter(
     "Consolidated agent status pushes ingested",
     labelnames=("host_id",),
 )
+HOST_PUSH_OBSERVATION_FAILURES = Counter(
+    "gridfleet_host_push_observation_failures_total",
+    "Push-time observation stages that raised and were contained.",
+    labelnames=("stage",),
+)
 
 
 def record_host_status_push(*, host_id: str) -> None:
