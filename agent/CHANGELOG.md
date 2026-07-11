@@ -2,6 +2,15 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.34.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.33.0...gridfleet-agent-v0.34.0) (2026-07-11)
+
+
+### Features
+
+* **agent:** adapter-hook wire protocol and pack worker entrypoint ([de8fdbe](https://github.com/quidow/gridfleet/commit/de8fdbe4b9db3c975ddb5b1b3f1eec62e1d5dcae))
+* **agent:** run adapter hooks in pack worker subprocesses ([3cbbd42](https://github.com/quidow/gridfleet/commit/3cbbd4277e3646a5a10d6347b0885c72c0285e3e))
+* **agent:** run adapter hooks in pack worker subprocesses ([8d10b17](https://github.com/quidow/gridfleet/commit/8d10b17b08c81ace673150c4db145f0cb45fbf30))
+
 ## [0.33.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.32.0...gridfleet-agent-v0.33.0) (2026-07-10)
 
 
