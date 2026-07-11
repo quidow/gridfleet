@@ -19,7 +19,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | Key | Category | Type | Default | Env var | Validation | Operational meaning |
 | --- | --- | --- | --- | --- | --- | --- |
 | `general.host_offline_after_sec` | `general` | `int` | `45` | none | `15..3600` | Seconds without a status push before a host is marked offline |
-| `general.node_max_failures` | `general` | `int` | `3` | `GRIDFLEET_NODE_MAX_FAILURES` | `1..20` | Consecutive failed node checks before restart or suppression logic runs |
+| `general.node_fail_window_sec` | `general` | `int` | `60` | none | `0..600` | Wall-clock seconds of failing node-health observations before the node is marked offline and restart escalation runs; `0` flips on the first failure |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated out of the run; the escalated device is placed into maintenance or left available per `general.run_failure_escalates_to_maintenance`; `0` disables escalation |
 | `general.run_failure_escalates_to_maintenance` | `general` | `bool` | `true` | none | boolean | When a device is escalated out of a run (CI preparation failure or cooldown threshold exceeded), true places it into maintenance (manual recovery); false leaves it available. The device is released from the run regardless |
@@ -34,7 +34,9 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.lifecycle_recovery_backoff_base_sec` | `general` | `int` | `60` | none | `1..3600` | Base delay for lifecycle automatic recovery backoff |
 | `general.lifecycle_recovery_backoff_max_sec` | `general` | `int` | `900` | none | `1..86400` | Maximum delay for lifecycle automatic recovery backoff |
 | `general.lifecycle_recovery_review_threshold` | `general` | `int` | `5` | none | `1..100` | Consecutive automatic recovery failures before the device is shelved into `review_required`; automated recovery loops skip it until an operator action clears the flag |
-| `device_checks.ip_ping.consecutive_fail_threshold` | `device_checks` | `int` | `3` | none | `1..50` | Consecutive ICMP-ping misses before an opted-in device is marked unhealthy; set to 1 for strict, no-hysteresis behaviour |
+| `device_checks.ip_ping.fail_window_sec` | `device_checks` | `int` | `120` | none | `0..3600` | Wall-clock seconds ICMP ping must keep failing before an opted-in device is marked unhealthy; `0` flips on the first miss |
+| `device_checks.probe_unanswered.fail_window_sec` | `device_checks` | `int` | `120` | none | `0..3600` | Wall-clock seconds unanswered health probes may persist before a device is marked unhealthy; `0` flips on the first miss |
+| `device_checks.probe_failed.fail_window_sec` | `device_checks` | `int` | `120` | none | `0..3600` | Wall-clock seconds a manifest-declared debounceable health check may fail before the device is marked unhealthy; `0` flips on the first miss |
 | `device_checks.ip_ping.timeout_sec` | `device_checks` | `float` | `2.0` | none | `0.5..30.0` | Per-attempt ICMP-ping timeout used by the adapter |
 | `device_checks.ip_ping.count_per_cycle` | `device_checks` | `int` | `1` | none | `1..10` | Number of ICMP echo requests sent per cycle inside the adapter probe |
 | `grid.queue_timeout_sec` | `grid` | `int` | `300` | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `5..3600` | How long a queued new-session request may wait for a device before failing |

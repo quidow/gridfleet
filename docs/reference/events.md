@@ -145,7 +145,7 @@ Run terminal events (`run.completed`, `run.cancelled`, `run.expired`) now dispat
 
 The `device_events` table is narrower than the live event bus. Causes are recorded once, at the observation site that knows them; operational-state transitions themselves persist no audit row. The persisted enum currently contains:
 
-- `health_check_fail` — node-health failures and non-connectivity remediation escalation
+- `health_check_fail` — node-health failure-episode edges (onset and elapsed-window verdict) and non-connectivity remediation escalation
 - `connectivity_lost` — device disconnect (connectivity sweep), host heartbeat loss (one per device on the host), connectivity remediation escalation
 - `node_crash`
 - `node_restart`

@@ -114,13 +114,13 @@ function createSettingsState(): MockSetting[] {
       validation: { min: 1, max: 365 },
     },
     {
-      key: 'device_checks.ip_ping.consecutive_fail_threshold',
+      key: 'device_checks.ip_ping.fail_window_sec',
       category: 'device_checks',
       type: 'int',
-      description: 'Consecutive ICMP-ping misses before a device is marked unhealthy.',
-      default_value: 3,
-      value: 3,
-      validation: { min: 1, max: 50 },
+      description: 'How long ICMP-ping must keep failing before a device is marked unhealthy.',
+      default_value: 120,
+      value: 120,
+      validation: { min: 0, max: 3600 },
     },
   ];
 }

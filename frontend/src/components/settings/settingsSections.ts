@@ -25,7 +25,7 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       id: 'node-health',
       title: 'Node Health',
       description: 'Appium node health checks and restart thresholds.',
-      settingKeys: ['general.node_max_failures'],
+      settingKeys: ['general.node_fail_window_sec'],
     },
     {
       id: 'session-management',
@@ -102,11 +102,11 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       title: 'Health-Check Thresholds',
       description: 'Consecutive-failure debounce and probe timing for device health checks.',
       settingKeys: [
-        'device_checks.ip_ping.consecutive_fail_threshold',
+        'device_checks.ip_ping.fail_window_sec',
         'device_checks.ip_ping.timeout_sec',
         'device_checks.ip_ping.count_per_cycle',
-        'device_checks.probe_unanswered.consecutive_fail_threshold',
-        'device_checks.probe_failed.consecutive_fail_threshold',
+        'device_checks.probe_unanswered.fail_window_sec',
+        'device_checks.probe_failed.fail_window_sec',
       ],
     },
   ],

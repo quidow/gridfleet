@@ -32,7 +32,7 @@ These five rules are what made the recent split-brain fixes possible, and why th
 
 ## Node state machine
 
-`AppiumNode` has **no `state` column**. There are two orthogonal axes: the **desired** axis `AppiumNode.desired_state` (a 2-value enum, `running` | `stopped` only; there is no `error` desired state), written through `desired_state_writer.write_desired_state`; and the **observed** axis, the computed `AppiumNode.observed_running` property (`pid is not None AND active_connection_target is not None`), written by `mark_node_started`/`mark_node_stopped`. Health failure is tracked on the node via `consecutive_health_failures` / `health_running` / `health_state`, but the failure terminal is on the *device* (offline), not a node `error` state.
+`AppiumNode` has **no `state` column**. There are two orthogonal axes: the **desired** axis `AppiumNode.desired_state` (a 2-value enum, `running` | `stopped` only; there is no `error` desired state), written through `desired_state_writer.write_desired_state`; and the **observed** axis, the computed `AppiumNode.observed_running` property (`pid is not None AND active_connection_target is not None`), written by `mark_node_started`/`mark_node_stopped`. Health failure is tracked on the node via `health_failing_since` / `health_running` / `health_state`, but the failure terminal is on the *device* (offline), not a node `error` state.
 
 ```mermaid
 stateDiagram-v2
@@ -56,7 +56,7 @@ Important non-transitions:
 
 - `running → stopped` (observed) **never** happens until the agent's own health report confirms the process is gone. If the agent hasn't caught up yet, the convergence pass leaves `pid`/`active_connection_target` set. A later sweep reconciles once the agent's report shows the process absent.
 - Operator action only writes the **desired** axis. Operator-initiated stop sets `desired_state=stopped` and pokes; the observed flip to stopped happens later, once the agent has pulled, stopped locally, and reported it gone.
-- Health failure does not stop anything; it increments `consecutive_health_failures`, and at `general.node_max_failures` it marks the *device* offline (`apply_node_state_transition(mark_offline=…)`) and registers an auto-recovery intent (see Flow D), which the agent picks up on its next pull and applies by rebinding the node process.
+- Health failure does not stop anything; it starts or advances `health_failing_since`, and at `general.node_fail_window_sec` it marks the *device* offline (`apply_node_state_transition(mark_offline=…)`) and registers an auto-recovery intent (see Flow D), which the agent picks up on its next pull and applies by rebinding the node process.
 
 ## Flow A: Operator start (`ReconcilerAgentService.start_node`)
 
@@ -209,11 +209,11 @@ sequenceDiagram
     else ack
         Process->>Pg: clear failure counter and health override
     else refused below threshold
-        Process->>Pg: increment AppiumNode.consecutive_health_failures
+        Process->>Pg: set/advance AppiumNode.health_failing_since
         Process->>Pg: apply_node_state_transition(health_running=False, mark_offline=False)
-    else refused at threshold (count >= node_max_failures)
+    else refused at failure window (elapsed >= node_fail_window_sec)
         Process->>Pg: apply_node_state_transition(health_running=False, mark_offline=True) → device offline
-        Process->>Pg: reset consecutive_health_failures
+        Process->>Pg: reset health_failing_since
         Process->>Process: _attempt_node_restart
         Process->>Intent: register_intents_and_reconcile (NODE_PROCESS start + RECOVERY auto-recovery, fresh transition_token/deadline)
     end
@@ -229,7 +229,7 @@ Three things this flow gets right that earlier versions did not:
 2. **Node state transitions go through `DeviceHealthService.apply_node_state_transition`.** The helper writes transient health detail, last-check timestamp, the dirty-and-reconcile (or dirty-only, below threshold) signal that drives derived operational state, and the derived `device.health_changed` event under the correct locks. It does not write a node `state` column (none exists).
 3. **The agent probe is the authoritative health signal.** Post-cutover there is no Grid `/status` to defer to: the direct `/agent/appium/{port}/status` probe is the source of truth for "is this Appium up". An acked probe persists `health_running=True` truthfully rather than relying on a registration grace window.
 
-At the failure threshold `_process_node_health` resets `consecutive_health_failures` and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` command plus a RECOVERY auto-recovery command (`IntentService.register_intents_and_reconcile`, fresh `transition_token`/`transition_deadline`, TTL-bounded via `expires_at`). It does **not** call the agent or rewrite node fields itself — the write goes through the same `write_desired_state` path as any other desired-state change. The agent applies the restart on its next pull; the observe-only reconciler (`reconciler.py`) performs the `mark_node_*` flips from the agent's next health report and, on exhaustion, records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
+At the failure window `_process_node_health` advances `health_failing_since` to start the next episode and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` command plus a RECOVERY auto-recovery command (`IntentService.register_intents_and_reconcile`, fresh `transition_token`/`transition_deadline`, TTL-bounded via `expires_at`). It does **not** call the agent or rewrite node fields itself — the write goes through the same `write_desired_state` path as any other desired-state change. The agent applies the restart on its next pull; the observe-only reconciler (`reconciler.py`) performs the `mark_node_*` flips from the agent's next health report and, on exhaustion, records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
 
 ## The resource-claim + port allocation interaction
 

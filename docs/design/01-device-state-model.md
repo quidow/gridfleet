@@ -154,7 +154,7 @@ There is no single `AppiumNode.state` column or `NodeState` enum. The node row c
 ```text
 AppiumNode.desired_state : running | stopped   (NOT NULL, DB CHECK constraint)
 observed: pid · port · active_connection_target · health_running · health_state
-          · last_observed_at · last_health_checked_at · consecutive_health_failures
+          · last_observed_at · last_health_checked_at · health_failing_since
 ```
 
 `backend/app/appium_nodes/models/node.py` defines `AppiumDesiredState` (with `CheckConstraint("desired_state IN ('running', 'stopped')")`). The effective state is derived in `app.devices.schemas.device` (`DesiredNodeState` / `EffectiveNodeState`). The Appium node is a **separate row** (one-to-one with `Device`, FK with cascade). This separation is deliberate: a device exists without a node, but a node cannot exist without a device.
@@ -187,7 +187,7 @@ The public health snapshot is not stored in KV. Health-relevant state lives in t
 - `Device.emulator_state : str | null`
 - `AppiumNode.desired_state` plus observed columns (Axis 5: `pid`, `port`, `active_connection_target`; effective state derived as `EffectiveNodeState`)
 - `AppiumNode.health_running : bool | null`, `AppiumNode.health_state : text | null`
-- `AppiumNode.consecutive_health_failures : int`
+- `AppiumNode.health_failing_since : timestamptz | null`
 - `AppiumNode.last_health_checked_at : timestamptz | null`
 
 The public summary returned by `/api/devices` is computed by `app.devices.services.health_view.build_public_summary(device)` (re-exported via `app.devices.services.health`), a pure function that reads the row plus `device.appium_node`. There is no separate document to keep in sync.

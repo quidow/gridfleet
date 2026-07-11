@@ -148,9 +148,10 @@ retries — escalate through one ladder owned by
 `general.lifecycle_recovery_backoff_max_sec`, promoted to
 `Device.review_required` at `general.lifecycle_recovery_review_threshold`. An armed
 backoff window defers every automated remediation, not just the one that armed it.
-Detection debounce (ip_ping hysteresis, `general.node_max_failures`,
-probe-unanswered counting, the link-repair attempt budget) stays per-observer and
-only decides when a failure event is real; the ladder owns what happens after.
+Detection debounce (ip_ping duration windows, `general.node_fail_window_sec`,
+probe-unanswered duration windows, and the link-repair attempt budget) stays
+per-observer and only decides when a failure event is real; the ladder owns what
+happens after.
 
 A successful node start clears only reconciler-sourced residue
 (`last_failure_source == "appium_reconciler"`). Backoff from failed recovery probes

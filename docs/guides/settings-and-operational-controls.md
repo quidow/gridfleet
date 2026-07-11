@@ -37,8 +37,8 @@ Most important settings:
 
 - `host_offline_after_sec` (the sweep cadence and partition diagnostic cadence are plumbing constants)
   - together determine how host liveness is derived from agent status pushes (`host_offline_after_sec` since the last push) and how often the reachability probe checks for a network partition
-- `node_max_failures`
-  - controls how many consecutive node-health failures trigger automatic restart behavior
+- `node_fail_window_sec`
+  - controls how many wall-clock seconds of node-health failure trigger automatic restart behavior
 - `hardware_telemetry_stale_timeout_sec` and `hardware_telemetry_consecutive_samples`
   - control when battery telemetry becomes stale in the UI and how many repeated hot samples are required before escalating a hardware alert
 - `host_resource_telemetry_window_minutes`
