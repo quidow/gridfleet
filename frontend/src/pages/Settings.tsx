@@ -14,7 +14,6 @@ const TABS = [
   { id: 'reservations', label: 'Reservations', section: 'System' },
   { id: 'retention', label: 'Data Retention', section: 'System' },
   { id: 'backup', label: 'Backup & Restore', section: 'System' },
-  { id: 'notifications', label: 'Notifications', section: 'Integrations' },
 ];
 
 const TAB_IDS = TABS.map((t) => t.id);

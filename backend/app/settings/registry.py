@@ -320,7 +320,11 @@ _DEFINITIONS: list[SettingDefinition] = [
         category="grid",
         setting_type="int",
         default=4723,
-        description="Start of Appium port range",
+        description=(
+            "Start of the port range the backend assigns managed Appium nodes from. "
+            "Each agent only binds ports inside its own AGENT_APPIUM_PORT_RANGE_* env; "
+            "keep this range within every host's env range."
+        ),
         min_value=1024,
         max_value=65535,
     ),
@@ -329,7 +333,11 @@ _DEFINITIONS: list[SettingDefinition] = [
         category="grid",
         setting_type="int",
         default=4823,
-        description="End of Appium port range",
+        description=(
+            "End of the port range the backend assigns managed Appium nodes from. "
+            "Each agent only binds ports inside its own AGENT_APPIUM_PORT_RANGE_* env; "
+            "keep this range within every host's env range."
+        ),
         min_value=1024,
         max_value=65535,
     ),
