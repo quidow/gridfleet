@@ -10,6 +10,16 @@ use crate::backend::BackendClient;
 use crate::metrics::metrics;
 use crate::routes::{RouteMap, Upstream};
 
+// The activity-flush cadence and its backend pair, checked at compile time.
+// BACKEND_ACTIVITY_FRESH_WINDOW_SECS mirrors ACTIVITY_FRESH_WINDOW_SEC in
+// backend/app/sessions/service_sync.py (owner: router — retune the cadence
+// here first, then the backend window and this mirror). See the
+// timeout-lattice table in docs/reference/architecture.md.
+const ACTIVITY_FLUSH_CADENCE_SECS: u64 = 10;
+const BACKEND_ACTIVITY_FRESH_WINDOW_SECS: u64 = 30;
+// The backend sizes its session-freshness window as exactly 3x this cadence.
+const _: () = assert!(BACKEND_ACTIVITY_FRESH_WINDOW_SECS == 3 * ACTIVITY_FLUSH_CADENCE_SECS);
+
 /// Every 60s: rebuild the route map from backend truth (bounds staleness).
 /// The immediate first `interval` tick is consumed before the loop so the
 /// first rebuild happens after one full period — the data plane already
@@ -44,12 +54,12 @@ pub fn spawn_route_reconcile(routes: Arc<RouteMap>, backend: Arc<BackendClient>)
 
 /// Every 10s: drain the activity tracker and flush to the backend (batched,
 /// never per-command). Skips the call entirely when nothing has been touched.
-/// The backend liveness sweep sizes its activity-freshness window as a
-/// multiple of this cadence (service_sync.py, ACTIVITY_FRESH_WINDOW_SEC) —
-/// retune both together.
+/// The backend liveness sweep sizes its activity-freshness window as 3x this
+/// cadence (service_sync.py, ACTIVITY_FRESH_WINDOW_SEC) — the ratio is
+/// compile-time asserted above.
 pub fn spawn_activity_flush(activity: Arc<ActivityTracker>, backend: Arc<BackendClient>) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(ACTIVITY_FLUSH_CADENCE_SECS));
         interval.tick().await; // consume the immediate tick
         loop {
             interval.tick().await;
