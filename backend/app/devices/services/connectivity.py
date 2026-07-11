@@ -970,14 +970,17 @@ class ConnectivityService:
         await db.commit()
 
     async def check_expired_cooldowns(self, db: AsyncSession) -> None:
-        """Delegate expired cooldown cleanup to the intent reconciler."""
+        """GC expired deny intents, then clear elapsed reservation-row cooldowns."""
         # Bulk-delete expired intent rows; the affected devices re-derive on the
         # next intent reconciler scan tick (<= general.intent_reconcile_interval_sec).
         await _gc_expired_intents(db)
         now = now_utc()
-        # Transitional cleanup for pre-intent cooldown reservations. Remove once
-        # all cooldown writes are guaranteed to flow through DeviceIntent rows.
-        legacy_entries = (
+        # Cooldown TTL-clear. cooldown_device writes the cooldown window to the
+        # active reservation row as the source of truth (deny intents are derived
+        # from it); this sweep is the only path that resets the exclusion fields
+        # once excluded_until elapses. Indefinite health exclusions
+        # (excluded_until IS NULL) are deliberately not matched.
+        expired_cooldowns = (
             (
                 await db.execute(
                     select(DeviceReservation)
@@ -991,15 +994,14 @@ class ConnectivityService:
             .scalars()
             .all()
         )
-        for entry in legacy_entries:
+        for entry in expired_cooldowns:
             if entry.run is not None and entry.run.state in (RunState.completed, RunState.cancelled, RunState.failed):
                 continue
             entry.excluded = False
             entry.exclusion_reason = None
             entry.excluded_at = None
             entry.excluded_until = None
-            # ``cooldown_count`` is sticky across TTL clears (see
-            # ``intent_reconciler._clear_reservation_exclusion``). Zeroing here
+            # ``cooldown_count`` is sticky across TTL clears. Zeroing here
             # makes the escalation threshold unreachable for slow-burn flakes
             # where each cooldown TTL expires before the next failure lands.
             # Only ``restore_device_to_run`` (operator-driven) resets the counter.
