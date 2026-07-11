@@ -7,7 +7,7 @@ through that adapter.
 
 The tests use a hand-rolled fake adapter that records every call so the
 tests stay independent of the asyncio dispatch wrapper details (those
-are covered by ``test_adapter_dispatch.py``).
+are covered by the focused dispatch tests).
 """
 
 from __future__ import annotations
@@ -31,15 +31,15 @@ from agent_app.pack.adapter_types import (
 )
 from agent_app.pack.contexts import HealthCtx
 from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
-from agent_app.pack.dispatch import (
+from agent_app.pack.host_identity import HostIdentity
+from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
+from tests.pack.adapter_test_helpers import (
     adapter_health_check,
     adapter_lifecycle_action,
     adapter_normalize_device,
     adapter_post_session,
     adapter_pre_session,
 )
-from agent_app.pack.host_identity import HostIdentity
-from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 
 
 def _host_identity(value: str) -> HostIdentity:

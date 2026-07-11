@@ -1,7 +1,6 @@
 import asyncio
 import collections
 import contextlib
-import inspect
 import json
 import logging
 import os
@@ -37,9 +36,15 @@ from agent_app.appium.log_files import (
 )
 from agent_app.config import agent_settings
 from agent_app.observability import sanitize_log_value
+from agent_app.pack.adapter_dispatch import (
+    adapter_supports,
+    dispatch_lifecycle_action,
+    dispatch_post_session,
+    dispatch_pre_session,
+)
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import SubprocessEnvContribution
-from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_post_session, adapter_pre_session
+from agent_app.pack.adapter_types import SessionOutcome, SessionSpec, SubprocessEnvContribution
+from agent_app.pack.contexts import LifecycleCtx
 from agent_app.pack.runtime_registry import RuntimeRegistry
 
 logger = logging.getLogger(__name__)
@@ -627,12 +632,10 @@ class AppiumProcessManager:
         caps = sanitize_appium_driver_capabilities(caps)
 
         invocation = resolve_appium_invocation_for_pack(pack_id=spec.pack_id, registry=self._runtime_registry)
-        adapter = self._adapter_registry.get_current(spec.pack_id) if self._adapter_registry is not None else None
-        adapter_env = None
-        if adapter is not None and hasattr(adapter, "subprocess_env"):
-            adapter_env = adapter.subprocess_env()
-            if inspect.isawaitable(adapter_env):
-                adapter_env = await adapter_env
+        handle = self._adapter_registry.get_current(spec.pack_id) if self._adapter_registry is not None else None
+        adapter_env = getattr(handle, "subprocess_env", None) if handle is not None else None
+        if callable(adapter_env):
+            adapter_env = adapter_env()
         env = build_env(
             appium_bin=invocation.binary,
             appium_home=invocation.env_extra.get("APPIUM_HOME"),
@@ -737,34 +740,42 @@ class AppiumProcessManager:
         self._cancel_task(self._appium_restart_tasks, port)
         resolved_connection_target = connection_target
         if self._adapter_registry is not None and _has_lifecycle_action(lifecycle_actions or [], "boot"):
-            adapter = self._adapter_registry.get_current(pack_id)
-            pack_release = getattr(adapter, "pack_release", "") if adapter is not None else ""
-            result = await adapter_lifecycle_action(
-                adapter_registry=self._adapter_registry,
-                pack_id=pack_id,
-                pack_release=pack_release,
-                host_id="",
-                identity_value=connection_target,
-                action="boot",
-                args={"headless": headless},
-            )
+            handle = self._adapter_registry.get_current(pack_id)
+            if handle is None or not adapter_supports(handle, "lifecycle_action"):
+                result = None
+            else:
+                lifecycle_result = await dispatch_lifecycle_action(
+                    handle,
+                    "boot",
+                    {"headless": headless},
+                    LifecycleCtx(host_id="", device_identity_value=connection_target),
+                )
+                result = {
+                    "success": lifecycle_result.ok,
+                    "state": lifecycle_result.state,
+                    "detail": lifecycle_result.detail,
+                    "resolved_connection_target": lifecycle_result.resolved_connection_target,
+                }
             if result and result.get("resolved_connection_target"):
                 resolved_connection_target = str(result["resolved_connection_target"])
             elif result and result.get("success") is False:
                 raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be started"))
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
         if self._adapter_registry is not None:
-            adapter = self._adapter_registry.get_current(pack_id)
-            if adapter is not None:
-                pack_release = getattr(adapter, "pack_release", "")
-                adapter_caps = await adapter_pre_session(
-                    adapter_registry=self._adapter_registry,
-                    pack_id=pack_id,
-                    pack_release=pack_release,
-                    platform_id=platform_id,
-                    identity_value=resolved_connection_target,
-                    capabilities=merged_extra_caps,
-                )
+            handle = self._adapter_registry.get_current(pack_id)
+            if handle is not None:
+                if not adapter_supports(handle, "pre_session"):
+                    adapter_caps = {}
+                else:
+                    adapter_caps = await dispatch_pre_session(
+                        handle,
+                        SessionSpec(
+                            pack_id=pack_id,
+                            platform_id=platform_id,
+                            device_identity_value=resolved_connection_target,
+                            capabilities=merged_extra_caps,
+                        ),
+                    )
                 merged_extra_caps.update(adapter_caps)
         spec = AppiumLaunchSpec(
             connection_target=resolved_connection_target,
@@ -893,19 +904,20 @@ class AppiumProcessManager:
         """
         if self._adapter_registry is None or spec is None or not spec.pack_id:
             return
-        adapter = self._adapter_registry.get_current(spec.pack_id)
-        if adapter is None:
+        handle = self._adapter_registry.get_current(spec.pack_id)
+        if handle is None:
             return
-        pack_release = getattr(adapter, "pack_release", "")
+        if not adapter_supports(handle, "post_session"):
+            return
         try:
-            await adapter_post_session(
-                adapter_registry=self._adapter_registry,
-                pack_id=spec.pack_id,
-                pack_release=pack_release,
-                platform_id=spec.platform_id,
-                identity_value=spec.connection_target,
-                ok=True,
-                detail="stopped",
+            await dispatch_post_session(
+                handle,
+                SessionSpec(
+                    pack_id=spec.pack_id,
+                    platform_id=spec.platform_id,
+                    device_identity_value=spec.connection_target,
+                ),
+                SessionOutcome(ok=True, detail="stopped"),
             )
         except Exception as exc:
             logger.warning("adapter post_session failed for pack %s: %s", spec.pack_id, sanitize_log_value(exc))

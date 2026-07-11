@@ -6,7 +6,8 @@ import pytest
 
 from agent_app.pack.adapter_types import HealthCheckResult
 from agent_app.pack.contexts import HealthCtx
-from agent_app.pack.dispatch import _adapter_health_payload, adapter_health_check
+from agent_app.pack.router import _adapter_health_payload
+from tests.pack.adapter_test_helpers import adapter_health_check
 
 
 def test_payload_lifts_recommended_action_to_top_level() -> None:

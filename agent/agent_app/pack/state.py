@@ -74,7 +74,6 @@ class PackStateLoop:
                 pack_id=pack.id,
                 appium_server=pack.appium_server,
                 appium_driver=pack.appium_driver,
-                policy=pack.runtime_policy,
             )
             if resolution.error is not None:
                 resolver_blocked_packs[pack.id] = resolution.error
@@ -188,6 +187,25 @@ class PackStateLoop:
             loaded_adapter = (
                 self.adapter_registry.get(pack.id, pack.release) if self.adapter_registry is not None else None
             )
+            if loaded_adapter is not None and not getattr(loaded_adapter, "alive", True):
+                doctor_entries.append(
+                    {
+                        "pack_id": pack.id,
+                        "check_id": "adapter_load",
+                        "ok": False,
+                        "message": "adapter worker is unavailable",
+                    }
+                )
+                pack_entries.append(
+                    {
+                        "pack_id": pack.id,
+                        "pack_release": pack.release,
+                        "runtime_id": env.runtime_id,
+                        "status": "blocked",
+                        "blocked_reason": "adapter_worker_unavailable",
+                    }
+                )
+                continue
             if loaded_adapter is not None:
                 missing = missing_declared_hooks(pack, loaded_adapter)
                 if missing:
@@ -228,6 +246,15 @@ class PackStateLoop:
             # runtime_mgr.reconcile failure does not evict cached envs
             # for packs the backend still wants.
             self.runtime_registry.purge_except({pack.id for pack in parsed.packs})
+
+        if self.adapter_registry is not None:
+            desired_keys = {(pack.id, pack.release) for pack in parsed.packs if pack.has_adapter_platform}
+            for pack_id, release in self.adapter_registry.keys():  # noqa: SIM118
+                if (pack_id, release) in desired_keys:
+                    continue
+                handle = self.adapter_registry.remove(pack_id, release)
+                if handle is not None:
+                    await handle.shutdown()
 
         self._latest_status = {
             "runtimes": runtime_entries,

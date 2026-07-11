@@ -21,7 +21,7 @@ from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.host.version_guidance import VersionGuidanceStore
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
-from agent_app.pack.adapter_loader import load_adapter
+from agent_app.pack.adapter_loader import prepare_adapter_site
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.discovery import pack_device_properties
 from agent_app.pack.host_identity import HostIdentity
@@ -31,6 +31,7 @@ from agent_app.pack.runtime import AppiumRuntimeManager
 from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
+from agent_app.pack.worker_supervisor import WorkerSupervisor
 from agent_app.probes import ProbeLoop
 from agent_app.registration import RegistrationService
 from agent_app.registration import manager_auth as _manager_auth  # tests patch agent_app.lifespan._manager_auth
@@ -148,8 +149,9 @@ class HttpProbeTargetsClient:
 def _build_adapter_loader(
     backend_url: str,
     adapter_registry: AdapterRegistry,
+    supervisor: WorkerSupervisor,
 ) -> AdapterLoaderFn:
-    """Return an ``AdapterLoaderFn`` that fetches a pack tarball and loads its adapter."""
+    """Return an ``AdapterLoaderFn`` that fetches and starts a pack worker."""
 
     base = backend_url.rstrip("/")
 
@@ -169,13 +171,9 @@ def _build_adapter_loader(
             auth=_manager_auth(),
             timeout=60.0,
         )
-        adapter = await load_adapter(
-            pack_id=pack.id,
-            release=pack.release,
-            tarball_path=tarball_path,
-            runtime_dir=runtime_dir,
-        )
-        adapter_registry.set(pack.id, pack.release, adapter)
+        site_dir = await prepare_adapter_site(tarball_path=tarball_path, runtime_dir=runtime_dir)
+        handle = await supervisor.start(pack.id, pack.release, site_dir)
+        adapter_registry.set(pack.id, pack.release, handle)
 
     return _load
 
@@ -186,13 +184,14 @@ async def _start_pack_loop_when_ready(
     backend_url: str,
     runtime_registry: RuntimeRegistry,
     adapter_registry: AdapterRegistry,
+    supervisor: WorkerSupervisor,
     on_status: Callable[[], None] | None,
 ) -> None:
     await host_identity.wait()
     app.state.pack_state_loop_enabled = True
     client = HttpPackStateClient(backend_url, host_identity)
     runtime_mgr = AppiumRuntimeManager()
-    adapter_loader = _build_adapter_loader(backend_url, adapter_registry)
+    adapter_loader = _build_adapter_loader(backend_url, adapter_registry, supervisor)
     loop = PackStateLoop(
         client=client,
         runtime_mgr=runtime_mgr,
@@ -238,6 +237,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     host_identity = HostIdentity()
     runtime_registry = RuntimeRegistry()
     adapter_registry = AdapterRegistry()
+    worker_supervisor = WorkerSupervisor()
     capabilities_cache = CapabilitiesCache(adapter_registry=adapter_registry)
     app.state.capabilities_cache = capabilities_cache
     await capabilities_cache.refresh()
@@ -247,6 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.host_identity = host_identity
     app.state.runtime_registry = runtime_registry
     app.state.adapter_registry = adapter_registry
+    app.state.worker_supervisor = worker_supervisor
     app.state.boot_id = boot_id
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
@@ -376,6 +377,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 backend_url,
                 runtime_registry,
                 adapter_registry,
+                worker_supervisor,
                 status_loop.wake if status_loop else None,
             )
         )
@@ -401,5 +403,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             probe_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
+        await worker_supervisor.shutdown_all()
         await appium_mgr.shutdown()
         await close_shared_http_client()

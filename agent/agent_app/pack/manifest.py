@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_app.pack.runtime_types import AppiumInstallable, RuntimePolicy
+from agent_app.pack.runtime_types import AppiumInstallable
 
 
 @dataclass
@@ -50,7 +50,6 @@ class DesiredPack:
     appium_server: AppiumInstallable
     appium_driver: AppiumInstallable
     platforms: list[DesiredPlatform]
-    runtime_policy: RuntimePolicy = field(default_factory=RuntimePolicy)
     tarball_sha256: str | None = None
     tool_dependencies: list[ToolDependency] = field(default_factory=list)
     runtime_packages: list[RuntimePackage] = field(default_factory=list)
@@ -83,7 +82,6 @@ def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
                 appium_server=_installable(raw["appium_server"]),
                 appium_driver=_installable(raw["appium_driver"]),
                 platforms=[_platform(p) for p in raw["platforms"]],
-                runtime_policy=_runtime_policy(raw.get("runtime_policy") or {"strategy": "recommended"}),
                 tarball_sha256=raw.get("tarball_sha256"),
                 tool_dependencies=tool_deps,
                 runtime_packages=[
@@ -123,10 +121,6 @@ def _platform(raw: dict[str, Any]) -> DesiredPlatform:
         connection_behavior=dict(raw.get("connection_behavior") or {}),
         device_type_overrides=dict(raw.get("device_type_overrides") or {}),
     )
-
-
-def _runtime_policy(raw: dict[str, Any]) -> RuntimePolicy:
-    return RuntimePolicy(strategy=str(raw.get("strategy", "recommended")))
 
 
 def resolve_desired_platform(

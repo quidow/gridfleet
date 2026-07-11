@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import glob
-import inspect
 import logging
 import os
 import re
@@ -262,13 +261,13 @@ async def get_tool_status(
         for pack in desired_packs:
             if not pack.tool_dependencies:
                 continue
-            adapter = adapter_registry.get_current(pack.id) if adapter_registry else None
+            handle = adapter_registry.get_current(pack.id) if adapter_registry else None
             detected: dict[str, str | None] = {}
-            if adapter is not None and hasattr(adapter, "tool_versions"):
-                result = adapter.tool_versions()
-                if inspect.isawaitable(result):
-                    result = await result
-                detected = result
+            if handle is not None:
+                versions = getattr(handle, "tool_versions", None)
+                if callable(versions):
+                    versions = versions()
+                detected = versions or {}
 
             packs[pack.id] = [
                 {

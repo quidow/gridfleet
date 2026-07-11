@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from typing import TYPE_CHECKING, Annotated, Any
@@ -9,9 +10,16 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import APIRouter, Body, Query, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
-from agent_app.pack.adapter_dispatch import adapter_supports, dispatch_doctor
+from agent_app.pack.adapter_dispatch import (
+    adapter_supports,
+    dispatch_doctor,
+    dispatch_health_check,
+    dispatch_lifecycle_action,
+    dispatch_normalize_device,
+    dispatch_telemetry,
+)
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
-from agent_app.pack.contexts import DoctorCtx, HealthCtx
+from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx, NormalizeCtx, TelemetryCtx
 from agent_app.pack.dependencies import (
     DesiredPlatformDep,
     HostIdDep,
@@ -19,12 +27,6 @@ from agent_app.pack.dependencies import (
     PackStateLoopDep,
 )
 from agent_app.pack.discovery import enumerate_pack_candidates
-from agent_app.pack.dispatch import (
-    adapter_health_check,
-    adapter_lifecycle_action,
-    adapter_normalize_device,
-    adapter_telemetry,
-)
 from agent_app.pack.schemas import (
     NormalizeDeviceRequest,
     NormalizeDeviceResponse,
@@ -36,7 +38,9 @@ from agent_app.pack.schemas import (
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
+    from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
     from agent_app.pack.manifest import DesiredPlatform
+    from agent_app.pack.worker_supervisor import WorkerHandle
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,32 @@ router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
 PackIdQuery = Annotated[str, Query(min_length=1, pattern=PACK_ID_PATTERN)]
 PlatformIdQuery = Annotated[str, Query(min_length=1, pattern=PLATFORM_ID_PATTERN)]
+
+
+def worker_or_none(registry: AdapterRegistry | None, pack_id: str, release: str) -> WorkerHandle | None:
+    return registry.get(pack_id, release) if registry is not None else None
+
+
+def _adapter_health_payload(results: list[HealthCheckResult]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "healthy": all(result.ok for result in results),
+        "checks": [
+            {"check_id": result.check_id, "ok": result.ok, "message": result.detail, "debounce": result.debounce}
+            for result in results
+        ],
+    }
+    for result in results:
+        if result.recommended_action:
+            payload["recommended_action"] = result.recommended_action
+            break
+    return payload
+
+
+def _adapter_lifecycle_payload(result: LifecycleActionResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {"success": result.ok, "state": result.state, "detail": result.detail}
+    if result.resolved_connection_target is not None:
+        payload["resolved_connection_target"] = result.resolved_connection_target
+    return payload
 
 
 async def run_device_health_probe(
@@ -67,12 +97,11 @@ async def run_device_health_probe(
 ) -> dict[str, Any]:
     """Run the pack health hook with the same context used by the HTTP route."""
     del platform, headless
-    if adapter_registry is not None:
-        payload = await adapter_health_check(
-            adapter_registry=adapter_registry,
-            pack_id=pack_id,
-            pack_release=release,
-            ctx=HealthCtx(
+    handle = worker_or_none(adapter_registry, pack_id, release)
+    if handle is not None and adapter_supports(handle, "health_check"):
+        results = await dispatch_health_check(
+            handle,
+            HealthCtx(
                 device_identity_value=connection_target,
                 allow_boot=allow_boot,
                 platform_id=platform_id,
@@ -86,8 +115,7 @@ async def run_device_health_probe(
                 has_live_session=has_live_session,
             ),
         )
-        if payload is not None:
-            return payload
+        return _adapter_health_payload(results)
     return {
         "healthy": None,
         "checks": [
@@ -111,13 +139,21 @@ async def run_device_telemetry_probe(
     """Run the pack telemetry hook with the same dispatch as the HTTP route."""
     if adapter_registry is None:
         return None
-    return await adapter_telemetry(
-        adapter_registry=adapter_registry,
-        pack_id=pack_id,
-        pack_release=release,
-        identity_value=identity_value,
-        connection_target=connection_target,
+    handle = worker_or_none(adapter_registry, pack_id, release)
+    if handle is None or not adapter_supports(handle, "telemetry"):
+        return None
+    result: HardwareTelemetry = await dispatch_telemetry(
+        handle,
+        TelemetryCtx(device_identity_value=identity_value, connection_target=connection_target),
     )
+    if not result.supported:
+        return {"support_status": "unsupported"}
+    return {
+        "support_status": "supported",
+        "battery_level_percent": result.battery_level_percent,
+        "battery_temperature_c": result.battery_temperature_c,
+        "charging_state": result.charging_state,
+    }
 
 
 def _parse_claimed_ports(raw: str | None) -> dict[str, int] | None:
@@ -220,18 +256,15 @@ async def pack_device_lifecycle_route(
     args: Annotated[dict[str, Any], Body(default_factory=dict)],
 ) -> dict[str, Any]:
     _platform_def, release = platform
-    if adapter_registry is not None:
-        payload = await adapter_lifecycle_action(
-            adapter_registry=adapter_registry,
-            pack_id=pack_id,
-            pack_release=release,
-            host_id=host_id,
-            identity_value=connection_target,
-            action=action,
-            args=args,
+    handle = worker_or_none(adapter_registry, pack_id, release)
+    if handle is not None and adapter_supports(handle, "lifecycle_action"):
+        result = await dispatch_lifecycle_action(
+            handle,
+            action,
+            args,
+            LifecycleCtx(host_id=host_id, device_identity_value=connection_target),
         )
-        if payload is not None:
-            return payload
+        return _adapter_lifecycle_payload(result)
     return {
         "success": False,
         "detail": f"Adapter not loaded for pack {pack_id}:{platform_id}",
@@ -259,21 +292,18 @@ async def normalize_device_route(
             message=f"No adapter loaded for pack {req.pack_id!r}",
         )
 
-    result = await adapter_normalize_device(
-        adapter_registry=adapter_registry,
-        pack_id=req.pack_id,
-        pack_release=req.pack_release,
-        host_id=host_id,
-        platform_id=req.platform_id,
-        raw_input=req.raw_input,
-    )
-    if result is None:
+    handle = worker_or_none(adapter_registry, req.pack_id, req.pack_release)
+    if handle is None or not adapter_supports(handle, "normalize_device"):
         raise http_exc(
             status_code=404,
             code=AgentErrorCode.NO_ADAPTER,
             message=f"No adapter loaded for pack {req.pack_id!r}",
         )
-    return result
+    result = await dispatch_normalize_device(
+        handle,
+        NormalizeCtx(host_id=host_id, platform_id=req.platform_id, raw_input=req.raw_input),
+    )
+    return dataclasses.asdict(result)
 
 
 @router.post(

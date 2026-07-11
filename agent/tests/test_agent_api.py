@@ -163,13 +163,14 @@ async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -
 
     captured: dict[str, object] = {}
 
-    async def fake_adapter_health_check(**kwargs: object) -> dict[str, object]:
-        captured.update(kwargs)
-        return {"healthy": True, "checks": []}
+    async def fake_dispatch_health_check(handle: object, ctx: object) -> list[HealthCheckResult]:
+        del handle
+        captured["ctx"] = ctx
+        return [HealthCheckResult(check_id="fake", ok=True)]
 
     with (
         _latest_desired_override(desired_pack),
-        patch("agent_app.pack.router.adapter_health_check", new=fake_adapter_health_check),
+        patch("agent_app.pack.router.dispatch_health_check", new=fake_dispatch_health_check),
     ):
         resp = await client.get(
             "/agent/pack/devices/abc/health",

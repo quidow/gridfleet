@@ -11,8 +11,3 @@ class AppiumInstallable:
     recommended: str | None
     known_bad: list[str]
     github_repo: str | None = None
-
-
-@dataclass(frozen=True)
-class RuntimePolicy:
-    strategy: str = "recommended"
