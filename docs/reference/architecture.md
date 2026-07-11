@@ -54,9 +54,11 @@ At push ingest, the handler folds the observation sections (`node_health`,
 into durable facts after the liveness commit. Restart ingest, Appium-node
 convergence, and each fold are contained so an observation failure cannot
 erase the heartbeat. `host_sweep` is the silence detector: it emits liveness
-edges and the offline cascade from push recency, runs the cadence-gated
-`/agent/health` partition diagnostic (60 s plumbing cadence; feeds no state),
-and expires stale device cooldowns. The agent produces observations locally on
+edges and the offline cascade from push recency, and runs the cadence-gated
+`/agent/health` partition diagnostic (60 s plumbing cadence; feeds no state).
+The `device_intent_reconciler` tick GCs expired deny intents and clears elapsed
+reservation-row cooldowns before its full reconcile scan. The agent produces
+observations locally on
 fixed cadences (30/60/300/600 s constants in `agent_app/probes.py`); fact
 latency is push-bounded (at most one push interval after a probe fires).
 
