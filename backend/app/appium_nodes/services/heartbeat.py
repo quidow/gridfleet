@@ -520,6 +520,10 @@ class HeartbeatService:
         gap = round(now_mono - prev_mono, 1) if prev_mono is not None else None
         return _ResumeGuard(active=guard_active, gap_sec=gap, threshold_sec=threshold)
 
+    async def ingest_restart_events(self, db: AsyncSession, host: Host, payload: dict[str, Any]) -> None:
+        """Ingest push-time restart events using the sequence cursor for deduplication."""
+        await _ingest_appium_restart_events(db, host, payload, publisher=self._publisher)
+
     async def evaluate_host(self, db: AsyncSession, host: Host, *, guard: _ResumeGuard) -> HostStatusEvaluation:
         """Recency verdict from the latest status push; the caller owns the commit."""
         offline_after = self._settings.get_float("general.host_offline_after_sec")
