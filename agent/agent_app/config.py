@@ -24,7 +24,8 @@ class CoreSettings(BaseSettings):
     # (POOL_KEEPALIVE_EXPIRY_SEC = 60 in backend app/agent_comm/http_pool.py):
     # if the server-side keep-alive is shorter, the backend pool hands out
     # connections the agent already closed and non-idempotent calls die with
-    # RemoteProtocolError.
+    # RemoteProtocolError. Enforced by the backend contract test
+    # backend/tests/contracts/test_timeout_lattice_parity.py (reads this default).
     http_keepalive_timeout_sec: int = 630
 
 

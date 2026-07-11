@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Plumbing constants (P5): connection-pool tuning, not operator policy.
+# POOL_KEEPALIVE_EXPIRY_SEC must stay below the agent's keep-alive default —
+# enforced by tests/contracts/test_timeout_lattice_parity.py.
 POOL_MAX_KEEPALIVE = 10
 POOL_KEEPALIVE_EXPIRY_SEC = 60.0
 

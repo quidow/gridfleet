@@ -39,7 +39,8 @@ logger = get_logger(__name__)
 # Freshness gate for the liveness probe (wave-5 #19): the router flushes
 # last_activity_at every ~10s while traffic flows (router tasks.rs,
 # spawn_activity_flush), so activity within 3x that cadence proves the session
-# alive without spending a per-session GET each sweep tick.
+# alive without spending a per-session GET each sweep tick. The 3x ratio is
+# compile-time asserted in router/src/tasks.rs (mirrored constant there).
 ACTIVITY_FRESH_WINDOW_SEC = 30.0
 
 # ponytail: fixed direct-to-Appium probe fan-out width per host; was the
