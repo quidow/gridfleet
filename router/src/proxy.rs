@@ -12,7 +12,7 @@ use pingora::protocols::http::v1::common::is_upgrade_req;
 use pingora::proxy::{ProxyHttp, Session};
 
 use crate::activity::ActivityTracker;
-use crate::backend::BackendClient;
+use crate::backend::{BackendClient, CONFIRM_ATTEMPTS, CONFIRM_RETRY_SLEEP_SECS};
 use crate::classify::{classify, peel_run_prefix, RouteClass, RunPrefix};
 use crate::routes::{RouteMap, Upstream};
 use crate::w3c;
@@ -334,7 +334,8 @@ impl GridRouter {
         self.routes.get(session_id)
     }
 
-    /// Confirm an allocation, retrying up to 3 total attempts, 2s apart.
+    /// Confirm an allocation, retrying up to `CONFIRM_ATTEMPTS` total attempts,
+    /// `CONFIRM_RETRY_SLEEP_SECS` apart.
     /// Transport failures (no HTTP status — e.g. the backend is mid-deploy) and
     /// retryable HTTP statuses (5xx, 429 — transient backend pressure or a
     /// rolling deploy) are retried. Only a 4xx other than 429 is permanent
@@ -347,7 +348,7 @@ impl GridRouter {
         session_id: &str,
         appium_capabilities: Option<&serde_json::Value>,
     ) -> reqwest::Result<()> {
-        for attempt in 1..=3 {
+        for attempt in 1..=CONFIRM_ATTEMPTS {
             match self
                 .backend
                 .confirm(allocation_id, session_id, appium_capabilities)
@@ -355,12 +356,12 @@ impl GridRouter {
             {
                 Ok(()) => return Ok(()),
                 Err(e) if is_permanent_confirm_error(&e) => return Err(e),
-                Err(e) if attempt == 3 => return Err(e),
+                Err(e) if attempt == CONFIRM_ATTEMPTS => return Err(e),
                 Err(e) => {
                     log::warn!(
-                        "confirm transport error for {allocation_id} (attempt {attempt}/3): {e}"
+                        "confirm transport error for {allocation_id} (attempt {attempt}/{CONFIRM_ATTEMPTS}): {e}"
                     );
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    tokio::time::sleep(Duration::from_secs(CONFIRM_RETRY_SLEEP_SECS)).await;
                 }
             }
         }
@@ -835,7 +836,7 @@ mod tests {
 
     #[test]
     fn create_timeout_tiny_window_floors_at_five() {
-        // The registry min is 5; max(5-5, 5) = 5 keeps a sane create budget.
+        // The registry floor for grid.claim_window_sec is 30; the 5s floor below is math robustness for any smaller reported window.
         let pt = Duration::from_secs(300);
         assert_eq!(create_timeout(pt, Some(5)), Duration::from_secs(5));
     }
