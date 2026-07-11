@@ -267,7 +267,7 @@ async def _handle_restart_succeeded(
         # live value the reconciler already wrote is never churned.
         if locked_node.active_connection_target is None:
             locked_node.active_connection_target = appium_connection_target(device)
-    locked_node.consecutive_health_failures = 0
+    locked_node.health_failing_since = None
     if process == "appium":
         publisher.queue_for_session(
             db,

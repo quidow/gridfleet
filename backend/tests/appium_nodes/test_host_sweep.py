@@ -2,6 +2,8 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+from sqlalchemy import func, select
+
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import heartbeat as heartbeat_module
 from app.appium_nodes.services import reconciler as reconciler_module
@@ -13,10 +15,14 @@ from app.appium_nodes.services.host_sweep import (
     run_host_sweep_once,
     stage_due,
 )
+from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.core.leader import state_store as control_plane_state_store
 from app.core.timeutil import now_utc
-from app.devices.models import DeviceOperationalState
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
+from app.devices.services.health import DeviceHealthService
+from app.hosts.models import HostResourceSample
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -461,3 +467,76 @@ def test_partition_probe_stage_interval_at_least_base_tick() -> None:
     from app.appium_nodes.services.host_sweep import HOST_SWEEP_INTERVAL_SEC, PARTITION_PROBE_INTERVAL_SEC
 
     assert PARTITION_PROBE_INTERVAL_SEC >= HOST_SWEEP_INTERVAL_SEC
+
+
+async def test_full_refold_is_idempotent(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """Acceptance (WS-9.1): re-folding the same pushed sections produces identical
+    verdict-bearing durable facts, which is why the per-host watermark is only an
+    optimization and not a correctness gate.
+
+    Drives the real node_health and host_telemetry folds twice with identical
+    stamps (calling the fold functions directly — the watermark that would
+    normally skip the second fold is bypassed to force a genuine re-fold). The
+    connectivity-debounce and telemetry ON-CONFLICT paths have their own
+    per-mechanism replay tests. Excludes ``*_checked_at`` / ``last_*`` stamps,
+    which advance with ``now_utc()`` by design (decision #6).
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Refold Device",
+        identity_value="refold-001",
+        connection_target="refold-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="refold-target",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    settings = FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
+    node_health = NodeHealthService(
+        publisher=event_bus,
+        settings=settings,
+        recovery_control=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
+    )
+    telemetry = HostResourceTelemetryService(settings=settings)
+    stamp = "2026-07-11T12:00:00+00:00"
+    node_health_section = {
+        "reported_at": stamp,
+        "nodes": [{"port": 4723, "pid": 1, "connection_target": "refold-target", "running": False}],
+    }
+    telemetry_section = {"recorded_at": stamp, "cpu_percent": 33.0, "memory_used_mb": 1000, "memory_total_mb": 2000}
+
+    async def _fold_all() -> None:
+        await node_health.fold_host_nodes(db_session, db_host.id, node_health_section)
+        await telemetry.fold_host_telemetry(db_session, db_host.id, telemetry_section)
+
+    async def _snapshot() -> tuple[object, ...]:
+        await db_session.refresh(node)
+        events = await db_session.scalar(
+            select(func.count())
+            .select_from(DeviceEvent)
+            .where(DeviceEvent.device_id == device.id, DeviceEvent.event_type == DeviceEventType.health_check_fail)
+        )
+        samples = await db_session.scalar(
+            select(func.count()).select_from(HostResourceSample).where(HostResourceSample.host_id == db_host.id)
+        )
+        return (node.health_failing_since, node.health_state, node.health_running, events, samples)
+
+    await _fold_all()
+    first = await _snapshot()
+    await _fold_all()  # genuine re-fold of the same observation
+    assert await _snapshot() == first

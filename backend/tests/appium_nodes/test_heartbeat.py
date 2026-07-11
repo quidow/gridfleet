@@ -74,13 +74,13 @@ def _unguarded_guard(svc: HeartbeatService) -> object:
 async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:
     node = await db_session.get(AppiumNode, uuid.UUID(node_key))
     assert node is not None
-    node.consecutive_health_failures = count
+    node.health_failing_since = now_utc() - timedelta(seconds=count * 30)
     await db_session.commit()
 
 
-async def get_node_health_control_plane_state(db_session: AsyncSession) -> dict[str, int]:
+async def get_node_health_control_plane_state(db_session: AsyncSession) -> dict[str, datetime]:
     nodes = (await db_session.execute(select(AppiumNode))).scalars().all()
-    return {str(node.id): node.consecutive_health_failures for node in nodes if node.consecutive_health_failures > 0}
+    return {str(node.id): node.health_failing_since for node in nodes if node.health_failing_since is not None}
 
 
 @pytest.fixture(autouse=True)

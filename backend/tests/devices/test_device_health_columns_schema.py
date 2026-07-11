@@ -36,7 +36,7 @@ async def test_device_has_health_columns(db_session: AsyncSession) -> None:
         }.issubset(cols), f"Missing columns on devices: {cols}"
         node_cols = {c["name"] for c in insp.get_columns("appium_nodes")}
         assert {
-            "consecutive_health_failures",
+            "health_failing_since",
             "last_health_checked_at",
             "health_running",
             "health_state",

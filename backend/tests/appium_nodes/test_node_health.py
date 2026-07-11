@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
@@ -14,6 +15,8 @@ from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
+    DeviceEvent,
+    DeviceEventType,
     DeviceIntent,
     DeviceOperationalState,
     DeviceType,
@@ -99,7 +102,7 @@ async def _running_node(
 
 
 async def _set_failure_count(db_session: AsyncSession, node: AppiumNode, count: int) -> None:
-    node.consecutive_health_failures = count
+    node.health_failing_since = now_utc() - timedelta(seconds=count * 30)
     await db_session.commit()
 
 
@@ -108,11 +111,11 @@ async def test_fold_healthy_node_clears_failure_count(db_session: AsyncSession, 
     await _set_failure_count(db_session, node, 2)
 
     await _service(
-        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300})
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
     ).fold_host_nodes(db_session, device.host_id, _section(_entry(node, running=True)))
 
     await db_session.refresh(node)
-    assert node.consecutive_health_failures == 0
+    assert node.health_failing_since is None
     assert node.health_running is True
     assert node.health_state is None
     assert node.last_health_checked_at is not None
@@ -122,11 +125,11 @@ async def test_fold_refused_node_increments_failure_count(db_session: AsyncSessi
     device, node = await _running_node(db_session, db_host, name="Failing Phone", identity="nh-refused", port=4724)
 
     await _service(
-        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300})
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
     ).fold_host_nodes(db_session, device.host_id, _section(_entry(node, running=False)))
 
     await db_session.refresh(node)
-    assert node.consecutive_health_failures == 1
+    assert node.health_failing_since is not None
     assert node.health_state == "error"
 
 
@@ -137,7 +140,7 @@ async def test_fold_absent_node_preserves_health_state(db_session: AsyncSession,
     await _service(settings=FakeSettingsReader({})).fold_host_nodes(db_session, device.host_id, _section())
 
     await db_session.refresh(node)
-    assert node.consecutive_health_failures == 2
+    assert node.health_failing_since is not None
     assert node.health_running is None
 
 
@@ -146,7 +149,7 @@ async def test_fold_max_failures_registers_restart_intent(db_session: AsyncSessi
     await _set_failure_count(db_session, node, 2)
 
     await _service(
-        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300})
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
     ).fold_host_nodes(db_session, device.host_id, _section(_entry(node, running=False)))
 
     await db_session.refresh(node)
@@ -163,6 +166,64 @@ async def test_fold_max_failures_registers_restart_intent(db_session: AsyncSessi
         .all()
     )
     assert len(intents) == 2
+
+
+def _section_at(stamp: str, *entries: dict[str, object]) -> dict[str, object]:
+    return {"reported_at": stamp, "nodes": list(entries)}
+
+
+async def _health_fail_events(db_session: AsyncSession, device_id: uuid.UUID) -> list[DeviceEvent]:
+    return list(
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device_id,
+                    DeviceEvent.event_type == DeviceEventType.health_check_fail,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def test_fold_replay_is_idempotent(db_session: AsyncSession, db_host: Host) -> None:
+    """Re-folding the same failing observation (same reported_at) is a no-op:
+    identical health_failing_since, node state, and exactly one onset event."""
+    device, node = await _running_node(db_session, db_host, name="Replay Phone", identity="nh-replay", port=4740)
+    settings = FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
+    section = _section_at(now_utc().isoformat(), _entry(node, running=False))
+
+    await _service(settings=settings).fold_host_nodes(db_session, device.host_id, section)
+    await db_session.refresh(node)
+    first_since = node.health_failing_since
+    assert first_since is not None
+    assert node.health_state == "error"
+
+    await _service(settings=settings).fold_host_nodes(db_session, device.host_id, section)
+    await db_session.refresh(node)
+    assert node.health_failing_since == first_since
+    assert node.health_state == "error"
+    assert node.health_running is False
+    assert len(await _health_fail_events(db_session, device.id)) == 1
+
+
+async def test_health_check_fail_events_fire_on_edges_only(db_session: AsyncSession, db_host: Host) -> None:
+    """A failure episode emits exactly two health_check_fail events — onset and
+    verdict — not one per failing cycle; the verdict payload carries failing_for_sec."""
+    device, node = await _running_node(db_session, db_host, name="Edge Phone", identity="nh-edges", port=4741)
+    settings = FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
+    t0 = now_utc()
+    for offset in (0, 30, 60):
+        section = _section_at((t0 + timedelta(seconds=offset)).isoformat(), _entry(node, running=False))
+        await _service(settings=settings).fold_host_nodes(db_session, device.host_id, section)
+
+    events = await _health_fail_events(db_session, device.id)
+    assert len(events) == 2
+    verdicts = [e for e in events if e.details and "failing_for_sec" in e.details]
+    assert len(verdicts) == 1
+    assert verdicts[0].details is not None
+    assert verdicts[0].details["failing_for_sec"] == 60
 
 
 async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_host: Host) -> None:
@@ -201,7 +262,7 @@ async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_ho
     )
 
     await _service(
-        settings=FakeSettingsReader({"general.node_max_failures": 3, "appium_reconciler.restart_window_sec": 300}),
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300}),
         recovery_control=recovery,
     ).fold_host_nodes(db_session, device.host_id, _section(_entry(node, running=True)))
 
@@ -221,7 +282,7 @@ async def test_fold_skips_stale_observation_identity(db_session: AsyncSession, d
     await _service(settings=FakeSettingsReader({})).fold_host_nodes(db_session, device.host_id, _section(stale_entry))
 
     await db_session.refresh(node)
-    assert node.consecutive_health_failures == 2
+    assert node.health_failing_since is not None
     assert node.health_running is None
 
 
@@ -241,7 +302,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         connection_type=ConnectionType.usb,
     )
     db = AsyncMock()
-    svc = _service(settings=FakeSettingsReader({"general.node_max_failures": 3}))
+    svc = _service(settings=FakeSettingsReader({"general.node_fail_window_sec": 60}))
     monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))
     await svc._process_node_health(
         db, AppiumNode(device_id=device.id, port=4723), device, result=ProbeResult(status="ack")

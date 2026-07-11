@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,7 +16,7 @@ from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
-from app.core.timeutil import now_utc
+from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.models.event import DeviceEventType
@@ -39,6 +40,7 @@ from app.sessions.service import device_has_running_session
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +93,13 @@ LOOP_NAME = "device_connectivity"
 # ponytail: fixed dial width for the surviving lifecycle-state poll; was
 # general.probe_concurrency_per_host — re-knob only if a large host proves it.
 _LIFECYCLE_POLL_CONCURRENCY = 4
+
+
+@dataclass(frozen=True, slots=True)
+class _DebounceWindows:
+    ip_ping: float
+    probe_failed: float
+    probe_unanswered: float
 
 
 def _audit_label(operational_state: DeviceOperationalState) -> str:
@@ -295,30 +304,39 @@ def _split_ip_ping(checks: list[dict[str, Any]]) -> tuple[dict[str, Any] | None,
     return ip_ping, others
 
 
-async def _apply_failure_hysteresis(
+async def _apply_failure_debounce(
     db: AsyncSession,
     device: Device,
     *,
     namespace: str,
     ok: bool,
-    threshold: int,
+    window_sec: float,
+    observed_at: datetime,
 ) -> bool:
-    """Consecutive-failure debounce backed by the control-plane state store.
+    """Duration-based failure debounce backed by the control-plane state store.
 
-    Returns True while the failure count is below ``threshold`` (suppressing
-    the failure), False once the count reaches or exceeds it, and always True
-    (plus counter reset) on success. Keyed per device under ``namespace``
-    (``IP_PING_NAMESPACE`` for the ip_ping check, ``PROBE_FAILED_NAMESPACE``
-    for manifest-declared debounceable checks).
+    The first failing observation is stored under ``namespace``. The failure is
+    suppressed until ``observed_at`` is at least ``window_sec`` after that
+    stamp; success clears the stamp. Legacy integer counter values are treated
+    as absent so the duration window starts at the first new observation.
     """
     if ok:
         await control_plane_state_store.delete_value(db, namespace, device.identity_value)
         return True
 
     current = await control_plane_state_store.get_value(db, namespace, device.identity_value)
-    counter = int(current) + 1 if isinstance(current, int) else 1
-    await control_plane_state_store.set_value(db, namespace, device.identity_value, counter)
-    return counter < threshold
+    failing_since = parse_iso(current)
+    if failing_since is None:
+        failing_since = observed_at
+        await control_plane_state_store.set_value(db, namespace, device.identity_value, observed_at.isoformat())
+    return (observed_at - failing_since).total_seconds() < window_sec
+
+
+def _failure_elapsed_seconds(value: object, *, observed_at: datetime) -> float:
+    failing_since = parse_iso(value)
+    if failing_since is None:
+        return 0.0
+    return max(0.0, (observed_at - failing_since).total_seconds())
 
 
 async def _stop_disconnected_node(db: AsyncSession, device: Device, *, health: DeviceHealthProtocol) -> None:
@@ -358,8 +376,8 @@ class ConnectivityService:
         host: Host,
         health_result: dict[str, Any],
         *,
-        ip_ping_threshold: int,
-        probe_failed_threshold: int,
+        debounce_windows: _DebounceWindows,
+        observed_at: datetime,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Derive the health verdict from a probe result, applying ip-ping hysteresis.
 
@@ -389,20 +407,21 @@ class ConnectivityService:
         # regardless, and mutating the persisted counter and failure gauges
         # would skew ip_ping telemetry for devices that are simply gone.
         if others_ok and ip_ping_entry is not None and not in_maintenance(device):
-            gated_ip_ping_ok = await _apply_failure_hysteresis(
+            gated_ip_ping_ok = await _apply_failure_debounce(
                 db,
                 device,
                 namespace=IP_PING_NAMESPACE,
                 ok=bool(ip_ping_entry.get("ok")),
-                threshold=ip_ping_threshold,
+                window_sec=debounce_windows.ip_ping,
+                observed_at=observed_at,
             )
             if not bool(ip_ping_entry.get("ok")):
                 metrics.record_ip_ping_failure(device_identity=device.identity_value, host=host.hostname)
-            counter_value = await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
-            metrics.set_ip_ping_consecutive_failures(
+            stamp_value = await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
+            metrics.set_ip_ping_failing_seconds(
                 device_identity=device.identity_value,
                 host=host.hostname,
-                value=int(counter_value or 0),
+                value=_failure_elapsed_seconds(stamp_value, observed_at=observed_at),
             )
 
         # Debounce transient failures only when EVERY failing non-ip_ping check
@@ -411,14 +430,24 @@ class ConnectivityService:
         gated_others_ok = others_ok
         if raw_checks_list and not in_maintenance(device):
             if others_ok:
-                await _apply_failure_hysteresis(
-                    db, device, namespace=PROBE_FAILED_NAMESPACE, ok=True, threshold=probe_failed_threshold
+                await _apply_failure_debounce(
+                    db,
+                    device,
+                    namespace=PROBE_FAILED_NAMESPACE,
+                    ok=True,
+                    window_sec=debounce_windows.probe_failed,
+                    observed_at=observed_at,
                 )
             else:
                 failing = [c for c in other_checks if isinstance(c, dict) and not c.get("ok")]
                 if failing and all(c.get("debounce") for c in failing):
-                    gated_others_ok = await _apply_failure_hysteresis(
-                        db, device, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=probe_failed_threshold
+                    gated_others_ok = await _apply_failure_debounce(
+                        db,
+                        device,
+                        namespace=PROBE_FAILED_NAMESPACE,
+                        ok=False,
+                        window_sec=debounce_windows.probe_failed,
+                        observed_at=observed_at,
                     )
         return gated_others_ok and gated_ip_ping_ok, ip_ping_entry
 
@@ -428,7 +457,8 @@ class ConnectivityService:
         device: Device,
         *,
         ip_ping_entry: dict[str, Any] | None,
-        ip_ping_threshold: int,
+        ip_ping_window_sec: float,
+        observed_at: datetime,
     ) -> None:
         # A healthy probe re-arms link repair: clear the failed-attempt budget so a
         # later genuine link death can dispatch a fresh round.
@@ -438,10 +468,9 @@ class ConnectivityService:
             if ip_ping_entry is not None
             else None
         )
+        elapsed = _failure_elapsed_seconds(counter, observed_at=observed_at)
         summary = (
-            f"Healthy (ip_ping miss {counter}/{ip_ping_threshold})"
-            if isinstance(counter, int) and counter > 0
-            else "Healthy"
+            f"Healthy (ip_ping failing for {elapsed:.0f}s/{ip_ping_window_sec:.0f}s)" if elapsed > 0 else "Healthy"
         )
         await self._health.update_device_checks(db, device, healthy=True, summary=summary)
         await self._maybe_auto_recover(db, device)
@@ -563,8 +592,16 @@ class ConnectivityService:
         if not was_offline:
             await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
 
-    async def _note_unanswered_probe(self, db: AsyncSession, device: Device, host: Host, *, threshold: int) -> bool:
-        """Count consecutive unanswered probes (AgentCallError → health_result None).
+    async def _note_unanswered_probe(
+        self,
+        db: AsyncSession,
+        device: Device,
+        host: Host,
+        *,
+        window_sec: float,
+        observed_at: datetime,
+    ) -> bool:
+        """Debounce unanswered probes (AgentCallError → health_result None).
 
         On threshold, mark the device unhealthy via the normal failure machinery
         instead of silently skipping it — a dead-link device whose agent channel
@@ -572,15 +609,20 @@ class ConnectivityService:
         it took over (caller continues to the next device)."""
         # Read-modify-write is safe: the connectivity loop is leader-owned (one
         # serialized writer per device). The only overlap is a brief leader
-        # handoff, where a lost count shifts the threshold by one tick — harmless
-        # for a consecutive-failure counter. Mirrors the ip_ping counter pattern.
+        # handoff, where a lost write shifts the window start by one observation —
+        # harmless for a duration debounce. Mirrors the ip_ping stamp pattern.
         current = await control_plane_state_store.get_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
-        counter = int(current) + 1 if isinstance(current, int) else 1
-        await control_plane_state_store.set_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value, counter)
-        metrics.set_probe_unanswered_consecutive(
-            device_identity=device.identity_value, host=host.hostname, value=counter
+        failing_since = parse_iso(current)
+        if failing_since is None:
+            failing_since = observed_at
+            await control_plane_state_store.set_value(
+                db, PROBE_UNANSWERED_NAMESPACE, device.identity_value, observed_at.isoformat()
+            )
+        failing_for_sec = max(0.0, (observed_at - failing_since).total_seconds())
+        metrics.set_probe_unanswered_failing_seconds(
+            device_identity=device.identity_value, host=host.hostname, value=failing_for_sec
         )
-        if counter < threshold:
+        if failing_for_sec < window_sec:
             return False
         await self._escalate_health_failure(db, device, summary="Health probe unanswered (agent/adapter error)")
         return True
@@ -735,9 +777,8 @@ class ConnectivityService:
         *,
         health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]],
         claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
-        ip_ping_threshold: int,
-        probe_failed_threshold: int,
-        probe_unanswered_threshold: int,
+        debounce_windows: _DebounceWindows,
+        observed_at: datetime,
     ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None] | None:
         """Derive this device's health verdict, applying emulator-state, unanswered-probe
         and repair side effects. Returns ``None`` when the unanswered-probe note flipped
@@ -748,11 +789,20 @@ class ConnectivityService:
         if lifecycle_state is not None:
             await self._health.update_emulator_state(db, device, lifecycle_state)
         if health_result is None:
-            flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
+            flipped = await self._note_unanswered_probe(
+                db,
+                device,
+                host,
+                window_sec=debounce_windows.probe_unanswered,
+                observed_at=observed_at,
+            )
             if flipped:
                 return None
         else:
             await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+            metrics.set_probe_unanswered_failing_seconds(
+                device_identity=device.identity_value, host=host.hostname, value=0.0
+            )
         healthy = False
         ip_ping_entry: dict[str, Any] | None = None
         if health_result is not None:
@@ -761,8 +811,8 @@ class ConnectivityService:
                 device,
                 host,
                 health_result,
-                ip_ping_threshold=ip_ping_threshold,
-                probe_failed_threshold=probe_failed_threshold,
+                debounce_windows=debounce_windows,
+                observed_at=observed_at,
             )
 
         if not healthy and health_result is not None:
@@ -855,11 +905,12 @@ class ConnectivityService:
         host = await db.get(Host, host_id)
         if host is None:
             return
-        ip_ping_threshold = self._settings.get_int("device_checks.ip_ping.consecutive_fail_threshold")
-        probe_unanswered_threshold = int(
-            self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
+        observed_at = parse_iso(section.get("reported_at")) or now_utc()
+        debounce_windows = _DebounceWindows(
+            ip_ping=float(self._settings.get("device_checks.ip_ping.fail_window_sec")),
+            probe_unanswered=float(self._settings.get("device_checks.probe_unanswered.fail_window_sec")),
+            probe_failed=float(self._settings.get("device_checks.probe_failed.fail_window_sec")),
         )
-        probe_failed_threshold = self._settings.get_int("device_checks.probe_failed.consecutive_fail_threshold")
 
         all_devices, lifecycle_capable, claimed_ports_by_id = await self._collect_prepass_devices(db, [host])
         raw = section.get("devices")
@@ -893,16 +944,19 @@ class ConnectivityService:
                 host_ref,
                 health_by_device_id=health_by_device_id,
                 claimed_ports_by_id=claimed_ports_by_id,
-                ip_ping_threshold=ip_ping_threshold,
-                probe_failed_threshold=probe_failed_threshold,
-                probe_unanswered_threshold=probe_unanswered_threshold,
+                debounce_windows=debounce_windows,
+                observed_at=observed_at,
             )
             if verdict is None:
                 continue
             healthy, ip_ping_entry, health_result = verdict
             if healthy:
                 await self._handle_healthy_device(
-                    db, device, ip_ping_entry=ip_ping_entry, ip_ping_threshold=ip_ping_threshold
+                    db,
+                    device,
+                    ip_ping_entry=ip_ping_entry,
+                    ip_ping_window_sec=debounce_windows.ip_ping,
+                    observed_at=observed_at,
                 )
                 continue
             await self._handle_unhealthy_device(

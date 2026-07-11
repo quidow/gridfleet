@@ -51,7 +51,8 @@ Per host, after Appium-node convergence, `host_sweep` folds the push's
 observation sections (`node_health`, `device_health`, `device_telemetry`,
 `device_properties`, `host_telemetry`) into durable facts — each fold gated by
 a per-host stamp watermark (control-plane namespace
-`host_sweep.observation_fold`) so one observation folds exactly once. It then
+`host_sweep.observation_fold`) to skip redundant re-folds; every fold is
+idempotent under re-processing. It then
 runs the cadence-gated `/agent/health` partition diagnostic
 (60 s plumbing cadence; feeds no state). After the per-host
 fan-out the sweep expires stale device cooldowns. The agent produces those

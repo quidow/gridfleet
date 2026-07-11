@@ -64,7 +64,7 @@ class AppiumNode(Base):
         server_default="{}",
         default=dict,
     )
-    consecutive_health_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    health_failing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     health_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     health_state: Mapped[str | None] = mapped_column(Text, nullable=True)

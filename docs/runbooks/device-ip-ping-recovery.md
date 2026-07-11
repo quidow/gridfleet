@@ -26,15 +26,15 @@ Three settings control IP ping behavior. They live in the `device_checks` settin
 ```bash
 curl -X PUT -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
   -H 'Content-Type: application/json' \
-  http://localhost:8000/api/settings/device_checks.ip_ping.consecutive_fail_threshold \
-  -d '{"value": 5}'
+  http://localhost:8000/api/settings/device_checks.ip_ping.fail_window_sec \
+  -d '{"value": 300}'
 ```
 
-### `device_checks.ip_ping.consecutive_fail_threshold`
+### `device_checks.ip_ping.fail_window_sec`
 
-- **Default:** `3`
-- **What it does:** Number of consecutive failed pings required to flip the device offline.
-- **Use case:** Raise this (e.g., to `5` or `10`) if your Wi-Fi frequently drops frames and causes false offline flips. Lowering it (to `1` or `2`) makes the system more aggressive.
+- **Default:** `120` seconds
+- **What it does:** Wall-clock duration of failing ping observations required to flip the device offline.
+- **Use case:** Raise this (e.g., to `300` or `600`) if your Wi-Fi frequently drops frames and causes false offline flips. Set it to `0` for strict first-miss behavior.
 
 ### `device_checks.ip_ping.timeout_sec`
 
@@ -76,20 +76,20 @@ Open the UI and find the device row. The device's health summary should show "He
 Verify the counter is zero by hitting the metrics endpoint:
 
 ```bash
-curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_consecutive_failures' | head -1
+curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_failing_seconds' | head -1
 ```
 
 Expected output (or similar):
 
 ```
-gridfleet_ip_ping_consecutive_failures{device_identity="<device_id>",host="<agent_hostname>"} 0.0
+gridfleet_ip_ping_failing_seconds{device_identity="<device_id>",host="<agent_hostname>"} 0.0
 ```
 
 ### Step 4: Disconnect the device's Wi-Fi
 
 Go to the phone → Settings → Wi-Fi → turn Wi-Fi **Off** (or select a different network that is unreachable).
 
-Wait for three connectivity loop intervals to pass. The default interval is 60 seconds, so wait approximately **3 minutes**.
+Wait for the default 120-second failure window to pass. At the 60-second device-health cadence, this is approximately **2 minutes** from the first failing observation.
 
 ### Step 5: Confirm the device flips offline
 
@@ -101,10 +101,10 @@ Return to the UI and check the device row:
 Verify the counter incremented by hitting metrics:
 
 ```bash
-curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_consecutive_failures' | head -1
+curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_failing_seconds' | head -1
 ```
 
-Expected output shows `consecutive_failures` > 0 (e.g., `3.0` if `consecutive_fail_threshold=3`).
+Expected output shows elapsed failing seconds greater than zero (up to the current observation age).
 
 Also check the total failures counter:
 
@@ -127,7 +127,7 @@ The device should return to `available` status automatically via the `attempt_au
 Verify:
 
 ```bash
-curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_consecutive_failures' | head -1
+curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_failing_seconds' | head -1
 ```
 
 Should show `0.0` again (or no row if the device recovered fully).
@@ -139,7 +139,7 @@ Should show `0.0` again (or no row if the device recovered fully).
 **Cause:** The device's Wi-Fi connection is dropping due to Doze or power saving.
 
 **Fix:**
-- Raise `device_checks.ip_ping.consecutive_fail_threshold` to `5` or higher (requires more misses before flipping).
+- Raise `device_checks.ip_ping.fail_window_sec` to `300` or higher (requires a longer failure episode before flipping).
 - Or disable IP ping entirely for that device by removing it from the pack manifest's `applies_when` rules.
 
 ### All USB devices flip offline when you run the smoke test
@@ -177,8 +177,8 @@ To disable IP ping checks entirely:
 ```bash
 curl -X PUT -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
   -H 'Content-Type: application/json' \
-  http://localhost:8000/api/settings/device_checks.ip_ping.consecutive_fail_threshold \
-  -d '{"value": 50}'
+  http://localhost:8000/api/settings/device_checks.ip_ping.fail_window_sec \
+  -d '{"value": 3600}'
 ```
 
 Devices will rarely or never flip offline due to IP ping failures (set high enough that normal transients never trigger it).

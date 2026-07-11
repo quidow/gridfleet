@@ -158,7 +158,7 @@ async def test_bulk_update(client: AsyncClient) -> None:
         json={
             "settings": {
                 "general.session_viability_timeout_sec": 20,
-                "general.node_max_failures": 5,
+                "general.node_fail_window_sec": 150,
             }
         },
     )
@@ -167,11 +167,11 @@ async def test_bulk_update(client: AsyncClient) -> None:
     assert len(data) == 2
     values = {s["key"]: s["value"] for s in data}
     assert values["general.session_viability_timeout_sec"] == 20
-    assert values["general.node_max_failures"] == 5
+    assert values["general.node_fail_window_sec"] == 150
 
     # Cleanup
     await client.post("/api/settings/reset/general.session_viability_timeout_sec")
-    await client.post("/api/settings/reset/general.node_max_failures")
+    await client.post("/api/settings/reset/general.node_fail_window_sec")
 
 
 async def test_bulk_update_validation_error(client: AsyncClient) -> None:
@@ -180,7 +180,7 @@ async def test_bulk_update_validation_error(client: AsyncClient) -> None:
         json={
             "settings": {
                 "general.session_viability_timeout_sec": 20,
-                "general.node_max_failures": -1,  # min is 1
+                "general.node_fail_window_sec": -1,  # min is 0
             }
         },
     )
@@ -205,7 +205,7 @@ async def test_reset_setting(client: AsyncClient) -> None:
 async def test_reset_all(client: AsyncClient) -> None:
     # Override a couple
     await client.put("/api/settings/general.session_viability_timeout_sec", json={"value": 120})
-    await client.put("/api/settings/general.node_max_failures", json={"value": 10})
+    await client.put("/api/settings/general.node_fail_window_sec", json={"value": 300})
 
     # Reset all
     resp = await client.post("/api/settings/reset-all")

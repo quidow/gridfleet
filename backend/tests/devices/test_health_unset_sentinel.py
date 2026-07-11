@@ -47,7 +47,7 @@ async def _seed_device_with_error_node(db_session: AsyncSession, db_host: Host, 
         active_connection_target="target",
         health_running=False,
         health_state="error",
-        consecutive_health_failures=1,
+        health_failing_since=datetime.now(UTC),
     )
     db_session.add(node)
     await db_session.commit()

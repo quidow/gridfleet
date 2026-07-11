@@ -36,7 +36,6 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=88,
-        consecutive_health_failures=999,
     )
     db_session.add(node)
     await db_session.commit()
@@ -46,7 +45,7 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
 
     svc = NodeHealthService(
         publisher=event_bus,
-        settings=FakeSettingsReader({}),
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 0}),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
@@ -105,7 +104,6 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
         active_connection_target="live",
         desired_state=AppiumDesiredState.stopped,
         pid=88,
-        consecutive_health_failures=999,
     )
     db_session.add(node)
     await db_session.commit()
@@ -130,7 +128,7 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
 
     await db_session.refresh(node)
     assert node.restart_requested_at is None  # no restart escalated
-    assert node.consecutive_health_failures == 999  # refused probe not counted
+    assert node.health_failing_since is None  # refused probe not counted
     intent = (
         await db_session.execute(
             select(DeviceIntent).where(

@@ -5,8 +5,8 @@ expiry after the fan-out.
 Concerns run only for hosts this sweep pass proved alive: host liveness derives
 from status-push recency (evaluate_host), appium-node convergence reads the same
 latest pushed snapshot, and per-host observation folds consume stamped push
-sections afterward — each fold gated by a per-host stamp watermark so one
-observation folds exactly once. The backend keeps a single cadence-gated
+sections afterward — each fold skip-gated by a per-host stamp watermark, an
+optimization because every fold is idempotent under re-processing. The backend keeps a single cadence-gated
 reachability probe (probe_host) as a network-partition diagnostic (see
 stage_due). After the fan-out the sweep expires stale device cooldowns.
 """
@@ -57,9 +57,9 @@ class ObservationFold:
     """A per-host fact fold fed by one status-push section.
 
     Runs only when the section's stamp differs from the stored per-host
-    watermark: each push re-sends the agent's latest probe cache, and the
-    failure-hysteresis counters downstream count per observation — re-folding
-    an unchanged section would multiply them.
+    watermark. The watermark skips redundant re-folds of unchanged probe
+    caches; it is not a correctness gate because every fold is idempotent under
+    re-processing.
     """
 
     section: str  # push payload key
@@ -87,7 +87,7 @@ async def _fold_observations(
         except Exception:
             # Fold isolation (stage-isolation successor): one section's failure
             # must not starve the others. Watermark not advanced — retried next
-            # cycle (at-least-once; the restart-event ingest accepts the same).
+            # cycle (re-folds are harmless because folds are idempotent).
             logger.exception("host_sweep_fold_failed", section=entry.section, host_id=str(host_id))
             continue
         watermarks[entry.section] = stamp

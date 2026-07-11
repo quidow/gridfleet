@@ -65,7 +65,7 @@ def test_appium_reconciler_restart_window_setting_is_registered() -> None:
 @pytest.mark.parametrize(
     "key,expected_default,expected_min,expected_max,expected_type",
     [
-        ("device_checks.ip_ping.consecutive_fail_threshold", 3, 1, 50, "int"),
+        ("device_checks.ip_ping.fail_window_sec", 120, 0, 3600, "int"),
         ("device_checks.ip_ping.timeout_sec", 2.0, 0.5, 30.0, "float"),
         ("device_checks.ip_ping.count_per_cycle", 1, 1, 10, "int"),
     ],
@@ -108,6 +108,10 @@ def test_removed_plumbing_settings_are_not_registered() -> None:
         "agent.http_pool_idle_seconds",
         "agent.circuit_breaker_failure_threshold",
         "agent.circuit_breaker_cooldown_seconds",
+        "general.node_max_failures",
+        "device_checks.ip_ping.consecutive_fail_threshold",
+        "device_checks.probe_unanswered.consecutive_fail_threshold",
+        "device_checks.probe_failed.consecutive_fail_threshold",
     }
     assert not removed & set(settings_registry.SETTINGS_REGISTRY)
 
