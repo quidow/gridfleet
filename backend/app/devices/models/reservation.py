@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Integer, String, func, text
@@ -16,6 +17,20 @@ def _cooldown_remaining_sec(excluded_until: datetime | None) -> int | None:
     if excluded_until is None:
         return None
     return max(0, int((excluded_until - now_utc()).total_seconds()))
+
+
+class ExclusionKind(StrEnum):
+    """Why an active reservation row is excluded — the explicit twin of the
+    excluded/excluded_until pair (WS-12.2).
+
+    ``cooldown``: timed, run-bound backoff; expires at ``excluded_until``
+    (the TTL-clear sweep resets the fields once it elapses).
+    ``exclusion``: indefinite health exclusion; removes the device from run
+    routing until restored or released.
+    """
+
+    cooldown = "cooldown"
+    exclusion = "exclusion"
 
 
 class DeviceReservation(Base):
@@ -54,6 +69,7 @@ class DeviceReservation(Base):
     exclusion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     excluded_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exclusion_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     excluded_window: Mapped[Any | None] = mapped_column(
         TSTZRANGE,
         Computed(
