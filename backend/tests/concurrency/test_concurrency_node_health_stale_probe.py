@@ -10,7 +10,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceOperationalState
-from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -45,10 +44,6 @@ async def test_fold_skips_stale_unhealthy_observation_after_node_restart(
     )
     db_session.add(node)
     await db_session.commit()
-    threshold = int(settings_service.get("general.node_max_failures"))
-    node.consecutive_health_failures = threshold - 1
-    await db_session.commit()
-
     section = {
         "reported_at": now_utc().isoformat(),
         "nodes": [
@@ -80,6 +75,6 @@ async def test_fold_skips_stale_unhealthy_observation_after_node_restart(
 
     async with db_session_maker() as verify:
         verified = (await verify.execute(select(AppiumNode).where(AppiumNode.id == node.id))).scalar_one()
-    assert verified.consecutive_health_failures == threshold - 1
+    assert verified.health_failing_since is None
     assert verified.pid == 2222
     assert verified.active_connection_target == "new-target"

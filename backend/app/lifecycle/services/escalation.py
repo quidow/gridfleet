@@ -7,7 +7,7 @@ start retry -- shares ONE ladder on ``Device.lifecycle_policy_state``:
 ``Device.review_required`` once attempts cross
 ``general.lifecycle_recovery_review_threshold``.
 
-Detection debounce (ip_ping hysteresis, ``general.node_max_failures``,
+Detection debounce (ip_ping duration windows, ``general.node_fail_window_sec``,
 probe-unanswered counting, the link-repair attempt budget) stays with each
 observer; this module owns only what happens AFTER a remediation fails.
 

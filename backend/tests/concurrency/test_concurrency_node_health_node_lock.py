@@ -90,12 +90,6 @@ async def test_node_health_failure_path_locks_appium_node(
             )
             await session.commit()
 
-    from tests.conftest import settings_service
-
-    threshold = int(settings_service.get("general.node_max_failures"))
-    node.consecutive_health_failures = threshold - 1
-    await db_session.commit()
-
     await asyncio.gather(health_runner(), stomper())
 
     async with db_session_maker() as verify:

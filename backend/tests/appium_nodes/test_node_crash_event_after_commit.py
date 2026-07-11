@@ -129,7 +129,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
         publisher=Mock(),
         settings=FakeSettingsReader(
             {
-                "general.node_max_failures": 1,
+                "general.node_fail_window_sec": 0,
                 "appium.startup_timeout_sec": 30,
                 "appium_reconciler.restart_window_sec": 30,
             }

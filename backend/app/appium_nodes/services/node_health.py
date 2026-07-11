@@ -14,7 +14,7 @@ from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
 from app.core.metrics_recorders import record_background_loop_phase
 from app.core.observability import get_logger
-from app.core.timeutil import now_utc
+from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -31,6 +31,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +76,7 @@ class NodeHealthService:
         raw_nodes = section.get("nodes")
         if not isinstance(raw_nodes, list):
             return
+        observed_at = parse_iso(section.get("reported_at")) or now_utc()
         by_port: dict[int, dict[str, Any]] = {
             entry["port"]: entry
             for entry in raw_nodes
@@ -122,6 +124,7 @@ class NodeHealthService:
                 observed_active_connection_target=(
                     entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
                 ),
+                observed_at=observed_at,
             )
             await db.commit()
         record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
@@ -168,6 +171,7 @@ class NodeHealthService:
         observed_port: int | None = None,
         observed_pid: int | None = None,
         observed_active_connection_target: str | None = None,
+        observed_at: datetime | None = None,
     ) -> None:
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if locked_node is None:
@@ -212,7 +216,7 @@ class NodeHealthService:
         healthy = result.status == "ack"
 
         if healthy:
-            if locked_node.consecutive_health_failures > 0:
+            if locked_node.health_failing_since is not None:
                 logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
                 await self._recovery_control.record_control_action(
                     db,
@@ -261,7 +265,7 @@ class NodeHealthService:
                         source="node_health",
                     ),
                 )
-            locked_node.consecutive_health_failures = 0
+            locked_node.health_failing_since = None
             # Direct probe acked: the node is the authoritative health signal.
             # Persist the positive result truthfully — health_running=True —
             # instead of clearing the columns to NULL and relying on the
@@ -277,7 +281,7 @@ class NodeHealthService:
             )
             return
 
-        await self._record_health_failure(db, node, locked_node, device)
+        await self._record_health_failure(db, node, locked_node, device, observed_at=observed_at or now_utc())
 
     async def _record_health_failure(
         self,
@@ -285,38 +289,49 @@ class NodeHealthService:
         node: AppiumNode,
         locked_node: AppiumNode,
         device: Device,
+        *,
+        observed_at: datetime,
     ) -> None:
-        locked_node.consecutive_health_failures += 1
-        count = locked_node.consecutive_health_failures
-        max_failures = self._settings.get("general.node_max_failures")
+        if locked_node.health_failing_since is None:
+            locked_node.health_failing_since = observed_at
+            onset = True
+        else:
+            onset = False
+        failing_for_sec = max(0.0, (observed_at - locked_node.health_failing_since).total_seconds())
+        window_sec = float(self._settings.get("general.node_fail_window_sec"))
+        verdict = (onset and window_sec <= 0) or (
+            not onset and observed_at > locked_node.health_failing_since and failing_for_sec >= window_sec
+        )
         await self._health.apply_node_state_transition(
             db,
             device,
             health_running=False,
             health_state="error",
-            mark_offline=count >= max_failures,
+            mark_offline=verdict,
         )
         logger.warning(
-            "Node health check failed for device %s (port %d): %d/%d",
+            "Node health check failed for device %s (port %d): %.0fs/%.0fs",
             device.name,
             node.port,
-            count,
-            max_failures,
+            failing_for_sec,
+            window_sec,
         )
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.health_check_fail,
-            {"consecutive_failures": count, "port": node.port},
-        )
+        if onset:
+            await record_event(db, device.id, DeviceEventType.health_check_fail, {"port": node.port})
 
-        if count >= max_failures:
-            locked_node.consecutive_health_failures = 0
+        if verdict:
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.health_check_fail,
+                {"failing_for_sec": int(failing_for_sec), "port": node.port},
+            )
+            locked_node.health_failing_since = observed_at
 
             deadline = backoff_active(policy_state(device))
             if deadline is not None:
                 logger.warning(
-                    "Node for device %s reached max failures; restart deferred by shared backoff until %s",
+                    "Node for device %s reached failure window; restart deferred by shared backoff until %s",
                     device.name,
                     deadline.isoformat(),
                 )
@@ -337,5 +352,5 @@ class NodeHealthService:
                 )
                 return
 
-            logger.error("Node for device %s reached max failures, attempting restart", device.name)
+            logger.error("Node for device %s reached failure window, attempting restart", device.name)
             await self._attempt_node_restart(db, device=device)
