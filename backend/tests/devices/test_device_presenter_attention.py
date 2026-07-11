@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType, ExclusionKind
 from app.devices.services import presenter as device_presenter
 from app.devices.services.presenter import DevicePresenterService
 from tests.fakes import FakeSettingsReader
@@ -105,6 +105,7 @@ def test_build_reservation_read_marks_escalated_cooldown() -> None:
     reservation = SimpleNamespace(id=uuid.uuid4(), name="run", state=SimpleNamespace(value="active"))
     entry = SimpleNamespace(
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="Exceeded cooldown threshold 3",
         excluded_until=datetime.now(UTC) + timedelta(seconds=30),
         cooldown_count=4,
