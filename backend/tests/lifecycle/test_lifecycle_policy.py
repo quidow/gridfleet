@@ -186,7 +186,7 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
     assert result == "deferred"
     assert device.operational_state_last_emitted == DeviceOperationalState.busy
     policy = await build_lifecycle_policy(db_session, device)
-    assert policy["stop_pending"] is True
+    assert policy["deferred_stop"] is True
     assert policy["recovery_state"] == "waiting_for_session_end"
     assert await _event_types_for_device(db_session, device.id) == [DeviceEventType.lifecycle_deferred_stop]
 
@@ -306,7 +306,7 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     policy = await build_lifecycle_policy(db_session, device)
-    assert policy["stop_pending"] is False
+    assert policy["deferred_stop"] is False
     assert policy["excluded_from_run"] is True
 
 
@@ -883,7 +883,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
 
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state["stop_pending"] is True
+    assert device.lifecycle_policy_state["deferred_stop"] is True
 
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
@@ -897,7 +897,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
 
 
 async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
@@ -979,8 +979,8 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
         host_id=db_host.id,
         operational_state=DeviceOperationalState.busy,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB not responsive",
         },
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -1018,8 +1018,8 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
 
     device.lifecycle_policy_state = {
         **(device.lifecycle_policy_state or {}),
-        "stop_pending": False,
-        "stop_pending_reason": None,
+        "deferred_stop": False,
+        "deferred_stop_reason": None,
     }
     await db_session.commit()
 
@@ -1062,9 +1062,9 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB not responsive",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "Probe failed",
@@ -1086,9 +1086,9 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
-    assert reloaded.lifecycle_policy_state["stop_pending_reason"] is None
-    assert reloaded.lifecycle_policy_state["stop_pending_since"] is None
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop_reason"] is None
+    assert reloaded.lifecycle_policy_state["deferred_stop_since"] is None
 
     incident_stmt = select(DeviceEvent).where(
         DeviceEvent.device_id == device.id,
@@ -1120,9 +1120,9 @@ async def test_clear_pending_auto_stop_on_recovery_no_op_when_not_pending(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": False,
-            "stop_pending_reason": None,
-            "stop_pending_since": None,
+            "deferred_stop": False,
+            "deferred_stop_reason": None,
+            "deferred_stop_since": None,
             "last_action": "node_monitor_recovered",
         },
     )
@@ -1160,9 +1160,9 @@ async def test_handle_session_finished_drops_intent_when_healthy(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB not responsive",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "ADB not responsive",
@@ -1205,7 +1205,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
     # last_action must be refreshed so the audit trail does not show a stale
     # ``auto_stop_deferred`` after the intent was cleared by the healthy
     # session-end branch (see ``clear_pending_auto_stop_on_recovery``).
@@ -1236,9 +1236,9 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB not responsive",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "ADB not responsive",
@@ -1268,7 +1268,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline  # complete_auto_stop ran
 
 
@@ -1290,9 +1290,9 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "Disconnected",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "Disconnected",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "device_checks",
             "last_failure_reason": "Disconnected",
@@ -1325,7 +1325,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
 
 
@@ -1346,7 +1346,7 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
         operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
-        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+        lifecycle_policy_state={"deferred_stop": False, "last_action": "idle"},
     )
     db_session.add(device)
     await db_session.commit()
@@ -1385,7 +1385,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
         operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
-        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+        lifecycle_policy_state={"deferred_stop": False, "last_action": "idle"},
     )
     db_session.add(device)
     await db_session.flush()
@@ -1466,9 +1466,9 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB not responsive",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "device_checks",
             "last_failure_reason": "ADB not responsive",
@@ -1493,7 +1493,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     # State must be untouched because we bailed before doing any work.
-    assert reloaded.lifecycle_policy_state["stop_pending"] is True
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is True
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_deferred"
     # Device must still be busy — caller (session_sync) leaves the new session in charge.
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.busy
@@ -1523,9 +1523,9 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB hung",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB hung",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "ADB hung",
@@ -1566,7 +1566,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
     # last_failure_* is preserved (historical) but no longer drives behavior.
     assert reloaded.lifecycle_policy_state["last_failure_reason"] == "ADB hung"

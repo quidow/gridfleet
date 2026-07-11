@@ -34,9 +34,9 @@ def test_in_maintenance_reads_reason_with_defaults_merged() -> None:
 def test_set_deferred_stop_sets_pending_fields_and_action() -> None:
     state = default_state()
     set_deferred_stop(state, reason="probe failed")
-    assert state["stop_pending"] is True
-    assert state["stop_pending_reason"] == "probe failed"
-    assert isinstance(state["stop_pending_since"], str) and state["stop_pending_since"]
+    assert state["deferred_stop"] is True
+    assert state["deferred_stop_reason"] == "probe failed"
+    assert isinstance(state["deferred_stop_since"], str) and state["deferred_stop_since"]
     assert state["last_action"] == "auto_stop_deferred"
     assert isinstance(state["last_action_at"], str) and state["last_action_at"]
 
@@ -50,9 +50,9 @@ def test_clear_deferred_stop_resets_pending_fields_only() -> None:
     state["last_action"] = "sentinel_action"
     state["last_action_at"] = "2000-01-01T00:00:00+00:00"
     clear_deferred_stop(state)
-    assert state["stop_pending"] is False
-    assert state["stop_pending_reason"] is None
-    assert state["stop_pending_since"] is None
+    assert state["deferred_stop"] is False
+    assert state["deferred_stop_reason"] is None
+    assert state["deferred_stop_since"] is None
     # last_action is left untouched; callers that want to record auto_stop_cleared
     # must call set_action explicitly.
     assert state["last_action"] == "sentinel_action"

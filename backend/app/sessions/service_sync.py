@@ -238,12 +238,12 @@ class SessionSyncService:
            terminated so a leaked session cannot pin a device busy forever.
 
         The loop never inserts or hydrates Session rows: row creation is owned
-        by the allocation API. It also runs the stale ``stop_pending`` sweep,
+        by the allocation API. It also runs the stale ``deferred_stop`` sweep,
         which depends on DB state only.
         """
         await self._check_liveness(db)
         await self._kill_orphans(db)
-        await self._sweep_stale_stop_pending(db)
+        await self._sweep_stale_deferred_stop(db)
         await db.commit()
 
     async def _check_liveness(self, db: AsyncSession) -> None:
@@ -605,8 +605,8 @@ class SessionSyncService:
                     terminated,
                 )
 
-    async def _sweep_stale_stop_pending(self, db: AsyncSession) -> None:
-        """Backstop sweep: clear stop_pending on devices that have no running sessions.
+    async def _sweep_stale_deferred_stop(self, db: AsyncSession) -> None:
+        """Backstop sweep: clear deferred_stop on devices that have no running sessions.
 
         Protects against any session-end path that bypassed
         `lifecycle_policy.complete_deferred_stop_if_session_ended`. Runs every session_sync
@@ -617,7 +617,7 @@ class SessionSyncService:
         batch.
         """
         stmt = (
-            select(Device.id).where(Device.lifecycle_policy_state["stop_pending"].astext == "true").order_by(Device.id)
+            select(Device.id).where(Device.lifecycle_policy_state["deferred_stop"].astext == "true").order_by(Device.id)
         )
         result = await db.execute(stmt)
         device_ids = list(result.scalars().all())

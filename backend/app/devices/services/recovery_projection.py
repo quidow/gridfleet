@@ -8,7 +8,7 @@ helpers and an age-gate (S10) purely because a stored copy can go stale.
 
 Kind precedence mirrors the retired attempt_auto_recovery gate order:
 review > recovery-deny (operator/maintenance/cooldown, via decide_recovery) >
-not_ready > stop_pending > session > backoff.
+not_ready > deferred_stop > session > backoff.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class RecoveryBlockKind(StrEnum):
     maintenance = "maintenance"
     cooldown = "cooldown"
     not_ready = "not_ready"
-    stop_pending = "stop_pending"
+    deferred_stop = "deferred_stop"
     session = "session"
     backoff = "backoff"
 
@@ -104,9 +104,9 @@ async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one retu
         return RecoveryAvailability(False, "Device setup or verification is incomplete", RecoveryBlockKind.not_ready)
 
     state = policy_state(device)
-    if state.get("stop_pending"):
+    if state.get("deferred_stop"):
         return RecoveryAvailability(
-            False, "Waiting for active client session to finish", RecoveryBlockKind.stop_pending
+            False, "Waiting for active client session to finish", RecoveryBlockKind.deferred_stop
         )
 
     if await device_has_live_session(db, device.id):

@@ -8,9 +8,9 @@ const DEFAULT_POLICY: LifecyclePolicy = {
   last_failure_reason: null,
   last_action: null,
   last_action_at: null,
-  stop_pending: false,
-  stop_pending_reason: null,
-  stop_pending_since: null,
+  deferred_stop: false,
+  deferred_stop_reason: null,
+  deferred_stop_since: null,
   excluded_from_run: false,
   excluded_run_id: null,
   excluded_run_name: null,
@@ -47,7 +47,7 @@ export function DeviceLifecyclePolicyPanel({ policy }: Props) {
         <Row label="Recovery State" value={formatRecoveryState(effective.recovery_state)} />
         <Row label="Last Auto Action" value={effective.last_action ?? '-'} />
         <Row label="Failure Source" value={effective.last_failure_source ?? '-'} />
-        <Row label="Stopping Soon" value={effective.stop_pending ? 'Waiting for session end' : 'No'} />
+        <Row label="Stopping Soon" value={effective.deferred_stop ? 'Waiting for session end' : 'No'} />
         <Row
           label="Run Exclusion"
           value={effective.excluded_from_run ? `Excluded from ${effective.excluded_run_name ?? 'active run'}` : 'No'}

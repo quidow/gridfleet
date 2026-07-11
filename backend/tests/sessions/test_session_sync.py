@@ -935,11 +935,11 @@ async def test_sweep_never_inserts_sessions(
 
 
 # --------------------------------------------------------------------------- #
-# Stale stop_pending sweep                                                     #
+# Stale deferred_stop sweep                                                    #
 # --------------------------------------------------------------------------- #
 
 
-async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
+async def test_sweep_clears_stale_deferred_stop_for_devices_without_sessions(
     db_session: AsyncSession, db_host: Host
 ) -> None:
     device = Device(
@@ -973,14 +973,14 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     await db_session.commit()
 
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state["stop_pending"] is True
+    assert device.lifecycle_policy_state["deferred_stop"] is True
 
     await _make_sync_service(lifecycle=_make_real_lifecycle()).sync(db_session)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
 
 
 # --------------------------------------------------------------------------- #

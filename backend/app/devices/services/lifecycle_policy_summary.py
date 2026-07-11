@@ -59,7 +59,7 @@ async def build_lifecycle_policy(
     if operational_state is None:
         operational_state = await derive_operational_state(db, device, now=now())
     backoff_until = parse_iso(policy.get("backoff_until"))
-    if policy.get("stop_pending"):
+    if policy.get("deferred_stop"):
         recovery_state = "waiting_for_session_end"
     elif backoff_until is not None and backoff_until > now():
         recovery_state = "backoff"
@@ -82,10 +82,10 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
     summary_state = DeviceLifecyclePolicySummaryState.idle
     label = "Idle"
 
-    if policy.get("stop_pending"):
+    if policy.get("deferred_stop"):
         summary_state = DeviceLifecyclePolicySummaryState.deferred_stop
         label = "Stopping Soon"
-        detail = policy.get("stop_pending_reason") or "Waiting for the active client session to finish"
+        detail = policy.get("deferred_stop_reason") or "Waiting for the active client session to finish"
     elif current_state == "backoff":
         summary_state = DeviceLifecyclePolicySummaryState.backoff
         label = "Waiting to Retry"

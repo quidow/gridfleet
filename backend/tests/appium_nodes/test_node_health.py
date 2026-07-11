@@ -232,9 +232,9 @@ async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_ho
     state = policy_state(locked)
     state.update(
         {
-            "stop_pending": True,
-            "stop_pending_reason": "Probe failed",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "Probe failed",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "Probe failed",
@@ -268,7 +268,7 @@ async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_ho
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
 
 
 async def test_fold_skips_stale_observation_identity(db_session: AsyncSession, db_host: Host) -> None:

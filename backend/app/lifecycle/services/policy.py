@@ -185,7 +185,7 @@ class LifecyclePolicyService:
             # only marks offline when the device is currently available). If the
             # blip clears and we land here, the intent persists at priority 50
             # forever, then a viability probe briefly holds a session, the
-            # session-safety downgrade pins ``stop_pending=True``, and the
+            # session-safety downgrade pins ``deferred_stop=True``, and the
             # device flaps offline every probe cycle. Mirrors the revoke that
             # already fires in the start-node branch below.
             await IntentService(db).revoke_intents_and_reconcile(
@@ -202,11 +202,11 @@ class LifecyclePolicyService:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
         operational_state = await derive_operational_state(db, device, now=now_utc())
-        # D4: a stale ``stop_pending`` traps the device permanently when nothing
+        # D4: a stale ``deferred_stop`` traps the device permanently when nothing
         # else clears it (no session row to fire ``handle_session_finished``).
         # Clear it BEFORE consulting availability — otherwise the projection would
-        # block on RecoveryBlockKind.stop_pending and re-trap the device (the D4 bug).
-        if current_state.get("stop_pending") and (
+        # block on RecoveryBlockKind.deferred_stop and re-trap the device (the D4 bug).
+        if current_state.get("deferred_stop") and (
             operational_state == DeviceOperationalState.offline
             or not await self._actions.has_running_client_session(db, device.id)
         ):
@@ -582,7 +582,7 @@ class LifecyclePolicyService:
         # running (see ``intent_reconciler.reconcile_device`` session-safety
         # invariant); with the session done, the held intent now applies and the
         # node converges to ``desired_state=stopped``. Independent of and runs
-        # before the ``policy_state["stop_pending"]`` path below — that path
+        # before the ``policy_state["deferred_stop"]`` path below — that path
         # tracks lifecycle-policy-driven deferrals; this one covers
         # intent-driven deferrals registered by any caller.
         await reconcile_device(db, device.id, publisher=self._publisher)
@@ -592,7 +592,7 @@ class LifecyclePolicyService:
         # is still running" reason is projected from the live session rows, so it
         # clears the instant the session ends. Nothing to write.
 
-        if not current_state.get("stop_pending"):
+        if not current_state.get("deferred_stop"):
             return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
         # Authoritative check under the device row lock. Callers may have
@@ -623,12 +623,12 @@ class LifecyclePolicyService:
             # commit the cleared intent here so callers do not need to know about the
             # internal helper contract. Without this commit, request-scoped sessions
             # (FastAPI ``get_db``) close before the cleared state is persisted, and
-            # the dashboard keeps rendering stale ``stop_pending``.
+            # the dashboard keeps rendering stale ``deferred_stop``.
             await db.commit()
             return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
         reason = (
-            current_state.get("stop_pending_reason")
+            current_state.get("deferred_stop_reason")
             or current_state.get("last_failure_reason")
             or "Health-driven stop pending"
         )
@@ -788,11 +788,11 @@ class LifecyclePolicyService:
         """
         device = await _reload_device(db, device)
         current_state = policy_state(device)
-        if not current_state.get("stop_pending"):
+        if not current_state.get("deferred_stop"):
             return False
 
-        pending_since = current_state.get("stop_pending_since")
-        pending_reason = current_state.get("stop_pending_reason")
+        pending_since = current_state.get("deferred_stop_since")
+        pending_reason = current_state.get("deferred_stop_reason")
         clear_deferred_stop(current_state)
         if action is not None:
             set_action(current_state, action)
@@ -849,7 +849,7 @@ RECOVERY_NODE_START_WAIT_POLL_SEC = 0.5
 class DeferredStopOutcome(StrEnum):
     """Outcome of ``complete_deferred_stop_if_session_ended`` / ``handle_session_finished``.
 
-    NO_PENDING_OR_RECOVERED: either the device had no ``stop_pending`` intent, or it
+    NO_PENDING_OR_RECOVERED: either the device had no ``deferred_stop`` intent, or it
         became healthy before the session ended and the intent was cleared without an
         auto-stop. In both cases the caller restores availability via the normal
         session-end-on-healthy-device path.

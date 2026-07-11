@@ -74,9 +74,9 @@ class LifecyclePolicyActionsService:
             source=source,
             reason=reason,
         )
-        next_state["stop_pending"] = False
-        next_state["stop_pending_reason"] = None
-        next_state["stop_pending_since"] = None
+        next_state["deferred_stop"] = False
+        next_state["deferred_stop_reason"] = None
+        next_state["deferred_stop_since"] = None
         await self.record_auto_stopped_incident(
             db,
             device,
@@ -264,13 +264,13 @@ class LifecyclePolicyActionsService:
     ) -> None:
         device = await _lock_for_state_write(db, device)
         # Preserve any state mutations committed by concurrent writers between
-        # our caller's read and our write.  ``stop_pending*`` is the only field
+        # our caller's read and our write.  ``deferred_stop*`` is the only field
         # this call site explicitly resets, so we carry that forward from
         # ``next_state`` (the caller already set it to ``False``).
         fresh = policy_state(device)
-        fresh["stop_pending"] = next_state.get("stop_pending", False)
-        fresh["stop_pending_reason"] = next_state.get("stop_pending_reason")
-        fresh["stop_pending_since"] = next_state.get("stop_pending_since")
+        fresh["deferred_stop"] = next_state.get("deferred_stop", False)
+        fresh["deferred_stop_reason"] = next_state.get("deferred_stop_reason")
+        fresh["deferred_stop_since"] = next_state.get("deferred_stop_since")
         set_action(fresh, "auto_stopped")
         write_state(device, fresh)
         await self._incidents.record_lifecycle_incident(

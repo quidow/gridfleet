@@ -28,9 +28,9 @@ Open follow-up specs, when present, live under `docs/design/specs/`. They are in
 
 References in these docs cite **file paths and function/class names**, not line numbers. Lines drift as code moves; functions are renamed less often. If a citation no longer points to a real symbol (e.g. a file was consolidated, a function renamed), search by symbol name in the current tree and update the doc in place. Last citation refresh: 2026-06-30.
 
-## Deferred stop note (`stop_pending`)
+## Deferred stop note (`deferred_stop`)
 
-The current implementation has a `stop_pending` lifecycle path: the `appium_sweep` sync pass runs `_sweep_stale_stop_pending`, `app.lifecycle.services.policy.clear_pending_auto_stop_on_recovery` clears the intent on health recovery, and lifecycle failure paths set `Device.lifecycle_policy_state["stop_pending"] = true` when an active client session prevents an immediate stop. Doc 1 documents the JSON fields. The backstop is implemented in `backend/app/sessions/service_sync.py` and runs on every sweep cycle.
+The current implementation has a `deferred_stop` lifecycle path: the `appium_sweep` sync pass runs `_sweep_stale_deferred_stop`, `app.lifecycle.services.policy.clear_pending_auto_stop_on_recovery` clears the intent on health recovery, and lifecycle failure paths set `Device.lifecycle_policy_state["deferred_stop"] = true` when an active client session prevents an immediate stop. Doc 1 documents the JSON fields. The backstop is implemented in `backend/app/sessions/service_sync.py` and runs on every sweep cycle.
 
 ## Companion docs
 

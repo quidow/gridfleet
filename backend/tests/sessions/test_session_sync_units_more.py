@@ -17,7 +17,7 @@ def _make_service(lifecycle: object | None = None) -> SessionSyncService:
     )
 
 
-async def test_sweep_stale_stop_pending_handles_deleted_rows() -> None:
+async def test_sweep_stale_deferred_stop_handles_deleted_rows() -> None:
     db = MagicMock()
     missing_id = uuid.uuid4()
     device = SimpleNamespace(id=uuid.uuid4())
@@ -30,7 +30,7 @@ async def test_sweep_stale_stop_pending_handles_deleted_rows() -> None:
     mock_lifecycle.complete_deferred_stop_if_session_ended = complete
 
     svc = _make_service(lifecycle=mock_lifecycle)
-    await svc._sweep_stale_stop_pending(db)
+    await svc._sweep_stale_deferred_stop(db)
 
     complete.assert_awaited_once_with(db, device)
 
@@ -43,7 +43,7 @@ async def test_sync_commits_after_sweep(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(svc, "_check_liveness", AsyncMock())
     monkeypatch.setattr(svc, "_kill_orphans", AsyncMock())
     sweep = AsyncMock()
-    monkeypatch.setattr(svc, "_sweep_stale_stop_pending", sweep)
+    monkeypatch.setattr(svc, "_sweep_stale_deferred_stop", sweep)
 
     await svc.sync(db)
 
