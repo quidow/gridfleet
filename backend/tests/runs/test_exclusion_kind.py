@@ -5,16 +5,17 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceReservation, ExclusionKind
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.intent_reconciler import gather_decision_facts
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import build_review_service
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.packs.factories import seed_test_packs
 
@@ -146,3 +147,41 @@ async def test_kind_is_authoritative_over_window(
 
     facts = await gather_decision_facts(db_session, device, now_utc())
     assert facts.cooldown_active is False
+
+
+async def test_sweep_clears_kind_and_skips_indefinite_exclusions(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "exkind-005")
+    run = await _create_run(client)
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 120},
+    )
+    assert resp.status_code == 200
+    entry = await _reservation_entry(db_session, run["id"], device.id)
+    expired_until = datetime.now(UTC) - timedelta(seconds=1)
+    entry.excluded_at = expired_until - timedelta(seconds=120)
+    entry.excluded_until = expired_until
+    await db_session.commit()
+
+    excluded_device = await _create_available_device(db_session, default_host_id, "exkind-006")
+    run2 = await _create_run(client)
+    svc = RunReservationService(review=build_review_service())
+    await svc.exclude_device_from_run(db_session, excluded_device.id, reason="health failure")
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
+    ).check_expired_cooldowns(db_session)
+
+    await db_session.refresh(entry)
+    assert entry.excluded is False
+    assert entry.exclusion_kind is None
+
+    excluded_entry = await _reservation_entry(db_session, run2["id"], excluded_device.id)
+    assert excluded_entry.excluded is True
+    assert excluded_entry.exclusion_kind == ExclusionKind.exclusion

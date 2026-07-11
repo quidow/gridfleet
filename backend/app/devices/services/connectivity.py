@@ -18,7 +18,7 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType, ExclusionKind
 from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
 from app.devices.services.claims import device_is_reserved, reservation_active
@@ -979,13 +979,12 @@ class ConnectivityService:
         # active reservation row as the source of truth (deny intents are derived
         # from it); this sweep is the only path that resets the exclusion fields
         # once excluded_until elapses. Indefinite health exclusions
-        # (excluded_until IS NULL) are deliberately not matched.
+        # (exclusion_kind = 'exclusion') are deliberately not matched.
         expired_cooldowns = (
             (
                 await db.execute(
                     select(DeviceReservation)
-                    .where(DeviceReservation.excluded.is_(True))
-                    .where(DeviceReservation.excluded_until.isnot(None))
+                    .where(DeviceReservation.exclusion_kind == ExclusionKind.cooldown)
                     .where(DeviceReservation.excluded_until < now)
                     .where(reservation_active())
                     .options(selectinload(DeviceReservation.device), selectinload(DeviceReservation.run))
@@ -998,6 +997,7 @@ class ConnectivityService:
             if entry.run is not None and entry.run.state in (RunState.completed, RunState.cancelled, RunState.failed):
                 continue
             entry.excluded = False
+            entry.exclusion_kind = None
             entry.exclusion_reason = None
             entry.excluded_at = None
             entry.excluded_until = None
