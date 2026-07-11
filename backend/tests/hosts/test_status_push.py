@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 import uuid
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 
 from app.core.leader import state_store as control_plane_state_store
 from app.hosts.models import Host, HostStatus, OSType
-from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
+from app.hosts.service_status_push import HOST_STATUS_NAMESPACE, HostStatusPushService
 from app.packs.models import HostPackInstallation
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
+    import pytest
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,3 +137,40 @@ async def test_status_push_without_packs_section_is_fine(client: AsyncClient, db
     online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-no-packs")
     resp = await client.post("/agent/hosts/status", json={"host_id": str(online_host.id)})
     assert resp.status_code == 204
+
+
+async def test_status_push_processes_observations_after_liveness_commit(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-observations")
+    process = AsyncMock()
+    monkeypatch.setattr(HostStatusPushService, "process_observations", process)
+    body = {
+        "host_id": str(online_host.id),
+        "device_health": {"reported_at": "2026-07-11T00:00:00+00:00", "devices": {}},
+    }
+
+    resp = await client.post("/agent/hosts/status", json=body)
+
+    assert resp.status_code == 204
+    process.assert_awaited_once()
+    assert process.await_args.kwargs["host_id"] == online_host.id
+    assert process.await_args.kwargs["payload"]["device_health"] == body["device_health"]
+    await db_session.refresh(online_host)
+    assert online_host.last_heartbeat is not None
+
+
+async def test_status_push_returns_204_when_observation_processing_fails(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-observation-failure")
+
+    async def boom(self: HostStatusPushService, **kwargs: object) -> None:
+        raise RuntimeError("observation boom")
+
+    monkeypatch.setattr(HostStatusPushService, "process_observations", boom)
+    resp = await client.post("/agent/hosts/status", json={"host_id": str(online_host.id)})
+
+    assert resp.status_code == 204
+    await db_session.refresh(online_host)
+    assert online_host.last_heartbeat is not None
