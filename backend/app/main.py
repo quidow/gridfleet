@@ -181,7 +181,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(
         services=app_services.appium_nodes,
-        expire_cooldowns=app_services.devices.connectivity.check_expired_cooldowns,
     )
     appium_sweep = AppiumSweepLoop(services=app_services.sessions)
     allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)

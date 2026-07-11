@@ -12,10 +12,9 @@ from sqlalchemy import select
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceReservation, ExclusionKind
-from app.devices.services.connectivity import ConnectivityService
-from app.devices.services.intent_reconciler import gather_decision_facts
+from app.devices.services.intent_reconciler import _clear_elapsed_cooldowns, gather_decision_facts
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import build_review_service
 from tests.helpers import create_device_record
 from tests.packs.factories import seed_test_packs
 
@@ -111,7 +110,7 @@ async def test_cooldown_keeps_run_binding_and_blocks_sessions(
 async def test_expired_unswept_cooldown_is_inactive(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    """kind stays 'cooldown' until the TTL sweep runs; an elapsed window must read inactive."""
+    """kind stays 'cooldown' until the TTL clear runs; an elapsed window must read inactive."""
     device = await _create_available_device(db_session, default_host_id, "exkind-003")
     run = await _create_run(client)
     resp = await client.post(
@@ -149,7 +148,7 @@ async def test_kind_is_authoritative_over_window(
     assert facts.cooldown_active is False
 
 
-async def test_sweep_clears_kind_and_skips_indefinite_exclusions(
+async def test_expiry_clears_kind_and_skips_indefinite_exclusions(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "exkind-005")
@@ -170,13 +169,7 @@ async def test_sweep_clears_kind_and_skips_indefinite_exclusions(
     svc = RunReservationService(review=build_review_service())
     await svc.exclude_device_from_run(db_session, excluded_device.id, reason="health failure")
 
-    await ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=AsyncMock(),
-    ).check_expired_cooldowns(db_session)
+    await _clear_elapsed_cooldowns(db_session, publisher=Mock())
 
     await db_session.refresh(entry)
     assert entry.excluded is False
