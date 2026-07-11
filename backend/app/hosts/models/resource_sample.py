@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,7 @@ from app.core.database import Base
 class HostResourceSample(Base):
     __tablename__ = "host_resource_samples"
     __table_args__ = (
+        UniqueConstraint("host_id", "recorded_at", name="uq_host_resource_samples_host_recorded"),
         Index("ix_host_resource_samples_host_id_recorded_at", "host_id", "recorded_at"),
         Index("ix_host_resource_samples_recorded_at", "recorded_at"),
     )

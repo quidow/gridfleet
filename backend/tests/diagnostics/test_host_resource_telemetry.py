@@ -105,6 +105,36 @@ async def test_fold_appends_sample_and_rate_limits(
     assert count == 2
 
 
+async def test_apply_host_resource_sample_is_idempotent_on_replay(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Re-applying a sample with the same (host, recorded_at) is a no-op: the
+    unique constraint + ON CONFLICT DO NOTHING keep exactly one row (first write
+    wins) so a re-fold of an already-processed observation cannot duplicate it."""
+    sample = {
+        "recorded_at": "2026-04-16T09:30:00+00:00",
+        "cpu_percent": 55.0,
+        "memory_used_mb": 1000,
+        "memory_total_mb": 2000,
+        "disk_used_gb": 5.0,
+        "disk_total_gb": 50.0,
+        "disk_percent": 10.0,
+    }
+    svc = _make_service()
+    first = await svc.apply_host_resource_sample(db_session, db_host, sample)
+    await db_session.commit()
+    second = await svc.apply_host_resource_sample(db_session, db_host, {**sample, "cpu_percent": 99.0})
+    await db_session.commit()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(HostResourceSample).where(HostResourceSample.host_id == db_host.id)
+    )
+    assert count == 1
+    assert second.id == first.id
+    assert second.cpu_percent == pytest.approx(55.0)
+
+
 async def test_fetch_host_resource_telemetry_buckets_samples(
     db_session: AsyncSession,
     db_host: Host,

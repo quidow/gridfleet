@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.coerce import coerce_float as _coerce_float
 from app.core.observability import get_logger
@@ -72,19 +73,34 @@ class HostResourceTelemetryService:
         sample: dict[str, Any],
     ) -> HostResourceSample:
         recorded_at = parse_iso(sample.get("recorded_at")) or now_utc()
-        row = HostResourceSample(
-            host_id=host.id,
-            recorded_at=recorded_at,
-            cpu_percent=_coerce_float(sample.get("cpu_percent")),
-            memory_used_mb=_coerce_int(sample.get("memory_used_mb")),
-            memory_total_mb=_coerce_int(sample.get("memory_total_mb")),
-            disk_used_gb=_coerce_float(sample.get("disk_used_gb")),
-            disk_total_gb=_coerce_float(sample.get("disk_total_gb")),
-            disk_percent=_coerce_float(sample.get("disk_percent")),
+        values = {
+            "host_id": host.id,
+            "recorded_at": recorded_at,
+            "cpu_percent": _coerce_float(sample.get("cpu_percent")),
+            "memory_used_mb": _coerce_int(sample.get("memory_used_mb")),
+            "memory_total_mb": _coerce_int(sample.get("memory_total_mb")),
+            "disk_used_gb": _coerce_float(sample.get("disk_used_gb")),
+            "disk_total_gb": _coerce_float(sample.get("disk_total_gb")),
+            "disk_percent": _coerce_float(sample.get("disk_percent")),
+        }
+        if not hasattr(db, "execute"):
+            row = HostResourceSample(**values)
+            db.add(row)
+            await db.flush()
+            return row
+        await db.execute(
+            pg_insert(HostResourceSample)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["host_id", "recorded_at"])
         )
-        db.add(row)
-        await db.flush()
-        return row
+        existing = await db.scalar(
+            select(HostResourceSample).where(
+                HostResourceSample.host_id == host.id,
+                HostResourceSample.recorded_at == recorded_at,
+            )
+        )
+        assert existing is not None
+        return existing
 
     async def fold_host_telemetry(self, db: AsyncSession, host_id: UUID, section: dict[str, Any]) -> None:
         """Fold the pushed host_telemetry sample, rate-limited so per-push stamps
