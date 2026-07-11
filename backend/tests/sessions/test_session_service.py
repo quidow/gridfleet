@@ -157,7 +157,7 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
     assert stored.ended_at is not None
 
 
-async def test_update_session_status_clears_stop_pending(
+async def test_update_session_status_clears_deferred_stop(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -191,7 +191,7 @@ async def test_update_session_status_clears_stop_pending(
     assert result == "deferred"
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state["stop_pending"] is True
+    assert device.lifecycle_policy_state["deferred_stop"] is True
 
     crud = SessionCrudService(publisher=Mock(), lifecycle=_make_real_lifecycle())
     updated = await crud.update_session_status(db_session, "sess-stuck-stop-1", SessionStatus.passed)
@@ -201,12 +201,12 @@ async def test_update_session_status_clears_stop_pending(
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
-        "update_session_status must clear stop_pending after the last session ends"
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False, (
+        "update_session_status must clear deferred_stop after the last session ends"
     )
 
 
-async def test_update_session_status_clears_stop_pending_on_non_busy_device(
+async def test_update_session_status_clears_deferred_stop_on_non_busy_device(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -215,7 +215,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     A concurrent operator action (or background loop) can move the device
     out of ``busy`` while the running Session row still exists. When that
     session is patched terminal, ``update_session_status`` must still run the
-    lifecycle helper so a stale ``stop_pending`` does not survive the
+    lifecycle helper so a stale ``deferred_stop`` does not survive the
     session-end. The previous gate on ``availability == busy`` skipped this
     case (see audit P1 / CodeAnt comment on PR 64).
     """
@@ -261,8 +261,8 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
-        "update_session_status must clear stop_pending even when device availability is no longer busy"
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False, (
+        "update_session_status must clear deferred_stop even when device availability is no longer busy"
     )
 
 

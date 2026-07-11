@@ -190,7 +190,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     ).exit_maintenance(db_session, locked)
 
     # Run the queued recovery job with start_managed_node + viability probe stubbed
-    # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.
+    # to success — mirroring the patching style of test_lifecycle_policy_stale_deferred_stop.py.
     probe_mock = AsyncMock(
         return_value={
             "status": "passed",

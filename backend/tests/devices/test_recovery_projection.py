@@ -83,15 +83,15 @@ async def test_not_ready_blocks(db_session: AsyncSession, db_host: Host) -> None
     assert (result.allowed, result.kind) == (False, RecoveryBlockKind.not_ready)
 
 
-async def test_stop_pending_blocks(db_session: AsyncSession, db_host: Host) -> None:
+async def test_deferred_stop_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="stop-pending")
     locked = await device_locking.lock_device(db_session, device.id)
     state = policy_state(locked)
-    state["stop_pending"] = True
+    state["deferred_stop"] = True
     write_state(locked, state)
     await db_session.commit()
     result = await recovery_availability(db_session, locked)
-    assert (result.allowed, result.kind) == (False, RecoveryBlockKind.stop_pending)
+    assert (result.allowed, result.kind) == (False, RecoveryBlockKind.deferred_stop)
 
 
 async def test_live_session_blocks(db_session: AsyncSession, db_host: Host) -> None:

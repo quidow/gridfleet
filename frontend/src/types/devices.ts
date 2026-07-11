@@ -57,9 +57,9 @@ export type DeviceLifecyclePolicy = {
   last_failure_reason: string | null;
   last_action: string | null;
   last_action_at: string | null;
-  stop_pending: boolean;
-  stop_pending_reason: string | null;
-  stop_pending_since: string | null;
+  deferred_stop: boolean;
+  deferred_stop_reason: string | null;
+  deferred_stop_since: string | null;
   excluded_from_run: boolean;
   excluded_run_id: string | null;
   excluded_run_name: string | null;

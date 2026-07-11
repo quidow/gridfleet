@@ -123,7 +123,7 @@ columns; the row-lock contract applies to application code only.
 
 ### Lifecycle JSON axis
 
-`Device.lifecycle_policy_state` (the JSON column for `stop_pending`,
+`Device.lifecycle_policy_state` (the JSON column for `deferred_stop`,
 `backoff_until`, `maintenance_reason`, the `last_failure_*` trail, etc.) is NOT
 derived by the reconciler.  Helpers in `app.devices.services.lifecycle_policy_state`
 manage that column directly under the same row lock.  It holds durable facts and the
@@ -168,7 +168,7 @@ lifecycle `write_state` allowlist escalate via
 "Why can automated recovery act on this device right now" is one recomputable
 projection, not a stored flag. `app.devices.services.recovery_projection.recovery_availability`
 folds, in order: `review_required` > recovery-deny (operator / maintenance /
-cooldown, via `decide_recovery`) > not-ready > `stop_pending` > live session >
+cooldown, via `decide_recovery`) > not-ready > `deferred_stop` > live session >
 active backoff window, returning `(allowed, reason, kind)`. Both the write path
 (`attempt_auto_recovery` stands down when it reports blocked) and every read path
 consult the same ladder:
