@@ -6,9 +6,9 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 from agent_app.pack.runtime import RuntimeSpec
-from agent_app.pack.runtime_types import AppiumInstallable, RuntimePolicy
+from agent_app.pack.runtime_types import AppiumInstallable
 
-__all__ = ["AppiumInstallable", "RuntimePolicy", "RuntimePolicyResolution", "resolve_runtime_spec"]
+__all__ = ["AppiumInstallable", "RuntimePolicyResolution", "resolve_runtime_spec"]
 
 
 @dataclass(frozen=True)
@@ -39,11 +39,11 @@ def resolve_runtime_spec(
     pack_id: str,
     appium_server: AppiumInstallable,
     appium_driver: AppiumInstallable,
-    policy: RuntimePolicy,
 ) -> RuntimePolicyResolution:
     del pack_id
-    if policy.strategy != "recommended":
-        return RuntimePolicyResolution(runtime_spec=None, error=f"runtime_strategy_unsupported:{policy.strategy}")
+    # ponytail: exactly one runtime strategy exists ("recommended"), enforced
+    # by the backend's Literal schema. Reintroduce a policy parameter here
+    # when a second strategy actually ships.
 
     recommended_server_version, server_error = _recommended_version(appium_server, "appium_server_version")
     if server_error:

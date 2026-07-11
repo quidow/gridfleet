@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from copy import deepcopy
@@ -53,12 +52,12 @@ class CapabilitiesCache:
             return {}
         tools: dict[str, str] = {}
         for pack_id in self._adapter_registry.pack_ids():
-            adapter = self._adapter_registry.get_current(pack_id)
-            if adapter is not None and hasattr(adapter, "tool_versions"):
-                result = adapter.tool_versions()
-                if inspect.isawaitable(result):
-                    result = await result
-                for name, version in result.items():
+            handle = self._adapter_registry.get_current(pack_id)
+            if handle is not None:
+                versions = getattr(handle, "tool_versions", None)
+                if callable(versions):
+                    versions = versions()
+                for name, version in (versions or {}).items():
                     if version is not None and name not in tools:
                         tools[name] = version
         return tools

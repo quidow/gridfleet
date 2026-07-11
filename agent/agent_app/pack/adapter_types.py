@@ -156,8 +156,8 @@ class DriverPackAdapter(Protocol):
     A curated adapter is a plain ``Adapter`` class — it does NOT subclass this
     Protocol; the Protocol only documents the contract and gives the core type
     checks something to validate against. Because adapters are plain classes,
-    the agent probes each hook with a truthful ``hasattr`` check
-    (``adapter_supports``), so an adapter ships only the hooks it needs.
+    the worker handshake advertises the hooks each adapter implements, so an
+    adapter ships only the hooks it needs.
 
     Required core (every pack must implement both):
       - ``discover``          — enumerate candidate devices on the host.

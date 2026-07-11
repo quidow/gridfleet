@@ -1,5 +1,5 @@
 from agent_app.pack.manifest import AppiumInstallable
-from agent_app.pack.runtime_policy import RuntimePolicy, resolve_runtime_spec
+from agent_app.pack.runtime_policy import resolve_runtime_spec
 
 
 def _server(recommended: str | None = "2.11.5") -> AppiumInstallable:
@@ -15,7 +15,6 @@ def test_recommended_uses_manifest_recommended() -> None:
         pack_id="appium-uiautomator2",
         appium_server=_server(),
         appium_driver=_driver(),
-        policy=RuntimePolicy(strategy="recommended"),
     )
 
     assert spec.error is None
@@ -29,7 +28,6 @@ def test_recommended_rejects_missing_recommended() -> None:
         pack_id="appium-uiautomator2",
         appium_server=_server(recommended=None),
         appium_driver=_driver(),
-        policy=RuntimePolicy(strategy="recommended"),
     )
 
     assert spec.runtime_spec is None
@@ -41,20 +39,7 @@ def test_recommended_rejects_known_bad_driver() -> None:
         pack_id="appium-uiautomator2",
         appium_server=_server(),
         appium_driver=_driver(known_bad=["3.6.0"]),
-        policy=RuntimePolicy(strategy="recommended"),
     )
 
     assert spec.runtime_spec is None
     assert spec.error == "pinned_version_unavailable:appium_driver_version=3.6.0 known_bad"
-
-
-def test_unknown_strategy_blocks_pack() -> None:
-    resolution = resolve_runtime_spec(
-        pack_id="p",
-        appium_server=AppiumInstallable("npm", "appium", ">=2", "2.11.0", []),
-        appium_driver=AppiumInstallable("npm", "drv", ">=1", "1.0.0", []),
-        policy=RuntimePolicy(strategy="latest_patch"),
-    )
-
-    assert resolution.runtime_spec is None
-    assert resolution.error == "runtime_strategy_unsupported:latest_patch"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -13,6 +14,7 @@ from agent_app.lifespan import _build_adapter_loader
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 from agent_app.pack.runtime import RuntimeEnv
+from agent_app.pack.worker_supervisor import WorkerSupervisor
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -47,16 +49,20 @@ async def test_adapter_tarball_download_uses_manager_basic_auth(
         return original_async_client(transport=httpx.MockTransport(handler), **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
-    loader = _build_adapter_loader("http://manager.local", AdapterRegistry())
+    supervisor = AsyncMock(spec=WorkerSupervisor)
+    supervisor.start.return_value = SimpleNamespace(pack_id="appium-roku-dlenroc", release="2026.04.0")
+    loader = _build_adapter_loader("http://manager.local", AdapterRegistry(), supervisor)
     try:
-        with patch("agent_app.lifespan.load_adapter", new_callable=AsyncMock) as load_adapter:
+        with patch("agent_app.lifespan.prepare_adapter_site", new_callable=AsyncMock) as prepare_site:
+            prepare_site.return_value = tmp_path / "site"
             await loader(_desired_pack(hashlib.sha256(payload).hexdigest()), _runtime_env(tmp_path))
     finally:
         await close_shared_http_client()
 
     assert len(seen_requests) == 1
     assert seen_requests[0].url.path == "/api/driver-packs/appium-roku-dlenroc/releases/2026.04.0/tarball"
-    load_adapter.assert_awaited_once()
+    prepare_site.assert_awaited_once()
+    supervisor.start.assert_awaited_once()
 
 
 def _desired_pack(tarball_sha256: str) -> DesiredPack:

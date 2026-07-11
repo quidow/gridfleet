@@ -1,4 +1,4 @@
-"""Tests for agent_app.pack.dispatch helper functions."""
+"""Tests for the pack worker dispatch helper behavior."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 
 from agent_app.pack.adapter_types import HealthCheckResult, NormalizedDevice
 from agent_app.pack.contexts import HealthCtx
-from agent_app.pack.dispatch import adapter_health_check, adapter_normalize_device
+from tests.pack.adapter_test_helpers import adapter_health_check, adapter_normalize_device
 
 
 class _StubAdapter:
@@ -88,7 +88,7 @@ async def test_adapter_health_check_expected_identity_defaults_to_none() -> None
 
 
 def test_adapter_health_payload_carries_debounce_flag() -> None:
-    from agent_app.pack.dispatch import _adapter_health_payload
+    from agent_app.pack.router import _adapter_health_payload
 
     payload = _adapter_health_payload(
         [

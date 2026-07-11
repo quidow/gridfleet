@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -12,6 +13,7 @@ import pytest
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.lifespan import _build_adapter_loader
 from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.worker_supervisor import WorkerSupervisor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -31,7 +33,9 @@ async def test_adapter_loader_reuses_shared_client(tmp_path: Path) -> None:
         appium_home = str(tmp_path)
 
     registry = AdapterRegistry()
-    loader = _build_adapter_loader("http://backend.test", registry)
+    supervisor = AsyncMock(spec=WorkerSupervisor)
+    supervisor.start.return_value = SimpleNamespace(pack_id="foo", release="1.0.0")
+    loader = _build_adapter_loader("http://backend.test", registry, supervisor)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=body, request=request)
@@ -42,7 +46,7 @@ async def test_adapter_loader_reuses_shared_client(tmp_path: Path) -> None:
         with (
             patch("httpx2.AsyncClient", side_effect=AssertionError("must not allocate AsyncClient")),
             patch("agent_app.lifespan.get_shared_http_client", return_value=shared_client),
-            patch("agent_app.lifespan.load_adapter", new_callable=AsyncMock, return_value=object()),
+            patch("agent_app.lifespan.prepare_adapter_site", new_callable=AsyncMock, return_value=tmp_path / "site"),
         ):
             await loader(FakePack(), FakeEnv())  # type: ignore[arg-type]
     finally:

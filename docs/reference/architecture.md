@@ -119,6 +119,7 @@ The PostgreSQL 18 migration is a fresh baseline. Environments that have already 
 Agents run on physical lab hosts or VMs where devices are attached. Unlike the centralized Backend, Agents run on the 'edge' and govern physical connections.
 
 - **Discovery**: Runs pack-aware probes and adapters, then reports discovered candidates through manager-owned intake flows.
+- **Adapter Workers**: Installs verified adapter wheels into the pack runtime and runs each `(pack, release)` adapter in a supervised subprocess over a stdlib-only JSON-lines protocol. A blocking or crashing hook is killed/restarted for that pack without wedging the agent event loop; the uploaded wheel remains an untrusted code-execution surface on the host.
 - **Appium Process Management**: The Agent isolates each device by spawning standalone Appium server processes attached to that device's UDID/Serial. The agent runs no Grid relay node; WebDriver traffic reaches Appium via the router (below).
 - **Health Checks**: Monitors ADB connectivity and driver viability, terminating Appium processes gracefully if the physical device goes offline.
 

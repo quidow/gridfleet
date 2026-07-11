@@ -48,11 +48,11 @@ def test_parse_minimal_desired_payload() -> None:
     assert parsed.packs[0].platforms[0].identity_scheme == "android_serial"
 
 
-def test_manifest_runtime_policy_import_order_is_acyclic() -> None:
+def test_manifest_import_order_is_acyclic() -> None:
     import importlib
 
     runtime_policy = importlib.import_module("agent_app.pack.runtime_policy")
     manifest = importlib.import_module("agent_app.pack.manifest")
 
-    assert runtime_policy.RuntimePolicy.__module__ == "agent_app.pack.runtime_types"
+    assert runtime_policy.AppiumInstallable.__module__ == "agent_app.pack.runtime_types"
     assert manifest.AppiumInstallable.__module__ == "agent_app.pack.runtime_types"
