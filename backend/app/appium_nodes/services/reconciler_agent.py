@@ -268,7 +268,9 @@ def build_agent_start_payload(
         "device_type": device.device_type.value,
         "ip_address": device.ip_address,
         "allocated_caps": allocated_caps or None,
-        "session_override": settings.get("appium.session_override"),
+        # ponytail: never flipped in production; re-add a registry row if a
+        # driver pack ever needs lingering sessions preserved.
+        "session_override": True,
         "headless": headless,
     }
 

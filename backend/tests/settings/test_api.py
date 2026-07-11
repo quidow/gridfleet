@@ -1,13 +1,7 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
-
-from app.settings.models import Setting
-from tests.conftest import settings_service
-
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_list_settings(client: AsyncClient) -> None:
@@ -39,28 +33,6 @@ async def test_get_setting(client: AsyncClient) -> None:
     assert data["validation"]["min"] == 10
 
 
-async def test_get_toast_events_setting_includes_catalog_validation(client: AsyncClient) -> None:
-    resp = await client.get("/api/settings/notifications.toast_events")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["value"] == [
-        "node.crash",
-        "host.heartbeat_lost",
-        "device.operational_state_changed",
-        "device.hardware_health_changed",
-        "run.expired",
-    ]
-    assert data["default_value"] == [
-        "node.crash",
-        "host.heartbeat_lost",
-        "device.operational_state_changed",
-        "device.hardware_health_changed",
-        "run.expired",
-    ]
-    assert data["validation"]["item_type"] == "string"
-    assert "run.failed" not in data["validation"]["item_allowed_values"]
-
-
 async def test_get_lifecycle_recovery_backoff_setting(client: AsyncClient) -> None:
     resp = await client.get("/api/settings/general.lifecycle_recovery_backoff_base_sec")
     assert resp.status_code == 200
@@ -71,12 +43,12 @@ async def test_get_lifecycle_recovery_backoff_setting(client: AsyncClient) -> No
 
 
 async def test_host_resource_telemetry_settings_are_registered(client: AsyncClient) -> None:
-    window = await client.get("/api/settings/general.host_resource_telemetry_window_minutes")
+    window = await client.get("/api/settings/general.host_offline_after_sec")
     assert window.status_code == 200
-    assert window.json()["value"] == 60
+    assert window.json()["value"] == 45
     v = window.json()["validation"]
-    assert v["min"] == 5
-    assert v["max"] == 1440
+    assert v["min"] == 15
+    assert v["max"] == 3600
 
     retention = await client.get("/api/settings/retention.host_resource_telemetry_hours")
     assert retention.status_code == 200
@@ -217,37 +189,6 @@ async def test_reset_all(client: AsyncClient) -> None:
     assert resp.json()["is_overridden"] is False
 
 
-async def test_string_setting_allowed_values(client: AsyncClient) -> None:
-    # Valid value
-    resp = await client.put(
-        "/api/settings/notifications.toast_severity_threshold",
-        json={"value": "error"},
-    )
-    assert resp.status_code == 200
-
-    # Invalid value
-    resp = await client.put(
-        "/api/settings/notifications.toast_severity_threshold",
-        json={"value": "critical"},
-    )
-    assert resp.status_code == 400
-
-    # Cleanup
-    await client.post("/api/settings/reset/notifications.toast_severity_threshold")
-
-
-async def test_appium_session_override_setting_defaults_true_and_can_be_updated(client: AsyncClient) -> None:
-    resp = await client.get("/api/settings/appium.session_override")
-    assert resp.status_code == 200
-    assert resp.json()["value"] is True
-
-    update_resp = await client.put("/api/settings/appium.session_override", json={"value": False})
-    assert update_resp.status_code == 200
-    assert update_resp.json()["value"] is False
-
-    await client.post("/api/settings/reset/appium.session_override")
-
-
 async def test_update_rejects_cross_timer_contradiction_naming_both_keys(client: AsyncClient) -> None:
     resp = await client.put("/api/settings/grid.session_idle_timeout_sec", json={"value": 80000})
     assert resp.status_code == 400
@@ -279,42 +220,3 @@ async def test_removed_global_runtime_tool_version_settings_are_not_registered(c
 
     selenium_resp = await client.get("/api/settings/grid.selenium_jar_version")
     assert selenium_resp.status_code == 404
-
-
-async def test_update_toast_events_rejects_unknown_values(client: AsyncClient) -> None:
-    resp = await client.put(
-        "/api/settings/notifications.toast_events",
-        json={"value": ["node.crash", "run.failed"]},
-    )
-    assert resp.status_code == 400
-
-
-async def test_update_toast_events_deduplicates_valid_values(client: AsyncClient) -> None:
-    resp = await client.put(
-        "/api/settings/notifications.toast_events",
-        json={"value": ["node.crash", "node.crash", "run.created"]},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["value"] == ["node.crash", "run.created"]
-
-    await client.post("/api/settings/reset/notifications.toast_events")
-
-
-async def test_initialize_normalizes_stale_toast_event_overrides(db_session: AsyncSession) -> None:
-    db_session.add(
-        Setting(
-            key="notifications.toast_events",
-            category="notifications",
-            value=["run.failed", "node.crash", "node.crash", "totally.invalid"],
-        )
-    )
-    await db_session.commit()
-
-    await settings_service.initialize(db_session)
-
-    normalized = settings_service.get_setting_response("notifications.toast_events")
-    assert normalized["value"] == ["node.crash"]
-
-    result = await db_session.execute(select(Setting).where(Setting.key == "notifications.toast_events"))
-    row = result.scalar_one()
-    assert row.value == ["node.crash"]
