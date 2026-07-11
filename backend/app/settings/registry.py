@@ -126,15 +126,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=10,
     ),
     SettingDefinition(
-        key="general.host_resource_telemetry_window_minutes",
-        category="general",
-        setting_type="int",
-        default=60,
-        description="Default Host Detail telemetry time window",
-        min_value=5,
-        max_value=1440,
-    ),
-    SettingDefinition(
         key="general.session_viability_interval_sec",
         category="general",
         setting_type="int",
@@ -364,13 +355,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=30,
         max_value=600,
     ),
-    SettingDefinition(
-        key="appium.session_override",
-        category="grid",
-        setting_type="bool",
-        default=True,
-        description="Whether managed Appium nodes should force-close lingering sessions before opening a new one",
-    ),
     # ── Notifications ──
     # ── Agent ──
     SettingDefinition(
@@ -393,15 +377,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="bool",
         default=False,
         description="Auto-accept self-registering hosts (off by default: operators approve hosts manually)",
-    ),
-    SettingDefinition(
-        key="agent.default_port",
-        category="agent",
-        setting_type="int",
-        default=5100,
-        description="Default agent port for new hosts",
-        min_value=1024,
-        max_value=65535,
     ),
     # ── Reservations ──
     SettingDefinition(
