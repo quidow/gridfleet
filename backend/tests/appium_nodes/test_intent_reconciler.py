@@ -11,7 +11,7 @@ from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation, ExclusionKind
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
     _gc_expired_intents,
@@ -108,6 +108,7 @@ async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
         await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
     ).scalar_one()
     reservation.excluded = True
+    reservation.exclusion_kind = ExclusionKind.cooldown
     reservation.exclusion_reason = "Device in cooldown"
     reservation.excluded_at = datetime.now(UTC)
     reservation.excluded_until = datetime.now(UTC) + timedelta(minutes=5)

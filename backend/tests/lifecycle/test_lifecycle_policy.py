@@ -20,6 +20,7 @@ from app.devices.models import (
     DeviceOperationalState,
     DeviceReservation,
     DeviceType,
+    ExclusionKind,
 )
 from app.devices.services.claims import device_is_reserved
 from app.devices.services.health import DeviceHealthService
@@ -1690,7 +1691,9 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     db = AsyncMock()
     db.add = lambda _row: None
     run = SimpleNamespace(id=uuid.uuid4(), name="active-run", state=RunState.active)
-    excluded_entry = SimpleNamespace(excluded=True, excluded_until=None, exclusion_reason="flaky")
+    excluded_entry = SimpleNamespace(
+        excluded=True, exclusion_kind=ExclusionKind.exclusion, excluded_until=None, exclusion_reason="flaky"
+    )
     # Offline + observed_running=True is a stale observation: recovery now routes
     # it through the start path (revoke blocking stops, register start, wait), so
     # the node mock needs an id for wait_for_node_running.
@@ -2004,6 +2007,7 @@ async def _exclude_reservation(
     """Mark the reservation excluded on the row (no intent axis anymore)."""
     res = await _reservation_row(db_session, device_id)
     res.excluded = True
+    res.exclusion_kind = ExclusionKind.cooldown if excluded_until is not None else ExclusionKind.exclusion
     res.exclusion_reason = reason
     res.excluded_at = datetime.now(UTC)
     res.excluded_until = excluded_until

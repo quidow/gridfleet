@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceReservation
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceReservation, ExclusionKind
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from tests.appium_nodes.test_intent_reconciler import _seed_node
@@ -33,6 +33,7 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
         await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
     ).scalar_one()
     reservation.excluded = True
+    reservation.exclusion_kind = ExclusionKind.cooldown
     reservation.exclusion_reason = "blocked by test"
     reservation.excluded_at = datetime.now(UTC)
     reservation.excluded_until = datetime.now(UTC) + timedelta(minutes=5)

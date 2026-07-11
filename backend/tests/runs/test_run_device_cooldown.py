@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation, ExclusionKind
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -101,6 +101,7 @@ async def test_cooldown_device_success(client: AsyncClient, db_session: AsyncSes
     assert entry.cooldown_count == 1
     assert entry.exclusion_reason == "flaky connection"
     assert entry.excluded_until is not None
+    assert entry.exclusion_kind == "cooldown"
 
 
 async def test_cooldown_device_not_found_run(client: AsyncClient) -> None:
@@ -384,6 +385,7 @@ async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncS
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC) - timedelta(seconds=120),
         excluded_until=datetime.now(UTC) - timedelta(seconds=60),
@@ -558,6 +560,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC) - timedelta(seconds=120),
         excluded_until=datetime.now(UTC) - timedelta(seconds=1),
@@ -620,6 +623,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC),
         excluded_until=datetime.now(UTC) + timedelta(seconds=300),
@@ -698,6 +702,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC) - timedelta(seconds=120),
         excluded_until=datetime.now(UTC) - timedelta(seconds=1),
@@ -758,6 +763,7 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
         platform_id=device.platform_id,
         os_version=device.os_version,
         excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
         exclusion_reason="flaky",
         excluded_at=datetime.now(UTC) - timedelta(seconds=120),
         excluded_until=datetime.now(UTC) - timedelta(seconds=1),

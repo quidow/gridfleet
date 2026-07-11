@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.devices.models import DeviceReservation
+from app.devices.models import DeviceReservation, ExclusionKind
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
@@ -76,6 +76,7 @@ async def test_metrics_route_reports_all_four_cross_domain_gauges(
             platform_id=cooldown_device.platform_id,
             os_version=cooldown_device.os_version,
             excluded=True,
+            exclusion_kind=ExclusionKind.cooldown,
             excluded_at=now,
             excluded_until=now + timedelta(seconds=60),
         )

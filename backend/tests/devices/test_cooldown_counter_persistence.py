@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceReservation
+from app.devices.models import DeviceReservation, ExclusionKind
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_lifecycle_failures import RunFailureService
@@ -190,6 +190,7 @@ async def test_expired_cooldown_sweep_preserves_counter(
     reservation = await _reservation_for(db_session, device.id)
     excluded_at = datetime.now(UTC) - timedelta(seconds=120)
     reservation.excluded = True
+    reservation.exclusion_kind = ExclusionKind.cooldown
     reservation.exclusion_reason = "flaky"
     reservation.excluded_at = excluded_at
     reservation.excluded_until = datetime.now(UTC) - timedelta(seconds=1)

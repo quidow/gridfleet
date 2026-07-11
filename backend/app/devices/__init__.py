@@ -20,6 +20,7 @@ DEVICE_RESERVATIONS = table(
     "device_reservations",
     column("device_id"),
     column("released_at"),
+    column("exclusion_kind"),
     column("excluded_until"),
 )
 
@@ -34,7 +35,9 @@ async def _refresh_devices_gauges(db: AsyncSession) -> None:
         select(func.count(func.distinct(DEVICE_RESERVATIONS.c.device_id)))
         .select_from(DEVICE_RESERVATIONS)
         .where(DEVICE_RESERVATIONS.c.released_at.is_(None))
-        .where(DEVICE_RESERVATIONS.c.excluded_until.is_not(None))
+        # Literal, not ExclusionKind: this stub deliberately avoids importing
+        # models (the package __init__ lazy-loads submodules).
+        .where(DEVICE_RESERVATIONS.c.exclusion_kind == "cooldown")
         .where(DEVICE_RESERVATIONS.c.excluded_until > now_utc())
     )
     DEVICES_IN_COOLDOWN.set(int(cooldown_result.scalar_one() or 0))

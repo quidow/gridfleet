@@ -6,7 +6,7 @@ from prometheus_client import REGISTRY
 
 from app.core.metrics import refresh_system_gauges
 from app.core.metrics_recorders import DEVICES_IN_COOLDOWN
-from app.devices.models import DeviceReservation
+from app.devices.models import DeviceReservation, ExclusionKind
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device_record
 
@@ -56,6 +56,7 @@ async def test_refresh_system_gauges_counts_active_cooldowns(
                 platform_id=active_device.platform_id,
                 os_version=active_device.os_version,
                 excluded=True,
+                exclusion_kind=ExclusionKind.cooldown,
                 excluded_at=now,
                 excluded_until=now + timedelta(seconds=60),
             ),
@@ -68,6 +69,7 @@ async def test_refresh_system_gauges_counts_active_cooldowns(
                 platform_id=expired_device.platform_id,
                 os_version=expired_device.os_version,
                 excluded=True,
+                exclusion_kind=ExclusionKind.cooldown,
                 excluded_at=now - timedelta(seconds=120),
                 excluded_until=now - timedelta(seconds=60),
             ),
