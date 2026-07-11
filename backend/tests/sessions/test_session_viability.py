@@ -229,7 +229,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
     assert persisted is not None
     assert persisted["status"] == "passed"
     assert persisted["last_succeeded_at"] == persisted["last_attempted_at"]
-    assert loaded_device.operational_state_last_emitted == DeviceOperationalState.available
+    assert loaded_device.operational_state_last_emitted is DeviceOperationalState.available
     probe_mock.assert_awaited_once()
     probe_capabilities = probe_mock.await_args.args[0]
     assert probe_capabilities["platformName"] == "Android"
@@ -293,7 +293,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
 
     assert result["status"] == "passed"
     await db_session.refresh(loaded_device)
-    assert loaded_device.operational_state_last_emitted == DeviceOperationalState.available
+    assert loaded_device.operational_state_last_emitted is DeviceOperationalState.offline
 
 
 async def test_run_session_viability_probe_uses_running_avd_active_target(
@@ -1004,8 +1004,8 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    # Exception path calls reconcile_now (not set_operational_state).
-    mark_dirty.assert_awaited()
+    # Exception paths leave the projection to the reconciler scan.
+    mark_dirty.assert_not_awaited()
 
 
 async def test_run_session_viability_probe_no_node_commit_and_available_exception_restore(
@@ -1069,8 +1069,8 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    # Exception path calls reconcile_now (not set_operational_state).
-    mark_dirty2.assert_awaited()
+    # Exception paths leave the projection to the reconciler scan.
+    mark_dirty2.assert_not_awaited()
 
 
 def test_classify_session_error_recognises_grid_no_slot() -> None:

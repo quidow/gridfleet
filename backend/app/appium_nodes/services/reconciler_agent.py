@@ -36,7 +36,6 @@ from app.appium_nodes.services.common import (
 from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
-from app.devices.services.intent import IntentService
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.lifecycle.services.actions import (
     reset_reconciler_start_failure_state,
@@ -200,11 +199,6 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
     assert node is not None
     node.pid = None
     node.active_connection_target = None
-    # Mark dirty so the reconciler derives the correct operational state
-    # (offline when the node stops, unless a running session holds it busy).
-    # Skip the write-through state machine that used to route AUTO_STOP_EXECUTED
-    # here: the reconciler's apply_derived_state is now authoritative.
-    await IntentService(db).reconcile_now(device.id, publisher=publisher)
     await DeviceHealthService(publisher=publisher).apply_node_state_transition(
         db,
         device,

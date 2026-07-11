@@ -465,9 +465,6 @@ class LifecyclePolicyService:
                 DeviceEventType.node_restart,
                 {"recovered_from": source, "reason": reason},
             )
-            operational_state = await derive_operational_state(db, device, now=now_utc())
-            if operational_state != DeviceOperationalState.available:
-                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
 
         await db.commit()

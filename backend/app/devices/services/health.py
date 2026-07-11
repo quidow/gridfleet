@@ -103,9 +103,6 @@ class DeviceHealthService:
         # Same asymmetry as update_device_checks: reconcile immediately on failure
         # (device goes offline), defer on success (rely on apply_node_state_transition
         # or the next reconciler scan tick).
-        if status == "failed":
-            await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
-
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def apply_node_state_transition(
@@ -129,8 +126,6 @@ class DeviceHealthService:
 
         # UNSET = caller is not making a health statement: leave the columns
         # (and the checked-at stamp) untouched. Explicit None = clear.
-        prev_running = locked_node.health_running
-        prev_state = locked_node.health_state
         health_provided = not isinstance(health_running, UnsetType) or not isinstance(health_state, UnsetType)
         if not isinstance(health_running, UnsetType):
             locked_node.health_running = health_running
@@ -139,37 +134,8 @@ class DeviceHealthService:
         if health_provided:
             locked_node.last_health_checked_at = now_utc()
 
-        # Transition gate: an explicit health observation that does not change the
-        # node's health columns is the steady-state node-health churn (node_health
-        # re-asserts health_running=True/health_state=None every cycle). Skip the
-        # reconcile/mark in that case. Callers that make NO health statement (UNSET,
-        # e.g. mark_node_started after setting pid) and explicit mark_offline=True
-        # must still act — operational_state (not part of the public verdict) may
-        # need re-derivation, and offline is an explicit intent. The full scan is the
-        # backstop for any drift with no observation transition.
-        # health_running is not True covers the recovery/None path: health_running=None
-        # (clear) or =False are not the confirmed-running steady state, so they must
-        # always act even when the column value is already the same (e.g. a fresh node
-        # with health_running=None being probed again during maintenance recovery).
-        running_changed = not isinstance(health_running, UnsetType) and health_running != prev_running
-        state_changed = not isinstance(health_state, UnsetType) and health_state != prev_state
-        health_changed = running_changed or state_changed
-        should_act = mark_offline or not health_provided or health_changed or health_running is not True
-
-        # Reconcile when: (a) mark_offline=True (explicit offline intent), or
-        # (b) the call clears or does not touch the health signal (→ may restore
-        # to available). Do NOT reconcile when mark_offline=False and
-        # health_running=False (below-threshold failure recording — hysteresis:
-        # let the threshold be reached before offline derivation).
-        should_reconcile = mark_offline or health_running is not False
-        if should_act and should_reconcile:
-            await IntentService(db).reconcile_now(
-                locked.id,
-                publisher=self._publisher,
-            )
-        # Otherwise defer to the next reconciler scan tick (≤ one
-        # intent_reconcile_interval): a below-threshold failure recording that
-        # must not derive offline yet still gets re-derived by the backstop scan.
+        # Agent-visible reactions remain on the connectivity/lifecycle intent
+        # paths; operational state is projected at read time.
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:

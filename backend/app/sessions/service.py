@@ -442,14 +442,6 @@ class SessionCrudService:
             running_result = await db.execute(running_stmt)
             still_running = running_result.scalars().first() is not None
             if not still_running:
-                # Mark the device dirty so the reconciler derives the correct
-                # operational state (available or offline) from durable facts.
-                # The old state-machine branch (SESSION_ENDED / AUTO_STOP_EXECUTED)
-                # is replaced by reconciler-authoritative derivation.
-                await IntentService(db).reconcile_now(
-                    locked_device.id,
-                    publisher=self._publisher,
-                )
                 deferred_stop_target = locked_device
             await pack_lifecycle.complete_drain_if_draining(db, locked_device.pack_id)
 

@@ -273,7 +273,6 @@ class SessionViabilityService:
         checked_by: SessionViabilityCheckedBy,
     ) -> dict[str, Any]:
         device_key = str(device.id)
-        previous_state: DeviceOperationalState | None = None
         await self._claim_viability_lock(db, device_key, checked_by=checked_by)
         # Once the lock is claimed, EVERY exit path — gate rejection, readiness
         # failure, probe exception, success, or task cancellation (a client
@@ -317,7 +316,7 @@ class SessionViabilityService:
                     await db.commit()
                 return state
 
-            previous_state = await self._acquire_probe_lock_and_revalidate(db, device, checked_by=checked_by)
+            await self._acquire_probe_lock_and_revalidate(db, device, checked_by=checked_by)
 
             capabilities = build_probe_capabilities(await self._capability.get_device_capabilities(db, device))
             # Register the device as having an in-flight probe so the session_sync
@@ -363,20 +362,12 @@ class SessionViabilityService:
                     sources=[verification_intent_source(device.id)],
                 )
 
-            # Mark dirty so the reconciler derives the correct post-probe state.
-            # The probe created and deleted a Grid session but left no running
-            # Session row; reconciler sees no running session and derives
-            # available or offline based on health signals and stop_in_flight.
-            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
             if config_changed:
                 await db.commit()
             await self._escalate_probe_failure(db, device, state, result=(ok, error), checked_by=checked_by)
             return state
         except Exception:
-            if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
-                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
-                await db.commit()
             raise
         finally:
             await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
