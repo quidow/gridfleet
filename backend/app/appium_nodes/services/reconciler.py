@@ -68,7 +68,9 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.protocols import ReconcilerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -122,6 +124,35 @@ async def fetch_desired_rows(db: AsyncSession, *, offline_after_sec: float) -> l
     )
     rows = (await db.execute(stmt)).all()
     return [_row_to_desired(row) for row in rows]
+
+
+async def fetch_desired_rows_for_host(db: AsyncSession, host_id: uuid.UUID) -> list[DesiredRow]:
+    stmt = _desired_select().where(Device.host_id == host_id)
+    rows = (await db.execute(stmt)).all()
+    return [_row_to_desired(row) for row in rows]
+
+
+async def converge_pushed_host(
+    *,
+    session_factory: SessionFactory,
+    reconciler: ReconcilerProtocol,
+    host_id: uuid.UUID,
+    host_ip: str,
+    agent_port: int,
+    payload: dict[str, Any],
+) -> None:
+    """Converge one host from the observation that its status push proved it alive."""
+    async with session_factory() as db:
+        rows = await fetch_desired_rows_for_host(db, host_id)
+        backoff = await fetch_backoff_until(db)
+    await reconciler.reconcile_host(
+        host_id=host_id,
+        host_ip=host_ip,
+        agent_port=agent_port,
+        rows=rows,
+        backoff_until_by_device=backoff,
+        payload=payload,
+    )
 
 
 async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredRow | None:

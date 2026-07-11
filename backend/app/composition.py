@@ -6,6 +6,7 @@ implementations. Called once from app/main.py lifespan.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -21,7 +22,7 @@ from app.agent_comm.operations import get_pack_devices
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
-from app.appium_nodes.services.reconciler import ReconcilerService
+from app.appium_nodes.services.reconciler import ReconcilerService, converge_pushed_host
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.devices.services.bulk import BulkOperationsService
@@ -48,7 +49,7 @@ from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
-from app.hosts.service_status_push import HostStatusPushService
+from app.hosts.service_status_push import HostStatusPushService, ObservationFold
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -178,7 +179,11 @@ def compose_app(
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService()
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
-    property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
+    property_refresh_svc, hardware_telemetry_svc, resource_telemetry_svc = (
+        PropertyRefreshService(discovery=pack_discovery_svc),
+        HardwareTelemetryService(publisher=bus, settings=settings_svc),
+        HostResourceTelemetryService(settings=settings_svc),
+    )
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
     crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc, publisher=bus)
     connectivity_svc = ConnectivityService(
@@ -227,6 +232,22 @@ def compose_app(
         pool=http_pool,
         circuit_breaker=circuit_breaker,
         session_factory=session_factory,
+    )
+    node_health_svc, heartbeat_svc = (
+        NodeHealthService(
+            publisher=bus,
+            settings=settings_svc,
+            recovery_control=lifecycle_policy_svc,
+            health=device_health_svc,
+            incidents=incidents_svc,
+        ),
+        HeartbeatService(
+            publisher=bus,
+            settings=settings_svc,
+            pool=http_pool,
+            circuit_breaker=circuit_breaker,
+            session_factory=session_factory,
+        ),
     )
 
     verification_preparation_svc = VerificationPreparationService(
@@ -307,11 +328,27 @@ def compose_app(
         lifecycle=lifecycle_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
-            hardware_telemetry=HardwareTelemetryService(publisher=bus, settings=settings_svc),
-            resource_telemetry=HostResourceTelemetryService(settings=settings_svc),
+            hardware_telemetry=hardware_telemetry_svc,
+            resource_telemetry=resource_telemetry_svc,
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
-            status_push=HostStatusPushService(publisher=bus),
+            status_push=HostStatusPushService(
+                publisher=bus,
+                session_factory=session_factory,
+                observation_folds=(
+                    ObservationFold("node_health", node_health_svc.fold_host_nodes),
+                    ObservationFold("device_health", connectivity_svc.fold_host_device_health),
+                    ObservationFold("device_telemetry", hardware_telemetry_svc.fold_host_device_telemetry),
+                    ObservationFold("device_properties", property_refresh_svc.fold_host_device_properties),
+                    ObservationFold("host_telemetry", resource_telemetry_svc.fold_host_telemetry),
+                ),
+                converge_host=functools.partial(
+                    converge_pushed_host,
+                    session_factory=session_factory,
+                    reconciler=reconciler_svc,
+                ),
+                ingest_restart_events=heartbeat_svc.ingest_restart_events,
+            ),
             settings=settings_svc,
             session_factory=session_factory,
         ),
@@ -355,20 +392,8 @@ def compose_app(
         appium_nodes=AppiumNodeServices(
             reconciler=reconciler_svc,
             reconciler_agent=reconciler_agent_svc,
-            node_health=NodeHealthService(
-                publisher=bus,
-                settings=settings_svc,
-                recovery_control=lifecycle_policy_svc,
-                health=device_health_svc,
-                incidents=incidents_svc,
-            ),
-            heartbeat=HeartbeatService(
-                publisher=bus,
-                settings=settings_svc,
-                pool=http_pool,
-                circuit_breaker=circuit_breaker,
-                session_factory=session_factory,
-            ),
+            node_health=node_health_svc,
+            heartbeat=heartbeat_svc,
             settings=settings_svc,
             session_factory=session_factory,
         ),

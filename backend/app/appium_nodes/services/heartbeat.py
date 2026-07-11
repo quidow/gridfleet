@@ -30,7 +30,6 @@ from app.devices.services.event import build_device_crashed_payload, record_even
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
 from app.hosts.models import Host, HostStatus
-from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 
 if TYPE_CHECKING:
     import uuid
@@ -481,7 +480,6 @@ class _ResumeGuard:
 @dataclass(frozen=True, slots=True)
 class HostStatusEvaluation:
     alive: bool
-    payload: dict[str, Any] | None
     stale_for_sec: float
 
 
@@ -520,6 +518,10 @@ class HeartbeatService:
         gap = round(now_mono - prev_mono, 1) if prev_mono is not None else None
         return _ResumeGuard(active=guard_active, gap_sec=gap, threshold_sec=threshold)
 
+    async def ingest_restart_events(self, db: AsyncSession, host: Host, payload: dict[str, Any]) -> None:
+        """Ingest push-time restart events using the sequence cursor for deduplication."""
+        await _ingest_appium_restart_events(db, host, payload, publisher=self._publisher)
+
     async def evaluate_host(self, db: AsyncSession, host: Host, *, guard: _ResumeGuard) -> HostStatusEvaluation:
         """Recency verdict from the latest status push; the caller owns the commit."""
         offline_after = self._settings.get_float("general.host_offline_after_sec")
@@ -527,12 +529,6 @@ class HeartbeatService:
         stale_for = (now_utc() - reference).total_seconds()
 
         if stale_for <= offline_after:
-            raw = await control_plane_state_store.get_value(db, HOST_STATUS_NAMESPACE, str(host.id))
-            payload = raw.get("payload") if isinstance(raw, dict) else None
-            if isinstance(payload, dict):
-                await _ingest_appium_restart_events(db, host, payload, publisher=self._publisher)
-            else:
-                payload = None
             if host.status == HostStatus.offline and host.last_heartbeat is not None:
                 # Ledger edge: reads were already online (projection); this write
                 # exists for the exactly-once event, serialized in the scheduler.
@@ -551,7 +547,7 @@ class HeartbeatService:
                     },
                 )
                 host.status = HostStatus.online
-            return HostStatusEvaluation(alive=True, payload=payload, stale_for_sec=stale_for)
+            return HostStatusEvaluation(alive=True, stale_for_sec=stale_for)
 
         if guard.active:
             logger.warning(
@@ -561,7 +557,7 @@ class HeartbeatService:
                 threshold_sec=guard.threshold_sec,
                 stale_for_sec=round(stale_for, 1),
             )
-            return HostStatusEvaluation(alive=False, payload=None, stale_for_sec=stale_for)
+            return HostStatusEvaluation(alive=False, stale_for_sec=stale_for)
 
         if host.status == HostStatus.online:
             logger.error("Host %s marked offline: no status push for %.0fs", host.hostname, stale_for)
@@ -605,7 +601,7 @@ class HeartbeatService:
                     healthy=False,
                     summary=f"Host {host.hostname} offline",
                 )
-        return HostStatusEvaluation(alive=False, payload=None, stale_for_sec=stale_for)
+        return HostStatusEvaluation(alive=False, stale_for_sec=stale_for)
 
     async def probe_host(self, *, host_id: str, host_ip: str, agent_port: int) -> HeartbeatPingResult:
         """Network-partition diagnostic: can the backend reach the agent it and

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.appium_nodes.services import heartbeat
+from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import HeartbeatOutcome
 from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services_container import AppiumNodeServices
@@ -122,3 +123,23 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
 
     with pytest.raises(asyncio.CancelledError):
         await HostSweepLoop(services=services).run()
+
+
+async def test_public_restart_ingest_method_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = MagicMock()
+    host = Host(hostname="h3", ip="10.0.0.3", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    publisher = Mock()
+    service = HeartbeatService(
+        publisher=publisher,
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=Mock(),
+    )
+    ingest = AsyncMock()
+    monkeypatch.setattr(heartbeat, "_ingest_appium_restart_events", ingest)
+    payload = {"appium_processes": {"recent_restart_events": []}}
+
+    await service.ingest_restart_events(db, host, payload)
+
+    ingest.assert_awaited_once_with(db, host, payload, publisher=publisher)

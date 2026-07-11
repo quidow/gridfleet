@@ -29,11 +29,13 @@ poke (`POST /agent/appium-nodes/refresh`). Agents push one consolidated
 host telemetry, and agent version/capabilities — pack status has no separate
 channel. The scheduler's `host_sweep` evaluates each host's liveness from that
 push's recency (`general.host_offline_after_sec`, default 45 s) rather than
-dialing the agent, and passes the latest pushed snapshot to the reconciler for
-a host the recency check proved alive. A cadence-gated `GET /agent/health`
+dialing the agent. The push handler commits the liveness stamp first, then
+ingests restart events, converges Appium nodes, and folds observations for that
+host. A cadence-gated `GET /agent/health`
 reachability probe (60 s plumbing constant)
-still runs per host as a network-partition diagnostic, but it feeds no state —
-liveness and convergence are push-driven. The reconciler
+still runs per host as a network-partition diagnostic, but it feeds no state.
+The latest push remains in `status_push.host_status` for host diagnostics and
+the device-capability active-target fill. The reconciler
 (`app/appium_nodes/services/reconciler*.py`) is observe-only: it matches the
 agent's self-reported Appium processes against desired rows and writes
 observed columns (`pid`, `active_connection_target`, health fields) — it never
@@ -47,17 +49,16 @@ is rejected at registration with HTTP 426, and the same check runs on every
 stops stamping `last_heartbeat`, and it reads offline within the recency
 window. See `docs/design/04-backend-agent-contract.md` for the full contract.
 
-Per host, after Appium-node convergence, `host_sweep` folds the push's
-observation sections (`node_health`, `device_health`, `device_telemetry`,
-`device_properties`, `host_telemetry`) into durable facts — each fold gated by
-a per-host stamp watermark (control-plane namespace
-`host_sweep.observation_fold`) to skip redundant re-folds; every fold is
-idempotent under re-processing. It then
-runs the cadence-gated `/agent/health` partition diagnostic
-(60 s plumbing cadence; feeds no state). After the per-host
-fan-out the sweep expires stale device cooldowns. The agent produces those
-observations locally on fixed cadences (30/60/300/600 s constants in
-`agent_app/probes.py`); the backend never dials an agent to observe.
+At push ingest, the handler folds the observation sections (`node_health`,
+`device_health`, `device_telemetry`, `device_properties`, `host_telemetry`)
+into durable facts after the liveness commit. Restart ingest, Appium-node
+convergence, and each fold are contained so an observation failure cannot
+erase the heartbeat. `host_sweep` is the silence detector: it emits liveness
+edges and the offline cascade from push recency, runs the cadence-gated
+`/agent/health` partition diagnostic (60 s plumbing cadence; feeds no state),
+and expires stale device cooldowns. The agent produces observations locally on
+fixed cadences (30/60/300/600 s constants in `agent_app/probes.py`); fact
+latency is push-bounded (at most one push interval after a probe fires).
 
 Each fact class has exactly one channel:
 
@@ -65,11 +66,11 @@ Each fact class has exactly one channel:
 |---|---|---|
 | Host liveness | status-push recency (`last_heartbeat`), computed at read time (`app/hosts/liveness.py`); the stored `Host.status` column is the enrollment axis (`pending`) + the sweep-written event ledger | backend `general.host_offline_after_sec` |
 | Appium process inventory + restart events | push `appium_processes` | agent push interval (10 s) |
-| Node Appium health | push `node_health` | agent constant (30 s) |
-| Device pack health | push `device_health` | agent constant (60 s) |
-| Device hardware telemetry | push `device_telemetry` | agent constant (300 s) |
-| Device properties | push `device_properties` | agent constant (600 s) |
-| Host resource telemetry | push `host_telemetry` | push interval, folded ≥ 60 s |
+| Node Appium health | push `node_health` | agent constant (30 s); fold push-bounded (≤ push interval) |
+| Device pack health | push `device_health` | agent constant (60 s); fold push-bounded (≤ push interval) |
+| Device hardware telemetry | push `device_telemetry` | agent constant (300 s); fold push-bounded (≤ push interval) |
+| Device properties | push `device_properties` | agent constant (600 s); fold push-bounded (≤ push interval) |
+| Host resource telemetry | push `host_telemetry` | push interval; fold push-bounded (≤ push interval) |
 | Pack install/doctor status | push `packs` | agent pack state loop |
 | Session liveness / orphans | direct-to-Appium (`appium_sweep`, action channel) | backend |
 | Network partition (diagnostic only) | backend dial `/agent/health` | 60 s plumbing cadence |

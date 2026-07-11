@@ -13,7 +13,7 @@ from app.agent_comm.config import agent_settings
 from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes.services.host_sweep import HostSweepLoop, ObservationFold
+from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
@@ -181,17 +181,6 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
     host_sweep = HostSweepLoop(
         services=app_services.appium_nodes,
-        observation_folds=(
-            ObservationFold("node_health", app_services.appium_nodes.node_health.fold_host_nodes),
-            ObservationFold("device_health", app_services.devices.connectivity.fold_host_device_health),
-            ObservationFold("device_telemetry", app_services.hosts.hardware_telemetry.fold_host_device_telemetry),
-            ObservationFold("device_properties", app_services.devices.property_refresh.fold_host_device_properties),
-            ObservationFold(
-                "host_telemetry",
-                app_services.hosts.resource_telemetry.fold_host_telemetry,
-                stamp_key="recorded_at",
-            ),
-        ),
         expire_cooldowns=app_services.devices.connectivity.check_expired_cooldowns,
     )
     appium_sweep = AppiumSweepLoop(services=app_services.sessions)

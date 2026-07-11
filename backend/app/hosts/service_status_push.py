@@ -1,17 +1,22 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from app.core.leader import state_store as control_plane_state_store
-from app.core.metrics_recorders import record_host_status_push
+from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES, record_host_status_push
 from app.core.timeutil import now_utc
+from app.hosts.models import Host
 from app.hosts.service import normalize_capabilities, update_missing_prerequisites_from_health
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
-    from app.hosts.models import Host
     from app.hosts.schemas import HostStatusPush
 
 # One snapshot per host: the latest consolidated status push. Read by the
@@ -20,13 +25,42 @@ if TYPE_CHECKING:
 HOST_STATUS_NAMESPACE = "status_push.host_status"
 
 
-class HostStatusPushService:
-    """Thin any-worker ingest: liveness stamp + snapshot store. No device row
-    locks here — lock-heavy ingest (restart events, convergence, the offline
-    cascade) stays in the scheduler's host_sweep."""
+@dataclass(frozen=True)
+class ObservationFold:
+    """One push section folded into durable device or host facts."""
 
-    def __init__(self, *, publisher: EventPublisher) -> None:
+    section: str
+    fold: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]]
+
+
+def push_sections(push: HostStatusPush) -> dict[str, Any]:
+    return {
+        "appium_processes": push.appium_processes,
+        "host_telemetry": push.host_telemetry,
+        "node_health": push.node_health,
+        "device_health": push.device_health,
+        "device_telemetry": push.device_telemetry,
+        "device_properties": push.device_properties,
+    }
+
+
+class HostStatusPushService:
+    """Persist liveness first, then contain push-time observation processing."""
+
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        session_factory: SessionFactory | None = None,
+        observation_folds: tuple[ObservationFold, ...] = (),
+        converge_host: Callable[..., Awaitable[None]] | None = None,
+        ingest_restart_events: Callable[[AsyncSession, Host, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
         self._publisher = publisher
+        self._session_factory = session_factory
+        self._observation_folds = observation_folds
+        self._converge_host = converge_host
+        self._ingest_restart_events = ingest_restart_events
 
     async def apply_status_push(self, db: AsyncSession, host: Host, push: HostStatusPush) -> None:
         host.last_heartbeat = now_utc()
@@ -42,16 +76,42 @@ class HostStatusPushService:
             db,
             HOST_STATUS_NAMESPACE,
             str(host.id),
-            {
-                "received_at": now_utc().isoformat(),
-                "payload": {
-                    "appium_processes": push.appium_processes,
-                    "host_telemetry": push.host_telemetry,
-                    "node_health": push.node_health,
-                    "device_health": push.device_health,
-                    "device_telemetry": push.device_telemetry,
-                    "device_properties": push.device_properties,
-                },
-            },
+            {"received_at": now_utc().isoformat(), "payload": push_sections(push)},
         )
         record_host_status_push(host_id=str(host.id))
+
+    async def process_observations(
+        self, *, host_id: uuid.UUID, host_ip: str, agent_port: int, payload: dict[str, Any]
+    ) -> None:
+        """Run restart ingest, convergence, and folds without raising to the endpoint."""
+        if self._session_factory is None:
+            return
+        if self._ingest_restart_events is not None:
+            try:
+                async with self._session_factory() as db:
+                    host = await db.get(Host, host_id)
+                    if host is not None:
+                        await self._ingest_restart_events(db, host, payload)
+                        await db.commit()
+            except Exception:  # noqa: BLE001 - observation stages must never starve liveness
+                HOST_PUSH_OBSERVATION_FAILURES.labels(stage="restart_events").inc()
+        if self._converge_host is not None:
+            try:
+                await self._converge_host(
+                    host_id=host_id,
+                    host_ip=host_ip,
+                    agent_port=agent_port,
+                    payload=payload,
+                )
+            except Exception:  # noqa: BLE001 - observation stages must never starve liveness
+                HOST_PUSH_OBSERVATION_FAILURES.labels(stage="convergence").inc()
+        for entry in self._observation_folds:
+            section = payload.get(entry.section)
+            if not isinstance(section, dict):
+                continue
+            try:
+                async with self._session_factory() as fold_db:
+                    await entry.fold(fold_db, host_id, section)
+                    await fold_db.commit()
+            except Exception:  # noqa: BLE001 - observation stages must never starve liveness
+                HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
