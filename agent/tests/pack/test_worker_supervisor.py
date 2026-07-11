@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from agent_app.pack.adapter_dispatch import AdapterContractError, AdapterHookExecutionError, AdapterHookTimeoutError
+from agent_app.pack.adapter_types import DiscoveryCandidate, FieldError
 from agent_app.pack.worker_supervisor import WorkerSupervisor
 
 if TYPE_CHECKING:
@@ -29,6 +30,45 @@ async def test_call_returns_typed_result(tmp_path: Path) -> None:
         result = await handle.call("discover", {"ctx": {"host_id": "h", "platform_id": "p"}})
         assert result == []
         assert handle.alive
+    finally:
+        await supervisor.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_discover_roundtrips_nested_field_errors(tmp_path: Path) -> None:
+    # The one non-trivial decoder path: DiscoveryCandidate nests list[FieldError],
+    # so the wire result must reconstruct typed FieldError objects, not dicts.
+    _write_adapter(
+        tmp_path,
+        """
+from agent_app.pack.adapter_types import DiscoveryCandidate, FieldError
+
+class Adapter:
+    async def discover(self, ctx):
+        return [DiscoveryCandidate(
+            identity_scheme="serial", identity_value="dev-1", suggested_name="Device 1",
+            detected_properties={"model": "x"}, runnable=False,
+            missing_requirements=["driver"],
+            field_errors=[FieldError(field_id="serial", message="bad")],
+        )]
+""",
+    )
+    supervisor = WorkerSupervisor(hook_timeout=1, kill_grace_sec=0.1)
+    handle = await supervisor.start("pack", "1", tmp_path)
+    try:
+        result = await handle.call("discover", {"ctx": {"host_id": "h", "platform_id": "p"}})
+        assert result == [
+            DiscoveryCandidate(
+                identity_scheme="serial",
+                identity_value="dev-1",
+                suggested_name="Device 1",
+                detected_properties={"model": "x"},
+                runnable=False,
+                missing_requirements=["driver"],
+                field_errors=[FieldError(field_id="serial", message="bad")],
+            )
+        ]
+        assert isinstance(result[0].field_errors[0], FieldError)
     finally:
         await supervisor.shutdown_all()
 
