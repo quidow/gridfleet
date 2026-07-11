@@ -7,7 +7,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
 | `general` | General | 16 |
-| `grid` | Appium & Grid | 10 |
+| `grid` | Appium & Allocation | 10 |
 | `notifications` | Notifications | 3 |
 | `agent` | Agent | 4 |
 | `reservations` | Reservations | 3 |
@@ -39,11 +39,11 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `device_checks.probe_failed.fail_window_sec` | `device_checks` | `int` | `120` | none | `0..3600` | Wall-clock seconds a manifest-declared debounceable health check may fail before the device is marked unhealthy; `0` flips on the first miss |
 | `device_checks.ip_ping.timeout_sec` | `device_checks` | `float` | `2.0` | none | `0.5..30.0` | Per-attempt ICMP-ping timeout used by the adapter |
 | `device_checks.ip_ping.count_per_cycle` | `device_checks` | `int` | `1` | none | `1..10` | Number of ICMP echo requests sent per cycle inside the adapter probe |
-| `grid.queue_timeout_sec` | `grid` | `int` | `300` | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `5..3600` | How long a queued new-session request may wait for a device before failing |
+| `grid.queue_timeout_sec` | `grid` | `int` | `300` | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `30..3600` | How long a queued new-session request may wait for a device before failing (must exceed the router's 25s long-poll slice) |
 | `grid.session_idle_timeout_sec` | `grid` | `int` | `1800` | `GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC` | `60..86400` | How long a running session may go without reported client activity before the observation sweep terminates it. Replaces the relay's idle timeout (driver enforcement of `newCommandTimeout` is config-dependent), so an abandoned client cannot pin its device busy forever. A client `appium:newCommandTimeout` above this value extends the window per session, up to `grid.session_idle_timeout_ceiling_sec` |
 | `grid.session_idle_timeout_ceiling_sec` | `grid` | `int` | `7200` | `GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_CEILING_SEC` | `60..86400` | Hard ceiling on how far a client's `appium:newCommandTimeout` may extend the idle reap window. `newCommandTimeout=0` ("never idle-kill") clamps here, preserving the zombie-session guarantee. Clients can extend the idle window, never shorten it |
 | `grid.session_first_command_grace_sec` | `grid` | `int` | `180` | `GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC` | `30..3600` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep terminates it. Measured from the allocation claim (`started_at`), so Appium session-create time eats into the grace. Bounds abandoned-client zombie sessions well below the full idle timeout |
-| `grid.claim_window_sec` | `grid` | `int` | `120` | `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `5..600` | How long an allocated (pending) session may remain unconfirmed before the `grid_allocation_reaper` fails it. Must exceed worst-case Appium session-creation time |
+| `grid.claim_window_sec` | `grid` | `int` | `120` | `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `30..600` | How long an allocated (pending) session may remain unconfirmed before it is failed. Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create. The reaper adds a fixed +60s confirm grace on top of this window to absorb router confirm retries. The floor is 30s: the router's create-timeout cap engages only above 10s, so a smaller window lets the orphan sweep race a real in-creation session |
 | `appium.port_range_start` | `grid` | `int` | `4723` | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `1024..65535` | Start of the managed Appium node port range |
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
@@ -52,7 +52,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hardware_health_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
 | `notifications.toast_auto_dismiss_sec` | `notifications` | `int` | `5` | none | `0..60` | Auto-dismiss delay for success toasts; `0` means manual dismissal |
 | `notifications.toast_severity_threshold` | `notifications` | `string` | `warning` | none | `info`, `warning`, `error` | Minimum toast severity shown in the UI |
-| `agent.min_version` | `agent` | `string` | `0.1.0` | `GRIDFLEET_MIN_AGENT_VERSION` | none | Minimum accepted agent version; empty disables the version check |
+| `agent.min_version` | `agent` | `string` | `0.33.0` | `GRIDFLEET_MIN_AGENT_VERSION` | none | Minimum accepted agent version; empty disables the version check |
 | `agent.recommended_version` | `agent` | `string` | `""` | `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | none | Recommended `gridfleet-agent` version surfaced to agents and operators; empty disables recommendation messaging |
 | `agent.auto_accept_hosts` | `agent` | `bool` | `false` | none | boolean | Whether self-registering hosts are automatically approved; off by default |
 | `agent.default_port` | `agent` | `int` | `5100` | none | `1024..65535` | Default agent port for new hosts |
