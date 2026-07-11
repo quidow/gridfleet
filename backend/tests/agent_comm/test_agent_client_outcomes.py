@@ -36,7 +36,7 @@ def _pooled_client(method: str, side_effect: list[object]) -> MagicMock:
 @pytest.mark.asyncio
 async def test_pooled_get_retries_once_on_stale_keepalive_disconnect() -> None:
     # The agent's uvicorn keep-alive (default 5s) is shorter than our pool idle
-    # (agent.http_pool_idle_seconds, up to 600s), so the pool can hand back a
+    # (POOL_KEEPALIVE_EXPIRY_SEC, 60s), so the pool can hand back a
     # connection the server already closed -> RemoteProtocolError before the
     # request is processed. One retry on a fresh connection must recover it.
     ok = httpx.Response(status_code=200)
