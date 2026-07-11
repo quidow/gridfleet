@@ -1,27 +1,21 @@
-"""One pushed observation per host per tick: recency liveness, convergence, then
-watermark-gated fact folds; a cadence-gated partition-probe diagnostic; cooldown
-expiry after the fan-out.
+"""The silence detector: host liveness edges from status-push recency, a
+cadence-gated partition-probe diagnostic, and cooldown expiry after the
+fan-out.
 
-Concerns run only for hosts this sweep pass proved alive: host liveness derives
-from status-push recency (evaluate_host), appium-node convergence reads the same
-latest pushed snapshot, and per-host observation folds consume stamped push
-sections afterward — each fold skip-gated by a per-host stamp watermark, an
-optimization because every fold is idempotent under re-processing. The backend keeps a single cadence-gated
-reachability probe (probe_host) as a network-partition diagnostic (see
-stage_due). After the fan-out the sweep expires stale device cooldowns.
+Everything observational moved to the push ingest path (WS-11.1): restart
+ingest, appium-node convergence, and the fact folds run at push time in
+HostStatusPushService.process_observations. This sweep notices only what a
+push cannot deliver — the host that stopped pushing.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.appium_nodes.services.reconciler import fetch_backoff_until, fetch_desired_rows
 from app.core.background_loop import BackgroundLoop, stage_due
-from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import APPIUM_RECONCILER_CYCLE_FAILURES, APPIUM_RECONCILER_LAST_CYCLE_SECONDS
 from app.core.observability import get_logger
 from app.hosts.liveness import host_online
@@ -29,13 +23,12 @@ from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.protocols import ReconcilerProtocol
     from app.appium_nodes.services.heartbeat import HeartbeatService
-    from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
@@ -43,56 +36,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 LOOP_NAME = "host_sweep"
-OBSERVATION_FOLD_NAMESPACE = "host_sweep.observation_fold"
-
 # Plumbing constants (P5): the sweep tick, its stage cadence, and fan-out width
 # are not operator policy. The operator-facing knob is host_offline_after_sec.
 HOST_SWEEP_INTERVAL_SEC = 15.0
 PARTITION_PROBE_INTERVAL_SEC = 60.0
 HOST_SWEEP_PARALLELISM = 8
-
-
-@dataclass(frozen=True)
-class ObservationFold:
-    """A per-host fact fold fed by one status-push section.
-
-    Runs only when the section's stamp differs from the stored per-host
-    watermark. The watermark skips redundant re-folds of unchanged probe
-    caches; it is not a correctness gate because every fold is idempotent under
-    re-processing.
-    """
-
-    section: str  # push payload key
-    fold: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]]
-    stamp_key: str = "reported_at"
-
-
-async def _fold_observations(
-    db: AsyncSession,
-    host_id: uuid.UUID,
-    payload: dict[str, Any],
-    folds: Sequence[ObservationFold],
-) -> None:
-    raw = await control_plane_state_store.get_value(db, OBSERVATION_FOLD_NAMESPACE, str(host_id))
-    watermarks: dict[str, Any] = raw if isinstance(raw, dict) else {}
-    for entry in folds:
-        section = payload.get(entry.section)
-        if not isinstance(section, dict):
-            continue
-        stamp = section.get(entry.stamp_key)
-        if not isinstance(stamp, str) or stamp == watermarks.get(entry.section):
-            continue
-        try:
-            await entry.fold(db, host_id, section)
-        except Exception:
-            # Fold isolation (stage-isolation successor): one section's failure
-            # must not starve the others. Watermark not advanced — retried next
-            # cycle (re-folds are harmless because folds are idempotent).
-            logger.exception("host_sweep_fold_failed", section=entry.section, host_id=str(host_id))
-            continue
-        watermarks[entry.section] = stamp
-        await control_plane_state_store.set_value(db, OBSERVATION_FOLD_NAMESPACE, str(host_id), watermarks)
-        await db.commit()
 
 
 async def run_host_sweep_once(
@@ -102,7 +50,6 @@ async def run_host_sweep_once(
     reconciler: ReconcilerProtocol,
     settings: SettingsReader,
     session_factory: SessionFactory,
-    observation_folds: Sequence[ObservationFold] = (),
     expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     cycle_index: int = 0,
 ) -> None:
@@ -110,11 +57,6 @@ async def run_host_sweep_once(
     guard = heartbeat.begin_cycle()
     offline_after = settings.get_float("general.host_offline_after_sec")
     host_ids = list((await db.execute(select(Host.id).where(Host.status != HostStatus.pending))).scalars().all())
-    desired = await fetch_desired_rows(db, offline_after_sec=offline_after)
-    backoff = await fetch_backoff_until(db)
-    rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
-    for row in desired:
-        rows_by_host.setdefault(row.host_id, []).append(row)
     probe_due = stage_due(
         cycle_index,
         base_interval=HOST_SWEEP_INTERVAL_SEC,
@@ -129,7 +71,7 @@ async def run_host_sweep_once(
                     host = await host_db.get(Host, host_id)
                     if host is None:
                         return
-                    evaluation = await heartbeat.evaluate_host(host_db, host, guard=guard)
+                    await heartbeat.evaluate_host(host_db, host, guard=guard)
                     host_alive = host_online(host, offline_after_sec=offline_after)
                     host_ip, agent_port = host.ip, host.agent_port
                     await host_db.commit()
@@ -143,26 +85,6 @@ async def run_host_sweep_once(
                     await heartbeat.probe_host(host_id=str(host_id), host_ip=host_ip, agent_port=agent_port)
                 except Exception:
                     logger.exception("host_sweep_probe_failed", host_id=str(host_id))
-            if evaluation.payload is not None:
-                try:
-                    await reconciler.reconcile_host(
-                        host_id=host_id,
-                        host_ip=host_ip,
-                        agent_port=agent_port,
-                        rows=rows_by_host.get(host_id, []),
-                        backoff_until_by_device=backoff,
-                        payload=evaluation.payload,
-                    )
-                except Exception:
-                    # Stage isolation: a convergence failure must not poison other
-                    # hosts' sweep NOR this host's remaining stages.
-                    logger.exception("host_sweep_convergence_failed", host_id=str(host_id))
-            if evaluation.payload is not None and observation_folds:
-                try:
-                    async with session_factory() as fold_db:
-                        await _fold_observations(fold_db, host_id, evaluation.payload, observation_folds)
-                except Exception:
-                    logger.exception("host_sweep_fold_pass_failed", host_id=str(host_id))
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
@@ -188,11 +110,9 @@ class HostSweepLoop(BackgroundLoop):
         self,
         *,
         services: AppiumNodeServices,
-        observation_folds: Sequence[ObservationFold] = (),
         expire_cooldowns: Callable[[AsyncSession], Awaitable[None]] | None = None,
     ) -> None:
         self._services = services
-        self._observation_folds = tuple(observation_folds)
         self._expire_cooldowns = expire_cooldowns
         self._cycle = 0
 
@@ -210,7 +130,6 @@ class HostSweepLoop(BackgroundLoop):
             reconciler=self._services.reconciler,
             settings=self._services.settings,
             session_factory=self._services.session_factory,
-            observation_folds=self._observation_folds,
             expire_cooldowns=self._expire_cooldowns,
             cycle_index=self._cycle,
         )

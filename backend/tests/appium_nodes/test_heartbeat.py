@@ -65,6 +65,14 @@ async def _seed_snapshot(db: AsyncSession, host: Host, appium_processes: dict[st
     await db.commit()
 
 
+async def _ingest_seeded_snapshot(db: AsyncSession, service: HeartbeatService, host: Host) -> None:
+    stored = await control_plane_state_store.get_value(db, HOST_STATUS_NAMESPACE, str(host.id))
+    assert isinstance(stored, dict)
+    payload = stored.get("payload")
+    assert isinstance(payload, dict)
+    await service.ingest_restart_events(db, host, payload)
+
+
 def _unguarded_guard(svc: HeartbeatService) -> object:
     """Advance past the first (always-guarded) cycle and return an unguarded guard."""
     svc.begin_cycle()
@@ -315,8 +323,7 @@ async def test_alive_evaluation_ingests_restart_events_from_snapshot_once(db_ses
 
     svc = _hb_svc(db_session)
     for _ in range(2):
-        guard = svc.begin_cycle()
-        await svc.evaluate_host(db_session, host, guard=guard)
+        await _ingest_seeded_snapshot(db_session, svc, host)
         await db_session.commit()
 
     crash_events = (
@@ -515,8 +522,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
 
     svc = _hb_svc(db_session)
     for _ in range(2):
-        guard = svc.begin_cycle()
-        await svc.evaluate_host(db_session, host, guard=guard)
+        await _ingest_seeded_snapshot(db_session, svc, host)
         await db_session.commit()
 
     await db_session.refresh(node)
@@ -611,8 +617,7 @@ async def test_restart_succeeded_eager_fills_active_connection_target(db_session
     )
 
     svc = _hb_svc(db_session)
-    guard = svc.begin_cycle()
-    await svc.evaluate_host(db_session, host, guard=guard)
+    await _ingest_seeded_snapshot(db_session, svc, host)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -688,8 +693,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     )
 
     svc = _hb_svc(db_session)
-    guard = svc.begin_cycle()
-    await svc.evaluate_host(db_session, host, guard=guard)
+    await _ingest_seeded_snapshot(db_session, svc, host)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -820,8 +824,7 @@ async def test_unknown_process_restart_events_normalize_to_appium_and_restore_he
     )
 
     svc = _hb_svc(db_session)
-    guard = svc.begin_cycle()
-    await svc.evaluate_host(db_session, host, guard=guard)
+    await _ingest_seeded_snapshot(db_session, svc, host)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -925,8 +928,7 @@ async def test_restart_exhausted_sets_degraded_state(
     )
 
     svc = _hb_svc(db_session)
-    guard = svc.begin_cycle()
-    await svc.evaluate_host(db_session, host, guard=guard)
+    await _ingest_seeded_snapshot(db_session, svc, host)
     await db_session.commit()
 
     await db_session.refresh(node)
