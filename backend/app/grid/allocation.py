@@ -102,8 +102,9 @@ GRID_ALLOCATE_QUEUE_WAIT_SECONDS = Histogram(
 
 # Extra budget on top of grid.claim_window_sec before the reaper fails a pending row.
 # Covers the router's confirm retries (a confirm whose response was lost re-posts the
-# same confirm, which can outlive the create cap): the router-side confirm budget is
-# being tightened in parallel to fit inside this grace.
+# same confirm, which can outlive the create cap): the router's confirm budget
+# (3 attempts x (10s + 2s) = 36s) is compile-time asserted below this grace in
+# router/src/backend.rs. See the timeout-lattice table in docs/reference/architecture.md.
 CONFIRM_GRACE_SEC = 60
 
 

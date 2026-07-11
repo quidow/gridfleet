@@ -128,6 +128,21 @@ Agents run on physical lab hosts or VMs where devices are attached. Unlike the c
 
 The router (`router/`) is a standalone Rust binary that listens on `:4444` and replaces the Selenium Grid hub. For each incoming W3C `POST /session` it calls the backend's internal grid API (`/internal/grid/*`) to allocate and confirm a device, then proxies that session's WebDriver commands directly to the allocated device's Appium server. Subsequent commands on an established session are routed by session id to the same Appium upstream. The backend owns allocation, queueing, and capability matching; the router owns request forwarding. It is configured purely via `GRIDFLEET_ROUTER_*` env vars (see `docs/reference/environment.md`).
 
+### Timeout lattice — cross-component ordered budgets
+
+Same-component budget rules live next to their constants as derived expressions or asserts. Rules that span two components cannot be derived in code; this table is their single home. The **owner** is the side you retune first — the other side then updates its mirror (and this table).
+
+| Budget A | Budget B | Rule | Owner | Enforcement |
+| --- | --- | --- | --- | --- |
+| Router shared HTTP client timeout (40 s, `router/src/backend.rs`) | Backend allocate long-poll slice (`LONG_POLL_SEC` = 25 s, `backend/app/grid/constants.py`) | A > B, or every quiet allocate poll dies on the client timeout | backend | compile-time `const` assert in `router/src/backend.rs` (mirrored constant) |
+| Router confirm retry budget (3 × (10 s + 2 s) = 36 s, `router/src/backend.rs`, `proxy.rs`) | Backend confirm grace (`CONFIRM_GRACE_SEC` = 60 s, `backend/app/grid/allocation.py`) | A < B, or a retried confirm outlives the reaper's grace and the allocation is released mid-confirm | backend | compile-time `const` assert in `router/src/backend.rs` (mirrored constant) |
+| Router Appium create timeout (`create_timeout`, `router/src/proxy.rs`) | Backend `grid.claim_window_sec` (registry, floor 30 s) | A ≤ min(proxy_timeout, B − 5 s), or the reaper releases the allocation under an in-flight create | backend (registry) | derived expression + unit tests in `router/src/proxy.rs`; the registry floor keeps the −5 s cap engaged |
+| Router activity-flush cadence (10 s, `router/src/tasks.rs`) | Backend session-liveness freshness window (`ACTIVITY_FRESH_WINDOW_SEC` = 30 s, `backend/app/sessions/service_sync.py`) | B = 3 × A — retune together, or live sessions fail the freshness gate and get per-session probes (or worse, idle-reaped) | router | comments on both constants + this row |
+| Backend `grid.queue_timeout_sec` (registry) | Backend allocate long-poll slice (`LONG_POLL_SEC` = 25 s) | A > B, or a queued waiter can expire mid-poll | backend | settings invariant in `backend/app/settings/invariants.py` (write-time reject + scheduler boot gate) |
+| Agent HTTP keep-alive (630 s, `agent/agent_app/config.py`) | Backend agent-pool idle (`POOL_KEEPALIVE_EXPIRY_SEC` = 60 s, `backend/app/agent_comm/http_pool.py`) | A > B, or the backend pool reuses connections the agent already closed and non-idempotent calls fail | backend | comments on both constants + this row |
+
+(One row is backend↔agent rather than backend↔router; it is the same class of rule and this table is the designated single home, so it lives here too.)
+
 ## 4. Frontend Operator Dashboard
 
 The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operators.

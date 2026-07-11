@@ -2,6 +2,28 @@
 
 use std::collections::HashSet;
 
+// Budget constants for the backend-facing HTTP path, with their ordering rules
+// checked at compile time. BACKEND_* values are mirrored from the backend
+// (authority: LONG_POLL_SEC in app/grid/constants.py, CONFIRM_GRACE_SEC in
+// app/grid/allocation.py); retune them there first, then here. See the
+// timeout-lattice table in docs/reference/architecture.md.
+pub(crate) const CLIENT_TIMEOUT_SECS: u64 = 40;
+pub(crate) const CONFIRM_TIMEOUT_SECS: u64 = 10;
+pub(crate) const CONFIRM_ATTEMPTS: u64 = 3;
+pub(crate) const CONFIRM_RETRY_SLEEP_SECS: u64 = 2;
+pub(crate) const BACKEND_LONG_POLL_SECS: u64 = 25;
+pub(crate) const BACKEND_CONFIRM_GRACE_SECS: u64 = 60;
+
+// Every allocate long-poll must fit inside the shared client timeout.
+const _: () = assert!(CLIENT_TIMEOUT_SECS > BACKEND_LONG_POLL_SECS);
+// The worst-case confirm retry budget must fit inside the reaper's grace.
+const _: () = assert!(
+    CONFIRM_ATTEMPTS * (CONFIRM_TIMEOUT_SECS + CONFIRM_RETRY_SLEEP_SECS)
+        < BACKEND_CONFIRM_GRACE_SECS
+);
+// Each confirm attempt must be far below the shared client timeout.
+const _: () = assert!(CONFIRM_TIMEOUT_SECS < CLIENT_TIMEOUT_SECS);
+
 #[derive(Debug)]
 pub enum AllocateOutcome {
     Allocated {
@@ -53,7 +75,7 @@ pub struct BackendClient {
 impl BackendClient {
     pub fn new(base: &str, auth: Option<(String, String)>) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(40)) // > backend's 25s long-poll
+            .timeout(std::time::Duration::from_secs(CLIENT_TIMEOUT_SECS)) // > backend's long-poll; see the const asserts above
             .build()
             .expect("client");
         Self {
@@ -158,10 +180,9 @@ impl BackendClient {
             reqwest::Method::POST,
             &format!("/internal/grid/sessions/{allocation_id}/confirm"),
         )
-        // Confirm is a tiny POST. Cap it well below the shared client's 40s so the
-        // worst-case retry budget (3 attempts + 2s sleeps) stays inside the
-        // backend reaper's confirm grace rather than 3×40s.
-        .timeout(std::time::Duration::from_secs(10))
+        // Confirm is a tiny POST; its retry budget is compile-time asserted below
+        // the backend's confirm grace (see the consts at the top of this module).
+        .timeout(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS))
         .json(&body)
         .send()
         .await?

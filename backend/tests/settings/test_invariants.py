@@ -57,3 +57,12 @@ def test_equal_idle_and_ceiling_is_allowed() -> None:
         )
         == []
     )
+
+
+def test_queue_timeout_must_exceed_long_poll() -> None:
+    errors = cross_invariant_errors(_getter({"grid.queue_timeout_sec": 20}))
+    assert any("grid.queue_timeout_sec" in error and "long-poll" in error for error in errors)
+
+
+def test_queue_timeout_above_long_poll_is_clean() -> None:
+    assert cross_invariant_errors(_getter({"grid.queue_timeout_sec": 300})) == []

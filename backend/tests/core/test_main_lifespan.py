@@ -91,6 +91,7 @@ def _setting_value(key: str) -> int:
     values = {
         "appium.startup_timeout_sec": 30,
         "general.host_offline_after_sec": 45,
+        "grid.queue_timeout_sec": 300,
         "grid.session_idle_timeout_sec": 1800,
         "grid.session_idle_timeout_ceiling_sec": 7200,
         "grid.session_first_command_grace_sec": 180,
