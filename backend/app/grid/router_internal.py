@@ -38,7 +38,7 @@ from app.grid.allocation import (
     resolve_router_target,
     transition_ticket,
 )
-from app.grid.constants import RETRY_INTERVAL_SEC
+from app.grid.constants import LONG_POLL_SEC, RETRY_INTERVAL_SEC
 from app.grid.dependencies import GridServicesDep
 from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -58,8 +58,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
-
-LONG_POLL_SEC = 25.0
 
 
 async def _get_or_create_ticket(
