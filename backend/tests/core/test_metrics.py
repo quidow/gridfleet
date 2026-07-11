@@ -81,13 +81,13 @@ async def test_refresh_system_gauges_counts_active_cooldowns(
 
 
 def test_ip_ping_metrics_registered() -> None:
-    from app.core.metrics_recorders import record_ip_ping_failure, set_ip_ping_consecutive_failures
+    from app.core.metrics_recorders import record_ip_ping_failure, set_ip_ping_failing_seconds
 
     record_ip_ping_failure(device_identity="dev-1", host="host-a")
-    set_ip_ping_consecutive_failures(device_identity="dev-1", host="host-a", value=2)
+    set_ip_ping_failing_seconds(device_identity="dev-1", host="host-a", value=2.0)
 
     # prometheus_client strips the _total suffix from Counter metric names when
     # iterating REGISTRY.collect(); samples are still emitted as *_total.
     registered_names = {m.name for m in REGISTRY.collect()}
     assert "gridfleet_ip_ping_failures" in registered_names
-    assert "gridfleet_ip_ping_consecutive_failures" in registered_names
+    assert "gridfleet_ip_ping_failing_seconds" in registered_names

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -40,7 +40,9 @@ def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.devices.services.connectivity._fetch_lifecycle_state", AsyncMock(return_value=None))
 
 
-async def _run_connectivity_fold(service: ConnectivityService, db: AsyncSession) -> None:
+async def _run_connectivity_fold(
+    service: ConnectivityService, db: AsyncSession, *, reported_at: datetime | None = None
+) -> None:
     """Fold the pushed device_health section once per online host — the fan-out
     the deleted check_connectivity pass used to do. Each device's observation is
     sourced from the (mocked) _get_device_health so the legacy per-device mocks
@@ -59,7 +61,9 @@ async def _run_connectivity_fold(service: ConnectivityService, db: AsyncSession)
             if _payload is not None and _d.connection_target:
                 _observations[_d.connection_target] = _payload
         await service.fold_host_device_health(
-            db, _host.id, {"reported_at": _now_utc().isoformat(), "devices": _observations}
+            db,
+            _host.id,
+            {"reported_at": (reported_at or _now_utc()).isoformat(), "devices": _observations},
         )
 
 
@@ -367,7 +371,7 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
     db_session.add(ping_miss)
     await db_session.commit()
 
-    settings = _stub_settings(monkeypatch, threshold=2, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=60, timeout=2.0, count=1)
     monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", AsyncMock(return_value=set()))
 
     async def endpoint_health(device: Device, **_kwargs: object) -> dict[str, object]:
@@ -378,6 +382,7 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
     monkeypatch.setattr("app.devices.services.connectivity._get_device_health", endpoint_health)
 
     mock_lifecycle_policy = AsyncMock()
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
     await _run_connectivity_fold(
         ConnectivityService(
             publisher=Mock(),
@@ -387,13 +392,14 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
             health=DeviceHealthService(publisher=Mock()),
         ),
         db_session,
+        reported_at=t0,
     )
 
     await db_session.refresh(failing)
     await db_session.refresh(ping_miss)
     assert failing.device_checks_healthy is False
     assert ping_miss.device_checks_healthy is True
-    assert ping_miss.device_checks_summary == "Healthy (ip_ping miss 1/2)"
+    assert ping_miss.device_checks_summary == "Healthy"
 
 
 async def test_endpoint_offline_recovery_skip_and_failure_branches(
@@ -443,7 +449,7 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
     db_session.add_all([manual, failed_recovery])
     await db_session.commit()
 
-    _stub_settings(monkeypatch, threshold=2, timeout=2.0, count=1)
+    _stub_settings(monkeypatch, window_sec=60, timeout=2.0, count=1)
     monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", AsyncMock(return_value=set()))
     monkeypatch.setattr(
         "app.devices.services.connectivity._get_device_health",
@@ -1258,27 +1264,25 @@ def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> N
 
 
 def _stub_settings(
-    monkeypatch: pytest.MonkeyPatch, *, threshold: int, timeout: float, count: int
+    monkeypatch: pytest.MonkeyPatch, *, window_sec: int, timeout: float, count: int
 ) -> FakeSettingsReader:
     from tests.conftest import settings_service
 
-    dispatcher = _settings_dispatch(threshold=threshold, timeout=timeout, count=count)
+    dispatcher = _settings_dispatch(window_sec=window_sec, timeout=timeout, count=count)
     monkeypatch.setattr(settings_service, "get", dispatcher)
     return FakeSettingsReader(
         {
-            "device_checks.ip_ping.consecutive_fail_threshold": dispatcher(
-                "device_checks.ip_ping.consecutive_fail_threshold"
-            ),
+            "device_checks.ip_ping.fail_window_sec": dispatcher("device_checks.ip_ping.fail_window_sec"),
             "device_checks.ip_ping.timeout_sec": dispatcher("device_checks.ip_ping.timeout_sec"),
             "device_checks.ip_ping.count_per_cycle": dispatcher("device_checks.ip_ping.count_per_cycle"),
         }
     )
 
 
-def _settings_dispatch(*, threshold: int, timeout: float, count: int) -> Callable[[str], object]:
+def _settings_dispatch(*, window_sec: int, timeout: float, count: int) -> Callable[[str], object]:
     def _get(key: str) -> object:
-        if key == "device_checks.ip_ping.consecutive_fail_threshold":
-            return threshold
+        if key == "device_checks.ip_ping.fail_window_sec":
+            return window_sec
         if key == "device_checks.ip_ping.timeout_sec":
             return timeout
         if key == "device_checks.ip_ping.count_per_cycle":
@@ -1355,83 +1359,90 @@ def test_split_ip_ping_when_absent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
+async def test_debounce_suppresses_inside_window(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_hysteresis
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_debounce
 
     fake = _FakeDevice(identity_value="dev-1")
-    gated = await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    assert gated is True
-    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
-    assert counter == 1
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    assert await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, window_sec=120, observed_at=t0
+    )
+    assert await _apply_failure_debounce(
+        db_session,
+        fake,
+        namespace=IP_PING_NAMESPACE,
+        ok=False,
+        window_sec=120,
+        observed_at=t0.replace(minute=1),
+    )
+    assert await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1") == t0.isoformat()
 
 
 @pytest.mark.asyncio
-async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
-    from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_hysteresis
+async def test_debounce_fires_at_window(db_session: AsyncSession) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_debounce
 
     fake = _FakeDevice(identity_value="dev-1")
-    for _ in range(2):
-        await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    assert gated is False
-    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
-    assert counter == 3
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, window_sec=120, observed_at=t0
+    )
+    assert not await _apply_failure_debounce(
+        db_session,
+        fake,
+        namespace=IP_PING_NAMESPACE,
+        ok=False,
+        window_sec=120,
+        observed_at=t0 + timedelta(seconds=120),
+    )
 
 
 @pytest.mark.asyncio
-async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
-    from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_hysteresis
+async def test_debounce_zero_window_is_strict(db_session: AsyncSession) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_debounce
 
     fake = _FakeDevice(identity_value="dev-1")
-    await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=True, threshold=3)  # type: ignore[arg-type]
-    assert gated is True
-    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
-    assert counter is None
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    assert not await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, window_sec=0, observed_at=t0
+    )
 
 
 @pytest.mark.asyncio
-async def test_apply_probe_failure_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
+async def test_debounce_success_clears(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_failure_hysteresis
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_debounce
 
     fake = _FakeDevice(identity_value="dev-1")
-    gated = await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    assert gated is True
-    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
-    assert counter == 1
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, window_sec=120, observed_at=t0
+    )
+    assert await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=True, window_sec=120, observed_at=t0
+    )
+    assert await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1") is None
 
 
 @pytest.mark.asyncio
-async def test_apply_probe_failure_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
+async def test_debounce_replay_is_idempotent(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_failure_hysteresis
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_debounce
 
     fake = _FakeDevice(identity_value="dev-1")
-    for _ in range(2):
-        await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    assert gated is False
-    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
-    assert counter == 3
-
-
-@pytest.mark.asyncio
-async def test_apply_probe_failure_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
-    from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_failure_hysteresis
-
-    fake = _FakeDevice(identity_value="dev-1")
-    await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=True, threshold=3)  # type: ignore[arg-type]
-    assert gated is True
-    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
-    assert counter is None
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    first = await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, window_sec=120, observed_at=t0
+    )
+    stored = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
+    replay = await _apply_failure_debounce(
+        db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, window_sec=120, observed_at=t0
+    )
+    assert (first, stored) == (
+        replay,
+        await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1449,10 +1460,11 @@ async def test_ip_ping_first_miss_keeps_healthy(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
     await _run_connectivity_fold(
         ConnectivityService(
             publisher=Mock(),
@@ -1462,12 +1474,13 @@ async def test_ip_ping_first_miss_keeps_healthy(
             health=DeviceHealthService(publisher=Mock()),
         ),
         db_session,
+        reported_at=t0,
     )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is True
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
-    assert counter == 1
+    assert counter == datetime(2026, 7, 11, 12, 0, tzinfo=UTC).isoformat()
 
 
 @pytest.mark.asyncio
@@ -1480,7 +1493,7 @@ async def test_ip_ping_threshold_flips_unhealthy(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
     handler_calls: list[str] = []
@@ -1489,7 +1502,8 @@ async def test_ip_ping_threshold_flips_unhealthy(
     mock_lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock(return_value=False)
     mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
-    for _ in range(3):
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    for offset in (0, 60, 120):
         await _run_connectivity_fold(
             ConnectivityService(
                 publisher=Mock(),
@@ -1499,12 +1513,13 @@ async def test_ip_ping_threshold_flips_unhealthy(
                 health=DeviceHealthService(publisher=Mock()),
             ),
             db_session,
+            reported_at=t0 + timedelta(seconds=offset),
         )
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
-    assert counter == 3
+    assert counter == datetime(2026, 7, 11, 12, 0, tzinfo=UTC).isoformat()
     assert len(handler_calls) == 1
 
 
@@ -1518,7 +1533,7 @@ async def test_ip_ping_success_clears_counter(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_agent_devices(monkeypatch, {device.identity_value})
     payloads: list[object] = [
         healthy_payload(adb=True, ip_ping=False),
@@ -1527,7 +1542,8 @@ async def test_ip_ping_success_clears_counter(
     ]
     _stub_get_health_sequence(monkeypatch, payloads)
 
-    for _ in range(3):
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    for offset in (0, 60, 120):
         await _run_connectivity_fold(
             ConnectivityService(
                 publisher=Mock(),
@@ -1537,6 +1553,7 @@ async def test_ip_ping_success_clears_counter(
                 health=DeviceHealthService(publisher=Mock()),
             ),
             db_session,
+            reported_at=t0 + timedelta(seconds=offset),
         )
 
     refreshed = await _reload(db_session, device.id)
@@ -1555,7 +1572,7 @@ async def test_ip_ping_other_check_failure_no_hysteresis(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=False, ip_ping=True))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
@@ -1595,14 +1612,14 @@ def _roku_payload(*, reachable: bool) -> dict[str, object]:
     }
 
 
-def _debounce_settings(threshold: int = 3) -> FakeSettingsReader:
+def _debounce_settings(window_sec: int = 120) -> FakeSettingsReader:
     return FakeSettingsReader(
         {
-            "device_checks.ip_ping.consecutive_fail_threshold": 3,
+            "device_checks.ip_ping.fail_window_sec": 120,
             "device_checks.ip_ping.timeout_sec": 2.0,
             "device_checks.ip_ping.count_per_cycle": 1,
-            "device_checks.probe_unanswered.consecutive_fail_threshold": 3,
-            "device_checks.probe_failed.consecutive_fail_threshold": threshold,
+            "device_checks.probe_unanswered.fail_window_sec": 120,
+            "device_checks.probe_failed.fail_window_sec": window_sec,
         }
     )
 
@@ -1626,7 +1643,7 @@ async def test_debounceable_check_blip_first_miss_keeps_healthy(
     await _run_connectivity_fold(
         ConnectivityService(
             publisher=Mock(),
-            settings=_debounce_settings(threshold=3),
+            settings=_debounce_settings(window_sec=120),
             circuit_breaker=Mock(),
             lifecycle_policy=mock_lifecycle_policy,
             health=DeviceHealthService(publisher=Mock()),
@@ -1655,16 +1672,18 @@ async def test_debounceable_check_flips_unhealthy_at_threshold(
     mock_lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock(return_value=False)
     mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
-    for _ in range(3):
+    t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    for offset in (0, 60, 120):
         await _run_connectivity_fold(
             ConnectivityService(
                 publisher=Mock(),
-                settings=_debounce_settings(threshold=3),
+                settings=_debounce_settings(window_sec=120),
                 circuit_breaker=Mock(),
                 lifecycle_policy=mock_lifecycle_policy,
                 health=DeviceHealthService(publisher=Mock()),
             ),
             db_session,
+            reported_at=t0 + timedelta(seconds=offset),
         )
 
     refreshed = await _reload(db_session, device.id)
@@ -1698,7 +1717,7 @@ async def test_debounceable_check_recovery_clears_counter(
         await _run_connectivity_fold(
             ConnectivityService(
                 publisher=Mock(),
-                settings=_debounce_settings(threshold=3),
+                settings=_debounce_settings(window_sec=120),
                 circuit_breaker=Mock(),
                 lifecycle_policy=mock_lifecycle_policy,
                 health=DeviceHealthService(publisher=Mock()),
@@ -1742,7 +1761,7 @@ async def test_hard_check_failure_flips_immediately_despite_debounceable_sibling
     await _run_connectivity_fold(
         ConnectivityService(
             publisher=Mock(),
-            settings=_debounce_settings(threshold=3),
+            settings=_debounce_settings(window_sec=120),
             circuit_breaker=Mock(),
             lifecycle_policy=mock_lifecycle_policy,
             health=DeviceHealthService(publisher=Mock()),
@@ -1765,7 +1784,7 @@ async def test_ip_ping_absent_no_counter_writes(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address=None)
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True))  # no ip_ping entry
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
@@ -1799,7 +1818,7 @@ async def test_ip_ping_skipped_for_held_device(
         operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={"maintenance_reason": "test maintenance"},
     )
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
@@ -1828,9 +1847,14 @@ async def test_ip_ping_health_result_none_preserves_counter(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
-    settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=120, timeout=2.0, count=1)
     _stub_agent_devices(monkeypatch, {device.identity_value})
-    await control_plane_state_store.set_value(db_session, IP_PING_NAMESPACE, device.identity_value, 2)
+    await control_plane_state_store.set_value(
+        db_session,
+        IP_PING_NAMESPACE,
+        device.identity_value,
+        datetime(2026, 7, 11, 12, 0, tzinfo=UTC).isoformat(),
+    )
     await db_session.commit()
     _stub_get_health(monkeypatch, None)  # agent unreachable
 
@@ -1846,17 +1870,17 @@ async def test_ip_ping_health_result_none_preserves_counter(
     )
 
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
-    assert counter == 2
+    assert counter == datetime(2026, 7, 11, 12, 0, tzinfo=UTC).isoformat()
 
 
 @pytest.mark.asyncio
-async def test_ip_ping_settings_threshold_one_flips_immediately(
+async def test_ip_ping_settings_zero_window_flips_immediately(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
-    settings = _stub_settings(monkeypatch, threshold=1, timeout=2.0, count=1)
+    settings = _stub_settings(monkeypatch, window_sec=0, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
 
@@ -2441,10 +2465,11 @@ async def test_unanswered_probe_marks_unhealthy_on_threshold(db_session: AsyncSe
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None),
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
     ):
-        await _run_connectivity_fold(svc, db_session)
-        await _run_connectivity_fold(svc, db_session)
+        t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+        await _run_connectivity_fold(svc, db_session, reported_at=t0)
+        await _run_connectivity_fold(svc, db_session, reported_at=t0 + timedelta(seconds=60))
         lifecycle_policy.handle_health_failure.assert_not_awaited()  # 2 of 3, below threshold
-        await _run_connectivity_fold(svc, db_session)
+        await _run_connectivity_fold(svc, db_session, reported_at=t0 + timedelta(seconds=120))
 
     lifecycle_policy.handle_health_failure.assert_awaited()  # threshold reached
 
@@ -2507,7 +2532,13 @@ async def test_disconnected_already_recorded_device_skips_reconcile(
         await _run_connectivity_fold(
             ConnectivityService(
                 publisher=Mock(),
-                settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
+                settings=FakeSettingsReader(
+                    {
+                        "device_checks.ip_ping.fail_window_sec": 120,
+                        "device_checks.probe_unanswered.fail_window_sec": 300,
+                        "device_checks.probe_failed.fail_window_sec": 120,
+                    }
+                ),
                 circuit_breaker=Mock(),
                 lifecycle_policy=AsyncMock(),
                 health=DeviceHealthService(publisher=Mock()),
@@ -2548,7 +2579,13 @@ async def test_disconnected_first_observation_still_reconciles(
         await _run_connectivity_fold(
             ConnectivityService(
                 publisher=Mock(),
-                settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
+                settings=FakeSettingsReader(
+                    {
+                        "device_checks.ip_ping.fail_window_sec": 120,
+                        "device_checks.probe_unanswered.fail_window_sec": 300,
+                        "device_checks.probe_failed.fail_window_sec": 120,
+                    }
+                ),
                 circuit_breaker=Mock(),
                 lifecycle_policy=AsyncMock(),
                 health=DeviceHealthService(publisher=Mock()),

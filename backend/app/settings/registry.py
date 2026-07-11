@@ -48,13 +48,17 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3600,
     ),
     SettingDefinition(
-        key="general.node_max_failures",
+        key="general.node_fail_window_sec",
         category="general",
         setting_type="int",
-        default=3,
-        description="Failed health checks before auto-restart",
-        min_value=1,
-        max_value=20,
+        default=60,
+        description=(
+            "How long node health checks must keep failing (wall-clock, across the agent's "
+            "30s node probe cycles) before the node is marked offline and restart escalation "
+            "runs; 0 = first failure."
+        ),
+        min_value=0,
+        max_value=600,
     ),
     SettingDefinition(
         key="general.device_cooldown_max_sec",
@@ -197,16 +201,17 @@ _DEFINITIONS: list[SettingDefinition] = [
     ),
     # ── Device Checks ──
     SettingDefinition(
-        key="device_checks.ip_ping.consecutive_fail_threshold",
+        key="device_checks.ip_ping.fail_window_sec",
         category="device_checks",
         setting_type="int",
-        default=3,
+        default=120,
         description=(
-            "Consecutive ICMP-ping misses before an opted-in device is marked unhealthy. "
-            "Set to 1 for strict, no-hysteresis behaviour."
+            "How long ICMP-ping must keep failing (wall-clock, measured across the agent's "
+            "60s device-health probe cycles) before an opted-in device is marked unhealthy. "
+            "0 = strict, first miss flips."
         ),
-        min_value=1,
-        max_value=50,
+        min_value=0,
+        max_value=3600,
     ),
     SettingDefinition(
         key="device_checks.ip_ping.timeout_sec",
@@ -227,29 +232,29 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=10,
     ),
     SettingDefinition(
-        key="device_checks.probe_unanswered.consecutive_fail_threshold",
+        key="device_checks.probe_unanswered.fail_window_sec",
         category="device_checks",
         setting_type="int",
-        default=3,
+        default=120,
         description=(
-            "Consecutive unanswered health probes (agent/adapter error) before a device "
-            "is marked unhealthy instead of being silently skipped."
+            "How long unanswered health probes (agent/adapter error) must persist before a "
+            "device is marked unhealthy instead of being silently skipped."
         ),
-        min_value=1,
-        max_value=100,
+        min_value=0,
+        max_value=3600,
     ),
     SettingDefinition(
-        key="device_checks.probe_failed.consecutive_fail_threshold",
+        key="device_checks.probe_failed.fail_window_sec",
         category="device_checks",
         setting_type="int",
-        default=3,
+        default=120,
         description=(
-            "Consecutive failing cycles of a manifest-declared debounceable health check "
-            "(e.g. Roku ECP reachability on port 8060) before the device is marked unhealthy. "
-            "Set to 1 for strict, no-hysteresis behaviour."
+            "How long a manifest-declared debounceable health check (e.g. Roku ECP reachability "
+            "on port 8060) may keep failing before the device is marked unhealthy. "
+            "0 = strict, first miss flips."
         ),
-        min_value=1,
-        max_value=50,
+        min_value=0,
+        max_value=3600,
     ),
     # ── Appium & Allocation ──
     SettingDefinition(

@@ -9,13 +9,13 @@ def test_typed_getters_return_narrowed_types() -> None:
         {
             "general.session_viability_timeout_sec": 30,
             "appium_reconciler.interval_sec": 2.5,
-            "general.node_max_failures": True,
+            "general.node_fail_window_sec": True,
         }
     )
     assert reader.get_int("general.session_viability_timeout_sec") == 30
     assert reader.get_float("appium_reconciler.interval_sec") == 2.5
     assert reader.get_float("general.session_viability_timeout_sec") == 30.0  # int widens to float
-    assert reader.get_bool("general.node_max_failures") is True
+    assert reader.get_bool("general.node_fail_window_sec") is True
 
 
 def test_typed_getters_reject_mismatched_types() -> None:
@@ -32,13 +32,13 @@ def test_settings_service_typed_getters_validate_cached_values() -> None:
     # conformance test constructs the service without DB initialization.
     service = SettingsService()
     service._cache["general.session_viability_timeout_sec"] = 30
-    service._cache["general.node_max_failures"] = True
+    service._cache["general.node_fail_window_sec"] = True
     assert service.get_int("general.session_viability_timeout_sec") == 30
     assert service.get_float("general.session_viability_timeout_sec") == 30.0
-    assert service.get_bool("general.node_max_failures") is True
+    assert service.get_bool("general.node_fail_window_sec") is True
     with pytest.raises(TypeError):
         service.get_bool("general.session_viability_timeout_sec")
     with pytest.raises(TypeError):
-        service.get_int("general.node_max_failures")  # bool explicitly rejected as int
+        service.get_int("general.node_fail_window_sec")  # bool explicitly rejected as int
     with pytest.raises(TypeError):
-        service.get_float("general.node_max_failures")
+        service.get_float("general.node_fail_window_sec")
