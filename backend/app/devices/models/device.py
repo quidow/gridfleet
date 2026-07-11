@@ -109,9 +109,14 @@ class Device(Base):
     )
 
     def __init__(self, **kwargs: object) -> None:
-        # Keep old fixture/import callers source-compatible while the mapped
-        # attribute is renamed. Reads must use the projection helpers; this
-        # alias only seeds the event ledger during construction.
+        # ponytail: deliberate test-ergonomics shim, decided 2026-07-12 (WS-13.1)
+        # — not a transitional leftover. ~118 test sites construct
+        # Device(operational_state=...); the alias coerces str|enum into the
+        # ledger column and has zero app-code callers (production creation
+        # paths seed operational_state_last_emitted explicitly). Reads never
+        # use this name — state derives from facts. Delete only with a
+        # scripted rewrite of the test call sites (string values become
+        # DeviceOperationalState members).
         legacy_state = kwargs.pop("operational_state", None)
         if legacy_state is not None:
             kwargs["operational_state_last_emitted"] = DeviceOperationalState(cast("str", legacy_state))
