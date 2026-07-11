@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
 MIN_ORCHESTRATION_CONTRACT_VERSION = 6
+# Fallback for hosts created without a port; enrollment overwrites it with the
+# agent's real AGENT_AGENT_PORT on the first registration refresh.
+DEFAULT_AGENT_PORT = 5100
 
 
 def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
@@ -103,7 +106,7 @@ class HostCrudService:
 
     async def create_host(self, db: AsyncSession, data: HostCreate) -> Host:
         payload = data.model_dump()
-        payload["agent_port"] = payload["agent_port"] or self._settings.get("agent.default_port")
+        payload["agent_port"] = payload["agent_port"] or DEFAULT_AGENT_PORT
         host = Host(**payload)
         db.add(host)
         await db.commit()
@@ -156,7 +159,7 @@ class HostCrudService:
 
         # New registration
         status = HostStatus.online if self._settings.get("agent.auto_accept_hosts") else HostStatus.pending
-        agent_port = data.agent_port or self._settings.get("agent.default_port")
+        agent_port = data.agent_port or DEFAULT_AGENT_PORT
         host = Host(
             hostname=data.hostname,
             ip=data.ip,

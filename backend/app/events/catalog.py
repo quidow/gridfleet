@@ -330,14 +330,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
 
 PUBLIC_EVENT_NAMES: tuple[str, ...] = tuple(event.name for event in PUBLIC_EVENT_CATALOG)
 PUBLIC_EVENT_NAME_SET = frozenset(PUBLIC_EVENT_NAMES)
-DEFAULT_TOAST_EVENT_NAMES: tuple[str, ...] = (
-    "node.crash",
-    "host.heartbeat_lost",
-    "device.operational_state_changed",
-    "device.hardware_health_changed",
-    "run.expired",
-)
-
 _EVENT_INDEX: dict[str, PublicEventDefinition] = {event.name: event for event in PUBLIC_EVENT_CATALOG}
 
 

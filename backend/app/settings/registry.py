@@ -6,8 +6,6 @@ import copy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from app.events import DEFAULT_TOAST_EVENT_NAMES, PUBLIC_EVENT_NAMES
-
 if TYPE_CHECKING:
     from app.core.type_defs import SettingValue
 
@@ -29,7 +27,6 @@ class SettingDefinition:
 CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "general": "General",
     "grid": "Appium & Allocation",
-    "notifications": "Notifications",
     "agent": "Agent",
     "reservations": "Reservations",
     "retention": "Data Retention",
@@ -127,15 +124,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Consecutive warning or critical samples required before escalating hardware health",
         min_value=1,
         max_value=10,
-    ),
-    SettingDefinition(
-        key="general.host_resource_telemetry_window_minutes",
-        category="general",
-        setting_type="int",
-        default=60,
-        description="Default Host Detail telemetry time window",
-        min_value=5,
-        max_value=1440,
     ),
     SettingDefinition(
         key="general.session_viability_interval_sec",
@@ -332,7 +320,11 @@ _DEFINITIONS: list[SettingDefinition] = [
         category="grid",
         setting_type="int",
         default=4723,
-        description="Start of Appium port range",
+        description=(
+            "Start of the port range the backend assigns managed Appium nodes from. "
+            "Each agent only binds ports inside its own AGENT_APPIUM_PORT_RANGE_* env; "
+            "keep this range within every host's env range."
+        ),
         min_value=1024,
         max_value=65535,
     ),
@@ -341,7 +333,11 @@ _DEFINITIONS: list[SettingDefinition] = [
         category="grid",
         setting_type="int",
         default=4823,
-        description="End of Appium port range",
+        description=(
+            "End of the port range the backend assigns managed Appium nodes from. "
+            "Each agent only binds ports inside its own AGENT_APPIUM_PORT_RANGE_* env; "
+            "keep this range within every host's env range."
+        ),
         min_value=1024,
         max_value=65535,
     ),
@@ -367,39 +363,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=30,
         max_value=600,
     ),
-    SettingDefinition(
-        key="appium.session_override",
-        category="grid",
-        setting_type="bool",
-        default=True,
-        description="Whether managed Appium nodes should force-close lingering sessions before opening a new one",
-    ),
-    # ── Notifications ──
-    SettingDefinition(
-        key="notifications.toast_events",
-        category="notifications",
-        setting_type="json",
-        default=list(DEFAULT_TOAST_EVENT_NAMES),
-        description="Which event types trigger toast notifications",
-        item_allowed_values=list(PUBLIC_EVENT_NAMES),
-    ),
-    SettingDefinition(
-        key="notifications.toast_auto_dismiss_sec",
-        category="notifications",
-        setting_type="int",
-        default=5,
-        description="Auto-dismiss delay for success toasts (0 = manual only)",
-        min_value=0,
-        max_value=60,
-    ),
-    SettingDefinition(
-        key="notifications.toast_severity_threshold",
-        category="notifications",
-        setting_type="string",
-        default="warning",
-        description="Minimum severity for toasts: info, warning, error",
-        allowed_values=["info", "warning", "error"],
-    ),
     # ── Agent ──
     SettingDefinition(
         key="agent.min_version",
@@ -421,15 +384,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="bool",
         default=False,
         description="Auto-accept self-registering hosts (off by default: operators approve hosts manually)",
-    ),
-    SettingDefinition(
-        key="agent.default_port",
-        category="agent",
-        setting_type="int",
-        default=5100,
-        description="Default agent port for new hosts",
-        min_value=1024,
-        max_value=65535,
     ),
     # ── Reservations ──
     SettingDefinition(

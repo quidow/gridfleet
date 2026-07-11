@@ -2,9 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useAuth } from '../context/auth';
-import { fetchSettings } from '../api/settings';
 import { fetchEventCatalog } from '../api/events';
-import type { SettingsGrouped } from '../types';
 import { formatEventDetails } from '../components/notifications/eventRegistry';
 import { qk } from '../lib/queryKeys';
 import { createReconnectingEventSource } from '../lib/reconnectingEventSource';
@@ -87,6 +85,7 @@ const DEFAULT_TOAST_EVENTS = [
   'node.crash',
   'host.heartbeat_lost',
   'device.operational_state_changed',
+  'device.hardware_health_changed',
   'run.expired',
 ];
 const DEFAULT_TOAST_DISMISS_SEC = 5;
@@ -96,16 +95,6 @@ type ToastConfig = {
   dismissSec: number;
   toastThreshold: ToastSeverity;
 };
-
-function flattenSettings(groups: SettingsGrouped[] | undefined): Record<string, unknown> {
-  const flattened: Record<string, unknown> = {};
-  for (const group of groups ?? []) {
-    for (const setting of group.settings) {
-      flattened[setting.key] = setting.value;
-    }
-  }
-  return flattened;
-}
 
 function toSeverity(type: ToastKind): ToastSeverity {
   if (type === 'error') return 'error';
@@ -157,30 +146,15 @@ export function useEventStream() {
     staleTime: Infinity,
     throwOnError: false,
   });
-  const { data: settingsGroups } = useQuery({
-    queryKey: qk.settings.root,
-    queryFn: fetchSettings,
-    throwOnError: false,
-    staleTime: Infinity,
-    refetchInterval: false,
-  });
   const eventTypes = useMemo(() => eventCatalog?.map((event) => event.name) ?? [], [eventCatalog]);
-  const settings = useMemo(() => flattenSettings(settingsGroups), [settingsGroups]);
-  const toastConfig = useMemo((): ToastConfig => {
-    const toastEvents = Array.isArray(settings['notifications.toast_events'])
-      ? settings['notifications.toast_events'].filter((value): value is string => typeof value === 'string')
-      : DEFAULT_TOAST_EVENTS;
-    const dismissSec = typeof settings['notifications.toast_auto_dismiss_sec'] === 'number'
-      ? settings['notifications.toast_auto_dismiss_sec']
-      : DEFAULT_TOAST_DISMISS_SEC;
-    const thresholdSetting = settings['notifications.toast_severity_threshold'];
-    const toastThreshold: ToastSeverity =
-      thresholdSetting === 'info' || thresholdSetting === 'warning' || thresholdSetting === 'error'
-        ? thresholdSetting
-        : DEFAULT_TOAST_THRESHOLD;
-
-    return { toastEvents, dismissSec, toastThreshold };
-  }, [settings]);
+  const toastConfig = useMemo(
+    (): ToastConfig => ({
+      toastEvents: DEFAULT_TOAST_EVENTS,
+      dismissSec: DEFAULT_TOAST_DISMISS_SEC,
+      toastThreshold: DEFAULT_TOAST_THRESHOLD,
+    }),
+    [],
+  );
   const toastConfigRef = useRef<ToastConfig>(toastConfig);
   const pendingInvalidationsRef = useRef<Set<string>>(new Set());
   const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

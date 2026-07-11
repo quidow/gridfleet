@@ -54,12 +54,12 @@ def test_update_missing_prerequisites_from_health_updates_host_capabilities() ->
 
 
 async def test_create_and_delete_host(db_session: AsyncSession) -> None:
-    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({"agent.default_port": 6200}))
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
     host = await svc.create_host(
         db_session,
         HostCreate(hostname="create-host", ip="10.0.0.10", os_type=OSType.linux, agent_port=None),
     )
-    assert host.agent_port == 6200
+    assert host.agent_port == 5100
 
     assert await svc.delete_host(db_session, host.id) is True
     assert await svc.get_host(db_session, host.id) is None
@@ -166,7 +166,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
 ) -> None:
     svc_pending = HostCrudService(
         publisher=event_bus,
-        settings=FakeSettingsReader({"agent.auto_accept_hosts": False, "agent.default_port": 5151}),
+        settings=FakeSettingsReader({"agent.auto_accept_hosts": False}),
     )
     host, is_new = await svc_pending.register_host(
         db_session,
@@ -181,11 +181,11 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
 
     assert is_new is True
     assert host.status == HostStatus.pending
-    assert host.agent_port == 5151
+    assert host.agent_port == 5100
 
     svc_online = HostCrudService(
         publisher=event_bus,
-        settings=FakeSettingsReader({"agent.auto_accept_hosts": True, "agent.default_port": 5200}),
+        settings=FakeSettingsReader({"agent.auto_accept_hosts": True}),
     )
     online_host, _ = await svc_online.register_host(
         db_session,

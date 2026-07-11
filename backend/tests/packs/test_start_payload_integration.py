@@ -117,7 +117,7 @@ async def test_build_node_launch_payload_forwards_pack_appium_env(
             "device_type": device.device_type.value,
             "ip_address": device.ip_address,
             "allocated_caps": None,
-            "session_override": None,
+            "session_override": True,
             "headless": True,
         },
     )

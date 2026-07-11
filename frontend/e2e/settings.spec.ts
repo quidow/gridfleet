@@ -22,7 +22,6 @@ interface MockSetting {
 const displayNames: Record<string, string> = {
   general: 'General',
   grid: 'Appium & Allocation',
-  notifications: 'Notifications',
   device_checks: 'Device Checks',
   agent: 'Agent',
   reservations: 'Reservations',
@@ -48,43 +47,6 @@ function createSettingsState(): MockSetting[] {
       default_value: 4723,
       value: 4723,
       validation: { min: 1024, max: 65535 },
-    },
-    {
-      key: 'notifications.toast_events',
-      category: 'notifications',
-      type: 'json',
-      description: 'Event names eligible for toast display.',
-      default_value: [
-        'node.crash',
-        'host.heartbeat_lost',
-        'device.operational_state_changed',
-        'run.expired',
-      ],
-      value: [
-        'node.crash',
-        'host.heartbeat_lost',
-        'device.operational_state_changed',
-        'run.expired',
-      ],
-      validation: {
-        item_type: 'string',
-        item_allowed_values: [
-          'device.operational_state_changed',
-          'node.crash',
-          'session.started',
-          'run.created',
-          'run.expired',
-        ],
-      },
-    },
-    {
-      key: 'notifications.toast_auto_dismiss_sec',
-      category: 'notifications',
-      type: 'int',
-      description: 'Auto-dismiss delay for success toasts.',
-      default_value: 5,
-      value: 5,
-      validation: { min: 0, max: 60 },
     },
     {
       key: 'agent.min_version',
@@ -327,7 +289,7 @@ test.describe('Settings Page', () => {
     await mockSettingsPageApis(page);
   });
 
-  test('loads with all 9 tabs visible in grouped tab strip', async ({ page }) => {
+  test('loads with all 7 tabs visible in grouped tab strip', async ({ page }) => {
     await page.goto('/settings');
 
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
@@ -340,7 +302,6 @@ test.describe('Settings Page', () => {
       'Reservations',
       'Data Retention',
       'Backup & Restore',
-      'Notifications',
     ]) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
@@ -372,11 +333,6 @@ test.describe('Settings Page', () => {
     await page.getByRole('button', { name: 'Appium & Allocation' }).click();
     await expect(page.locator('input[name="appium.port_range_start"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Notifications' }).click();
-    await expect(page.locator('input[name="notifications.toast_auto_dismiss_sec"]')).toBeVisible();
-    await expect(page.getByLabel('run.expired')).toBeVisible();
-    await expect(page.getByLabel('device.health_changed')).toHaveCount(0);
-
     await page.getByRole('button', { name: 'Agent' }).click();
     await expect(page.locator('input[name="agent.min_version"]')).toBeVisible();
 
@@ -398,9 +354,6 @@ test.describe('Settings Page', () => {
     await page.getByRole('button', { name: 'Appium & Allocation' }).click();
     await expect(page.getByRole('heading', { name: 'Appium Node Pool' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Notifications' }).click();
-    await expect(page.getByRole('heading', { name: 'Toast Events' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Toast Delivery' })).toBeVisible();
   });
 
   test('changing and saving a setting persists after reload', async ({ page }) => {
@@ -442,9 +395,9 @@ test.describe('Settings Page', () => {
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Export configuration')).toBeVisible();
 
-    // Switch to Notifications and URL should update
-    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
-    await expect(page).toHaveURL(/tab=notifications/);
-    await expect(page.getByRole('heading', { name: 'Toast Events' })).toBeVisible();
+    // Switch to Agent and URL should update
+    await page.getByRole('button', { name: 'Agent', exact: true }).click();
+    await expect(page).toHaveURL(/tab=agent/);
+    await expect(page.getByRole('heading', { name: 'Agent Enrollment' })).toBeVisible();
   });
 });

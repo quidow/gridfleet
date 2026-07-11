@@ -999,32 +999,24 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     )
     assert await hosts.get_host_diagnostics(host_id, db=object(), host_services=fake_hs_diag_ok) == {"ok": True}
 
-    telemetry_svc = Mock()
-    telemetry_svc.get = Mock(return_value=60)
-    telemetry_ss = _mock_settings_svc(telemetry_svc)
-
     fake_hs_tel_err = SimpleNamespace(
         resource_telemetry=SimpleNamespace(fetch_host_resource_telemetry=AsyncMock(side_effect=ValueError("bad")))
     )
     with pytest.raises(HTTPException) as exc:
-        await hosts.get_host_resource_telemetry(
-            host_id, db=object(), host_services=fake_hs_tel_err, settings_services=telemetry_ss
-        )
+        await hosts.get_host_resource_telemetry(host_id, db=object(), host_services=fake_hs_tel_err)
     assert exc.value.status_code == 400
     fake_hs_tel_none = SimpleNamespace(
         resource_telemetry=SimpleNamespace(fetch_host_resource_telemetry=AsyncMock(return_value=None))
     )
     with pytest.raises(HTTPException) as exc:
-        await hosts.get_host_resource_telemetry(
-            host_id, db=object(), host_services=fake_hs_tel_none, settings_services=telemetry_ss
-        )
+        await hosts.get_host_resource_telemetry(host_id, db=object(), host_services=fake_hs_tel_none)
     assert exc.value.status_code == 404
     fake_hs_tel_ok = SimpleNamespace(
         resource_telemetry=SimpleNamespace(fetch_host_resource_telemetry=AsyncMock(return_value={"samples": []}))
     )
-    assert await hosts.get_host_resource_telemetry(
-        host_id, db=object(), host_services=fake_hs_tel_ok, settings_services=telemetry_ss
-    ) == {"samples": []}
+    assert await hosts.get_host_resource_telemetry(host_id, db=object(), host_services=fake_hs_tel_ok) == {
+        "samples": []
+    }
 
     offline = SimpleNamespace(status=HostStatus.offline, last_heartbeat=None)
     fake_hs_offline = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=offline)))

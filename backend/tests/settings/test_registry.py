@@ -7,11 +7,30 @@ from app.settings.registry import SETTINGS_REGISTRY
 
 
 def test_resolve_default_deep_copies_mutable_defaults() -> None:
-    definition = settings_registry.SETTINGS_REGISTRY["notifications.toast_events"]
+    definition = settings_registry.SettingDefinition(
+        key="test.mutable",
+        category="test",
+        setting_type="json",
+        default=["value"],
+        description="test",
+    )
     value = settings_registry.resolve_default(definition)
     assert isinstance(value, list)
     value.append("mutated")
     assert settings_registry.resolve_default(definition) != value
+
+
+def test_removed_presentation_settings_are_not_registered() -> None:
+    removed = [
+        "appium.session_override",
+        "agent.default_port",
+        "general.host_resource_telemetry_window_minutes",
+        "notifications.toast_events",
+        "notifications.toast_auto_dismiss_sec",
+        "notifications.toast_severity_threshold",
+    ]
+    for key in removed:
+        assert key not in SETTINGS_REGISTRY
 
 
 def test_capacity_snapshot_settings_are_registered() -> None:

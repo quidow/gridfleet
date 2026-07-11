@@ -55,24 +55,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
         'appium.port_range_start',
         'appium.port_range_end',
         'appium.startup_timeout_sec',
-        'appium.session_override',
-      ],
-    },
-  ],
-  notifications: [
-    {
-      id: 'toast-events',
-      title: 'Toast Events',
-      description: 'Choose which public events surface as operator toasts.',
-      settingKeys: ['notifications.toast_events'],
-    },
-    {
-      id: 'toast-delivery',
-      title: 'Toast Delivery',
-      description: 'Severity threshold and dismissal timing for notifications.',
-      settingKeys: [
-        'notifications.toast_severity_threshold',
-        'notifications.toast_auto_dismiss_sec',
       ],
     },
   ],
@@ -81,7 +63,7 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       id: 'agent-enrollment',
       title: 'Agent Enrollment',
       description: 'Version policy and host registration defaults.',
-      settingKeys: ['agent.min_version', 'agent.auto_accept_hosts', 'agent.default_port'],
+      settingKeys: ['agent.min_version', 'agent.auto_accept_hosts'],
     },
   ],
   reservations: [

@@ -307,7 +307,7 @@ async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_s
     payload = build_agent_start_payload(
         device,
         4723,
-        settings=FakeSettingsReader({"appium.session_override": True}),
+        settings=FakeSettingsReader({}),
     )
 
     assert payload["headless"] is True
@@ -330,7 +330,7 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
     payload = build_agent_start_payload(
         device,
         4724,
-        settings=FakeSettingsReader({"appium.session_override": True}),
+        settings=FakeSettingsReader({}),
     )
 
     assert payload["headless"] is False
@@ -384,12 +384,7 @@ async def test_build_node_launch_payload_aligns_simulator_caps_with_probe_reques
             loaded,
             port=4724,
             allocated_caps={"appium:wdaLocalPort": 8100},
-            settings=FakeSettingsReader(
-                {
-                    "appium.session_override": True,
-                    "appium.startup_timeout_sec": 30,
-                }
-            ),
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30}),
         )
 
     assert payload["extra_caps"]["appium:automationName"] == "XCUITest"

@@ -33,11 +33,7 @@ def test_build_agent_start_payload_includes_orchestration_metadata() -> None:
     payload = build_agent_start_payload(
         device,
         4723,
-        settings=FakeSettingsReader(
-            {
-                "appium.session_override": True,
-            }
-        ),
+        settings=FakeSettingsReader({}),
     )
 
     assert payload["accepting_new_sessions"] is False
