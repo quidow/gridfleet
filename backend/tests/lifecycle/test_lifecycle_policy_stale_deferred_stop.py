@@ -1,4 +1,4 @@
-"""D4: stale stop_pending on offline device must not trap recovery."""
+"""D4: stale deferred_stop on offline device must not trap recovery."""
 
 from datetime import UTC, datetime
 from functools import partial
@@ -48,11 +48,11 @@ async def _mark_device_available(
         node.active_connection_target = "127.0.0.1:4723"
 
 
-async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
+async def test_stale_deferred_stop_cleared_so_recovery_can_proceed(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """D4: offline device with stop_pending=true and no running session must recover.
+    """D4: offline device with deferred_stop=true and no running session must recover.
 
     Before the fix, attempt_auto_recovery suppresses with
     "Waiting for active client session to finish" and the device is
@@ -73,9 +73,9 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "Health probe failed",
-            "stop_pending_since": "2026-05-09T12:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "Health probe failed",
+            "deferred_stop_since": "2026-05-09T12:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "Probe failed",
@@ -126,27 +126,27 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
     await db_session.refresh(device)
     policy = await build_lifecycle_policy(db_session, device)
 
-    # stop_pending must be cleared — device should not be stuck suppressed.
-    assert policy.get("stop_pending") is False, "stop_pending must be cleared by recovery"
-    assert policy.get("stop_pending_reason") is None
+    # deferred_stop must be cleared — device should not be stuck suppressed.
+    assert policy.get("deferred_stop") is False, "deferred_stop must be cleared by recovery"
+    assert policy.get("deferred_stop_reason") is None
 
-    # The device should NOT be stuck on the stop_pending suppression branch.
+    # The device should NOT be stuck on the deferred_stop suppression branch.
     assert policy.get("recovery_suppressed_reason") != "Waiting for active client session to finish", (
-        "Recovery must not suppress with stop_pending reason when there is no running session"
+        "Recovery must not suppress with deferred_stop reason when there is no running session"
     )
 
     # Recovery should have succeeded (device is now available after our mock).
-    assert recovered is True, "Recovery should proceed and succeed when stop_pending is stale"
+    assert recovered is True, "Recovery should proceed and succeed when deferred_stop is stale"
 
 
-async def test_stop_pending_not_cleared_when_live_session_exists(
+async def test_deferred_stop_not_cleared_when_live_session_exists(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """D4 negative path: stop_pending must NOT be cleared while a client session is running.
+    """D4 negative path: deferred_stop must NOT be cleared while a client session is running.
 
     When a live Session row exists the stale-clear guard should be skipped and
-    attempt_auto_recovery must return False with the stop_pending suppression reason.
+    attempt_auto_recovery must return False with the deferred_stop suppression reason.
     """
     device = Device(
         pack_id="appium-uiautomator2",
@@ -163,9 +163,9 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "Health probe failed",
-            "stop_pending_since": "2026-05-09T12:00:00+00:00",
+            "deferred_stop": True,
+            "deferred_stop_reason": "Health probe failed",
+            "deferred_stop_since": "2026-05-09T12:00:00+00:00",
             "last_action": "auto_stop_deferred",
             "last_failure_source": "node_health",
             "last_failure_reason": "Probe failed",
@@ -175,7 +175,7 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     db_session.add(device)
     await db_session.flush()
 
-    # A live client session is still running — stop_pending is NOT stale.
+    # A live client session is still running — deferred_stop is NOT stale.
     live_session = Session(
         session_id="sess-live-stop-pending",
         device_id=device.id,
@@ -206,10 +206,10 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     await db_session.refresh(device)
     policy = await build_lifecycle_policy(db_session, device)
 
-    # stop_pending must still be set — the live session guards it.
-    assert policy.get("stop_pending") is True, "stop_pending must not be cleared while a session is running"
+    # deferred_stop must still be set — the live session guards it.
+    assert policy.get("deferred_stop") is True, "deferred_stop must not be cleared while a session is running"
 
     # The deferred stop is surfaced as "waiting for session end", not a cleared/idle state.
     assert policy.get("recovery_state") == "waiting_for_session_end"
 
-    assert recovered is False, "attempt_auto_recovery must return False when stop_pending is guarded by a live session"
+    assert recovered is False, "attempt_auto_recovery must return False when deferred_stop is guarded by a live session"

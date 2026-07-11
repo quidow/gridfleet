@@ -41,9 +41,9 @@ def default_state() -> dict[str, Any]:
         "last_failure_reason": None,
         "last_action": None,
         "last_action_at": None,
-        "stop_pending": False,
-        "stop_pending_reason": None,
-        "stop_pending_since": None,
+        "deferred_stop": False,
+        "deferred_stop_reason": None,
+        "deferred_stop_since": None,
         "backoff_until": None,
         "recovery_backoff_attempts": 0,
         "maintenance_reason": None,
@@ -91,9 +91,9 @@ def set_deferred_stop(next_state: dict[str, Any], *, reason: str) -> None:
     The caller is still responsible for ``write_state`` and for emitting any
     ``lifecycle_deferred_stop`` incident under the device row lock.
     """
-    next_state["stop_pending"] = True
-    next_state["stop_pending_reason"] = reason
-    next_state["stop_pending_since"] = now_iso()
+    next_state["deferred_stop"] = True
+    next_state["deferred_stop_reason"] = reason
+    next_state["deferred_stop_since"] = now_iso()
     set_action(next_state, "auto_stop_deferred")
 
 
@@ -103,9 +103,9 @@ def clear_deferred_stop(next_state: dict[str, Any]) -> None:
     Does NOT stamp ``last_action`` — callers that want a specific trail entry
     (e.g. ``auto_stop_cleared``) call ``set_action`` themselves.
     """
-    next_state["stop_pending"] = False
-    next_state["stop_pending_reason"] = None
-    next_state["stop_pending_since"] = None
+    next_state["deferred_stop"] = False
+    next_state["deferred_stop_reason"] = None
+    next_state["deferred_stop_since"] = None
 
 
 def record_recovery_started(next_state: dict[str, Any]) -> None:

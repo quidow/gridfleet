@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 _settings = FakeSettingsReader({})
 
 
-async def test_force_release_clears_stop_pending(
+async def test_force_release_clears_deferred_stop(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -123,7 +123,7 @@ async def test_force_release_clears_stop_pending(
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
 
 
 async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
