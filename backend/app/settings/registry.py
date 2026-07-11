@@ -363,7 +363,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=30,
         max_value=600,
     ),
-    # ── Notifications ──
     # ── Agent ──
     SettingDefinition(
         key="agent.min_version",

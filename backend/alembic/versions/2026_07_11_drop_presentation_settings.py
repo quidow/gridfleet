@@ -2,7 +2,7 @@
 
 from alembic import op
 
-revision = "20260711_drop_presentation"
+revision = "2026_07_11_drop_presentation"
 down_revision = "20260711_telemetry_dedupe"
 branch_labels = None
 depends_on = None
