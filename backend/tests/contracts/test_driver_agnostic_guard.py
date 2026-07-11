@@ -75,12 +75,9 @@ def test_no_platform_prefix_patterns_in_backend() -> None:
 
 
 def test_agent_pack_core_has_no_legacy_platform_dispatch_map() -> None:
-    # PLATFORM_TO_PROBE and ios_lockdown were removed in Tasks 3/5.
+    # PLATFORM_TO_PROBE and ios_lockdown were removed in Tasks 3/5; the
+    # dispatch.py façade was deleted when hooks moved to worker subprocesses.
     forbidden_by_path: dict[Path, tuple[str, ...]] = {
-        ROOT.parent / "agent" / "agent_app" / "pack" / "dispatch.py": (
-            "PLATFORM_TO_PROBE",
-            "ios_lockdown",
-        ),
         ROOT.parent / "agent" / "agent_app" / "pack" / "discovery.py": (
             "PLATFORM_TO_PROBE",
             "ios_lockdown",

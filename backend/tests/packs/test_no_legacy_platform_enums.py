@@ -87,9 +87,9 @@ def test_agent_pack_runtime_status_does_not_stub_plugins() -> None:
 
 def test_agent_pack_telemetry_signature_uses_adapter_contract() -> None:
     assert not (AGENT_ROOT / "device_telemetry.py").exists()
-    path = AGENT_ROOT / "pack" / "dispatch.py"
+    path = AGENT_ROOT / "pack" / "adapter_dispatch.py"
     text = path.read_text()
-    signature = re.search(r"async def adapter_telemetry\((.*?)\)\s*->", text, flags=re.S)
+    signature = re.search(r"async def dispatch_telemetry\((.*?)\)\s*->", text, flags=re.S)
     assert signature is not None
     assert "platform: str" not in signature.group(1)
 
