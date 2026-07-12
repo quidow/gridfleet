@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
-from app.devices.services.intent_types import CommandKind
+from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, CommandKind
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_STOP
 
@@ -89,6 +89,10 @@ def parse_command(intent: DeviceIntent, now: datetime) -> Command | None:
     priority 0, where they could never win either).
     """
     if intent.expires_at is not None and intent.expires_at <= now:
+        return None
+    if intent.payload.get(VERIFICATION_OUTCOME_KEY) is not None:
+        # A finalized lease is a tombstone awaiting deletion, not a command:
+        # verification stamps its terminal outcome at finalization (WS-15.3).
         return None
     try:
         kind = CommandKind(intent.kind)

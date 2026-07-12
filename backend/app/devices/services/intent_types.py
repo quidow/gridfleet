@@ -14,6 +14,16 @@ def verification_intent_source(device_id: UUID) -> str:
     return f"verification:{device_id}"
 
 
+# Terminal-outcome stamp on the verification lease payload (WS-15.3). A stamped
+# lease is a tombstone awaiting deletion: no longer an active claim
+# (``claims.verification_lease_*``) and no longer a command
+# (``decision.parse_command``). Verification finalization is the only stamper;
+# the finalizer's revoke or the intent TTL GC deletes the row.
+VERIFICATION_OUTCOME_KEY = "outcome"
+VERIFICATION_OUTCOME_PASSED = "passed"
+VERIFICATION_OUTCOME_FAILED = "failed"
+
+
 class CommandKind(StrEnum):
     operator_stop = "operator:stop:node"
     operator_recovery_deny = "operator:stop:recovery"

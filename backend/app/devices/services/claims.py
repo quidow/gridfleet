@@ -7,7 +7,9 @@ Three claim axes gate device actions:
   records the pending-omission bug that motivated the chokepoint) and is
   re-exported here so this module presents the complete vocabulary.
 - **reservation** — an active ``DeviceReservation`` row: ``released_at IS NULL``.
-- **verification** — an unexpired verification ``DeviceIntent`` lease.
+- **verification** — an unexpired verification ``DeviceIntent`` lease. A lease
+  carrying a terminal ``outcome`` stamp is a tombstone awaiting deletion, not
+  an active claim (WS-15.3).
 
 Each axis's "active" definition appears in SQL exactly once, in (or re-exported
 by) this module. Hand-recomposing an axis at a call site is the drift class the
@@ -18,14 +20,14 @@ intent GC deletes on ``expires_at``); this module owns read-side gating only.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import exists, or_, select
 
 from app.devices.models import Device
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.reservation import DeviceReservation
-from app.devices.services.intent_types import CommandKind, verification_intent_source
+from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, CommandKind, verification_intent_source
 from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session
 
@@ -79,6 +81,7 @@ def verification_lease_exists(*, now: datetime) -> ColumnElement[bool]:
         select(DeviceIntent.id).where(
             DeviceIntent.device_id == Device.id,
             DeviceIntent.kind == CommandKind.verification_start,
+            DeviceIntent.payload[VERIFICATION_OUTCOME_KEY].astext.is_(None),
             or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
         )
     )
@@ -95,10 +98,12 @@ async def device_is_reserved(db: AsyncSession, device_id: UUID) -> bool:
 
 def verification_lease_predicate(device_id: UUID, *, now: datetime) -> ColumnElement[bool]:
     """SQL predicate: an unexpired verification lease intent for *device_id*."""
-    return (
+    return cast(
+        "ColumnElement[bool]",
         (DeviceIntent.device_id == device_id)
         & (DeviceIntent.source == verification_intent_source(device_id))
-        & or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now)
+        & DeviceIntent.payload[VERIFICATION_OUTCOME_KEY].astext.is_(None)
+        & or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
     )
 
 

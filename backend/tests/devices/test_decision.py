@@ -19,6 +19,7 @@ from app.devices.services.decision import (
     decide_recovery,
     parse_command,
 )
+from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, VERIFICATION_OUTCOME_PASSED
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_STOP, NodeDirective
 
@@ -311,6 +312,34 @@ def test_parse_expired_row_returns_none() -> None:
         expires_at=NOW - timedelta(seconds=1),
     )
     assert parse_command(row, NOW) is None
+
+
+def test_parse_command_outcome_stamped_lease_is_tombstone() -> None:
+    """A finalized verification lease is a tombstone awaiting deletion, not a command (WS-15.3)."""
+    from app.devices.models import DeviceIntent
+
+    row = DeviceIntent(
+        device_id=DEVICE,
+        source=f"verification:{DEVICE}",
+        kind=CommandKind.verification_start.value,
+        payload={"action": "start", VERIFICATION_OUTCOME_KEY: VERIFICATION_OUTCOME_PASSED},
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    assert parse_command(row, NOW) is None
+
+
+def test_parse_command_unstamped_lease_still_parses() -> None:
+    from app.devices.models import DeviceIntent
+
+    row = DeviceIntent(
+        device_id=DEVICE,
+        source=f"verification:{DEVICE}",
+        kind=CommandKind.verification_start.value,
+        payload={"action": "start"},
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    command = parse_command(row, NOW)
+    assert command is not None and command.kind is CommandKind.verification_start
 
 
 def test_parse_unknown_kind_returns_none() -> None:
