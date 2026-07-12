@@ -769,6 +769,8 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         save_device_id=device_id,
     )
     monkeypatch.setattr("app.verification.services.execution._revoke_verification_node_intent", AsyncMock())
+    stamp_mock = AsyncMock()
+    monkeypatch.setattr("app.verification.services.execution._stamp_verification_outcome", stamp_mock)
     monkeypatch.setattr(
         execution.remediation_log,
         "load_ladder",
@@ -797,8 +799,10 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         node=node,
     )
     assert outcome.status == "completed"
-    # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer.
+    # PASS is reconciler-authoritative: the outcome stamp is the durable fact and
+    # the revoke (carrying the publisher) is the hygiene + ledger-advancing reconcile.
     # The module no longer imports set_operational_state (enforced by test_no_direct_device_state_writes).
+    stamp_mock.assert_awaited_once()
     execution._revoke_verification_node_intent.assert_awaited()
 
     update_device = SimpleNamespace(id=device_id, identity_value="update-device", name="old")

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
+
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -13,10 +15,14 @@ from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, wr
 from app.core.errors import AgentCallError
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
+from app.devices.models.intent import DeviceIntent
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
+    VERIFICATION_OUTCOME_FAILED,
+    VERIFICATION_OUTCOME_KEY,
+    VERIFICATION_OUTCOME_PASSED,
     CommandKind,
     IntentRegistration,
     verification_intent_source,
@@ -292,12 +298,11 @@ class VerificationExecutionService:
                 if existing_stop_error is not None:
                     return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
                 locked = await device_locking.lock_device(db, context.save_device_id)
-                # Register the verification lease at entry so the derived state is
-                # ``verifying`` for the whole update window. Previously the lease only
-                # existed from run_probe onward, so a background full-scan reconcile
-                # during the device-health stage could clobber the direct write.
-                # run_probe's later registration is an idempotent upsert that
-                # refreshes expires_at.
+                # The lease opens the verification episode at entry: the device
+                # derives ``verifying`` for the whole update window and the
+                # claim keeps other flows off the device. run_probe's later
+                # registration is an idempotent upsert that refreshes
+                # expires_at.
                 await _register_verification_node_intent(
                     db, locked, settings=self._agent.settings, publisher=self._publisher
                 )
@@ -380,27 +385,25 @@ class VerificationExecutionService:
             detail="Verified node retained as the managed Appium node",
         )
 
+        # Durable facts of the pass: verified_at, the episode reset, the
+        # viability result, and the terminal outcome stamp that tombstones the
+        # lease for every reader (claim, command, projection).
         locked.verified_at = now_utc()
         ladder = await remediation_log.load_ladder(db, locked.id)
         if ladder.episode_active:
-            # Supersede the failure episode before the lease revoke: the revoke's
-            # inline reconcile must not re-derive the failure-stop rung on a device
-            # that just verified.
             await remediation_log.append_reset(db, locked.id, source="verification", action="verification_passed")
-        # Reconciler-authoritative terminal: no direct set_operational_state push. Set
-        # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
-        # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
-        # via ``publisher``. Setting ``verified_at`` before the revoke is load-bearing: otherwise
-        # the reconcile sees ``verified_at IS NULL``, skips the ``baseline:idle`` injection, and
-        # computes ``desired_state=stopped`` on an empty node_process intent set — a spurious
-        # ``available -> offline`` flap right after registration.
-        await _revoke_verification_node_intent(db, locked, publisher=self._publisher)
         await self._viability.record_session_viability_result(
             db,
             locked,
             status="passed",
             checked_by=SessionViabilityCheckedBy.verification,
         )
+        await _stamp_verification_outcome(db, locked, outcome=VERIFICATION_OUTCOME_PASSED)
+        # Row hygiene plus the inline reconcile that advances the ledger
+        # read-your-writes; a crashed finalization leaves a tombstone the TTL
+        # GC collects (tests/verification/test_finalization_permutations.py
+        # pins the order-independence).
+        await _revoke_verification_node_intent(db, locked, publisher=self._publisher)
         await db.commit()
         detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"
         await set_stage(job, "save_device", "passed", detail=detail)
@@ -421,9 +424,8 @@ class VerificationExecutionService:
             cleanup_error = await _stop_verification_node_if_running(
                 job, db, context.transient_device, node, self._failure_finalizers.node_manager
             )
-            # Device deletion cascades to DeviceIntent rows, so no explicit
-            # verification intent revoke is needed on the create-mode failure
-            # path.
+            # Device deletion cascades to DeviceIntent rows, so the lease (and
+            # any operator intents the cleanup registered) die with the device.
             await self._failure_finalizers.crud.delete_device(db, context.save_device_id)
             await db.commit()
             if cleanup_error is not None:
@@ -432,33 +434,31 @@ class VerificationExecutionService:
 
         with db.no_autoflush:
             locked = await device_locking.lock_device(db, context.save_device_id)
+        # Durable facts of the fail: the rolled-back fields, the shelving fact,
+        # and the terminal outcome stamp that tombstones the lease for every
+        # reader (claim, command, projection).
         _restore_update_original_fields(locked, original_fields)
-        await _stop_verification_node_if_running(job, db, locked, node, self._failure_finalizers.node_manager)
-        # Reconciler-authoritative terminal: no direct set_operational_state push. Shelve the device
-        # (review_required) BEFORE the revoke so the reconcile the revoke triggers reads the durable
-        # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
-        # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the
-        # derived ``offline`` emits.
         await self._failure_finalizers.review.mark_review_required(
             db,
             locked,
             reason=f"verification failed: {error}",
             source="verification",
         )
-        await _revoke_verification_node_intent(db, locked, publisher=self._publisher)
-        # The failure cleanup stopped the node via ``request_stop`` (which registers sticky
-        # operator:stop intents), and the verification node-start left a stray ``operator:start``
-        # intent. Strip BOTH: operator:stop must not survive — it would brand the device
-        # operator-stopped and block re-verify + the operator start-node route (spec bug-3 §1).
-        # operator:start must not survive either — its node_running auto-retire precondition is
-        # swept only by the leader device_intent_reconciler loop, so it persists through this
-        # synchronous flow; once operator:stop is gone it would be the sole node_process intent
-        # and the reconciler would restart the node. With no node_process start intent left, the
-        # ``review_required`` set above suppresses ``baseline:idle`` (device_in_service) so the
-        # node stays stopped (spec §8.1).
+        await _stamp_verification_outcome(db, locked, outcome=VERIFICATION_OUTCOME_FAILED)
+        await _stop_verification_node_if_running(job, db, locked, node, self._failure_finalizers.node_manager)
+        # Verification cleanup must not leave intents behind: the node stop
+        # registers sticky operator:stop rows (request_stop), which would brand
+        # the device operator-stopped and block re-verify; run_probe's node
+        # start left an operator:start row, which alone would baseline-restart
+        # the stopped node. Release the lease and both strays in one revoke;
+        # ``review_required`` keeps ``baseline:idle`` suppressed.
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=locked.id,
-            sources=[*operator_stop_sources(locked.id), operator_start_source(locked.id)],
+            sources=[
+                verification_intent_source(locked.id),
+                *operator_stop_sources(locked.id),
+                operator_start_source(locked.id),
+            ],
             publisher=self._publisher,
         )
         await db.commit()
@@ -527,10 +527,10 @@ async def _register_verification_node_intent(
     intents, so ``decide_node_process`` derives ``desired_state=stopped`` and
     the appium reconciler kills the verification node mid session-probe.
     ``expires_at`` is a safety net for crashed verifications; the normal path
-    revokes the intent inside
-    ``_finalize_success`` (after ``verified_at`` is set so the
-    revoke-triggered reconcile injects ``baseline:idle``) or
-    ``_finalize_failure``.
+    stamps the terminal outcome and revokes the row inside
+    ``_finalize_success`` / ``_finalize_failure``. Re-registration (run_probe,
+    exit-maintenance) upserts the payload, so a stale tombstone from a crashed
+    episode reopens as a fresh lease.
 
     Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
     does not commit; the caller owns transaction boundaries.
@@ -572,6 +572,33 @@ async def _revoke_verification_node_intent(db: AsyncSession, device: Device, *, 
         sources=[verification_intent_source(device.id)],
         publisher=publisher,
     )
+
+
+async def _stamp_verification_outcome(db: AsyncSession, device: Device, *, outcome: str) -> None:
+    """Stamp the terminal outcome on the verification lease row (WS-15.3).
+
+    The stamped lease is a tombstone: not an active claim (the ``claims``
+    predicates require the outcome to be absent) and not a command
+    (``parse_command`` skips outcome-stamped rows), so every derivation that
+    runs after the stamp reads the finalized episode no matter which
+    finalization statement triggered it. The finalizer's revoke deletes the
+    row; after a crash the intent TTL GC collects it. No-op when the lease row
+    is missing (registration never succeeded, or a recovery probe revoked it —
+    see ``service_viability``'s recovery-path revoke). Caller owns flush/commit
+    boundaries beyond the flush here; does not reconcile.
+    """
+    lease = (
+        await db.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == verification_intent_source(device.id),
+            )
+        )
+    ).scalar_one_or_none()
+    if lease is None:
+        return
+    lease.payload = {**lease.payload, VERIFICATION_OUTCOME_KEY: outcome}
+    await db.flush()
 
 
 async def _stop_verification_node_if_running(

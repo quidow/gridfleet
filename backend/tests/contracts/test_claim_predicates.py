@@ -23,7 +23,13 @@ import app.sessions.live_session_predicate as session_axis
 from app.devices.models import Device
 from app.devices.services import claims
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
+from app.devices.services.intent_types import (
+    VERIFICATION_OUTCOME_KEY,
+    VERIFICATION_OUTCOME_PASSED,
+    CommandKind,
+    IntentRegistration,
+    verification_intent_source,
+)
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -110,6 +116,19 @@ async def test_verification_lease_sql_predicate_matches_row_helper(db_session: A
     assert await claims.device_has_verification_lease(db_session, device.id, now=now) is True
 
     registered[0].expires_at = now - timedelta(seconds=1)
+    await db_session.flush()
+
+    selected = (
+        await db_session.execute(
+            select(Device.id).where(Device.id == device.id, claims.verification_lease_exists(now=now))
+        )
+    ).scalar_one_or_none()
+    assert selected is None
+    assert await claims.device_has_verification_lease(db_session, device.id, now=now) is False
+
+    # A terminal outcome stamp tombstones the lease even while unexpired (WS-15.3).
+    registered[0].expires_at = now + timedelta(minutes=5)
+    registered[0].payload = {**registered[0].payload, VERIFICATION_OUTCOME_KEY: VERIFICATION_OUTCOME_PASSED}
     await db_session.flush()
 
     selected = (
