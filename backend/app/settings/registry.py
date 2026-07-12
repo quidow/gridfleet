@@ -448,6 +448,15 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3650,
     ),
     SettingDefinition(
+        key="retention.remediation_log_days",
+        category="retention",
+        setting_type="int",
+        default=30,
+        description="Delete device remediation log entries older than N days (escalation-ladder memory)",
+        min_value=7,
+        max_value=3650,
+    ),
+    SettingDefinition(
         key="retention.host_resource_telemetry_hours",
         category="retention",
         setting_type="int",

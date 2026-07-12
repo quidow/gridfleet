@@ -6,7 +6,7 @@ from unittest.mock import patch
 from sqlalchemy import select
 
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceRemediationLogEntry
 from app.devices.services.data_cleanup import DataCleanupService
 from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
@@ -210,6 +210,37 @@ async def test_cleanup_old_device_events(db_session: AsyncSession, db_host: Host
     remaining = result.scalars().all()
     assert len(remaining) == 1
     assert remaining[0].event_type == DeviceEventType.connectivity_restored
+
+
+async def test_cleanup_prunes_old_remediation_log_entries(db_session: AsyncSession, db_host: Host) -> None:
+    device_id = await _create_device(db_session, db_host)
+    now = datetime.now(UTC)
+    old_entry = DeviceRemediationLogEntry(
+        device_id=device_id,
+        kind="attempt",
+        source="node_health",
+        action="recovery_failed",
+        at=now - timedelta(days=40),
+    )
+    recent_entry = DeviceRemediationLogEntry(
+        device_id=device_id,
+        kind="attempt",
+        source="node_health",
+        action="recovery_failed",
+        at=now - timedelta(days=1),
+    )
+    db_session.add_all([old_entry, recent_entry])
+    await db_session.commit()
+
+    await DataCleanupService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"retention.remediation_log_days": 30}),
+    ).cleanup_old_data(db_session)
+
+    remaining = (await db_session.execute(select(DeviceRemediationLogEntry))).scalars().all()
+    remaining_ids = {entry.id for entry in remaining}
+    assert old_entry.id not in remaining_ids
+    assert recent_entry.id in remaining_ids
 
 
 async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session: AsyncSession, db_host: Host) -> None:

@@ -12,7 +12,7 @@ from sqlalchemy import delete, or_, select
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
-from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
+from app.devices.models import DeviceEvent, DeviceRemediationLogEntry, DeviceTestDataAuditLog
 from app.events.models import SystemEvent
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import HostResourceSample
@@ -39,6 +39,7 @@ CleanupModel = (
     | type[ConfigAuditLog]
     | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
+    | type[DeviceRemediationLogEntry]
     | type[HostResourceSample]
     | type[AnalyticsCapacitySnapshot]
     | type[GridSessionQueueTicket]
@@ -85,6 +86,7 @@ class _CleanupCounts:
     audit_deleted: int = 0
     test_data_audit_deleted: int = 0
     events_deleted: int = 0
+    remediation_log_entries_deleted: int = 0
     host_resource_samples_deleted: int = 0
     capacity_snapshots_deleted: int = 0
     system_events_deleted: int = 0
@@ -177,6 +179,16 @@ class DataCleanupService:
                 cutoff=cutoff,
             )
 
+        remediation_days: int = self._settings.get("retention.remediation_log_days")
+        if remediation_days > 0:
+            cutoff = now - timedelta(days=remediation_days)
+            counts.remediation_log_entries_deleted = await _delete_in_batches(
+                db,
+                model=DeviceRemediationLogEntry,
+                timestamp_column=DeviceRemediationLogEntry.at,
+                cutoff=cutoff,
+            )
+
         # HostResourceSample
         host_resource_telemetry_hours: int = self._settings.get("retention.host_resource_telemetry_hours")
         if host_resource_telemetry_hours > 0:
@@ -247,7 +259,7 @@ class DataCleanupService:
 
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
-            "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d, "
+            "device_events=%d, remediation_log_entries=%d, host_resource_samples=%d, capacity_snapshots=%d, "
             "grid_queue_tickets=%d"
             ", system_events=%d, test_runs=%d, jobs=%d",
             counts.sessions_deleted,
@@ -255,6 +267,7 @@ class DataCleanupService:
             counts.audit_deleted,
             counts.test_data_audit_deleted,
             counts.events_deleted,
+            counts.remediation_log_entries_deleted,
             counts.host_resource_samples_deleted,
             counts.capacity_snapshots_deleted,
             counts.grid_queue_tickets_deleted,
@@ -270,6 +283,7 @@ class DataCleanupService:
                 "audit_entries_deleted": counts.audit_deleted,
                 "test_data_audit_entries_deleted": counts.test_data_audit_deleted,
                 "device_events_deleted": counts.events_deleted,
+                "remediation_log_entries_deleted": counts.remediation_log_entries_deleted,
                 "host_resource_samples_deleted": counts.host_resource_samples_deleted,
                 "capacity_snapshots_deleted": counts.capacity_snapshots_deleted,
                 "grid_queue_tickets_deleted": counts.grid_queue_tickets_deleted,
