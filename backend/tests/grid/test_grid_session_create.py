@@ -1,0 +1,195 @@
+"""Create-orchestrator tests: Appium outcomes resolve claimed allocation rows."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import TYPE_CHECKING, Any
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.grid import session_create
+from app.grid.allocation import AllocationService
+from app.grid.models import GridSessionQueueTicket
+from app.sessions.models import Session, SessionStatus
+from tests.helpers import seed_host_and_running_node
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from app.devices.models import Device
+    from app.grid.allocation import AllocationResult
+
+pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+W3C_OK = {"value": {"sessionId": "app-1", "capabilities": {"platformName": "x"}}}
+
+
+async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
+    return {
+        "platformName": "Android",
+        "appium:udid": device.connection_target,
+        "gridfleet:deviceId": str(device.id),
+    }
+
+
+@pytest_asyncio.fixture
+async def claimed_allocation(db_session: AsyncSession) -> AllocationResult:
+    from app.devices.services.intent import IntentService
+    from tests.helpers import test_event_bus as event_bus
+
+    _, _device, _ = await seed_host_and_running_node(db_session, identity=f"grid-create-{uuid.uuid4().hex[:8]}")
+    allocation_service = AllocationService(
+        intent_factory=IntentService,
+        publisher=event_bus,
+        stereotype_provider=_stereotype_stub,
+    )
+    ticket = GridSessionQueueTicket(requested_body={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await db_session.commit()
+    return result
+
+
+@pytest.fixture
+def db_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.fixture
+def allocation_service(db_session: AsyncSession) -> AllocationService:
+    from app.devices.services.intent import IntentService
+    from tests.helpers import test_event_bus as event_bus
+
+    return AllocationService(
+        intent_factory=IntentService,
+        publisher=event_bus,
+        stereotype_provider=_stereotype_stub,
+    )
+
+
+def _ok_raw(
+    status: int = 200, body: dict[str, Any] | None = None
+) -> Callable[..., Awaitable[tuple[int, bytes, str | None]]]:
+    payload = json.dumps(body if body is not None else W3C_OK).encode()
+
+    async def fake(target: str, raw: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+        return status, payload, None
+
+    return fake
+
+
+@pytest.mark.db
+async def test_created_promotes_row_to_running(
+    db_session: AsyncSession,
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _ok_raw())
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == "created" and outcome.session_id == "app-1"
+    assert outcome.appium_status == 200 and outcome.appium_body == W3C_OK
+    row = await db_session.get(Session, claimed_allocation.allocation_id)
+    assert row is not None
+    assert row.status == SessionStatus.running and row.session_id == "app-1"
+    assert row.actual_capabilities == {"platformName": "x"}
+
+
+@pytest.mark.db
+async def test_appium_http_error_fails_row_and_relays(
+    db_session: AsyncSession,
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"value": {"error": "session not created", "message": "no device"}}
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _ok_raw(500, body))
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == "create_failed" and outcome.appium_status == 500 and outcome.appium_body == body
+    row = await db_session.get(Session, claimed_allocation.allocation_id)
+    assert row is not None
+    assert row.status == SessionStatus.error and row.ended_at is not None
+
+
+@pytest.mark.db
+async def test_transport_error_fails_row(
+    db_session: AsyncSession,
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def dead(target: str, raw: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+        return 0, b"", "connect timeout"
+
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", dead)
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == "create_error" and "connect timeout" in outcome.message
+    row = await db_session.get(Session, claimed_allocation.allocation_id)
+    assert row is not None
+    assert row.status == SessionStatus.error
+
+
+@pytest.mark.db
+async def test_2xx_missing_session_id_sweeps_and_fails(
+    db_session: AsyncSession,
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _ok_raw(200, {"value": {}}))
+    listed: list[str] = []
+    killed: list[str] = []
+
+    async def fake_list(target: str, *, timeout: float = 10.0) -> list[str] | None:
+        listed.append(target)
+        return ["stray-1"]
+
+    async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        killed.append(session_id)
+        return True
+
+    monkeypatch.setattr(session_create.appium_direct, "list_sessions", fake_list)
+    monkeypatch.setattr(session_create.appium_direct, "terminate_session", fake_kill)
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == "create_error" and "sessionId" in outcome.message
+    assert listed and killed == ["stray-1"]
+
+
+@pytest.mark.db
+async def test_non_json_error_body_becomes_create_error(
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def html(target: str, raw: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+        return 502, b"<html>bad gateway</html>", None
+
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", html)
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == "create_error" and "502" in outcome.message
+
+
+def test_effective_create_timeout_derivation() -> None:
+    assert session_create.effective_create_timeout(120) == 115.0
+    assert session_create.effective_create_timeout(600) == 240.0
+    assert session_create.effective_create_timeout(30) == 25.0

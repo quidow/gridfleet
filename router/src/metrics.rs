@@ -20,7 +20,7 @@ pub struct Metrics {
     pub active_routes: IntGauge,
     /// DELETEs proxied that failed upstream before a response (route retained).
     pub delete_orphaned_total: IntCounter,
-    /// New sessions created+confirmed but rolled back because the downstream
+    /// New sessions created and recorded but rolled back because the downstream
     /// client was gone by the time we tried to write the response.
     pub new_session_client_gone_total: IntCounter,
     /// Appium create returned 2xx but the body carried no sessionId; the
@@ -61,7 +61,7 @@ pub fn metrics() -> &'static Metrics {
         .expect("metric");
         let new_session_client_gone_total = IntCounter::new(
             "gridfleet_router_new_session_client_gone_total",
-            "New sessions created and confirmed but rolled back (DELETE + session_ended) because the downstream client disconnected before the response could be written.",
+            "New sessions created and recorded but rolled back (DELETE + session_ended) because the downstream client disconnected before the response could be written.",
         )
         .expect("metric");
         let create_missing_session_id_total = IntCounter::new(

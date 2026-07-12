@@ -1,11 +1,4 @@
-"""Direct-call unit tests for the internal grid allocation handlers.
-
-The handlers are async route functions whose bodies are only otherwise exercised
-through the in-process ``client`` fixture, where coverage of the long-poll loop is
-timing-sensitive under xdist. Calling the handlers directly with a real
-session_factory makes every branch (queued/expired/cancelled/allocated/resume)
-deterministically traced.
-"""
+"""Direct-call tests for internal grid create-session handlers."""
 
 from __future__ import annotations
 
@@ -14,30 +7,23 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
-
-if TYPE_CHECKING:
-    from app.devices.models import Device
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.services.intent import IntentService
-from app.grid import router_internal
-from app.grid.allocation import AllocationService
+from app.grid import router_internal, session_create
+from app.grid.allocation import AllocationResult, AllocationService
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.grid.schemas_internal import (
-    ActivityRequest,
-    AllocateRequest,
-    ConfirmRequest,
-    EndedRequest,
-    FailRequest,
-)
+from app.grid.schemas_internal import ActivityRequest, CreateSessionRequest, EndedRequest
 from app.grid.services_container import GridServices
-from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service
 from tests.helpers import seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+
+if TYPE_CHECKING:
+    from app.devices.models import Device
+
+pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 def _body(**caps: str) -> dict[str, Any]:
@@ -73,135 +59,111 @@ def services(db_session: AsyncSession) -> GridServices:
 @pytest_asyncio.fixture
 async def seeded_available_device(db_session: AsyncSession) -> Device:
     await seed_test_packs(db_session)
-    _, device, _ = await seed_host_and_running_node(db_session, identity=f"rinternal-{uuid.uuid4().hex[:8]}")
+    _, device, _ = await seed_host_and_running_node(db_session, identity=f"grid-unit-{uuid.uuid4().hex[:8]}")
     await db_session.commit()
     return device
 
 
 @pytest.mark.db
-async def test_allocate_handler_allocated(services: GridServices, seeded_available_device: Device) -> None:
-    resp = await router_internal.allocate(AllocateRequest(body=_body(platformName="Android")), services)
-    assert resp.status == "allocated"
-    assert resp.target and resp.target.startswith("http://")
-    assert resp.claim_window_sec == 120
+async def test_create_session_handler_claims_then_creates(
+    services: GridServices, seeded_available_device: Device, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_create(
+        db_factory: session_create.DbFactory,
+        allocation_service: AllocationService,
+        *,
+        allocation: AllocationResult,
+        raw_body: bytes,
+        claim_window_sec: int,
+    ) -> session_create.CreateOutcome:
+        return session_create.CreateOutcome(
+            kind="created",
+            session_id="unit-session",
+            appium_status=200,
+            appium_body={"value": {"sessionId": "unit-session"}},
+            allocation=allocation,
+        )
+
+    monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
+    resp = await router_internal.create_session(CreateSessionRequest(body=_body(platformName="Android")), services)
+    assert resp.status == "created"
+    assert resp.session_id == "unit-session"
+    assert resp.target is not None
 
 
 @pytest.mark.db
-async def test_allocate_handler_queued_then_resume(services: GridServices, seeded_available_device: Device) -> None:
-    # No match -> queued with a ticket.
-    queued = await router_internal.allocate(AllocateRequest(body=_body(platformName="iOS")), services)
+async def test_create_session_handler_queued_then_reuses_ticket(
+    services: GridServices, seeded_available_device: Device
+) -> None:
+    queued = await router_internal.create_session(CreateSessionRequest(body=_body(platformName="iOS")), services)
     assert queued.status == "queued"
     assert queued.ticket is not None
-    # Re-poll with the same ticket -> still queued (the long-poll loop re-attempts).
-    queued2 = await router_internal.allocate(
-        AllocateRequest(body=_body(platformName="iOS"), ticket=queued.ticket), services
+    queued_again = await router_internal.create_session(
+        CreateSessionRequest(body=_body(platformName="iOS"), ticket=queued.ticket), services
     )
-    assert queued2.status == "queued"
-    assert queued2.ticket == queued.ticket
+    assert queued_again.status == "queued"
+    assert queued_again.ticket == queued.ticket
 
 
 @pytest.mark.db
-async def test_allocate_handler_cancelled_ticket_is_400(
+async def test_create_session_handler_cancelled_and_expired_ticket_are_terminal(
     services: GridServices, db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="iOS"), status=GridQueueStatus.cancelled)
-    db_session.add(ticket)
+    cancelled = GridSessionQueueTicket(requested_body=_body(platformName="iOS"), status=GridQueueStatus.cancelled)
+    expired = GridSessionQueueTicket(requested_body=_body(platformName="iOS"), status=GridQueueStatus.expired)
+    db_session.add_all([cancelled, expired])
     await db_session.commit()
-    resp = await router_internal.allocate(AllocateRequest(body=_body(platformName="iOS"), ticket=ticket.id), services)
-    # JSONResponse for the invalid path.
-    assert resp.status_code == 400
-
-
-@pytest.mark.db
-async def test_allocate_handler_expired_ticket_is_410(
-    services: GridServices, db_session: AsyncSession, seeded_available_device: Device
-) -> None:
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="iOS"), status=GridQueueStatus.expired)
-    db_session.add(ticket)
-    await db_session.commit()
-    resp = await router_internal.allocate(AllocateRequest(body=_body(platformName="iOS"), ticket=ticket.id), services)
-    assert resp.status_code == 410
-
-
-@pytest.mark.db
-async def test_allocate_handler_invalid_body_is_400(services: GridServices, seeded_available_device: Device) -> None:
-    resp = await router_internal.allocate(
-        AllocateRequest(body={"desiredCapabilities": {"platformName": "Android"}}), services
+    invalid = await router_internal.create_session(
+        CreateSessionRequest(body=_body(platformName="iOS"), ticket=cancelled.id), services
     )
-    assert resp.status_code == 400
+    timed_out = await router_internal.create_session(
+        CreateSessionRequest(body=_body(platformName="iOS"), ticket=expired.id), services
+    )
+    assert invalid.status_code == 400
+    assert timed_out.status_code == 410
 
 
 @pytest.mark.db
-async def test_confirm_fail_ended_activity_routes_handlers(
-    services: GridServices, db_session: AsyncSession, seeded_available_device: Device
+async def test_cancel_and_lifecycle_handlers(
+    services: GridServices,
+    db_session: AsyncSession,
+    seeded_available_device: Device,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    alloc = await router_internal.allocate(AllocateRequest(body=_body(platformName="Android")), services)
-    allocation_id = alloc.allocation_id
-    assert allocation_id is not None
+    async def fake_create(
+        db_factory: session_create.DbFactory,
+        allocation_service: AllocationService,
+        *,
+        allocation: AllocationResult,
+        raw_body: bytes,
+        claim_window_sec: int,
+    ) -> session_create.CreateOutcome:
+        async with db_factory() as db:
+            await allocation_service.promote_to_running(
+                db, allocation_id=allocation.allocation_id, appium_session_id="unit-route"
+            )
+            await db.commit()
+        return session_create.CreateOutcome(
+            kind="created",
+            session_id="unit-route",
+            appium_status=200,
+            appium_body={"value": {"sessionId": "unit-route"}},
+            allocation=allocation,
+        )
 
-    confirmed = await router_internal.confirm(
-        allocation_id, ConfirmRequest(appium_session_id="appium-x"), db_session, services
-    )
-    assert confirmed.status_code == 204
-
+    monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
+    created = await router_internal.create_session(CreateSessionRequest(body=_body(platformName="Android")), services)
+    assert created.status == "created"
     routes = await router_internal.routes(db_session)
-    assert any(r.session_id == "appium-x" for r in routes.routes)
+    assert any(entry.session_id == "unit-route" for entry in routes.routes)
+    assert (await router_internal.activity(ActivityRequest(sessions=["unit-route"]), db_session)).status_code == 204
+    assert (await router_internal.ended(EndedRequest(session_id="unit-route"), db_session, services)).status_code == 204
+    routes = await router_internal.routes(db_session)
+    assert not any(entry.session_id == "unit-route" for entry in routes.routes)
 
-    activity = await router_internal.activity(ActivityRequest(sessions=["appium-x"]), db_session)
-    assert activity.status_code == 204
-
-    ended = await router_internal.ended(EndedRequest(session_id="appium-x"), db_session, services)
-    assert ended.status_code == 204
-
-
-@pytest.mark.db
-async def test_confirm_unknown_allocation_is_409(services: GridServices, db_session: AsyncSession) -> None:
-    resp = await router_internal.confirm(uuid.uuid4(), ConfirmRequest(appium_session_id="nope"), db_session, services)
-    assert resp.status_code == 409
-
-
-@pytest.mark.db
-async def test_fail_handler(services: GridServices, db_session: AsyncSession, seeded_available_device: Device) -> None:
-    alloc = await router_internal.allocate(AllocateRequest(body=_body(platformName="Android")), services)
-    assert alloc.allocation_id is not None
-    resp = await router_internal.fail(alloc.allocation_id, FailRequest(message="boom"), db_session, services)
-    assert resp.status_code == 204
-    row = await db_session.get(Session, alloc.allocation_id)
-    assert row is not None
-    await db_session.refresh(row)
-    assert row.status == SessionStatus.error
-
-
-@pytest.mark.db
-async def test_cancel_ticket_handler(services: GridServices, db_session: AsyncSession) -> None:
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="iOS"), status=GridQueueStatus.waiting)
     db_session.add(ticket)
     await db_session.commit()
-    resp = await router_internal.cancel_ticket(ticket.id, db_session)
-    assert resp.status_code == 204
+    assert (await router_internal.cancel_ticket(ticket.id, db_session)).status_code == 204
     await db_session.refresh(ticket)
     assert ticket.status == GridQueueStatus.cancelled
-
-
-@pytest.mark.db
-async def test_activity_empty_is_noop(db_session: AsyncSession) -> None:
-    resp = await router_internal.activity(ActivityRequest(sessions=[]), db_session)
-    assert resp.status_code == 204
-
-
-@pytest.mark.db
-async def test_allocate_handler_resumes_session_ticket(
-    services: GridServices, db_session: AsyncSession, seeded_available_device: Device
-) -> None:
-    """A retry carrying the Session.ticket_id returns the SAME allocation."""
-    alloc = await router_internal.allocate(AllocateRequest(body=_body(platformName="Android")), services)
-    assert alloc.allocation_id is not None
-
-    row = (await db_session.execute(select(Session).where(Session.id == alloc.allocation_id))).scalars().one()
-    assert row.ticket_id is not None
-
-    resumed = await router_internal.allocate(
-        AllocateRequest(body=_body(platformName="Android"), ticket=row.ticket_id), services
-    )
-    assert resumed.status == "allocated"
-    assert resumed.allocation_id == alloc.allocation_id

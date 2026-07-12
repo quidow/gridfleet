@@ -149,7 +149,7 @@ async def test_request_timeout_exempts_grid_allocate_long_poll() -> None:
     middleware._request_timeout_sec = 0.001
 
     async with AsyncClient(transport=ASGITransport(app=middleware), base_url="http://test") as client:
-        response = await client.post("/internal/grid/allocate")
+        response = await client.post("/internal/grid/create-session")
 
     assert response.status_code == 200
 

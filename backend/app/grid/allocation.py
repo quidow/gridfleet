@@ -5,6 +5,7 @@ lock, the intent reconciler — and owns no writes to protected state columns:
 ``busy`` is derived from the ``pending`` Session row by the reconciler.
 """
 
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -32,6 +33,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.claims import live_session_exists
 from app.devices.services.intent import IntentService
 from app.devices.services.state import derive_operational_state, is_available_sql
+from app.grid import appium_direct
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -93,19 +95,12 @@ GRID_TRY_ALLOCATE_DURATION_SECONDS = Histogram(
 )
 GRID_ALLOCATE_QUEUE_WAIT_SECONDS = Histogram(
     "gridfleet_grid_allocate_queue_wait_seconds",
-    "Total wall-clock time a /internal/grid/allocate long-poll waited before returning, by outcome. "
+    "Total wall-clock time a /internal/grid/create-session long-poll waited before returning, by outcome. "
     "Separates capacity scarcity (queue wait) from try_allocate service time.",
     labelnames=("outcome",),  # allocated | queued
     # The long poll runs to LONG_POLL_SEC (25s); extend past the 10s default ceiling (#9).
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 25.0, 30.0),
 )
-
-# Extra budget on top of grid.claim_window_sec before the reaper fails a pending row.
-# Covers the router's confirm retries (a confirm whose response was lost re-posts the
-# same confirm, which can outlive the create cap): the router's confirm budget
-# (3 attempts x (10s + 2s) = 36s) is compile-time asserted below this grace in
-# router/src/backend.rs. See the timeout-lattice table in docs/reference/architecture.md.
-CONFIRM_GRACE_SEC = 60
 
 
 class AllocationNotPendingError(Exception):
@@ -219,7 +214,7 @@ class AllocationService:
         except KeyError:
             return _RESTART_WINDOW_FALLBACK_SEC
 
-    async def confirm(
+    async def promote_to_running(
         self,
         db: DbSession,
         *,
@@ -230,21 +225,21 @@ class AllocationService:
         """Swap the placeholder session id for the Appium id and promote to ``running``.
 
         The status transition is a conditional UPDATE guarded on ``status='pending'``
-        so the reaper failing the row mid-confirm loses the race deterministically:
-        rowcount 0 means the row is no longer pending. Before raising we check for the
-        lost-response retry case: a first confirm committed, its response was lost, and
-        the router retried the same confirm. If the row is already ``running`` with the
-        SAME ``appium_session_id`` we return success (idempotent). Any other state — a
-        different id, or a row failed/reaped — is a genuine conflict and still raises
-        (the router rolls back the Appium session via 409).
+        so the reaper failing the row mid-create loses the race deterministically.
+        A retry of an interrupted create is handled by ``resume_interrupted`` before
+        a fresh claim; a non-pending row therefore raises ``AllocationNotPendingError``.
 
-        ``last_activity_at`` is intentionally NOT stamped at confirm: a ``running``
+        ``last_activity_at`` is intentionally NOT stamped at promotion: a ``running``
         row with NULL activity means "the client never issued a command". The
         router's server-stamped ``/internal/grid/activity`` flush is the only
         writer, and ``SessionSyncService._check_liveness`` reaps a never-commanded
         session after ``grid.session_first_command_grace_sec`` (measured from the
         claim-time ``started_at``).
         """
+        if appium_capabilities is not None:
+            size = len(json.dumps(appium_capabilities, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+            if size > 32 * 1024:
+                appium_capabilities = None
         try:
             result = await db.execute(
                 update(Session)
@@ -257,29 +252,11 @@ class AllocationService:
             )
             await db.flush()
         except IntegrityError:
-            # Another running row already carries this Appium session id (the partial
-            # unique ux_sessions_session_id_running) while this alloc row still held its
-            # 'alloc-<uuid>' placeholder. That is exactly the conflict the 409 path
-            # exists for: roll the failed UPDATE back (it left the transaction poisoned)
-            # and surface it as not-pending so the router rolls back the Appium session
-            # via 409 — never as an unhandled 500 that wedges the allocation.
+            # Roll back the poisoned transaction and surface the allocation conflict.
             await db.rollback()
             raise AllocationNotPendingError(allocation_id) from None
         if int(getattr(result, "rowcount", 0) or 0) == 0:
-            # Idempotent retry: a first confirm committed but its response was lost, so
-            # the router resent the same confirm. Accept it iff the row is already
-            # running with the same Appium id; otherwise it is a real conflict (409).
-            existing_session_id = await db.scalar(
-                select(Session.session_id).where(
-                    Session.id == allocation_id,
-                    Session.status == SessionStatus.running,
-                )
-            )
-            if existing_session_id != appium_session_id:
-                raise AllocationNotPendingError(allocation_id)
-            # The first confirm already promoted the row and emitted session.started;
-            # the retry is a no-op success and must not re-emit the event.
-            return
+            raise AllocationNotPendingError(allocation_id)
         # This is the authoritative creation point for router-issued sessions (spec
         # §8): emit session.started here so consumers fire for clients that never hit
         # the legacy register API (Appium Inspector, plain WebDriver). Reload with the
@@ -300,7 +277,7 @@ class AllocationService:
     async def fail(self, db: DbSession, *, allocation_id: uuid.UUID, message: str) -> None:
         # Lock first (as before), then attempt the conditional transition. The device
         # lock + reconcile only fire on a successful transition: rowcount 0 means the
-        # row was already confirmed/reaped, so we no-op (idempotent) and skip reconcile.
+        # row was already promoted/reaped, so we no-op (idempotent) and skip reconcile.
         row = await db.get(Session, allocation_id)
         if row is None:
             return
@@ -318,46 +295,12 @@ class AllocationService:
             )
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:
-            return  # idempotent: already confirmed/reaped
+            return  # idempotent: already promoted/reaped
         await db.refresh(row)
         await db.flush()
         if device_id is not None:
             intent = self._intent_factory(db)
             await intent.reconcile_now(device_id, publisher=self._publisher)
-
-    async def record_doomed_appium_session(
-        self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str
-    ) -> bool:
-        """Stamp the Appium id reported by a 409-rejected confirm onto the terminal row.
-
-        When a confirm loses to the reaper/run-cancel, the router rolls the
-        freshly-created Appium session back with a best-effort DELETE. If that DELETE
-        fails, nothing tracks the orphan — and the orphan sweep spares unknown ids on
-        a device holding a new pending row (it cannot tell an in-creation session
-        from an orphan by id). Swapping the terminal row's ``alloc-`` placeholder for
-        the real id makes the orphan a *known doomed id* the sweep can kill precisely.
-
-        Guards: only a terminal row still carrying its placeholder is stamped, and
-        never while any live row owns the id (the legacy-register conflict case —
-        that session is alive and tracked, not an orphan). Returns True iff stamped.
-        """
-        row = await db.get(Session, allocation_id)
-        if row is None or row.ended_at is None or not row.session_id.startswith("alloc-"):
-            return False
-        live_owner = await db.scalar(
-            select(Session.id).where(Session.session_id == appium_session_id, live_session_predicate()).limit(1)
-        )
-        if live_owner is not None:
-            return False
-        row.session_id = appium_session_id
-        await db.flush()
-        logger.info(
-            "grid_doomed_appium_session_recorded allocation=%s appium_session=%s device=%s",
-            allocation_id,
-            appium_session_id,
-            row.device_id,
-        )
-        return True
 
     async def mark_ended(self, db: DbSession, *, appium_session_id: str) -> None:
         """Close a running session the same way session_sync closes vanished sessions.
@@ -394,7 +337,9 @@ class AllocationService:
         pending_stmt = select(Session.id).where(
             Session.status == SessionStatus.pending,
             Session.ended_at.is_(None),
-            Session.started_at < now - timedelta(seconds=claim_window + CONFIRM_GRACE_SEC),
+            # Crash orphans only: live create is bounded below claim_window by
+            # effective_create_timeout() in session_create.py.
+            Session.started_at < now - timedelta(seconds=claim_window),
         )
         pending_failed = 0
         for (session_pk,) in (await db.execute(pending_stmt)).all():
@@ -520,17 +465,8 @@ class AllocationService:
                     return result
         return None
 
-    async def resume_allocation(self, db: DbSession, *, ticket_id: uuid.UUID) -> AllocationResult | None:
-        """Idempotently resume an allocation whose Allocated response was lost.
-
-        A router retry after a transport error re-sends the same ticket id. If a
-        live Session row (pending or running, not ended) carries that ticket id,
-        return the SAME allocation -- re-claiming would orphan the first pending
-        session and double-allocate a device. No live row (the claim window
-        expired while the response was lost, or the device lost its node/host
-        target) returns None: the caller proceeds with a fresh ticket +
-        try_allocate, the honest continuation for a still-polling client.
-        """
+    async def resume_interrupted(self, db: DbSession, *, ticket_id: uuid.UUID) -> None:
+        """Resolve a live row from an interrupted create before a fresh claim."""
         stmt = (
             select(Session)
             .options(selectinload(Session.device).selectinload(Device.appium_node))
@@ -541,12 +477,15 @@ class AllocationService:
             )
         )
         row = (await db.execute(stmt)).scalars().first()
-        if row is None or row.device is None:
-            return None
+        if row is None:
+            return
+        if row.status == SessionStatus.pending:
+            await self.fail(db, allocation_id=row.id, message="create interrupted; retried by router")
+            return
         target = resolve_router_target(row)
-        if target is None:
-            return None
-        return AllocationResult(allocation_id=row.id, target=target, device_id=row.device.id)
+        if target is not None:
+            await appium_direct.terminate_session(target, row.session_id)
+        await self.mark_ended(db, appium_session_id=row.session_id)
 
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
         now = now_utc()
@@ -690,7 +629,7 @@ class AllocationService:
         requested_test_name = candidate.get("gridfleet:testName")
         row = Session(
             id=uuid.uuid4(),
-            session_id=f"alloc-{uuid.uuid4()}",  # placeholder until confirm; unique, never 'running'
+            session_id=f"alloc-{uuid.uuid4()}",  # transient in-create marker; unique, never 'running'
             device_id=locked.id,
             status=SessionStatus.pending,
             requested_capabilities=candidate,

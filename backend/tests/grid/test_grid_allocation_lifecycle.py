@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -114,7 +113,9 @@ async def test_claim_deletes_ticket(
 async def test_confirm_promotes_to_running(
     db_session: AsyncSession, allocated_pending: Session, allocation_service: AllocationService
 ) -> None:
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="abc123")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=allocated_pending.id, appium_session_id="abc123"
+    )
     await db_session.refresh(allocated_pending)
     assert allocated_pending.status == SessionStatus.running
     assert allocated_pending.session_id == "abc123"
@@ -124,11 +125,15 @@ async def test_confirm_promotes_to_running(
 async def test_confirm_non_pending_raises(
     db_session: AsyncSession, allocated_pending: Session, allocation_service: AllocationService
 ) -> None:
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="abc123")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=allocated_pending.id, appium_session_id="abc123"
+    )
     with pytest.raises(AllocationNotPendingError):
-        await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="dup")
+        await allocation_service.promote_to_running(
+            db_session, allocation_id=allocated_pending.id, appium_session_id="dup"
+        )
     with pytest.raises(AllocationNotPendingError):
-        await allocation_service.confirm(db_session, allocation_id=uuid.uuid4(), appium_session_id="missing")
+        await allocation_service.promote_to_running(db_session, allocation_id=uuid.uuid4(), appium_session_id="missing")
 
 
 @pytest.mark.db
@@ -164,7 +169,9 @@ async def test_confirm_after_reaper_fail_raises_not_pending(
     assert allocated_pending.status == SessionStatus.error
 
     with pytest.raises(AllocationNotPendingError):
-        await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="too-late")
+        await allocation_service.promote_to_running(
+            db_session, allocation_id=allocated_pending.id, appium_session_id="too-late"
+        )
 
     await db_session.refresh(allocated_pending)
     # The reaper's terminal state stands; confirm did not split it back to running.
@@ -181,7 +188,9 @@ async def test_fail_after_confirm_is_noop_device_stays_busy(
 ) -> None:
     """Race: confirm wins first; a late reaper fail must no-op rather than error a
     now-running session or free a still-busy device (#4)."""
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="confirmed-id")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=allocated_pending.id, appium_session_id="confirmed-id"
+    )
     await db_session.refresh(seeded_available_device)
     assert seeded_available_device.operational_state_last_emitted == DeviceOperationalState.busy
 
@@ -202,7 +211,9 @@ async def test_mark_ended_closes_running_and_frees_device(
     allocation_service: AllocationService,
     seeded_available_device: Device,
 ) -> None:
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="end-me")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=allocated_pending.id, appium_session_id="end-me"
+    )
     await allocation_service.mark_ended(db_session, appium_session_id="end-me")
     await db_session.refresh(allocated_pending)
     assert allocated_pending.ended_at is not None
@@ -223,7 +234,9 @@ async def test_mark_ended_run_terminal_marks_error(
     """A session whose owning run already reached a non-completed terminal state was
     aborted out from under the client — mark_ended must close it ``error``, not
     mask the abort as ``passed`` (#7)."""
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="aborted-run")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=allocated_pending.id, appium_session_id="aborted-run"
+    )
     run = await create_reserved_run(
         db_session, name="cancelled-run", devices=[seeded_available_device], state=RunState.cancelled
     )
@@ -254,7 +267,9 @@ async def test_close_reads_committed_run_state_over_stale_attached_run(
     from app.runs.models import TestRun
     from app.sessions.service import close_running_session
 
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="stale-race")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=allocated_pending.id, appium_session_id="stale-race"
+    )
     run = await create_reserved_run(
         db_session, name="stale-active-run", devices=[seeded_available_device], state=RunState.active
     )
@@ -276,93 +291,6 @@ async def test_close_reads_committed_run_state_over_stale_attached_run(
     await db_session.refresh(allocated_pending)
     assert allocated_pending.status == SessionStatus.error
     assert allocated_pending.error_type == "run_released"
-
-
-@pytest.mark.db
-async def test_resume_allocation_returns_same_allocation_for_live_row(
-    db_session: AsyncSession,
-    allocated_pending: Session,
-    allocation_service: AllocationService,
-) -> None:
-    """Lost-Allocated-response retry: a ticket_id with a live pending row returns
-    the SAME allocation, no second Session row, no second device claimed (#2)."""
-    assert allocated_pending.ticket_id is not None
-    sessions_before = len((await db_session.execute(select(Session))).scalars().all())
-
-    result = await allocation_service.resume_allocation(db_session, ticket_id=allocated_pending.ticket_id)
-
-    assert result is not None
-    assert result.allocation_id == allocated_pending.id
-    sessions_after = len((await db_session.execute(select(Session))).scalars().all())
-    assert sessions_after == sessions_before
-
-
-@pytest.mark.db
-async def test_resume_returns_same_allocation(
-    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
-) -> None:
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
-    db_session.add(ticket)
-    await db_session.flush()
-    first = await allocation_service.try_allocate(db_session, ticket=ticket)
-    assert first is not None
-    resumed = await allocation_service.resume_allocation(db_session, ticket_id=ticket.id)
-    assert resumed is not None
-    assert resumed.allocation_id == first.allocation_id
-    assert resumed.target == first.target
-    assert resumed.device_id == first.device_id
-
-
-@pytest.mark.db
-async def test_resume_after_reaped_claim_returns_none(
-    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
-) -> None:
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
-    db_session.add(ticket)
-    await db_session.flush()
-    first = await allocation_service.try_allocate(db_session, ticket=ticket)
-    assert first is not None
-    await allocation_service.fail(db_session, allocation_id=first.allocation_id, message="claim window expired")
-    assert await allocation_service.resume_allocation(db_session, ticket_id=ticket.id) is None
-
-
-@pytest.mark.db
-async def test_resume_unknown_ticket_returns_none(
-    db_session: AsyncSession, allocation_service: AllocationService
-) -> None:
-    assert await allocation_service.resume_allocation(db_session, ticket_id=uuid.uuid4()) is None
-
-
-@pytest.mark.db
-async def test_resume_allocation_returns_same_allocation_for_running_row(
-    db_session: AsyncSession,
-    allocated_pending: Session,
-    allocation_service: AllocationService,
-) -> None:
-    """A confirmed (running) row is still the honest allocation to hand back."""
-    assert allocated_pending.ticket_id is not None
-    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="run-id")
-
-    result = await allocation_service.resume_allocation(db_session, ticket_id=allocated_pending.ticket_id)
-
-    assert result is not None
-    assert result.allocation_id == allocated_pending.id
-
-
-@pytest.mark.db
-async def test_resume_allocation_does_not_rewind_ticket_when_row_reaped(
-    db_session: AsyncSession,
-    allocated_pending: Session,
-    allocation_service: AllocationService,
-) -> None:
-    """If the claim was reaped while the response was lost, resume leaves the
-    ticket terminal; the caller will create a fresh ticket and rejoin the back."""
-    assert allocated_pending.ticket_id is not None
-    await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
-
-    result = await allocation_service.resume_allocation(db_session, ticket_id=allocated_pending.ticket_id)
-
-    assert result is None
 
 
 @pytest.mark.db

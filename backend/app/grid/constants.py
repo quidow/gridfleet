@@ -10,7 +10,7 @@ window (wave-5 review #15). Both now import from here.
 
 RETRY_INTERVAL_SEC = 1.0
 
-# The allocate long-poll slice: how long POST /internal/grid/allocate holds a
+# The create-session long-poll slice: how long POST /internal/grid/create-session holds a
 # waiting request before returning "retry". Lives here (not router_internal)
 # so app.settings.invariants can import it cycle-free. Ordered budgets built
 # on it: grid.queue_timeout_sec must exceed it (settings invariant); the

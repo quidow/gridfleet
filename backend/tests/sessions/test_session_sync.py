@@ -803,14 +803,11 @@ async def test_orphan_sweep_skips_device_with_over_age_pending_row(
     assert _stub_appium_direct["terminated"] == []
 
 
-async def test_orphan_sweep_kills_doomed_id_on_pending_device(
+async def test_orphan_sweep_spares_unknown_ids_on_pending_device(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
-    """Wave-5 #7: a device holding a pending row is no longer spared wholesale. A live
-    id matching a TERMINAL row is provably not the in-creation session (which has no
-    row until confirm) — e.g. the id stamped by the 409-confirm path after a failed
-    router rollback — and is killed even while a new allocation is in flight. Unknown
-    ids are still spared (they may be the pending allocation's own session)."""
+    """A pending row marks an in-progress backend-owned create, so unknown Appium ids
+    are spared until the reaper closes a crash-orphaned pending row."""
     device = await _seed_device_with_node(
         db_session, db_host, identity_value="orph-doomed", operational_state=DeviceOperationalState.busy
     )
@@ -828,7 +825,7 @@ async def test_orphan_sweep_kills_doomed_id_on_pending_device(
     _stub_appium_direct["list"][target] = ["sess-doomed", "real-in-creation-id"]
     await _make_sync_service().sync(db_session)
 
-    assert _stub_appium_direct["terminated"] == [(target, "sess-doomed")]
+    assert _stub_appium_direct["terminated"] == []
 
 
 async def test_orphan_kill_metric_not_incremented_when_terminate_fails(

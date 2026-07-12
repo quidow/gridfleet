@@ -306,11 +306,8 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=120,
         description=(
-            "How long an allocated (pending) session may remain unconfirmed before it is failed. "
-            "Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create. "
-            "The reaper adds a fixed +60s confirm grace on top of this window to absorb router confirm retries. "
-            "The floor is 30s: the router's create-timeout cap engages only above 10s, so a smaller window lets "
-            "the orphan sweep race a real in-creation session."
+            "A pending row older than this window is a crash orphan and is failed by the reaper; "
+            "a live create is always bounded below it (session_create.effective_create_timeout)."
         ),
         min_value=30,
         max_value=600,

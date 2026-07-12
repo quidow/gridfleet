@@ -50,10 +50,10 @@ class RequestContextMiddleware:
     @classmethod
     def _is_timeout_exempt(cls, path: str) -> bool:
         # /api/events: SSE stream, open for the client's lifetime.
-        # /internal/grid/allocate: long-poll (LONG_POLL_SEC + per-attempt work)
+        # /internal/grid/create-session: long-poll (LONG_POLL_SEC + per-attempt work)
         # that can exceed request_timeout_sec; cancelling it mid-attempt can
         # orphan a committed claim. The grid router owns its own timeout.
-        return path in {"/api/events", "/internal/grid/allocate"}
+        return path in {"/api/events", "/internal/grid/create-session"}
 
     @staticmethod
     def _scope_str(scope: Mapping[str, object], key: str, default: str) -> str:
