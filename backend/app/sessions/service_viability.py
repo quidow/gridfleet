@@ -32,7 +32,11 @@ from app.sessions.probe_inflight import (
     viability_lock_is_stale as _viability_lock_is_stale,
 )
 from app.sessions.service_probes import ProbeSource, record_probe_session
-from app.sessions.viability_types import SessionViabilityCheckedBy
+from app.sessions.viability_types import (
+    SessionViabilityCheckedBy,
+    SessionViabilityProbeInProgressError,
+    SessionViabilityProbeNotPermittedError,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -52,30 +56,6 @@ __all__ = [
     "build_probe_capabilities",
     "grid_probe_response_to_result",
 ]
-
-
-class SessionViabilityProbeInProgressError(ValueError):
-    """Raised when a viability probe cannot start because one is already in flight.
-
-    Subclasses ``ValueError`` so manual HTTP callers keep surfacing 409 (control.py),
-    while the distinct type lets the lifecycle recovery loop tell a lock *collision*
-    (another probe — e.g. an active verification — holds the device's probe lock) apart
-    from a probe *failure*. A collision says nothing about device health, so recovery
-    skips it instead of counting a failed attempt that would feed backoff/shelving.
-    """
-
-
-class SessionViabilityProbeNotPermittedError(ValueError):
-    """Raised when the device's current state does not permit a probe.
-
-    Subclasses ``ValueError`` so manual HTTP callers keep surfacing 409 (control.py).
-    The distinct type lets the lifecycle recovery loop treat a *gating* rejection
-    (the device is no longer ``offline``/``verifying`` — e.g. ``busy``/``maintenance``,
-    or its state changed concurrently between the pre-lock gate and the row lock) as a
-    *skip* rather than a failed attempt. Like a probe collision, a gate rejection says
-    nothing about device health, so counting it would feed backoff/shelving. Mirrors
-    ``SessionViabilityProbeInProgressError``.
-    """
 
 
 SESSION_VIABILITY_KEY = "session_viability"
