@@ -125,7 +125,7 @@ impl RouteMap {
 
     /// Rebuild the map from a backend snapshot captured at generation
     /// `captured_gen`. Routes inserted since the capture (`inserted_gen >
-    /// captured_gen`) are overlaid on top of the snapshot so a freshly-confirmed
+    /// captured_gen`) are overlaid on top of the snapshot so a freshly-inserted
     /// session that raced the fetch is preserved rather than evicted. All other
     /// entries are replaced wholesale (the reconcile's purpose: drop stale
     /// routes). The generation/lock are read and the swap applied atomically.
@@ -245,16 +245,16 @@ mod tests {
     #[test]
     fn replace_if_unchanged_preserves_route_inserted_after_capture() {
         // Reproduce the C4 interleaving on a single thread: request B captures
-        // the generation, then request A confirms+inserts its fresh route, then
+        // the generation, then request A inserts its fresh route, then
         // B's (now-stale) snapshot — which lacks A's route — lands via
         // replace_if_unchanged. A's route must survive.
         let m = RouteMap::default();
         let captured = m.insert_generation(); // B captures before fetching
 
-        // A confirms and inserts its route mid-fetch.
+        // A inserts its route mid-fetch.
         m.insert("A-fresh", Upstream::parse("http://h:9").unwrap());
 
-        // B's stale snapshot (running-only, captured before A confirmed) does
+        // B's stale snapshot (running-only, captured before A inserted) does
         // NOT include A-fresh; it carries some other running session.
         m.replace_if_unchanged(
             vec![("other".into(), Upstream::parse("http://h:1").unwrap())],

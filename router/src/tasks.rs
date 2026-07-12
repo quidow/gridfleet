@@ -32,7 +32,7 @@ pub fn spawn_route_reconcile(routes: Arc<RouteMap>, backend: Arc<BackendClient>)
         loop {
             interval.tick().await;
             // Capture the insert generation BEFORE the fetch: a session
-            // confirmed+inserted by the data plane mid-fetch must survive the
+            // inserted by the data plane mid-fetch must survive the
             // rebuild, not be evicted by the (now-stale) snapshot (C4).
             let gen = routes.insert_generation();
             match backend.fetch_routes().await {

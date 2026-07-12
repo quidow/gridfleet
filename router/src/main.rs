@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::Parser;
 
 use gridfleet_router::activity::ActivityTracker;
-use gridfleet_router::backend::BackendClient;
+use gridfleet_router::backend::{BackendClient, CREATE_CALL_TIMEOUT_SECS};
 use gridfleet_router::proxy::GridRouter;
 use gridfleet_router::routes::RouteMap;
 use gridfleet_router::tasks::{spawn_activity_flush, spawn_route_reconcile};
@@ -54,6 +54,12 @@ fn normalize_backend_auth(raw: Option<&str>) -> Option<&str> {
 fn main() {
     env_logger::init();
     let args = Args::parse();
+
+    assert!(
+        args.new_session_timeout > (CREATE_CALL_TIMEOUT_SECS + 10) as f64,
+        "GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT must exceed {}s",
+        CREATE_CALL_TIMEOUT_SECS + 10
+    );
 
     let backend_auth = normalize_backend_auth(args.backend_auth.as_deref());
 
