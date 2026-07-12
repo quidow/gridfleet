@@ -20,6 +20,7 @@ from app.devices.services.decision import (
     parse_command,
 )
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
+from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_STOP, NodeDirective
 
 NOW = datetime(2026, 7, 9, 12, 0, 0, tzinfo=UTC)
 DEVICE = uuid.uuid4()
@@ -44,9 +45,14 @@ def facts(**kw: object) -> DecisionFacts:
         reservation_run_id=None,
         cooldown_active=False,
         cooldown_reason=None,
+        remediation_directive=None,
     )
     defaults.update(kw)
     return DecisionFacts(**defaults)
+
+
+def directive(kind: str, *, reason: str | None = None, watermark: datetime | None = None) -> NodeDirective:
+    return NodeDirective(kind=kind, reason=reason, restart_watermark=watermark)
 
 
 # --- node_process ladder ---
@@ -129,6 +135,101 @@ def test_plain_starts_carry_no_watermark() -> None:
     d = decide_node_process([cmd(CommandKind.operator_start)], facts())
     assert d.desired_state == "running"
     assert d.restart_requested_at is None
+
+
+def test_derived_stop_directive_gracefully_stops() -> None:
+    d = decide_node_process([], facts(remediation_directive=directive(DIRECTIVE_STOP, reason="node crashed")))
+
+    assert (d.desired_state, d.stop_mode, d.reason) == ("stopping_graceful", "graceful", "node crashed")
+
+
+def test_derived_stop_beats_connectivity_park() -> None:
+    d = decide_node_process(
+        [], facts(device_checks_unhealthy=True, remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.desired_state == "stopping_graceful"
+
+
+def test_maintenance_beats_derived_stop() -> None:
+    d = decide_node_process(
+        [], facts(in_maintenance=True, remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.reason == "maintenance hold"
+
+
+def test_operator_stop_beats_derived_start() -> None:
+    d = decide_node_process([cmd(CommandKind.operator_stop)], facts(remediation_directive=directive(DIRECTIVE_START)))
+
+    assert (d.desired_state, d.stop_mode) == ("stopped", "hard")
+
+
+def test_verification_start_suppresses_derived_stop() -> None:
+    """A verification lease structurally replaces the retired revoke-before-register ritual."""
+    d = decide_node_process(
+        [cmd(CommandKind.verification_start)], facts(remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.desired_state == "running"
+
+
+def test_operator_start_suppresses_derived_stop() -> None:
+    d = decide_node_process(
+        [cmd(CommandKind.operator_start)], facts(remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.desired_state == "running"
+
+
+def test_derived_start_suppresses_derived_stop_history() -> None:
+    d = decide_node_process([], facts(remediation_directive=directive(DIRECTIVE_START)))
+
+    assert d.desired_state == "running"
+
+
+def test_derived_start_suppresses_connectivity_park() -> None:
+    d = decide_node_process([], facts(device_checks_unhealthy=True, remediation_directive=directive(DIRECTIVE_START)))
+
+    assert d.desired_state == "running"
+
+
+def test_derived_start_carries_restart_watermark() -> None:
+    watermark = NOW - timedelta(seconds=5)
+    d = decide_node_process([], facts(remediation_directive=directive(DIRECTIVE_START, watermark=watermark)))
+
+    assert d.desired_state == "running"
+    assert d.restart_requested_at == watermark
+
+
+def test_derived_watermark_folds_with_stored_watermarks_newest_wins() -> None:
+    older = NOW - timedelta(seconds=10)
+    newer = NOW - timedelta(seconds=5)
+    first = decide_node_process(
+        [cmd(CommandKind.operator_start, restart_requested_at=older)],
+        facts(remediation_directive=directive(DIRECTIVE_START, watermark=newer)),
+    )
+    second = decide_node_process(
+        [cmd(CommandKind.operator_start, restart_requested_at=newer)],
+        facts(remediation_directive=directive(DIRECTIVE_START, watermark=older)),
+    )
+
+    assert first.restart_requested_at == newer
+    assert second.restart_requested_at == newer
+
+
+def test_derived_start_requires_in_service() -> None:
+    d = decide_node_process([], facts(in_service=False, remediation_directive=directive(DIRECTIVE_START)))
+
+    assert (d.desired_state, d.stop_mode) == ("stopped", None)
+
+
+def test_derived_stop_holds_out_of_service_too() -> None:
+    d = decide_node_process(
+        [], facts(in_service=False, remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert (d.desired_state, d.stop_mode) == ("stopping_graceful", "graceful")
 
 
 # --- grid_routing ladder ---

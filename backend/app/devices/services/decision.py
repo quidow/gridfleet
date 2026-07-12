@@ -23,11 +23,13 @@ from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
 from app.devices.services.intent_types import CommandKind
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
+from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_STOP
 
 if TYPE_CHECKING:
     import uuid
 
     from app.devices.models import DeviceIntent
+    from app.lifecycle.services.remediation_log import NodeDirective
 
 logger = get_logger(__name__)
 
@@ -55,6 +57,7 @@ class DecisionFacts:
     reservation_run_id: uuid.UUID | None  # None when unreserved OR indefinitely excluded
     cooldown_active: bool  # excluded AND excluded_until > now
     cooldown_reason: str | None
+    remediation_directive: NodeDirective | None = None  # derived from device_remediation_log (WS-15.2)
 
 
 @dataclass(frozen=True)
@@ -114,29 +117,40 @@ def decide_node_process(commands: list[Command], facts: DecisionFacts) -> NodePr
     if CommandKind.health_failure_stop in by_kind:
         return NodeProcessDecision("stopping_graceful", "graceful", _reason(commands, CommandKind.health_failure_stop))
     starts = [c for c in commands if c.kind in _START_KINDS]
-    if facts.device_checks_unhealthy and not starts:
+    directive = facts.remediation_directive
+    # A derived start is in_service-gated: a shelved or withdrawn device must never
+    # keep a directive-started node alive past the episode.
+    remediation_start = directive is not None and directive.kind == DIRECTIVE_START and facts.in_service
+    if directive is not None and directive.kind == DIRECTIVE_STOP and not starts and not remediation_start:
+        # Derived failure-stop: an auto-stop episode holds the node stopped until a
+        # reset supersedes it. Any active start — stored or derived — outranks it
+        # structurally, replacing the retired revoke-before-start rituals.
+        return NodeProcessDecision("stopping_graceful", "graceful", directive.reason or "remediation auto-stop")
+    if facts.device_checks_unhealthy and not starts and not remediation_start:
         # The connectivity park: derived from device_checks_healthy IS FALSE and
         # structurally suppressed by any active start command (semantic delta #3).
         return NodeProcessDecision("running_blocked", "defer", "connectivity park")
-    if starts:
+    if starts or remediation_start:
         # Newest watermark wins: a later restart request supersedes an earlier
         # one (restart-at-least-once-after-T is monotone), so last-write-wins
         # is correct and the old token override-detection has nothing to detect.
-        watermark = max((c.restart_requested_at for c in starts if c.restart_requested_at is not None), default=None)
-        winner = max(
-            starts,
-            key=lambda c: (
-                c.restart_requested_at is not None,
-                c.restart_requested_at or datetime.min.replace(tzinfo=UTC),
-                c.source,
-            ),
-        )
-        return NodeProcessDecision(
-            "running",
-            None,
-            f"{winner.source} command",
-            restart_requested_at=watermark,
-        )
+        watermarks = [c.restart_requested_at for c in starts if c.restart_requested_at is not None]
+        if remediation_start and directive is not None and directive.restart_watermark is not None:
+            watermarks.append(directive.restart_watermark)
+        watermark = max(watermarks, default=None)
+        if starts:
+            winner = max(
+                starts,
+                key=lambda c: (
+                    c.restart_requested_at is not None,
+                    c.restart_requested_at or datetime.min.replace(tzinfo=UTC),
+                    c.source,
+                ),
+            )
+            reason = f"{winner.source} command"
+        else:
+            reason = "remediation recovery start"
+        return NodeProcessDecision("running", None, reason, restart_requested_at=watermark)
     if facts.in_service:
         return NodeProcessDecision("running", None, "baseline:idle standing start")
     return NodeProcessDecision("stopped", None, "no active node_process command")

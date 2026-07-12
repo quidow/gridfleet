@@ -22,6 +22,7 @@ from app.devices.services.intent_reconciler import (
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.state import derive_operational_state
+from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.fakes.review import build_review_service
@@ -186,6 +187,58 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.stop_pending is True
     assert node.accepting_new_sessions is False
+
+
+async def test_derived_auto_stop_commission_stages_graceful_agent_drain(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="derived-graceful")
+    node = await _seed_node(db_session, device.id, generation=2)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="node crashed",
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+
+
+async def test_derived_restart_commission_sets_running_and_watermark(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="derived-restart")
+    node = await _seed_node(db_session, device.id)
+    entry = await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_RESTART_COMMISSIONED,
+        reason="Node health restart",
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.restart_requested_at == entry.at
 
 
 async def test_hard_stop_on_idle_device_stages_agent_drain(
