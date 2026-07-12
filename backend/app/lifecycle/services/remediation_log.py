@@ -28,6 +28,30 @@ KIND_FAILURE = "failure"
 KIND_RESET = "reset"
 KIND_ACTION = "action"
 
+DIRECTIVE_STOP = "stop"
+DIRECTIVE_START = "start"
+
+ACTION_AUTO_STOP_COMMISSIONED = "auto_stop_commissioned"
+ACTION_RESTART_COMMISSIONED = "restart_commissioned"
+ACTION_RECOVERY_STARTED = "recovery_started"
+ACTION_AUTO_STOP_DEFERRED = "auto_stop_deferred"
+ACTION_AUTO_STOPPED = "auto_stopped"
+ACTION_AUTO_STOP_CLEARED = "auto_stop_cleared"
+
+_DIRECTIVE_BY_ACTION = {
+    ACTION_AUTO_STOP_COMMISSIONED: DIRECTIVE_STOP,
+    ACTION_RESTART_COMMISSIONED: DIRECTIVE_START,
+    ACTION_RECOVERY_STARTED: DIRECTIVE_START,
+}
+_DEFERRED_LIFECYCLE_ACTIONS = frozenset({ACTION_AUTO_STOP_DEFERRED, ACTION_AUTO_STOPPED, ACTION_AUTO_STOP_CLEARED})
+
+
+@dataclass(frozen=True)
+class NodeDirective:
+    kind: str  # DIRECTIVE_STOP | DIRECTIVE_START
+    reason: str | None
+    restart_watermark: datetime | None
+
 
 @dataclass(frozen=True)
 class LadderState:
@@ -37,10 +61,24 @@ class LadderState:
     last_failure_reason: str | None
     last_action: str | None
     last_action_at: datetime | None
+    node_directive: NodeDirective | None = None
+    deferred_stop_pending: bool = False
+    deferred_stop_reason: str | None = None
+    deferred_stop_since: datetime | None = None
 
     @property
     def armed(self) -> bool:
         return self.attempts > 0
+
+    @property
+    def episode_active(self) -> bool:
+        """True while anything in the current episode still binds a decision."""
+        return (
+            self.attempts > 0
+            or self.last_failure_reason is not None
+            or self.node_directive is not None
+            or self.deferred_stop_pending
+        )
 
     def backoff_active(self, *, now: datetime) -> datetime | None:
         if self.backoff_until is not None and self.backoff_until > now:
@@ -48,7 +86,7 @@ class LadderState:
         return None
 
 
-EMPTY_LADDER = LadderState(0, None, None, None, None, None)
+EMPTY_LADDER = LadderState(0, None, None, None, None, None, None, False, None, None)
 
 
 def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
@@ -68,6 +106,20 @@ def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
     last = ordered[-1]
     last_attempt = attempts[-1] if attempts else None
     last_failure = failures[-1] if failures else None
+    directive_rows = [entry for entry in window if entry.action in _DIRECTIVE_BY_ACTION]
+    node_directive = None
+    if directive_rows:
+        newest = directive_rows[-1]
+        kind = _DIRECTIVE_BY_ACTION[newest.action]
+        restarts = [entry for entry in directive_rows if entry.action == ACTION_RESTART_COMMISSIONED]
+        node_directive = NodeDirective(
+            kind=kind,
+            reason=newest.reason,
+            restart_watermark=restarts[-1].at if kind == DIRECTIVE_START and restarts else None,
+        )
+    deferred_rows = [entry for entry in window if entry.action in _DEFERRED_LIFECYCLE_ACTIONS]
+    deferred_pending = bool(deferred_rows) and deferred_rows[-1].action == ACTION_AUTO_STOP_DEFERRED
+    deferred_row = deferred_rows[-1] if deferred_pending else None
     return LadderState(
         attempts=len(attempts),
         backoff_until=last_attempt.backoff_until if last_attempt is not None else None,
@@ -75,6 +127,10 @@ def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
         last_failure_reason=last_failure.reason if last_failure is not None else None,
         last_action=last.action,
         last_action_at=last.at,
+        node_directive=node_directive,
+        deferred_stop_pending=deferred_pending,
+        deferred_stop_reason=deferred_row.reason if deferred_row is not None else None,
+        deferred_stop_since=deferred_row.at if deferred_row is not None else None,
     )
 
 
@@ -148,6 +204,10 @@ async def append_attempt(
         last_failure_reason=reason,
         last_action="recovery_failed",
         last_action_at=entry.at,
+        node_directive=prior.node_directive,
+        deferred_stop_pending=prior.deferred_stop_pending,
+        deferred_stop_reason=prior.deferred_stop_reason,
+        deferred_stop_since=prior.deferred_stop_since,
     )
     return entry, ladder
 

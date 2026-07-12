@@ -4,7 +4,19 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.devices.models import DeviceRemediationLogEntry
-from app.lifecycle.services.remediation_log import LadderState, build_policy_view, derive_ladder
+from app.lifecycle.services.remediation_log import (
+    ACTION_AUTO_STOP_CLEARED,
+    ACTION_AUTO_STOP_COMMISSIONED,
+    ACTION_AUTO_STOP_DEFERRED,
+    ACTION_AUTO_STOPPED,
+    ACTION_RECOVERY_STARTED,
+    ACTION_RESTART_COMMISSIONED,
+    DIRECTIVE_START,
+    DIRECTIVE_STOP,
+    LadderState,
+    build_policy_view,
+    derive_ladder,
+)
 
 
 def _entry(
@@ -174,3 +186,148 @@ def test_build_policy_view_preserves_json_keys_and_serializes_datetimes() -> Non
     assert view["backoff_until"] == deadline.isoformat()
     assert view["last_action_at"] == at.isoformat()
     assert build_policy_view(LadderState(0, None, None, None, None, None), None)["deferred_stop"] is False
+
+
+def test_empty_log_has_no_directive_or_deferred_stop_and_is_inactive() -> None:
+    ladder = derive_ladder([])
+
+    assert ladder.node_directive is None
+    assert ladder.deferred_stop_pending is False
+    assert ladder.episode_active is False
+
+
+def test_auto_stop_commissioned_derives_stop_directive() -> None:
+    ladder = derive_ladder(
+        [
+            _entry(
+                kind="action",
+                at=datetime(2026, 7, 12, 12, 0, tzinfo=UTC),
+                action=ACTION_AUTO_STOP_COMMISSIONED,
+                reason="node crashed",
+            )
+        ]
+    )
+
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == DIRECTIVE_STOP
+    assert ladder.node_directive.reason == "node crashed"
+    assert ladder.episode_active is True
+
+
+def test_newest_directive_wins_and_recovery_start_has_no_watermark() -> None:
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder(
+        [
+            _entry(kind="action", at=base, action=ACTION_AUTO_STOP_COMMISSIONED),
+            _entry(kind="action", at=base + timedelta(seconds=1), action=ACTION_RECOVERY_STARTED),
+        ]
+    )
+
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == DIRECTIVE_START
+    assert ladder.node_directive.restart_watermark is None
+
+
+def test_restart_commission_derives_start_watermark() -> None:
+    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder([_entry(kind="action", at=at, action=ACTION_RESTART_COMMISSIONED)])
+
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == DIRECTIVE_START
+    assert ladder.node_directive.restart_watermark == at
+
+
+def test_restart_watermark_survives_a_newer_plain_start() -> None:
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder(
+        [
+            _entry(kind="action", at=base, action=ACTION_RESTART_COMMISSIONED),
+            _entry(kind="action", at=base + timedelta(seconds=1), action=ACTION_RECOVERY_STARTED),
+        ]
+    )
+
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == DIRECTIVE_START
+    assert ladder.node_directive.restart_watermark == base
+
+
+def test_failed_recovery_replaces_start_with_stop_directive() -> None:
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder(
+        [
+            _entry(kind="action", at=base, action=ACTION_RECOVERY_STARTED),
+            _entry(kind="action", at=base + timedelta(seconds=1), action=ACTION_AUTO_STOP_COMMISSIONED),
+        ]
+    )
+
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == DIRECTIVE_STOP
+
+
+def test_reset_supersedes_directive() -> None:
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder(
+        [
+            _entry(kind="action", at=base, action=ACTION_AUTO_STOP_COMMISSIONED),
+            _entry(kind="reset", at=base + timedelta(seconds=1), action="self_healed"),
+        ]
+    )
+
+    assert ladder.node_directive is None
+
+
+def test_deferred_stop_derives_pending_reason_and_since() -> None:
+    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder([_entry(kind="action", at=at, action=ACTION_AUTO_STOP_DEFERRED, reason="probe failed")])
+
+    assert ladder.deferred_stop_pending is True
+    assert ladder.deferred_stop_reason == "probe failed"
+    assert ladder.deferred_stop_since == at
+
+
+def test_deferred_stop_completion_and_reset_clear_pending() -> None:
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    for action, kind in (
+        (ACTION_AUTO_STOPPED, "action"),
+        (ACTION_AUTO_STOP_CLEARED, "action"),
+        ("reset", "reset"),
+    ):
+        ladder = derive_ladder(
+            [
+                _entry(kind="action", at=base, action=ACTION_AUTO_STOP_DEFERRED),
+                _entry(kind=kind, at=base + timedelta(seconds=1), action=action),
+            ]
+        )
+        assert ladder.deferred_stop_pending is False
+
+
+def test_non_directive_actions_do_not_derive_node_directive() -> None:
+    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    ladder = derive_ladder(
+        [
+            _entry(kind="action", at=at, action=ACTION_AUTO_STOPPED),
+            _entry(kind="action", at=at + timedelta(seconds=1), action="node_monitor_recovered"),
+            _entry(kind="action", at=at + timedelta(seconds=2), action="self_healed"),
+        ]
+    )
+
+    assert ladder.node_directive is None
+
+
+def test_episode_active_truth_table() -> None:
+    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    cases = [
+        ([_entry(kind="attempt", at=at, action="recovery_failed")], True),
+        ([_entry(kind="failure", at=at, action="failure_observed")], True),
+        ([_entry(kind="action", at=at, action=ACTION_AUTO_STOP_COMMISSIONED)], True),
+        ([_entry(kind="action", at=at, action=ACTION_AUTO_STOP_DEFERRED)], True),
+        (
+            [
+                _entry(kind="action", at=at, action=ACTION_AUTO_STOP_COMMISSIONED),
+                _entry(kind="reset", at=at + timedelta(seconds=1), action="self_healed"),
+            ],
+            False,
+        ),
+    ]
+    for entries, expected in cases:
+        assert derive_ladder(entries).episode_active is expected
