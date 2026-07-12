@@ -1,3 +1,12 @@
+"""Device intent reconciler: derives each device's desired state from intents and facts.
+
+Ticks as the ``device_intent_reconciler`` background loop: GCs expired deny
+intents, clears elapsed reservation-row cooldowns, then runs the full
+reconcile scan. Despite the name, unrelated to the observe-only
+``appium_nodes.services.reconciler*`` family, which converges agent-reported
+Appium process facts and never decides desired state.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -70,6 +70,7 @@ The manager publishes one shared event object shape:
 | `device.verification.updated` | full verification job snapshot | `info` | `info`, `success`, `warning`, `critical` | verification pipeline |
 | `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | `warning` | `warning`, `critical`, `success` | hardware telemetry loop |
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | `info` | `info`, `success`, `warning` | node start/stop/recovery paths |
+| `device.lifecycle_incident` | `device_id`, `device_name`, `event_type`, `label`, `summary_state`, plus nullable `reason`, `detail`, `source`, `run_id`, `run_name` | `info` | all | lifecycle incident recorder (`lifecycle.services.incidents`): recovery suppressed/failed/backoff/recovered, deferred and auto stop, node-health escalation, run exclusion/cooldown |
 | `node.crash` | `device_id`, `device_name`, `error`, `will_restart` | `critical` | `critical`, `warning` | node-health failure handling |
 | `device.crashed` | `device_id`, `device_name`, `source`, `reason`, `will_restart`, `process` | `critical` | `critical`, `warning` | persisted `node_crash` incidents |
 | `device.health_changed` | `device_id`, `overall`, `device`, `node`, `viability` | `info` | `info`, `success`, `warning` | any health verdict status change |

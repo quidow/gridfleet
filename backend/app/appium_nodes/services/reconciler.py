@@ -6,6 +6,10 @@ desired row can converge (see ``reconciler_convergence.orphaned_node_ports``),
 and ingests agent-reported facts (applied-transition-token, start_failures)
 to reconcile each device's desired AppiumNode state. The agent owns
 start/stop/restart of its own Appium processes.
+
+Despite the name, unrelated to ``devices.services.intent_reconciler`` (the
+``device_intent_reconciler`` loop), which derives desired state from intents
+and durable facts — this family only converges toward desired rows it reads.
 """
 
 from __future__ import annotations
