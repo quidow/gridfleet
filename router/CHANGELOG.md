@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.2.0...gridfleet-router-v0.3.0) (2026-07-12)
+
+
+### Features
+
+* backend-owned appium session creation (WS-14.1) ([347599c](https://github.com/quidow/gridfleet/commit/347599ccac415cb330ad0a6f15be6effed688933))
+
 ## [0.2.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.1.0...gridfleet-router-v0.2.0) (2026-06-22)
 
 
