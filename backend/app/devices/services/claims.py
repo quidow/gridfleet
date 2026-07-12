@@ -6,6 +6,8 @@ Three claim axes gate device actions:
   definition is owned by ``app.sessions.live_session_predicate`` (its docstring
   records the pending-omission bug that motivated the chokepoint) and is
   re-exported here so this module presents the complete vocabulary.
+  A live probe row claims the device but is excluded from the busy-masking
+  projection (masking_* variants, WS-16.1).
 - **reservation** — an active ``DeviceReservation`` row: ``released_at IS NULL``.
 - **verification** — an unexpired verification ``DeviceIntent`` lease. A lease
   carrying a terminal ``outcome`` stamp is a tombstone awaiting deletion, not
@@ -28,7 +30,12 @@ from app.devices.models import Device
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.reservation import DeviceReservation
 from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, CommandKind, verification_intent_source
-from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
+from app.sessions.live_session_predicate import (
+    device_has_live_session,
+    device_has_masking_live_session,
+    live_session_predicate,
+    masking_live_session_predicate,
+)
 from app.sessions.models import Session
 
 if TYPE_CHECKING:
@@ -41,10 +48,13 @@ if TYPE_CHECKING:
 __all__ = [
     "active_reservation_exists",
     "device_has_live_session",
+    "device_has_masking_live_session",
     "device_has_verification_lease",
     "device_is_reserved",
     "live_session_exists",
     "live_session_predicate",
+    "masking_live_session_exists",
+    "masking_live_session_predicate",
     "reservation_active",
     "verification_lease_exists",
     "verification_lease_predicate",
@@ -54,6 +64,15 @@ __all__ = [
 def live_session_exists() -> ColumnElement[bool]:
     """Correlated EXISTS for ``Device`` selects: a live session claims this device."""
     return exists(select(Session.id).where(Session.device_id == Device.id, live_session_predicate()))
+
+
+def masking_live_session_exists() -> ColumnElement[bool]:
+    """Correlated EXISTS for ``Device`` selects: busy-masking live sessions only.
+
+    Probe rows claim (``live_session_exists``) but do not mask (WS-16.1); the
+    operational-state projection's ``busy`` legs read this variant.
+    """
+    return exists(select(Session.id).where(Session.device_id == Device.id, masking_live_session_predicate()))
 
 
 def reservation_active() -> ColumnElement[bool]:
