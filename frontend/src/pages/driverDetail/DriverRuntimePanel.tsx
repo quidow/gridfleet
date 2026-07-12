@@ -125,25 +125,6 @@ export function DriverRuntimePanel({ pack }: { pack: DriverPack }) {
       <InstallSpecCard title="Desired Appium Server" spec={pack.appium_server} />
       <InstallSpecCard title="Desired Appium Driver" spec={pack.appium_driver} />
 
-      <Card padding="md">
-        <h2 className="mb-3 text-sm font-semibold text-text-1">Doctor Checks</h2>
-        {(pack.doctor?.length ?? 0) === 0 ? (
-          <p className="text-sm text-text-3">No doctor checks declared.</p>
-        ) : (
-          <div className="grid gap-2">
-            {pack.doctor?.map((check) => (
-              <div key={check.id} className="rounded border border-border px-3 py-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-sm text-text-1">{check.id}</span>
-                  {check.adapter_hook && <Badge tone="neutral">{check.adapter_hook}</Badge>}
-                </div>
-                <p className="mt-1 text-sm text-text-3">{check.description}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
       <Card padding="md" className="lg:col-span-2">
         <h2 className="mb-3 text-sm font-semibold text-text-1">Appium environment</h2>
         {(pack.appium_env?.length ?? 0) === 0 ? (

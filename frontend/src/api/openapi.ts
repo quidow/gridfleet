@@ -4159,15 +4159,6 @@ export interface components {
             /** Id */
             id: string;
         };
-        /** ManifestDoctorCheckOut */
-        ManifestDoctorCheckOut: {
-            /** Adapter Hook */
-            adapter_hook?: string | null;
-            /** Description */
-            description: string;
-            /** Id */
-            id: string;
-        };
         /** NodeDesiredSpecOut */
         NodeDesiredSpecOut: {
             /** Accepting New Sessions */
@@ -4241,8 +4232,6 @@ export interface components {
             current_release: string | null;
             /** Display Name */
             display_name: string;
-            /** Doctor */
-            doctor?: components["schemas"]["ManifestDoctorCheckOut"][];
             /** Id */
             id: string;
             /** Insecure Features */
@@ -8598,9 +8587,7 @@ export interface operations {
     };
     update_pack_api_driver_packs__pack_id__patch: {
         parameters: {
-            query?: {
-                override?: boolean;
-            };
+            query?: never;
             header?: never;
             path: {
                 pack_id: string;

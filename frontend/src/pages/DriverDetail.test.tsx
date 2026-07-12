@@ -75,7 +75,6 @@ const basePack = {
       env: { APPIUM_TEST_FLAG: '1' },
     },
   ],
-  doctor: [{ id: 'adb', description: 'ADB available', adapter_hook: 'check_adb' }],
   runtime_summary: {
     installed_hosts: 1,
     blocked_hosts: 0,
@@ -264,7 +263,6 @@ it('renders runtime manifest details', async () => {
   expect(screen.getByText('Desired Appium Driver')).toBeInTheDocument();
   expect(screen.getByText('uiautomator2:chromedriver_autodownload')).toBeInTheDocument();
   expect(screen.getByText('android_host_resolution')).toBeInTheDocument();
-  expect(screen.getByText('ADB available')).toBeInTheDocument();
 });
 
 it('renders hosts tab with pack installation status', async () => {
