@@ -28,9 +28,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -38,14 +36,10 @@ from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.viability_types import SessionViabilityProbeInProgressError
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.probe_result import ProbeResult
     from app.devices.models import Device
-
-logger = get_logger(__name__)
 
 PROBE_CHECKED_BY_CAP_KEY = "gridfleet:probeCheckedBy"
 
@@ -134,45 +128,3 @@ async def finalize_probe_session(db: AsyncSession, row: Session, *, result: Prob
     if finalized:
         await db.refresh(row)
     return finalized
-
-
-async def record_probe_session(
-    db: AsyncSession,
-    *,
-    device: Device,
-    attempted_at: datetime,
-    result: ProbeResult,
-    source: ProbeSource,
-    capabilities: dict[str, Any],
-) -> Session | None:
-    """Insert a terminal Session row for a probe.
-
-    Best-effort: on DB failure, log a warning and return None — control-plane
-    callers must not be blocked by observability writes.
-    """
-    status, error_type = map_probe_result_to_status(result)
-    enriched_caps: dict[str, Any] = {**capabilities, PROBE_CHECKED_BY_CAP_KEY: source.value}
-    session = Session(
-        id=uuid.uuid4(),
-        session_id=f"probe-{uuid.uuid4()}",
-        device_id=device.id,
-        test_name=PROBE_TEST_NAME,
-        started_at=attempted_at,
-        ended_at=now_utc(),
-        status=status,
-        requested_capabilities=enriched_caps,
-        error_type=error_type,
-        error_message=result.detail,
-        run_id=None,
-    )
-    try:
-        db.add(session)
-        await db.flush()
-    except SQLAlchemyError:
-        logger.warning(
-            "Failed to persist probe session row",
-            extra={"device_id": str(device.id), "source": source.value, "probe_status": result.status},
-            exc_info=True,
-        )
-        return None
-    return session
