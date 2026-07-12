@@ -347,8 +347,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     against a session that ended into an unhealthy outcome, not a clean
     busy→available restore.
     """
-    from app.devices.models import DeviceIntent
-    from app.devices.services.intent_types import CommandKind
+    from app.lifecycle.services import remediation_log
 
     device = await create_device_record(
         db_session,
@@ -371,19 +370,18 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     )
     db_session.add(node)
     db_session.add(Session(session_id="stop-inflight-sess", device_id=device.id, status=SessionStatus.running))
-    # Realistic shape: a graceful-stop intent registered by
+    # Realistic shape: a graceful-stop directive commissioned by
     # ``handle_health_failure`` during the session. While the session is
     # active, intent_reconciler holds the node at desired_state=running with
     # stop_pending=True (universal session-safety downgrade). When the
     # session ends, the active_session intent is revoked and reconcile picks
     # the stop intent as the winner, taking the node to desired_state=stopped.
-    db_session.add(
-        DeviceIntent(
-            device_id=device.id,
-            source=f"health_failure:node:{device.id}",
-            kind=CommandKind.health_failure_stop.value,
-            payload={"action": "stop"},
-        )
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="session ended",
     )
     await db_session.commit()
     event_bus_capture.clear()

@@ -37,7 +37,7 @@ NodeProcessState = str  # "running" | "running_blocked" | "stopping_graceful" | 
 StopMode = str  # "hard" | "graceful" | "defer"
 
 
-_START_KINDS = frozenset({CommandKind.operator_start, CommandKind.verification_start, CommandKind.auto_recovery_start})
+_START_KINDS = frozenset({CommandKind.operator_start, CommandKind.verification_start})
 
 
 @dataclass(frozen=True)
@@ -114,8 +114,6 @@ def decide_node_process(commands: list[Command], facts: DecisionFacts) -> NodePr
         return NodeProcessDecision("stopped", "hard", _reason(commands, CommandKind.forced_release))
     if facts.in_maintenance:
         return NodeProcessDecision("stopping_graceful", "graceful", "maintenance hold")
-    if CommandKind.health_failure_stop in by_kind:
-        return NodeProcessDecision("stopping_graceful", "graceful", _reason(commands, CommandKind.health_failure_stop))
     starts = [c for c in commands if c.kind in _START_KINDS]
     directive = facts.remediation_directive
     # A derived start is in_service-gated: a shelved or withdrawn device must never
@@ -174,9 +172,6 @@ def decide_recovery(commands: list[Command], facts: DecisionFacts) -> RecoveryDe
         return RecoveryDecision(False, MAINTENANCE_HOLD_SUPPRESSION_REASON, "maintenance")
     if facts.cooldown_active:
         return RecoveryDecision(False, facts.cooldown_reason, "cooldown")
-    allow = next((c for c in commands if c.kind is CommandKind.auto_recovery_allow), None)
-    if allow is not None:
-        return RecoveryDecision(True, allow.reason_detail or f"{allow.source} command", allow.source)
     return RecoveryDecision(True, None, None)
 
 

@@ -11,10 +11,6 @@ from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import (
-    CommandKind,
-    IntentRegistration,
-)
 from app.devices.services.lifecycle_policy_state import (
     clear_deferred_stop,
     write_state,
@@ -144,19 +140,25 @@ class LifecyclePolicyActionsService:
             return
 
         if node is not None and node.observed_running:
-            await IntentService(db).register_intents_and_reconcile(
-                device_id=device.id,
-                intents=_crash_intents(device),
-                publisher=self._publisher,
+            await remediation_log.append_action(
+                db,
+                device.id,
+                source=source,
+                action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+                reason=reason,
             )
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             await db.commit()
         else:
             if node is not None:
-                await IntentService(db).register_intents_and_reconcile(
-                    device_id=device.id,
-                    intents=_crash_intents(device),
-                    publisher=self._publisher,
+                await remediation_log.append_action(
+                    db,
+                    device.id,
+                    source=source,
+                    action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+                    reason=reason,
                 )
+                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             else:
                 # No node row — mark device_checks_healthy=False so the reconciler
                 # derives offline (device_allows_allocation=False → ready=False).
@@ -353,21 +355,3 @@ async def reset_reconciler_start_failure_if_needed(db: AsyncSession, device: Dev
         return False
     await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
     return True
-
-
-def _crash_intents(device: Device) -> list[IntentRegistration]:
-    # Only the health_failure_stop intent is registered. The
-    # ``health_failure:recovery`` deny intent used to live here too, but it
-    # had no expiry and gated the only code path that revoked it, deadlocking
-    # any device that hit a transient probe failure. Recovery throttling is
-    # now governed exclusively by the backoff window on
-    # ``lifecycle_policy_state``; persistent failures eventually flip
-    # ``Device.review_required`` and remove the device from the automated
-    # recovery scope until an operator intervenes.
-    return [
-        IntentRegistration(
-            source=f"health_failure:node:{device.id}",
-            kind=CommandKind.health_failure_stop,
-            payload={"action": "stop"},
-        ),
-    ]

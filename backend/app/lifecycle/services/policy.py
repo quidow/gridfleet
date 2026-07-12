@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -18,11 +17,6 @@ from app.devices.services import health as device_health
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.intent_types import (
-    CommandKind,
-    IntentRegistration,
-    failure_stop_sources,
-)
 from app.devices.services.lifecycle_policy_state import (
     clear_deferred_stop,
     loaded_node,
@@ -82,13 +76,15 @@ class LifecyclePolicyService:
         self._review = review
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
-        device, _current_state, run, entry, early = await self._evaluate_recovery_guards(
+        device, _current_state, run, _entry, early = await self._evaluate_recovery_guards(
             db, device, source=source, reason=reason
         )
         if early is not None:
             return early
 
-        await remediation_log.append_action(db, device.id, source=source, action="recovery_started")
+        await remediation_log.append_action(
+            db, device.id, source=source, action=remediation_log.ACTION_RECOVERY_STARTED
+        )
 
         node = loaded_node(device)
         operational_state = await derive_operational_state(db, device, now=now_utc())
@@ -97,8 +93,8 @@ class LifecyclePolicyService:
         # process is gone but the ``appium_reconciler`` has not yet cleared the
         # dead ``pid``/``active_connection_target`` (observed state is eventually
         # consistent, lagging up to one reconciler interval). Trusting it would
-        # short-circuit the start path below — skipping the revoke of the
-        # blocking ``health_failure:node`` stop intent — and strand the device in
+        # short-circuit the start path below — skipping the reconcile that applies
+        # the START directive over the stop directive — and strand the device in
         # backoff until the stale observation happens to clear. Treat it as not
         # running and (re)assert the node start.
         stale_offline_observation = (
@@ -108,7 +104,7 @@ class LifecyclePolicyService:
         if node is None or not node.observed_running or stale_offline_observation:
             started_node = True
             try:
-                await self._register_recovery_start_intents(db, device, run=run, entry=entry, reason=reason)
+                await self._ensure_recovery_node_row(db, device)
             except NodeManagerError as exc:
                 return await self._record_recovery_node_start_failure(db, device, exc=exc, source=source, run=run)
 
@@ -148,8 +144,14 @@ class LifecyclePolicyService:
 
         return await self._finalize_recovery_success(db, device, source=source, reason=reason)
 
-    async def _revoke_if_already_healthy(
-        self, db: AsyncSession, device: Device, entry: DeviceReservation | None, *, reason: str
+    async def _reset_if_already_healthy(
+        self,
+        db: AsyncSession,
+        device: Device,
+        entry: DeviceReservation | None,
+        *,
+        source: str,
+        reason: str,
     ) -> bool:
         node = loaded_node(device)
         operational_state = await derive_operational_state(db, device, now=now_utc())
@@ -159,21 +161,14 @@ class LifecyclePolicyService:
             and operational_state not in (DeviceOperationalState.offline, DeviceOperationalState.verifying)
             and not run_reservation_service.reservation_entry_is_excluded(entry)
         ):
-            # Device is already healthy — recovery has nothing to start. Revoke
-            # the stale stop intents anyway: a transient connectivity blip can
-            # register a ``connectivity:{device_id}`` graceful-stop intent
-            # without ever flipping the device offline (``_stop_disconnected_node``
-            # only marks offline when the device is currently available). If the
-            # blip clears and we land here, the intent persists at priority 50
-            # forever, then a viability probe briefly holds a session, the
-            # session-safety downgrade pins ``deferred_stop=True``, and the
-            # device flaps offline every probe cycle. Mirrors the revoke that
-            # already fires in the start-node branch below.
-            await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id,
-                sources=failure_stop_sources(device.id),
-                publisher=self._publisher,
-            )
+            # Recovery has nothing to start. Supersede any leftover episode so a
+            # derived stop directive cannot re-apply after this healthy observation.
+            ladder = await remediation_log.load_ladder(db, device.id)
+            if ladder.episode_active:
+                await remediation_log.append_reset(
+                    db, device.id, source=source, action="already_healthy", reason=reason
+                )
+                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             return True
         return False
 
@@ -206,7 +201,7 @@ class LifecyclePolicyService:
             current_state = policy_state(device)
             operational_state = await derive_operational_state(db, device, now=now_utc())
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
-        if await self._revoke_if_already_healthy(db, device, entry, reason=reason):
+        if await self._reset_if_already_healthy(db, device, entry, source=source, reason=reason):
             return device, current_state, run, entry, False
         availability = await recovery_availability(db, device)
         if not availability.allowed:
@@ -216,9 +211,7 @@ class LifecyclePolicyService:
             return device, current_state, run, entry, False
         return device, current_state, run, entry, None
 
-    async def _register_recovery_start_intents(
-        self, db: AsyncSession, device: Device, *, run: TestRun | None, entry: DeviceReservation | None, reason: str
-    ) -> None:
+    async def _ensure_recovery_node_row(self, db: AsyncSession, device: Device) -> None:
         if device.host_id is None:
             raise NodeManagerError(f"Device {device.id} has no host assigned")
         if device.appium_node is None:
@@ -233,40 +226,7 @@ class LifecyclePolicyService:
             db.add(new_node)
             await db.flush()
             device.appium_node = new_node
-        await IntentService(db).revoke_intents_and_reconcile(
-            device_id=device.id,
-            sources=failure_stop_sources(device.id),
-            publisher=self._publisher,
-        )
-
-        # Recovery start intents are bounded by a DEADLINE (TTL) so the row self-expires:
-        # a just-started node must not be torn down before the device finishes verifying
-        # to ``available`` (recovery-suppressed-on-a-reachable-device regression). Mirrors
-        # ``exit_maintenance``.
-        startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
-        viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
-        recovery_intent_expiry = now() + timedelta(seconds=startup_timeout + viability_timeout + 60)
-
-        await IntentService(db).register_intents_and_reconcile(
-            device_id=device.id,
-            intents=[
-                # The health-failure reservation exclusion is written directly on the
-                # reservation row; run: routing derives from it. No stored twin needed.
-                IntentRegistration(
-                    source=f"auto_recovery:node:{device.id}",
-                    kind=CommandKind.auto_recovery_start,
-                    payload={"action": "start"},
-                    expires_at=recovery_intent_expiry,
-                ),
-                IntentRegistration(
-                    source=f"auto_recovery:recovery:{device.id}",
-                    kind=CommandKind.auto_recovery_allow,
-                    payload={"allowed": True, "reason": reason},
-                    expires_at=recovery_intent_expiry,
-                ),
-            ],
-            publisher=self._publisher,
-        )
+        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
         await db.commit()
         await db.refresh(device.appium_node)
 

@@ -17,7 +17,6 @@ from app.devices.models import (
     Device,
     DeviceEvent,
     DeviceEventType,
-    DeviceIntent,
     DeviceOperationalState,
     DeviceType,
 )
@@ -25,6 +24,7 @@ from app.devices.services.health import DeviceHealthService
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_policy_state import write_state
 from app.hosts.models import Host
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -83,6 +83,7 @@ async def _running_node(
         os_version="14",
         host_id=db_host.id,
         operational_state=DeviceOperationalState.available,
+        verified_at=now_utc(),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -144,7 +145,7 @@ async def test_fold_absent_node_preserves_health_state(db_session: AsyncSession,
     assert node.health_running is None
 
 
-async def test_fold_max_failures_registers_restart_intent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_fold_max_failures_commissions_restart_directive(db_session: AsyncSession, db_host: Host) -> None:
     device, node = await _running_node(db_session, db_host, name="Restart Phone", identity="nh-restart", port=4726)
     await _set_failure_count(db_session, node, 2)
 
@@ -154,18 +155,10 @@ async def test_fold_max_failures_registers_restart_intent(db_session: AsyncSessi
 
     await db_session.refresh(node)
     assert node.restart_requested_at is not None
-    intents = (
-        (
-            await db_session.execute(
-                select(DeviceIntent).where(
-                    DeviceIntent.device_id == device.id, DeviceIntent.source.like("auto_recovery:%")
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert len(intents) == 2
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == remediation_log.DIRECTIVE_START
+    assert ladder.node_directive.restart_watermark == node.restart_requested_at
 
 
 def _section_at(stamp: str, *entries: dict[str, object]) -> dict[str, object]:

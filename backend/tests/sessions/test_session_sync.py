@@ -314,8 +314,7 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
     """A dead session on a device with a held graceful-stop intent goes offline."""
-    from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import CommandKind, IntentRegistration
+    from app.lifecycle.services import remediation_log
 
     device = await _seed_device_with_node(
         db_session, db_host, identity_value="dead-stop", operational_state=DeviceOperationalState.busy
@@ -324,15 +323,12 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    await IntentService(db_session).register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop"},
-            ),
-        ],
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="session dead",
     )
     await db_session.commit()
 

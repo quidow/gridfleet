@@ -28,7 +28,6 @@ from app.devices.schemas.device import (
 )
 from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
 from app.devices.services import identity, lifecycle_policy_summary, link_repair
-from app.devices.services import intent as intent_service
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions.dependencies import SessionServicesDep
@@ -268,15 +267,6 @@ async def reconnect_device(
         device.session_viability_error = None
         try:
             await db.flush()
-            await intent_service.IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id,
-                sources=[
-                    f"connectivity:{device.id}",
-                    f"health_failure:node:{device.id}",
-                    f"health_failure:recovery:{device.id}",
-                ],
-                publisher=device_services.publisher,
-            )
             # Intent reconciliation briefly locks the device row. Commit before
             # the inline restart so maintenance/delete actions can still
             # preempt while the restart talks to the agent.

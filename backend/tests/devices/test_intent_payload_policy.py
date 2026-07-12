@@ -18,8 +18,9 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceReservation
+from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceRemediationLogEntry, DeviceReservation
 from app.lifecycle.services import policy as lifecycle_policy_module
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader, build_review_service
@@ -55,19 +56,14 @@ async def _get_intent(db: AsyncSession, device_id: uuid.UUID, *, prefix: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — health_failure:node:* payload shape
+# Test 1 — auto-stop commission action
 #
-# Producer: lifecycle_policy_actions._crash_intents() called via
-#           handle_health_failure → complete_auto_stop → handle_node_crash →
-#           register_intents_and_reconcile.
-#
-# Documented fields (intents.md, "health_failure:node:{device_id}"):
-#   - stop_mode: "graceful"   (intentional snapshot)
+# Producer: handle_health_failure → complete_auto_stop → handle_node_crash.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.db
-async def test_health_failure_intent_payload_shape(
+async def test_auto_stop_commission_action_shape(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -110,11 +106,15 @@ async def test_health_failure_intent_payload_shape(
     )
     assert result == "stopped"
 
-    intent = await _get_intent(db_session, device.id, prefix=f"health_failure:node:{device.id}")
-
-    # Slim payload per intents.md: graceful stop is implied by the command kind;
-    # no priority or stop_mode is stored.
-    assert intent.payload == {"action": "stop"}
+    entry = (
+        await db_session.execute(
+            select(DeviceRemediationLogEntry).where(
+                DeviceRemediationLogEntry.device_id == device.id,
+                DeviceRemediationLogEntry.action == remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+            )
+        )
+    ).scalar_one()
+    assert entry.reason == "ADB not responsive"
 
 
 # ---------------------------------------------------------------------------
@@ -254,17 +254,14 @@ async def test_operator_start_intent_payload_shape(
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — auto_recovery:node:* (lifecycle_policy path) omits desired_port
+# Test 4 — lifecycle recovery commission leaves no retired intent rows
 #
-# Producer: lifecycle_policy.attempt_auto_recovery (when node is stopped)
-#
-# Documented (intents.md, "auto_recovery:node:{device_id}" lifecycle_policy path):
-#   - (no extra fields) — desired_port was a Drop violation; removed in 864e6feb.
+# Producer: lifecycle_policy.attempt_auto_recovery (when node is stopped).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.db
-async def test_auto_recovery_intent_payload_omits_desired_port(
+async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -316,8 +313,14 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
         )
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 
-    intent = await _get_intent(db_session, device.id, prefix=f"auto_recovery:node:{device.id}")
-
-    # Slim payload per intents.md: action only. desired_port must never appear (the
-    # Drop violation removed in 864e6feb); priority and stop_mode are gone too.
-    assert intent.payload == {"action": "start"}
+    entries = (
+        (
+            await db_session.execute(
+                select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert any(entry.action == remediation_log.ACTION_RECOVERY_STARTED for entry in entries)
+    assert not any(entry.kind == "action" and entry.action.startswith("auto_recovery:") for entry in entries)

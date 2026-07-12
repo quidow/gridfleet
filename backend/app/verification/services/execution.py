@@ -19,10 +19,10 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     CommandKind,
     IntentRegistration,
-    failure_stop_sources,
     verification_intent_source,
 )
 from app.grid.allocation import node_target
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.operator_node import operator_start_source, operator_stop_sources
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
@@ -381,6 +381,12 @@ class VerificationExecutionService:
         )
 
         locked.verified_at = now_utc()
+        ladder = await remediation_log.load_ladder(db, locked.id)
+        if ladder.episode_active:
+            # Supersede the failure episode before the lease revoke: the revoke's
+            # inline reconcile must not re-derive the failure-stop rung on a device
+            # that just verified.
+            await remediation_log.append_reset(db, locked.id, source="verification", action="verification_passed")
         # Reconciler-authoritative terminal: no direct set_operational_state push. Set
         # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
         # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
@@ -538,19 +544,6 @@ async def _register_verification_node_intent(
     # background scan takes). register_intents_and_reconcile re-locks idempotently in
     # the same transaction.
     await device_locking.lock_device(db, device.id)
-    # Verification is an explicit re-qualification of the device. Like the operator
-    # start-node path (lifecycle/services/operator_node.request_start) and the
-    # lifecycle recovery policy, revoke any failure-driven stop intents first: a
-    # health-failure stop command outranks the verification node-start command in the
-    # decision ladder. Left in place,
-    # the reconciler resolves desired_state=stopped, the node never spawns, and
-    # node_start times out forever — stranding any device that is both unverified and
-    # carrying a health-failure stop (e.g. after an operator config edit clears
-    # verified_at on a device that had a health blip).
-    await intent_service.revoke_intents(
-        device_id=device.id,
-        sources=failure_stop_sources(device.id),
-    )
     await intent_service.register_intents_and_reconcile(
         device_id=device.id,
         intents=[
