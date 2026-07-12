@@ -1,6 +1,7 @@
 """Direct Appium HTTP operations (spec §6) — the only backend->Appium call site."""
 
 import functools
+import json
 import logging
 from http import HTTPStatus
 from typing import Any
@@ -115,3 +116,33 @@ async def create_session(
     if resp.is_success and isinstance(sid, str):
         return sid, None, False
     return None, str(value.get("message", f"status {resp.status_code}")), False
+
+
+async def create_session_raw(target: str, body: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+    """POST /session for the router flow with the client's serialized W3C body."""
+    try:
+        resp = await _get_client().post(
+            f"{target}/session",
+            content=body,
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+        )
+    except httpx.HTTPError as exc:
+        return 0, b"", str(exc)
+    return resp.status_code, resp.content, None
+
+
+def extract_session_id(body: bytes) -> str | None:
+    """Extract a W3C or legacy JSONWP session id from an Appium response."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get("value")
+    sid = value.get("sessionId") if isinstance(value, dict) else None
+    if isinstance(sid, str) and sid:
+        return sid
+    top = parsed.get("sessionId")
+    return top if isinstance(top, str) and top else None

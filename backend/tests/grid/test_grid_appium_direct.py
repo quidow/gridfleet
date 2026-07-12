@@ -164,3 +164,42 @@ async def test_get_client_pools_and_aclose_resets() -> None:
 
     # aclose() on an already-closed/absent client is a no-op.
     await appium_direct.aclose()
+
+
+async def test_create_session_raw_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json={"value": {"sessionId": "s-1", "capabilities": {"a": 1}}})
+
+    _patch_transport(monkeypatch, handler)
+    status, body, err = await appium_direct.create_session_raw(TARGET, b'{"capabilities":{}}', timeout=5.0)
+    assert (status, err) == (200, None)
+    assert appium_direct.extract_session_id(body) == "s-1"
+    assert seen[0].url.path == "/session"
+    assert seen[0].content == b'{"capabilities":{}}'
+    assert seen[0].headers["content-type"] == "application/json"
+
+
+async def test_create_session_raw_http_error_relays_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_transport(monkeypatch, lambda req: httpx.Response(500, json={"value": {"error": "session not created"}}))
+    status, body, err = await appium_direct.create_session_raw(TARGET, b"{}", timeout=5.0)
+    assert (status, err) == (500, None)
+    assert b"session not created" in body
+
+
+async def test_create_session_raw_transport_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    _patch_transport(monkeypatch, boom)
+    status, body, err = await appium_direct.create_session_raw(TARGET, b"{}", timeout=5.0)
+    assert status == 0 and body == b"" and err is not None
+
+
+def test_extract_session_id_shapes() -> None:
+    assert appium_direct.extract_session_id(b'{"value": {"sessionId": "x"}}') == "x"
+    assert appium_direct.extract_session_id(b'{"sessionId": "y"}') == "y"
+    assert appium_direct.extract_session_id(b'{"value": {}}') is None
+    assert appium_direct.extract_session_id(b"<html>boom</html>") is None
