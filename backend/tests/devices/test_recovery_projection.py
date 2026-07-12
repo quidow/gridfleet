@@ -13,9 +13,7 @@ from app.devices.services.lifecycle_policy_state import (
     CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     set_maintenance_reason,
-    write_state,
 )
-from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.recovery_projection import (
     RecoveryBlockKind,
     recovery_availability,
@@ -86,10 +84,14 @@ async def test_not_ready_blocks(db_session: AsyncSession, db_host: Host) -> None
 
 async def test_deferred_stop_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="stop-pending")
-    locked = await device_locking.lock_device(db_session, device.id)
-    state = policy_state(locked)
-    state["deferred_stop"] = True
-    write_state(locked, state)
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="probe failed",
+    )
+    db_session.add(Session(session_id="sess-deferred-projection", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
     result = await recovery_availability(db_session, device)
     assert (result.allowed, result.kind) == (False, RecoveryBlockKind.deferred_stop)

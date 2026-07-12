@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -111,6 +112,7 @@ async def test_force_release_clears_deferred_stop(
         db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
+    assert (await remediation_log.load_ladder(db_session, device.id)).deferred_stop_pending is True
 
     test_release = RunReleaseService(
         publisher=event_bus,
@@ -122,8 +124,7 @@ async def test_force_release_clears_deferred_stop(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert (await remediation_log.load_ladder(db_session, device.id)).deferred_stop_pending is False
 
 
 async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(

@@ -49,8 +49,8 @@ Module structure:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, Mock, patch
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -68,7 +68,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
-    from app.runs.models import TestRun
 
 pytestmark = pytest.mark.asyncio
 
@@ -145,168 +144,3 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
 
     failure_pairs = {(row.source, row.reason) for row in rows if row.kind == "failure"}
     assert failure_pairs == set(inputs)
-
-
-# ---------------------------------------------------------------------------
-# Deterministic reproducer (stale-overwrite race — should FAIL today)
-# ---------------------------------------------------------------------------
-
-
-async def test_concurrent_health_failure_stale_overwrite(
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Deterministic stale-overwrite reproducer for the R4 race.
-
-    Without a row-level lock in record_control_action / write_state the RMW
-    window inside handle_health_failure spans from the initial
-    ``policy_state(device)`` read to the final ``write_state`` commit.
-
-    This test widens that window deterministically by patching
-    ``lifecycle_policy_actions.record_auto_stopped_incident`` so that writer A
-    sleeps until writer B has fully committed.  Writer A then commits its stale
-    dict — overwriting writer B's more recent values.
-
-    Expected outcome WITHOUT row lock (today):
-      Writer A's commit clobbers writer B's committed src-b/reason-b with
-      writer A's stale src-a/reason-a.  The assertion catches this.
-
-    Expected outcome WITH row lock (after Task 9):
-      Writer A holds a SELECT FOR UPDATE from its read to its commit.
-      Writer B's read blocks at the DB level until A commits.  The two writes
-      are serialized; the final state is whichever writer commits last, but
-      both source/reason pairs reflect a single writer's intent.
-
-    Implementation note:
-      We patch ``lifecycle_policy_actions.record_auto_stopped_incident`` via a
-      wrapper that — for the FIRST call only — signals the barrier and awaits
-      writer B.  Since asyncio is single-threaded, the await inside the wrapper
-      genuinely yields control to writer B.  The patch is applied at the
-      callsite in writer A's context.
-    """
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="rmw-stale-target",
-        operational_state=DeviceOperationalState.offline,
-    )
-    await db_session.commit()
-    device_id = device.id
-
-    # Synchronisation events between the two writers.
-    a_about_to_write = asyncio.Event()
-    b_has_committed = asyncio.Event()
-
-    # Track whether the barrier was actually reached.
-    barrier_entered = False
-
-    # We need to pause writer A between its current_state construction and its
-    # write_state call.  The most natural injection point is to wrap
-    # ``record_auto_stopped_incident`` (called at the end of complete_auto_stop)
-    # since it runs right before the final commit.
-    #
-    # record_auto_stopped_incident is now a method on LifecyclePolicyActionsService,
-    # so we patch it at the class level so all instances are affected.
-    original_record_auto_stopped = LifecyclePolicyActionsService.record_auto_stopped_incident
-    first_call_done = False
-
-    async def barrier_record_auto_stopped(
-        self: LifecyclePolicyActionsService,
-        db: AsyncSession,
-        device_arg: Device,
-        next_state: dict[str, Any],
-        *,
-        run: TestRun | None,
-        reason: str,
-        source: str,
-        detail: str,
-    ) -> None:
-        nonlocal barrier_entered, first_call_done
-        if not first_call_done:
-            first_call_done = True
-            # Signal writer A is about to write its state.
-            a_about_to_write.set()
-            # Wait for writer B to fully commit before proceeding.
-            await b_has_committed.wait()
-            barrier_entered = True
-        await original_record_auto_stopped(
-            self, db, device_arg, next_state, run=run, reason=reason, source=source, detail=detail
-        )
-
-    async def writer_a() -> None:
-        async with db_session_maker() as session:
-            stmt = select(Device).where(Device.id == device_id)
-            device_obj = (await session.execute(stmt)).scalar_one()
-            svc = LifecyclePolicyService(
-                review=build_review_service(),
-                publisher=event_bus,
-                settings=FakeSettingsReader({}),
-                actions=LifecyclePolicyActionsService(
-                    publisher=event_bus,
-                    reservation=RunReservationService(review=build_review_service()),
-                    incidents=LifecycleIncidentService(),
-                ),
-                incidents=LifecycleIncidentService(),
-                viability=Mock(),
-                node_manager=AsyncMock(),
-            )
-            with patch.object(
-                LifecyclePolicyActionsService, "record_auto_stopped_incident", barrier_record_auto_stopped
-            ):
-                await svc.handle_health_failure(
-                    session,
-                    device_obj,
-                    source="src-a",
-                    reason="reason-a",
-                )
-
-    async def writer_b() -> None:
-        # Wait until writer A is paused at the barrier.
-        await a_about_to_write.wait()
-        async with db_session_maker() as session:
-            stmt = select(Device).where(Device.id == device_id)
-            device_obj = (await session.execute(stmt)).scalar_one()
-            # Writer B runs without any patching; commits normally.
-            svc = LifecyclePolicyService(
-                review=build_review_service(),
-                publisher=event_bus,
-                settings=FakeSettingsReader({}),
-                actions=LifecyclePolicyActionsService(
-                    publisher=event_bus,
-                    reservation=RunReservationService(review=build_review_service()),
-                    incidents=LifecycleIncidentService(),
-                ),
-                incidents=LifecycleIncidentService(),
-                viability=Mock(),
-                node_manager=AsyncMock(),
-            )
-            await svc.handle_health_failure(
-                session,
-                device_obj,
-                source="src-b",
-                reason="reason-b",
-            )
-        # Signal writer A that B has committed.
-        b_has_committed.set()
-
-    await asyncio.gather(writer_a(), writer_b())
-
-    assert barrier_entered, (
-        "The barrier inside barrier_record_auto_stopped was never reached — "
-        "complete_auto_stop was refactored and the injection point is no longer valid."
-    )
-
-    async with db_session_maker() as verify:
-        rows = (
-            (
-                await verify.execute(
-                    select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device_id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-
-    failure_pairs = {(row.source, row.reason) for row in rows if row.kind == "failure"}
-    assert {("src-a", "reason-a"), ("src-b", "reason-b")} <= failure_pairs

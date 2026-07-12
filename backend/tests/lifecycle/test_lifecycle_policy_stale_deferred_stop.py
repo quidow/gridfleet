@@ -1,23 +1,22 @@
-"""D4: stale deferred_stop on offline device must not trap recovery."""
+"""Successor semantics for remediation-log-derived deferred stops."""
 
 from datetime import UTC, datetime
-from functools import partial
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import select
 
-from app.appium_nodes.models import AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services.intent import IntentService
+from app.devices.models import DeviceOperationalState
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
+from app.devices.services.recovery_projection import RecoveryBlockKind, recovery_availability
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from app.lifecycle.services.policy import LifecyclePolicyService
+from app.lifecycle.services.policy import DeferredStopOutcome, LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
+from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -28,163 +27,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
-async def _mark_device_available(
-    db: AsyncSession,
-    *,
-    device_id: object,
-    intents: object,
-    **kwargs: object,
-) -> None:
-    """Marks the device available and simulates the reconciler bringing the
-    node up so wait_for_node_running in attempt_auto_recovery exits on its
-    first poll instead of blocking for its full 60s timeout."""
-    del intents, kwargs
-    device = await db.get(Device, device_id)
-    assert device is not None
-    device.operational_state_last_emitted = DeviceOperationalState.available
-    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
-    if node is not None:
-        node.pid = 12345
-        node.active_connection_target = "127.0.0.1:4723"
-
-
-async def test_stale_deferred_stop_cleared_so_recovery_can_proceed(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """D4: offline device with deferred_stop=true and no running session must recover.
-
-    Before the fix, attempt_auto_recovery suppresses with
-    "Waiting for active client session to finish" and the device is
-    permanently stuck offline.
-    """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="stale-stop-pending-1",
-        connection_target="stale-stop-pending-1",
-        name="Stale Stop Pending Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "deferred_stop": True,
-            "deferred_stop_reason": "Health probe failed",
-            "deferred_stop_since": "2026-05-09T12:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "Probe failed",
-            "recovery_suppressed_reason": None,
-        },
-    )
-    db_session.add(device)
-    await db_session.commit()
-
-    # No Session row exists — this is the stale case (session already gone).
-    # Patch start_managed_node and the viability probe to success so the
-    # recovery path can complete past the stale-clear.
-    probe_mock = AsyncMock(
-        return_value={
-            "status": "passed",
-            "last_attempted_at": datetime.now(UTC).isoformat(),
-            "last_succeeded_at": datetime.now(UTC).isoformat(),
-            "error": None,
-            "checked_by": "recovery",
-        }
-    )
-    viability = AsyncMock()
-    viability.run_session_viability_probe = probe_mock
-    with patch.object(
-        IntentService,
-        "register_intents_and_reconcile",
-        new=AsyncMock(side_effect=partial(_mark_device_available, db_session)),
-    ):
-        recovered = await LifecyclePolicyService(
-            review=build_review_service(),
-            publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            actions=LifecyclePolicyActionsService(
-                publisher=event_bus,
-                reservation=RunReservationService(review=build_review_service()),
-                incidents=LifecycleIncidentService(),
-            ),
-            incidents=LifecycleIncidentService(),
-            viability=viability,
-            node_manager=AsyncMock(),
-        ).attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_checks",
-            reason="Reconnected",
-        )
-
-    await db_session.refresh(device)
-    policy = await build_lifecycle_policy(db_session, device)
-
-    # deferred_stop must be cleared — device should not be stuck suppressed.
-    assert policy.get("deferred_stop") is False, "deferred_stop must be cleared by recovery"
-    assert policy.get("deferred_stop_reason") is None
-
-    # The device should NOT be stuck on the deferred_stop suppression branch.
-    assert policy.get("recovery_suppressed_reason") != "Waiting for active client session to finish", (
-        "Recovery must not suppress with deferred_stop reason when there is no running session"
-    )
-
-    # Recovery should have succeeded (device is now available after our mock).
-    assert recovered is True, "Recovery should proceed and succeed when deferred_stop is stale"
-
-
-async def test_deferred_stop_not_cleared_when_live_session_exists(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """D4 negative path: deferred_stop must NOT be cleared while a client session is running.
-
-    When a live Session row exists the stale-clear guard should be skipped and
-    attempt_auto_recovery must return False with the deferred_stop suppression reason.
-    """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="stale-stop-pending-2",
-        connection_target="stale-stop-pending-2",
-        name="Live Session Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "deferred_stop": True,
-            "deferred_stop_reason": "Health probe failed",
-            "deferred_stop_since": "2026-05-09T12:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "Probe failed",
-            "recovery_suppressed_reason": None,
-        },
-    )
-    db_session.add(device)
-    await db_session.flush()
-
-    # A live client session is still running — deferred_stop is NOT stale.
-    live_session = Session(
-        session_id="sess-live-stop-pending",
-        device_id=device.id,
-        status=SessionStatus.running,
-    )
-    db_session.add(live_session)
-    await db_session.commit()
-
-    recovered = await LifecyclePolicyService(
+def _service() -> LifecyclePolicyService:
+    return LifecyclePolicyService(
         review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
@@ -196,20 +40,131 @@ async def test_deferred_stop_not_cleared_when_live_session_exists(
         incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
-    ).attempt_auto_recovery(
-        db_session,
-        device,
-        source="device_checks",
-        reason="Reconnected",
     )
 
-    await db_session.refresh(device)
+
+async def test_health_failure_derives_pending_stop_and_policy_view(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="deferred-device",
+        operational_state=DeviceOperationalState.busy,
+    )
+    db_session.add(Session(session_id="live-session", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+
+    assert (
+        await _service().handle_health_failure(db_session, device, source="device_checks", reason="probe failed")
+        == "deferred"
+    )
+
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.deferred_stop_pending is True
+    assert ladder.deferred_stop_reason == "probe failed"
+    assert ladder.deferred_stop_since is not None
     policy = await build_lifecycle_policy(db_session, device)
+    assert policy["deferred_stop"] is True
+    assert policy["deferred_stop_reason"] == "probe failed"
 
-    # deferred_stop must still be set — the live session guards it.
-    assert policy.get("deferred_stop") is True, "deferred_stop must not be cleared while a session is running"
 
-    # The deferred stop is surfaced as "waiting for session end", not a cleared/idle state.
-    assert policy.get("recovery_state") == "waiting_for_session_end"
+async def test_session_end_completes_derived_deferred_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="deferred-session-end",
+        operational_state=DeviceOperationalState.busy,
+    )
+    session = Session(session_id="ending-session", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+    assert (
+        await _service().handle_health_failure(db_session, device, source="device_checks", reason="probe failed")
+        == "deferred"
+    )
 
-    assert recovered is False, "attempt_auto_recovery must return False when deferred_stop is guarded by a live session"
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+    outcome = await _service().handle_session_finished(db_session, device)
+
+    assert outcome is DeferredStopOutcome.AUTO_STOPPED
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.deferred_stop_pending is False
+    assert ladder.last_action == remediation_log.ACTION_AUTO_STOPPED
+
+
+async def test_deferred_stop_is_live_session_gated_in_recovery_projection(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="projection-gated")
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="probe failed",
+    )
+    await db_session.commit()
+
+    assert (await recovery_availability(db_session, device, ready=True)).allowed is True
+    db_session.add(Session(session_id="projection-session", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    blocked = await recovery_availability(db_session, device, ready=True)
+    assert blocked.allowed is False
+    assert blocked.kind is RecoveryBlockKind.deferred_stop
+
+
+async def test_clear_pending_auto_stop_appends_action_without_explicit_action(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="clear-pending")
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="probe failed",
+    )
+    await db_session.commit()
+
+    cleared = await _service().clear_pending_auto_stop_on_recovery(
+        db_session,
+        device,
+        source="node_health",
+        reason="recovered",
+        record_incident=False,
+    )
+    await db_session.commit()
+
+    assert cleared is True
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.deferred_stop_pending is False
+    assert ladder.last_action == remediation_log.ACTION_AUTO_STOP_CLEARED
+
+
+async def test_reset_supersedes_pending_deferred_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="reset-pending")
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="probe failed",
+    )
+    await remediation_log.append_reset(
+        db_session, device.id, source="device_checks", action="self_healed", reason="recovered"
+    )
+
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.deferred_stop_pending is False

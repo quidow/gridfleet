@@ -26,7 +26,6 @@ from app.devices.services.intent_reconciler import gather_decision_facts
 from app.devices.services.lifecycle_policy_state import (
     CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
 )
-from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.readiness import is_ready_for_use_async
 from app.lifecycle.services import remediation_log
 from app.sessions.live_session_predicate import device_has_live_session
@@ -80,6 +79,7 @@ async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one retu
     # list path passes ``ready`` from its batched readiness so the pack catalog is not
     # reloaded per row; the remaining per-row queries are indexed and cheap at lab scale.
     now = now or now_utc()
+    ladder = await remediation_log.load_ladder(db, device.id)
     if device.review_required:
         return RecoveryAvailability(
             False,
@@ -89,7 +89,7 @@ async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one retu
 
     stored = (await db.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
     commands = [c for c in (parse_command(row, now) for row in stored) if c is not None]
-    facts = await gather_decision_facts(db, device, now)
+    facts = await gather_decision_facts(db, device, now, ladder=ladder)
     decision = decide_recovery(commands, facts)
     if not decision.allowed:
         return RecoveryAvailability(
@@ -103,16 +103,15 @@ async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one retu
     if not ready:
         return RecoveryAvailability(False, "Device setup or verification is incomplete", RecoveryBlockKind.not_ready)
 
-    state = policy_state(device)
-    if state.get("deferred_stop"):
+    live = await device_has_live_session(db, device.id)
+    if ladder.deferred_stop_pending and live:
         return RecoveryAvailability(
             False, "Waiting for active client session to finish", RecoveryBlockKind.deferred_stop
         )
 
-    if await device_has_live_session(db, device.id):
+    if live:
         return RecoveryAvailability(False, CLIENT_SESSION_RUNNING_SUPPRESSION_REASON, RecoveryBlockKind.session)
 
-    ladder = await remediation_log.load_ladder(db, device.id)
     deadline = ladder.backoff_active(now=now)
     if deadline is not None:
         return RecoveryAvailability(False, f"Backing off until {deadline.isoformat()}", RecoveryBlockKind.backoff)

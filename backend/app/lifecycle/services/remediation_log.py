@@ -138,9 +138,11 @@ def build_policy_view(ladder: LadderState, raw: dict[str, Any] | None) -> dict[s
     base = raw if isinstance(raw, dict) else {}
     return {
         "maintenance_reason": base.get("maintenance_reason"),
-        "deferred_stop": bool(base.get("deferred_stop", False)),
-        "deferred_stop_reason": base.get("deferred_stop_reason"),
-        "deferred_stop_since": base.get("deferred_stop_since"),
+        "deferred_stop": ladder.deferred_stop_pending,
+        "deferred_stop_reason": ladder.deferred_stop_reason,
+        "deferred_stop_since": (
+            ladder.deferred_stop_since.isoformat() if ladder.deferred_stop_since is not None else None
+        ),
         "backoff_until": ladder.backoff_until.isoformat() if ladder.backoff_until is not None else None,
         "recovery_backoff_attempts": ladder.attempts,
         "last_failure_source": ladder.last_failure_source,

@@ -18,6 +18,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.service import DeviceCrudService
+from app.lifecycle.services import remediation_log
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService
@@ -1202,17 +1203,13 @@ async def test_device_detail_surfaces_lifecycle_policy_summary(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    device.lifecycle_policy_state = {
-        "last_failure_reason": "ADB not responsive",
-        "last_action": "auto_stop_deferred",
-        "last_action_at": "2026-03-30T10:00:00+00:00",
-        "deferred_stop": True,
-        "deferred_stop_reason": "ADB not responsive",
-        "deferred_stop_since": "2026-03-30T10:00:00+00:00",
-        "recovery_suppressed_reason": None,
-        "backoff_until": None,
-        "recovery_backoff_attempts": 0,
-    }
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="ADB not responsive",
+    )
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device_id}")

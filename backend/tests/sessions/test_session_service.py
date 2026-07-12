@@ -15,6 +15,7 @@ from app.devices.models import (
     DeviceReservation,
     DeviceType,
 )
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -190,8 +191,7 @@ async def test_update_session_status_clears_deferred_stop(
     )
     assert result == "deferred"
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state["deferred_stop"] is True
+    assert (await remediation_log.load_ladder(db_session, device.id)).deferred_stop_pending is True
 
     crud = SessionCrudService(publisher=Mock(), lifecycle=_make_real_lifecycle())
     updated = await crud.update_session_status(db_session, "sess-stuck-stop-1", SessionStatus.passed)
@@ -200,8 +200,7 @@ async def test_update_session_status_clears_deferred_stop(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False, (
+    assert (await remediation_log.load_ladder(db_session, device.id)).deferred_stop_pending is False, (
         "update_session_status must clear deferred_stop after the last session ends"
     )
 
@@ -260,8 +259,7 @@ async def test_update_session_status_clears_deferred_stop_on_non_busy_device(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False, (
+    assert (await remediation_log.load_ladder(db_session, device.id)).deferred_stop_pending is False, (
         "update_session_status must clear deferred_stop even when device availability is no longer busy"
     )
 

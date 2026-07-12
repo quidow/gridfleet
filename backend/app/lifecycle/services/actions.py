@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
@@ -11,11 +11,6 @@ from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.intent import IntentService
-from app.devices.services.lifecycle_policy_state import (
-    clear_deferred_stop,
-    write_state,
-)
-from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
 from app.lifecycle.services import remediation_log
@@ -55,7 +50,6 @@ class LifecyclePolicyActionsService:
         self,
         db: AsyncSession,
         device: Device,
-        next_state: dict[str, Any],
         *,
         reason: str,
         source: str,
@@ -69,13 +63,9 @@ class LifecyclePolicyActionsService:
             source=source,
             reason=reason,
         )
-        next_state["deferred_stop"] = False
-        next_state["deferred_stop_reason"] = None
-        next_state["deferred_stop_since"] = None
         await self.record_auto_stopped_incident(
             db,
             device,
-            next_state,
             run=run,
             reason=reason,
             source=source,
@@ -256,24 +246,15 @@ class LifecyclePolicyActionsService:
         self,
         db: AsyncSession,
         device: Device,
-        next_state: dict[str, Any],
         *,
         run: TestRun | None,
         reason: str,
         source: str,
         detail: str,
     ) -> None:
-        device = await _lock_for_state_write(db, device)
-        # Preserve any state mutations committed by concurrent writers between
-        # our caller's read and our write.  ``deferred_stop*`` is the only field
-        # this call site explicitly resets, so we carry that forward from
-        # ``next_state`` (the caller already set it to ``False``).
-        fresh = policy_state(device)
-        fresh["deferred_stop"] = next_state.get("deferred_stop", False)
-        fresh["deferred_stop_reason"] = next_state.get("deferred_stop_reason")
-        fresh["deferred_stop_since"] = next_state.get("deferred_stop_since")
-        write_state(device, fresh)
-        await remediation_log.append_action(db, device.id, source=source, action="auto_stopped", reason=reason)
+        await remediation_log.append_action(
+            db, device.id, source=source, action=remediation_log.ACTION_AUTO_STOPPED, reason=reason
+        )
         await self._incidents.record_lifecycle_incident(
             db,
             device,
@@ -302,10 +283,6 @@ class LifecyclePolicyActionsService:
         the escalation enters maintenance; the maintenance hold itself drives the
         projected "Recovery Paused" badge, so no stored suppression is written.
         """
-        device = await _lock_for_state_write(db, device)
-        fresh = policy_state(device)
-        clear_deferred_stop(fresh)
-        write_state(device, fresh)
         await remediation_log.append_reset(db, device.id, source=source, action=action)
         await remediation_log.append_failure(db, device.id, source=source, reason=reason)
 

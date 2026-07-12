@@ -156,7 +156,7 @@ def test_backoff_active_returns_only_future_deadline() -> None:
     assert LadderState(1, now, None, None, None, None).backoff_active(now=now) is None
 
 
-def test_build_policy_view_preserves_json_keys_and_serializes_datetimes() -> None:
+def test_build_policy_view_derives_retired_keys_and_serializes_datetimes() -> None:
     at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
     deadline = at + timedelta(seconds=10)
     ladder = LadderState(2, deadline, "node_health", "failed", "recovery_failed", at)
@@ -185,6 +185,9 @@ def test_build_policy_view_preserves_json_keys_and_serializes_datetimes() -> Non
     }
     assert view["backoff_until"] == deadline.isoformat()
     assert view["last_action_at"] == at.isoformat()
+    assert view["deferred_stop"] is False
+    assert view["deferred_stop_reason"] is None
+    assert view["deferred_stop_since"] is None
     assert build_policy_view(LadderState(0, None, None, None, None, None), None)["deferred_stop"] is False
 
 

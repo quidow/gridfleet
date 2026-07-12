@@ -85,6 +85,18 @@ def _allow_recovery() -> AsyncMock:
     return AsyncMock(return_value=RecoveryAvailability(True, None, None))
 
 
+async def _append_deferred_stop(
+    db: AsyncSession, device: Device, *, reason: str = "ADB not responsive", source: str = "node_health"
+) -> None:
+    await remediation_log.append_action(
+        db,
+        device.id,
+        source=source,
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason=reason,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0, raising=False)
@@ -826,9 +838,8 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
     )
     assert result == "deferred"
 
-    await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state["deferred_stop"] is True
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.deferred_stop_pending is True
 
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
@@ -838,11 +849,9 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
     assert reloaded is not None
     stopped = await _make_svc(publisher=Mock()).handle_session_finished(db_session, reloaded)
 
-    await db_session.refresh(reloaded)
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).deferred_stop_pending is False
 
 
 async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
@@ -955,17 +964,20 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     )
     db_session.add(run)
     await db_session.commit()
+    await _append_deferred_stop(db_session, device)
 
     policy = await build_lifecycle_policy(db_session, device)
     summary = build_lifecycle_policy_summary(policy)
     assert summary["state"] == "deferred_stop"
     assert summary["label"] == "Stopping Soon"
 
-    device.lifecycle_policy_state = {
-        **(device.lifecycle_policy_state or {}),
-        "deferred_stop": False,
-        "deferred_stop_reason": None,
-    }
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_AUTO_STOP_CLEARED,
+        reason="recovered",
+    )
     await db_session.commit()
 
     policy = await build_lifecycle_policy(db_session, device)
@@ -1019,6 +1031,8 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
     db_session.add(device)
     await db_session.commit()
 
+    await _append_deferred_stop(db_session, device, reason="ADB not responsive")
+
     cleared = await _make_svc().clear_pending_auto_stop_on_recovery(
         db_session,
         device,
@@ -1030,10 +1044,7 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
-    assert reloaded.lifecycle_policy_state["deferred_stop_reason"] is None
-    assert reloaded.lifecycle_policy_state["deferred_stop_since"] is None
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).deferred_stop_pending is False
 
     incident_stmt = select(DeviceEvent).where(
         DeviceEvent.device_id == device.id,
@@ -1116,6 +1127,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     )
     db_session.add(device)
     await db_session.flush()
+    await _append_deferred_stop(db_session, device)
     node = AppiumNode(
         device_id=device.id,
         port=4781,
@@ -1149,8 +1161,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     assert stopped is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
     await db_session.refresh(reloaded)
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).deferred_stop_pending is False
     # last_action must be refreshed so the audit trail does not show a stale
     # ``auto_stop_deferred`` after the intent was cleared by the healthy
     # session-end branch (see ``clear_pending_auto_stop_on_recovery``).
@@ -1192,6 +1203,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     )
     db_session.add(device)
     await db_session.flush()
+    await _append_deferred_stop(db_session, device)
     await db_session.commit()
 
     _health_svc = DeviceHealthService(publisher=event_bus)
@@ -1212,8 +1224,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
 
     await db_session.refresh(reloaded)
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).deferred_stop_pending is False
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline  # complete_auto_stop ran
 
 
@@ -1246,6 +1257,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     )
     db_session.add(device)
     await db_session.flush()
+    await _append_deferred_stop(db_session, device, reason="Disconnected", source="device_checks")
     # Node already stopped - even if health checks read healthy, complete_auto_stop must still run.
     node = AppiumNode(
         device_id=device.id,
@@ -1269,8 +1281,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
 
     await db_session.refresh(reloaded)
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).deferred_stop_pending is False
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.offline
 
 
@@ -1418,6 +1429,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     )
     db_session.add(device)
     await db_session.flush()
+    await _append_deferred_stop(db_session, device)
     new_session = Session(
         session_id="sess-toctou-fresh",
         device_id=device.id,
@@ -1432,10 +1444,10 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     assert outcome is DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
     await db_session.refresh(reloaded)
-    assert reloaded.lifecycle_policy_state is not None
-    # State must be untouched because we bailed before doing any work.
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is True
-    assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_deferred"
+    # The log must be untouched because we bailed before doing any work.
+    ladder = await remediation_log.load_ladder(db_session, reloaded.id)
+    assert ladder.deferred_stop_pending is True
+    assert ladder.last_action == remediation_log.ACTION_AUTO_STOP_DEFERRED
     # Device must still be busy — caller (session_sync) leaves the new session in charge.
     assert reloaded.operational_state_last_emitted == DeviceOperationalState.busy
 
@@ -1475,6 +1487,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     )
     db_session.add(device)
     await db_session.flush()
+    await _append_deferred_stop(db_session, device, reason="ADB hung")
     node = AppiumNode(
         device_id=device.id,
         port=4795,
@@ -1512,8 +1525,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
     await db_session.refresh(reloaded)
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).deferred_stop_pending is False
     ladder = await remediation_log.load_ladder(db_session, reloaded.id)
     assert ladder.last_action == "auto_stop_cleared"
     # last_failure_* is preserved (historical) but no longer drives behavior.
@@ -1620,9 +1632,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
         appium_node=None,
     )
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
-    )
     append_failure = AsyncMock()
     monkeypatch.setattr(lifecycle_policy_module.remediation_log, "append_failure", append_failure)
     incident = AsyncMock()
@@ -1678,9 +1687,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     monkeypatch.setattr(LifecyclePolicyActionsService, "restore_run_if_needed", mock_restore_run)
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
     monkeypatch.setattr(
-        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
-    )
-    monkeypatch.setattr(
         LifecycleIncidentService,
         "record_lifecycle_incident",
         AsyncMock(),
@@ -1729,7 +1735,6 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     db = AsyncMock()
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
     monkeypatch.setattr(lifecycle_policy_module, "policy_state", lambda _device: {})
-    monkeypatch.setattr(lifecycle_policy_module, "write_state", lambda _device, state: setattr(_device, "state", state))
     monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
@@ -1813,11 +1818,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     db = FakeDb()
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        lifecycle_policy_module,
-        "write_state",
-        lambda target, state: setattr(target, "lifecycle_policy_state", dict(state)),
-    )
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
     monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
     monkeypatch.setattr(

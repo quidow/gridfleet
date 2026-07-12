@@ -17,16 +17,8 @@ from app.devices.services import health as device_health
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.lifecycle_policy_state import (
-    clear_deferred_stop,
-    loaded_node,
-    now,
-    set_deferred_stop,
-    write_state,
-)
-from app.devices.services.lifecycle_policy_state import (
-    state as policy_state,
-)
+from app.devices.services.lifecycle_policy_state import loaded_node, now
+from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.recovery_projection import recovery_availability
 from app.devices.services.state import derive_operational_state
 from app.lifecycle.services import remediation_log
@@ -76,9 +68,7 @@ class LifecyclePolicyService:
         self._review = review
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
-        device, _current_state, run, _entry, early = await self._evaluate_recovery_guards(
-            db, device, source=source, reason=reason
-        )
+        device, run, _entry, early = await self._evaluate_recovery_guards(db, device, source=source, reason=reason)
         if early is not None:
             return early
 
@@ -174,42 +164,18 @@ class LifecyclePolicyService:
 
     async def _evaluate_recovery_guards(
         self, db: AsyncSession, device: Device, *, source: str, reason: str
-    ) -> tuple[Device, dict[str, Any], TestRun | None, DeviceReservation | None, bool | None]:
+    ) -> tuple[Device, TestRun | None, DeviceReservation | None, bool | None]:
         device = await _reload_device(db, device)
-        current_state = policy_state(device)
-        operational_state = await derive_operational_state(db, device, now=now_utc())
-        # D4: a stale ``deferred_stop`` traps the device permanently when nothing
-        # else clears it (no session row to fire ``handle_session_finished``).
-        # Clear it BEFORE consulting availability — otherwise the projection would
-        # block on RecoveryBlockKind.deferred_stop and re-trap the device (the D4 bug).
-        if current_state.get("deferred_stop") and (
-            operational_state == DeviceOperationalState.offline
-            or not await self._actions.has_running_client_session(db, device.id)
-        ):
-            await self.clear_pending_auto_stop_on_recovery(
-                db,
-                device,
-                source=current_state.get("last_failure_source") or source,
-                reason="Cleared stale deferred stop before recovery",
-                action="auto_stop_cleared",
-                record_incident=False,
-            )
-            # Reload because the helper internally re-locks via _reload_device, returning a
-            # different Device instance — our local reference is stale even though the writes
-            # are already visible in the SQLAlchemy session.
-            device = await _reload_device(db, device)
-            current_state = policy_state(device)
-            operational_state = await derive_operational_state(db, device, now=now_utc())
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         if await self._reset_if_already_healthy(db, device, entry, source=source, reason=reason):
-            return device, current_state, run, entry, False
+            return device, run, entry, False
         availability = await recovery_availability(db, device)
         if not availability.allowed:
             logger.info(
                 "auto-recovery blocked for device %s: %s (%s)", device.id, availability.reason, availability.kind
             )
-            return device, current_state, run, entry, False
-        return device, current_state, run, entry, None
+            return device, run, entry, False
+        return device, run, entry, None
 
     async def _ensure_recovery_node_row(self, db: AsyncSession, device: Device) -> None:
         if device.host_id is None:
@@ -306,7 +272,6 @@ class LifecyclePolicyService:
         await self._actions.complete_auto_stop(
             db,
             device,
-            policy_state(device),
             reason=failure_reason,
             source="session_viability",
             detail="Manager stopped the device after a failed recovery viability probe",
@@ -431,7 +396,6 @@ class LifecyclePolicyService:
 
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
         device = await _reload_device(db, device)
-        current_state = policy_state(device)
         await remediation_log.append_failure(db, device.id, source=source, reason=reason)
 
         if policy_state(device).get("maintenance_reason") is not None:
@@ -442,10 +406,12 @@ class LifecyclePolicyService:
             return "suppressed"
 
         if await self._actions.has_running_client_session(db, device.id):
-            set_deferred_stop(current_state, reason=reason)
-            write_state(device, current_state)
             await remediation_log.append_action(
-                db, device.id, source=source, action="auto_stop_deferred", reason=reason
+                db,
+                device.id,
+                source=source,
+                action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+                reason=reason,
             )
             await self._incidents.record_lifecycle_incident(
                 db,
@@ -464,7 +430,6 @@ class LifecyclePolicyService:
         await self._actions.complete_auto_stop(
             db,
             device,
-            current_state,
             reason=reason,
             source=source,
             detail="Manager stopped the device automatically after a lifecycle failure",
@@ -474,21 +439,13 @@ class LifecyclePolicyService:
     async def handle_session_finished(self, db: AsyncSession, device: Device) -> DeferredStopOutcome:
         device = await _reload_device(db, device)
         # Re-run intent reconciliation now that the session has ended. A previous
-        # reconcile may have held a graceful-stop intent because the session was
+        # reconcile may have held a graceful-stop directive because the session was
         # running (see ``intent_reconciler.reconcile_device`` session-safety
         # invariant); with the session done, the held intent now applies and the
-        # node converges to ``desired_state=stopped``. Independent of and runs
-        # before the ``policy_state["deferred_stop"]`` path below — that path
-        # tracks lifecycle-policy-driven deferrals; this one covers
-        # intent-driven deferrals registered by any caller.
+        # node converges to ``desired_state=stopped``.
         await reconcile_device(db, device.id, publisher=self._publisher)
-        current_state = policy_state(device)
-
-        # No stale session-suppression to sweep here anymore: the "A client session
-        # is still running" reason is projected from the live session rows, so it
-        # clears the instant the session ends. Nothing to write.
-
-        if not current_state.get("deferred_stop"):
+        ladder = await remediation_log.load_ladder(db, device.id)
+        if not ladder.deferred_stop_pending:
             return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
         # Authoritative check under the device row lock. Callers may have
@@ -511,9 +468,8 @@ class LifecyclePolicyService:
             await self.clear_pending_auto_stop_on_recovery(
                 db,
                 device,
-                source=current_state.get("last_failure_source") or "session",
+                source=ladder.last_failure_source or "session",
                 reason="Session finished while device was healthy",
-                action="auto_stop_cleared",
             )
             # Mirror the AUTO_STOPPED branch (which commits via ``complete_auto_stop``):
             # commit the cleared intent here so callers do not need to know about the
@@ -523,16 +479,11 @@ class LifecyclePolicyService:
             await db.commit()
             return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
-        reason = (
-            current_state.get("deferred_stop_reason")
-            or current_state.get("last_failure_reason")
-            or "Health-driven stop pending"
-        )
-        source = current_state.get("last_failure_source") or "device_checks"
+        reason = ladder.deferred_stop_reason or ladder.last_failure_reason or "Health-driven stop pending"
+        source = ladder.last_failure_source or "device_checks"
         await self._actions.complete_auto_stop(
             db,
             device,
-            current_state,
             reason=reason,
             source=source,
             detail="Manager completed a previously deferred automatic stop",
@@ -548,9 +499,6 @@ class LifecyclePolicyService:
 
     async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None:
         device = await _reload_device(db, device)
-        current_state = policy_state(device)
-        clear_deferred_stop(current_state)
-        write_state(device, current_state)
         await remediation_log.append_failure(db, device.id, source="connectivity", reason=reason)
 
         # D1: connectivity loss is not exclusion-worthy. The device transitions
@@ -560,7 +508,6 @@ class LifecyclePolicyService:
         await self._actions.record_auto_stopped_incident(
             db,
             device,
-            current_state,
             run=None,
             reason=reason,
             source="connectivity",
@@ -590,7 +537,7 @@ class LifecyclePolicyService:
         if await operator_stop_active(db, device.id):
             return False
         ladder = await remediation_log.load_ladder(db, device.id)
-        if not (ladder.armed or ladder.last_failure_reason):
+        if not ladder.episode_active:
             return False
         await remediation_log.append_reset(db, device.id, source="device_checks", action="self_healed", reason=reason)
         await self._incidents.record_lifecycle_incident(
@@ -674,16 +621,19 @@ class LifecyclePolicyService:
         incident (e.g. ``node_health``) pass ``False`` to avoid duplicates.
         """
         device = await _reload_device(db, device)
-        current_state = policy_state(device)
-        if not current_state.get("deferred_stop"):
+        ladder = await remediation_log.load_ladder(db, device.id)
+        if not ladder.deferred_stop_pending:
             return False
 
-        pending_since = current_state.get("deferred_stop_since")
-        pending_reason = current_state.get("deferred_stop_reason")
-        clear_deferred_stop(current_state)
-        write_state(device, current_state)
-        if action is not None:
-            await remediation_log.append_action(db, device.id, source=source, action=action, reason=reason)
+        pending_since = ladder.deferred_stop_since
+        pending_reason = ladder.deferred_stop_reason
+        await remediation_log.append_action(
+            db,
+            device.id,
+            source=source,
+            action=action or remediation_log.ACTION_AUTO_STOP_CLEARED,
+            reason=reason,
+        )
 
         if record_incident:
             detail = (
