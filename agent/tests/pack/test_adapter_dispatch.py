@@ -2,23 +2,19 @@
 
 Uses a hand-rolled fake Adapter to cover:
 - Happy path for each dispatch wrapper.
-- Timeout → AdapterHookTimeoutError.
 - Adapter exception → AdapterHookExecutionError.
 - Wrong return type → AdapterContractError.
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import ClassVar, Literal
+from typing import Literal
 
 import pytest
 
 from agent_app.pack.adapter_dispatch import (
-    ADAPTER_HOOK_TIMEOUT_SECONDS,
     AdapterContractError,
     AdapterHookExecutionError,
-    AdapterHookTimeoutError,
     adapter_supports,
     dispatch_discover,
     dispatch_doctor,
@@ -41,43 +37,10 @@ from agent_app.pack.adapter_types import (
     SessionOutcome,
     SessionSpec,
 )
+from agent_app.pack.contexts import DiscoveryCtx, DoctorCtx, HealthCtx, LifecycleCtx, NormalizeCtx, TelemetryCtx
 from agent_app.pack.manifest import DesiredPack, DesiredPlatform
 from agent_app.pack.runtime_types import AppiumInstallable
-
-# ---------------------------------------------------------------------------
-# Minimal context stubs
-# ---------------------------------------------------------------------------
-
-
-class _DiscoveryCtx:
-    host_id = "host-1"
-    platform_id = "android_mobile"
-
-
-class _HealthCtx:
-    device_identity_value = "emulator-5554"
-    allow_boot = False
-
-
-class _DoctorCtx:
-    host_id = "host-1"
-
-
-class _LifecycleCtx:
-    host_id = "host-1"
-    device_identity_value = "emulator-5554"
-
-
-class _NormalizeCtx:
-    host_id = "host-1"
-    platform_id = "android_mobile"
-    raw_input: ClassVar[dict[str, str]] = {"connection_target": "emulator-5554"}
-
-
-class _TelemetryCtx:
-    device_identity_value = "emulator-5554"
-    connection_target = "emulator-5554"
-
+from tests.pack.fake_worker import FakeWorkerHandle
 
 # ---------------------------------------------------------------------------
 # Fake adapter variants
@@ -138,59 +101,6 @@ class _GoodAdapter:
 
     async def telemetry(self, ctx: object) -> HardwareTelemetry:
         return HardwareTelemetry(supported=True, battery_level_percent=85)
-
-
-class _TimeoutAdapter:
-    """Every hook sleeps longer than the timeout deadline."""
-
-    pack_id = "vendor-slow"
-    pack_release = "1.0.0"
-
-    async def discover(self, ctx: object) -> list[DiscoveryCandidate]:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return []
-
-    async def doctor(self, ctx: object) -> list[DoctorCheckResult]:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return []
-
-    async def health_check(self, ctx: object) -> list[HealthCheckResult]:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return []
-
-    async def lifecycle_action(
-        self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
-        args: dict[str, object],
-        ctx: object,
-    ) -> LifecycleActionResult:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return LifecycleActionResult(ok=False)
-
-    async def pre_session(self, spec: object) -> dict[str, object]:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return {}
-
-    async def post_session(self, spec: object, outcome: object) -> None:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-
-    async def normalize_device(self, ctx: object) -> NormalizedDevice:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return NormalizedDevice(
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="avd:Pixel_7",
-            connection_target="emulator-5554",
-            ip_address="",
-            device_type="emulator",
-            connection_type="",
-            os_version="14",
-            field_errors=[],
-        )
-
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        await asyncio.sleep(ADAPTER_HOOK_TIMEOUT_SECONDS + 10)
-        return HardwareTelemetry(supported=False)
 
 
 class _RaisingAdapter:
@@ -293,7 +203,9 @@ def test_hardware_telemetry_unsupported() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_discover_returns_list() -> None:
     adapter = _GoodAdapter()
-    results = await dispatch_discover(adapter, _DiscoveryCtx())  # type: ignore[arg-type]
+    results = await dispatch_discover(
+        FakeWorkerHandle(adapter), DiscoveryCtx(host_id="host-1", platform_id="android_mobile")
+    )
     assert isinstance(results, list)
     assert len(results) == 1
     assert results[0].identity_value == "emulator-5554"
@@ -302,7 +214,7 @@ async def test_dispatch_discover_returns_list() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_doctor_returns_list() -> None:
     adapter = _GoodAdapter()
-    results = await dispatch_doctor(adapter, _DoctorCtx())  # type: ignore[arg-type]
+    results = await dispatch_doctor(FakeWorkerHandle(adapter), DoctorCtx(host_id="host-1"))
     assert isinstance(results, list)
     assert results[0].check_id == "adb_version"
     assert results[0].ok is True
@@ -311,7 +223,9 @@ async def test_dispatch_doctor_returns_list() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_health_check_returns_list() -> None:
     adapter = _GoodAdapter()
-    results = await dispatch_health_check(adapter, _HealthCtx())  # type: ignore[arg-type]
+    results = await dispatch_health_check(
+        FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554", allow_boot=False)
+    )
     assert isinstance(results, list)
     assert results[0].check_id == "device_online"
     assert results[0].ok is True
@@ -320,7 +234,12 @@ async def test_dispatch_health_check_returns_list() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_lifecycle_action_returns_result() -> None:
     adapter = _GoodAdapter()
-    result = await dispatch_lifecycle_action(adapter, "reconnect", {}, _LifecycleCtx())  # type: ignore[arg-type]
+    result = await dispatch_lifecycle_action(
+        FakeWorkerHandle(adapter),
+        "reconnect",
+        {},
+        LifecycleCtx(host_id="host-1", device_identity_value="emulator-5554"),
+    )
     assert isinstance(result, LifecycleActionResult)
     assert result.ok is True
     assert result.state == "running"
@@ -334,7 +253,7 @@ async def test_dispatch_pre_session_returns_dict() -> None:
         platform_id="android_mobile",
         device_identity_value="emulator-5554",
     )
-    result = await dispatch_pre_session(adapter, spec)  # type: ignore[arg-type]
+    result = await dispatch_pre_session(FakeWorkerHandle(adapter), spec)
     assert isinstance(result, dict)
     assert result["appium:vendorMagic"] == "enabled"
 
@@ -349,91 +268,8 @@ async def test_dispatch_post_session_returns_none() -> None:
     )
     outcome = SessionOutcome(ok=True)
     # Should not raise
-    result = await dispatch_post_session(adapter, spec, outcome)  # type: ignore[arg-type]
+    result = await dispatch_post_session(FakeWorkerHandle(adapter), spec, outcome)
     assert result is None
-
-
-# ---------------------------------------------------------------------------
-# Timeout tests  (patch the timeout constant so tests don't actually wait 30s)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_dispatch_discover_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_discover(adapter, _DiscoveryCtx())  # type: ignore[arg-type]
-    assert exc_info.value.hook == "discover"
-    assert exc_info.value.pack_id == "vendor-slow"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_doctor_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_doctor(adapter, _DoctorCtx())  # type: ignore[arg-type]
-    assert exc_info.value.hook == "doctor"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_health_check_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_health_check(adapter, _HealthCtx())  # type: ignore[arg-type]
-    assert exc_info.value.hook == "health_check"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_lifecycle_action_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_lifecycle_action(adapter, "state", {}, _LifecycleCtx())  # type: ignore[arg-type]
-    assert exc_info.value.hook == "lifecycle_action"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_pre_session_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    spec = SessionSpec(
-        pack_id="vendor-slow",
-        platform_id="android_mobile",
-        device_identity_value="emulator-5554",
-    )
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_pre_session(adapter, spec)  # type: ignore[arg-type]
-    assert exc_info.value.hook == "pre_session"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_post_session_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    spec = SessionSpec(
-        pack_id="vendor-slow",
-        platform_id="android_mobile",
-        device_identity_value="emulator-5554",
-    )
-    outcome = SessionOutcome(ok=True)
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_post_session(adapter, spec, outcome)  # type: ignore[arg-type]
-    assert exc_info.value.hook == "post_session"
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +281,7 @@ async def test_dispatch_post_session_timeout(monkeypatch: pytest.MonkeyPatch) ->
 async def test_dispatch_discover_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_discover(adapter, _DiscoveryCtx())  # type: ignore[arg-type]
+        await dispatch_discover(FakeWorkerHandle(adapter), DiscoveryCtx(host_id="host-1", platform_id="android_mobile"))
     assert exc_info.value.hook == "discover"
     assert "discover exploded" in str(exc_info.value)
 
@@ -454,7 +290,7 @@ async def test_dispatch_discover_execution_error() -> None:
 async def test_dispatch_doctor_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_doctor(adapter, _DoctorCtx())  # type: ignore[arg-type]
+        await dispatch_doctor(FakeWorkerHandle(adapter), DoctorCtx(host_id="host-1"))
     assert exc_info.value.hook == "doctor"
 
 
@@ -462,7 +298,9 @@ async def test_dispatch_doctor_execution_error() -> None:
 async def test_dispatch_health_check_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_health_check(adapter, _HealthCtx())  # type: ignore[arg-type]
+        await dispatch_health_check(
+            FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554", allow_boot=False)
+        )
     assert exc_info.value.hook == "health_check"
 
 
@@ -470,7 +308,12 @@ async def test_dispatch_health_check_execution_error() -> None:
 async def test_dispatch_lifecycle_action_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_lifecycle_action(adapter, "reconnect", {}, _LifecycleCtx())  # type: ignore[arg-type]
+        await dispatch_lifecycle_action(
+            FakeWorkerHandle(adapter),
+            "reconnect",
+            {},
+            LifecycleCtx(host_id="host-1", device_identity_value="emulator-5554"),
+        )
     assert exc_info.value.hook == "lifecycle_action"
 
 
@@ -483,7 +326,7 @@ async def test_dispatch_pre_session_execution_error() -> None:
         device_identity_value="emulator-5554",
     )
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_pre_session(adapter, spec)  # type: ignore[arg-type]
+        await dispatch_pre_session(FakeWorkerHandle(adapter), spec)
     assert exc_info.value.hook == "pre_session"
 
 
@@ -497,7 +340,7 @@ async def test_dispatch_post_session_execution_error() -> None:
     )
     outcome = SessionOutcome(ok=False, detail="failed")
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_post_session(adapter, spec, outcome)  # type: ignore[arg-type]
+        await dispatch_post_session(FakeWorkerHandle(adapter), spec, outcome)
     assert exc_info.value.hook == "post_session"
 
 
@@ -510,7 +353,7 @@ async def test_dispatch_post_session_execution_error() -> None:
 async def test_dispatch_discover_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_discover(adapter, _DiscoveryCtx())  # type: ignore[arg-type]
+        await dispatch_discover(FakeWorkerHandle(adapter), DiscoveryCtx(host_id="host-1", platform_id="android_mobile"))
     assert exc_info.value.hook == "discover"
     assert "list" in str(exc_info.value)
 
@@ -519,7 +362,7 @@ async def test_dispatch_discover_contract_error() -> None:
 async def test_dispatch_doctor_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_doctor(adapter, _DoctorCtx())  # type: ignore[arg-type]
+        await dispatch_doctor(FakeWorkerHandle(adapter), DoctorCtx(host_id="host-1"))
     assert exc_info.value.hook == "doctor"
 
 
@@ -527,7 +370,9 @@ async def test_dispatch_doctor_contract_error() -> None:
 async def test_dispatch_health_check_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_health_check(adapter, _HealthCtx())  # type: ignore[arg-type]
+        await dispatch_health_check(
+            FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554", allow_boot=False)
+        )
     assert exc_info.value.hook == "health_check"
 
 
@@ -535,7 +380,12 @@ async def test_dispatch_health_check_contract_error() -> None:
 async def test_dispatch_lifecycle_action_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_lifecycle_action(adapter, "state", {}, _LifecycleCtx())  # type: ignore[arg-type]
+        await dispatch_lifecycle_action(
+            FakeWorkerHandle(adapter),
+            "state",
+            {},
+            LifecycleCtx(host_id="host-1", device_identity_value="emulator-5554"),
+        )
     assert exc_info.value.hook == "lifecycle_action"
     assert "LifecycleActionResult" in str(exc_info.value)
 
@@ -549,7 +399,7 @@ async def test_dispatch_pre_session_contract_error() -> None:
         device_identity_value="emulator-5554",
     )
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_pre_session(adapter, spec)  # type: ignore[arg-type]
+        await dispatch_pre_session(FakeWorkerHandle(adapter), spec)
     assert exc_info.value.hook == "pre_session"
     assert "dict" in str(exc_info.value)
 
@@ -560,29 +410,10 @@ async def test_dispatch_pre_session_contract_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_timeout_error_attributes() -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    adapter = _TimeoutAdapter()
-    # Use a very short timeout
-    original = mod.ADAPTER_HOOK_TIMEOUT_SECONDS
-    mod.ADAPTER_HOOK_TIMEOUT_SECONDS = 0.01
-    try:
-        with pytest.raises(AdapterHookTimeoutError) as exc_info:
-            await dispatch_discover(adapter, _DiscoveryCtx())  # type: ignore[arg-type]
-        err = exc_info.value
-        assert err.pack_id == "vendor-slow"
-        assert err.pack_release == "1.0.0"
-        assert err.hook == "discover"
-    finally:
-        mod.ADAPTER_HOOK_TIMEOUT_SECONDS = original
-
-
-@pytest.mark.asyncio
 async def test_execution_error_chained_cause() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_discover(adapter, _DiscoveryCtx())  # type: ignore[arg-type]
+        await dispatch_discover(FakeWorkerHandle(adapter), DiscoveryCtx(host_id="host-1", platform_id="android_mobile"))
     err = exc_info.value
     assert err.__cause__ is not None
     assert isinstance(err.__cause__, RuntimeError)
@@ -598,7 +429,10 @@ async def test_execution_error_chained_cause() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_normalize_device_returns_device() -> None:
     adapter = _GoodAdapter()
-    result = await dispatch_normalize_device(adapter, _NormalizeCtx())  # type: ignore[arg-type]
+    result = await dispatch_normalize_device(
+        FakeWorkerHandle(adapter),
+        NormalizeCtx(host_id="host-1", platform_id="android_mobile", raw_input={"connection_target": "emulator-5554"}),
+    )
     assert isinstance(result, NormalizedDevice)
     assert result.identity_value == "avd:Pixel_7"
 
@@ -606,38 +440,24 @@ async def test_dispatch_normalize_device_returns_device() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_telemetry_returns_telemetry() -> None:
     adapter = _GoodAdapter()
-    result = await dispatch_telemetry(adapter, _TelemetryCtx())  # type: ignore[arg-type]
+    result = await dispatch_telemetry(
+        FakeWorkerHandle(adapter),
+        TelemetryCtx(device_identity_value="emulator-5554", connection_target="emulator-5554"),
+    )
     assert isinstance(result, HardwareTelemetry)
     assert result.battery_level_percent == 85
-
-
-@pytest.mark.asyncio
-async def test_dispatch_normalize_device_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_normalize_device(adapter, _NormalizeCtx())  # type: ignore[arg-type]
-    assert exc_info.value.hook == "normalize_device"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_telemetry_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.pack import adapter_dispatch as mod
-
-    monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
-    adapter = _TimeoutAdapter()
-    with pytest.raises(AdapterHookTimeoutError) as exc_info:
-        await dispatch_telemetry(adapter, _TelemetryCtx())  # type: ignore[arg-type]
-    assert exc_info.value.hook == "telemetry"
 
 
 @pytest.mark.asyncio
 async def test_dispatch_normalize_device_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_normalize_device(adapter, _NormalizeCtx())  # type: ignore[arg-type]
+        await dispatch_normalize_device(
+            FakeWorkerHandle(adapter),
+            NormalizeCtx(
+                host_id="host-1", platform_id="android_mobile", raw_input={"connection_target": "emulator-5554"}
+            ),
+        )
     assert exc_info.value.hook == "normalize_device"
 
 
@@ -645,7 +465,10 @@ async def test_dispatch_normalize_device_execution_error() -> None:
 async def test_dispatch_telemetry_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_telemetry(adapter, _TelemetryCtx())  # type: ignore[arg-type]
+        await dispatch_telemetry(
+            FakeWorkerHandle(adapter),
+            TelemetryCtx(device_identity_value="emulator-5554", connection_target="emulator-5554"),
+        )
     assert exc_info.value.hook == "telemetry"
 
 
@@ -653,7 +476,12 @@ async def test_dispatch_telemetry_execution_error() -> None:
 async def test_dispatch_normalize_device_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_normalize_device(adapter, _NormalizeCtx())  # type: ignore[arg-type]
+        await dispatch_normalize_device(
+            FakeWorkerHandle(adapter),
+            NormalizeCtx(
+                host_id="host-1", platform_id="android_mobile", raw_input={"connection_target": "emulator-5554"}
+            ),
+        )
     assert exc_info.value.hook == "normalize_device"
     assert "NormalizedDevice" in str(exc_info.value)
 
@@ -662,7 +490,10 @@ async def test_dispatch_normalize_device_contract_error() -> None:
 async def test_dispatch_telemetry_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_telemetry(adapter, _TelemetryCtx())  # type: ignore[arg-type]
+        await dispatch_telemetry(
+            FakeWorkerHandle(adapter),
+            TelemetryCtx(device_identity_value="emulator-5554", connection_target="emulator-5554"),
+        )
     assert exc_info.value.hook == "telemetry"
     assert "HardwareTelemetry" in str(exc_info.value)
 
@@ -711,20 +542,25 @@ def _pack_declaring_capabilities() -> DesiredPack:
 
 
 def test_adapter_supports_probes_real_methods() -> None:
-    adapter = _MinimalAdapter()
-    assert adapter_supports(adapter, "discover") is True
-    assert adapter_supports(adapter, "normalize_device") is True
-    assert adapter_supports(adapter, "health_check") is False
-    assert adapter_supports(adapter, "lifecycle_action") is False
+    handle = FakeWorkerHandle(_MinimalAdapter())
+    assert adapter_supports(handle, "discover") is True
+    assert adapter_supports(handle, "normalize_device") is True
+    assert adapter_supports(handle, "health_check") is False
+    assert adapter_supports(handle, "lifecycle_action") is False
+
+
+def test_adapter_supports_requires_worker_handshake() -> None:
+    with pytest.raises(AttributeError):
+        adapter_supports(_MinimalAdapter(), "discover")  # type: ignore[arg-type]
 
 
 def test_missing_declared_hooks_reports_unimplemented() -> None:
-    missing = missing_declared_hooks(_pack_declaring_capabilities(), _MinimalAdapter())
+    missing = missing_declared_hooks(_pack_declaring_capabilities(), FakeWorkerHandle(_MinimalAdapter()))
     assert missing == ["lifecycle_action"]
 
 
 def test_missing_declared_hooks_empty_when_adapter_implements_them() -> None:
-    assert missing_declared_hooks(_pack_declaring_capabilities(), _GoodAdapter()) == []
+    assert missing_declared_hooks(_pack_declaring_capabilities(), FakeWorkerHandle(_GoodAdapter())) == []
 
 
 def test_missing_declared_hooks_empty_when_manifest_declares_nothing() -> None:
@@ -745,4 +581,4 @@ def test_missing_declared_hooks_empty_when_manifest_declares_nothing() -> None:
             )
         ],
     )
-    assert missing_declared_hooks(pack, _MinimalAdapter()) == []
+    assert missing_declared_hooks(pack, FakeWorkerHandle(_MinimalAdapter())) == []

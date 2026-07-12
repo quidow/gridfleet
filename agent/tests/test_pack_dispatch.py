@@ -7,6 +7,7 @@ import pytest
 from agent_app.pack.adapter_types import HealthCheckResult, NormalizedDevice
 from agent_app.pack.contexts import HealthCtx
 from tests.pack.adapter_test_helpers import adapter_health_check, adapter_normalize_device
+from tests.pack.fake_worker import FakeWorkerHandle
 
 
 class _StubAdapter:
@@ -25,8 +26,8 @@ class _StubRegistry:
     def __init__(self, adapter: _StubAdapter) -> None:
         self._adapter = adapter
 
-    def get(self, pack_id: str, pack_release: str) -> _StubAdapter:
-        return self._adapter
+    def get(self, pack_id: str, pack_release: str) -> FakeWorkerHandle:
+        return FakeWorkerHandle(self._adapter)
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,7 @@ Use the upload path when:
 | Scenario | Upload needed? |
 |----------|---------------|
 | Custom device discovery that needs an adapter `discover` hook | Yes |
-| Any adapter-backed manifest hook field, such as `doctor[].adapter_hook` | Yes |
+| A manifest `lifecycle_actions` declaration, which requires the adapter's `lifecycle_action` hook | Yes |
 | Imperative pre-session capability logic (capability values computed at session-request time) | Yes |
 | Portable distribution across GridFleet instances | Yes |
 | Simple discovery config, static capabilities, no custom code | Usually no — use a curated pack instead |
@@ -274,6 +274,7 @@ The response body includes a `detail` field with the specific constraint that wa
 - `manifest.yaml` fails schema validation (`ManifestValidationError`).
 - The tarball is empty.
 - `manifest.yaml` is missing at the archive root.
+- The manifest declares a field that was removed from the schema in 2026-07 (WS-14.2): the top-level `doctor:` block and the platform `host_fields_schema` no longer exist, and `extra="forbid"` rejects any manifest still carrying them. No curated pack ever declared either; if an externally-built manifest does, delete the keys and re-build the tarball. Runtime doctor checks are unaffected — they are driven by the adapter's advertised `doctor` hook, never by the manifest.
 - Required manifest fields are missing (`schema_version`, `id`, `release`, `display_name`, `appium_server`, `appium_driver`, `platforms`).
 - The archive violates the member-count, size, or safe-path limits.
 

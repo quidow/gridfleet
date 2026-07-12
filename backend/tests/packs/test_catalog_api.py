@@ -88,7 +88,6 @@ async def test_get_single_pack_exposes_manifest_details(client: AsyncClient, db_
             "env": {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
         }
     ]
-    assert data["doctor"] == []
 
 
 @pytest.mark.asyncio

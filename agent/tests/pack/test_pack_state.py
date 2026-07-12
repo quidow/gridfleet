@@ -16,6 +16,7 @@ from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
 from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateLoop
+from tests.pack.fake_worker import FakeWorkerHandle
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -295,7 +296,7 @@ async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
     """Without a runtime change, adapter doctor does not run on every iteration."""
     client = _FakeClient(_make_desired([_android_pack()]))
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "2026.04.0", _DoctorAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(_DoctorAdapter()))  # type: ignore[arg-type]
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
@@ -419,7 +420,7 @@ async def test_doctor_runs_on_first_install() -> None:
     """When a pack's runtime is freshly installed, doctor runs automatically."""
     client = _FakeClient(_make_desired([_android_pack()]))
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "2026.04.0", _DoctorAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(_DoctorAdapter()))  # type: ignore[arg-type]
     runtime_registry = RuntimeRegistry()
     loop = PackStateLoop(
         client=client,

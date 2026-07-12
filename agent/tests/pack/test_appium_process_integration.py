@@ -17,6 +17,7 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult
 from agent_app.pack.runtime import RuntimeEnv
 from agent_app.pack.runtime_registry import RuntimeRegistry
+from tests.pack.fake_worker import FakeWorkerHandle
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -218,7 +219,7 @@ async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pyte
     )
     mgr.set_runtime_registry(registry)
     adapter_registry = AdapterRegistry()
-    adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeAdapter())  # type: ignore[arg-type]
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(FakeAdapter()))  # type: ignore[arg-type]
     mgr.set_adapter_registry(adapter_registry)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))

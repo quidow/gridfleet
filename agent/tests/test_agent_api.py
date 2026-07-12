@@ -25,6 +25,7 @@ from agent_app.pack.adapter_types import (
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.pack.manifest import DesiredPack  # noqa: TC001 - contextmanager signature is runtime-inspected
 from agent_app.tools.dependencies import get_tool_status_dep
+from tests.pack.fake_worker import FakeWorkerHandle
 
 
 class _AdapterContext(Protocol):
@@ -118,7 +119,7 @@ async def test_pack_device_health_dispatches_correctly(client: AsyncClient) -> N
     )
     adapter = _FakeAdapter()
     registry = AdapterRegistry()
-    registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
     with _latest_desired_override(desired_pack):
@@ -158,7 +159,7 @@ async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -
         ],
     )
     registry = AdapterRegistry()
-    registry.set(desired_pack.id, desired_pack.release, _FakeAdapter())  # type: ignore[arg-type]
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(_FakeAdapter()))  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
     captured: dict[str, object] = {}
@@ -249,7 +250,7 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
     adapter = _FakeAdapter()
     registry = AdapterRegistry()
-    registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
     with _latest_desired_override(desired_pack):

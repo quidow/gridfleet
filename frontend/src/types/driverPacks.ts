@@ -69,13 +69,10 @@ export type ManifestAppiumEnvRule = Omit<Schemas['ManifestAppiumEnvOut'], 'appli
   applies_when: Record<string, unknown>;
   env: Record<string, string>;
 };
-export type ManifestDoctorCheck = Schemas['ManifestDoctorCheckOut'];
-
 export type DriverPack = Omit<
   Schemas['PackOut'],
   | 'appium_driver'
   | 'appium_server'
-  | 'doctor'
   | 'platforms'
   | 'runtime_policy'
   | 'state'
@@ -85,7 +82,6 @@ export type DriverPack = Omit<
   appium_server?: AppiumInstallable | null;
   appium_driver?: AppiumInstallable | null;
   appium_env?: ManifestAppiumEnvRule[];
-  doctor?: ManifestDoctorCheck[];
   runtime_policy: RuntimePolicy;
   platforms?: DriverPackPlatform[];
 };

@@ -204,7 +204,7 @@ Stamps `Host.last_heartbeat` (recency drives liveness at read time, see `general
 | `GET` | `/api/driver-packs/catalog` | List the driver-pack catalog | none | `PackCatalog` |
 | `GET` | `/api/driver-packs/{pack_id}` | Read one driver pack | path `pack_id` | `PackOut` |
 | `GET` | `/api/driver-packs/{pack_id}/hosts` | List hosts that have this pack installed | path `pack_id` | `DriverPackHostsOut` |
-| `PATCH` | `/api/driver-packs/{pack_id}` | Transition pack lifecycle state | `PackPatch`, `override` | `PackOut` |
+| `PATCH` | `/api/driver-packs/{pack_id}` | Transition pack lifecycle state | `PackPatch` | `PackOut` |
 | `PATCH` | `/api/driver-packs/{pack_id}/policy` | Update pack runtime policy | `RuntimePolicyPatch` | `PackOut` |
 | `DELETE` | `/api/driver-packs/{pack_id}` | Delete a driver pack | path `pack_id` | empty `204` |
 | `POST` | `/api/driver-packs/uploads` | Upload a driver-pack tarball | tarball upload | `PackOut` (`201`) |

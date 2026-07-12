@@ -51,14 +51,13 @@ async def update_pack(
     _username: AdminDep,
     session: DbDep,
     packs: PackServicesDep,
-    override: bool = False,
 ) -> PackOut:
     try:
         target = PackState(body.state)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid state: {body.state!r}") from exc
     try:
-        pack = await packs.lifecycle.transition_pack_state(session, pack_id, target, override=override)
+        pack = await packs.lifecycle.transition_pack_state(session, pack_id, target)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
     except ValueError as exc:

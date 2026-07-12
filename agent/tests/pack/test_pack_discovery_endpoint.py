@@ -13,6 +13,7 @@ from agent_app.pack.discovery import (
     pack_device_properties,
 )
 from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
+from tests.pack.fake_worker import FakeWorkerHandle
 
 
 @pytest.mark.asyncio
@@ -90,7 +91,7 @@ class _PackScopeAdapter:
 async def test_enumerate_pack_scope_adapter() -> None:
     registry = AdapterRegistry()
     adapter = _PackScopeAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
     assert len(result["candidates"]) == 1
@@ -110,7 +111,7 @@ class _FailingAdapter:
 async def test_enumerate_handles_adapter_exception_pack_scope() -> None:
     registry = AdapterRegistry()
     adapter = _FailingAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     adapter.discovery_scope = "pack"
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
@@ -121,7 +122,7 @@ async def test_enumerate_handles_adapter_exception_pack_scope() -> None:
 async def test_enumerate_handles_adapter_exception_per_platform() -> None:
     registry = AdapterRegistry()
     adapter = _FailingAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
     assert result == {"candidates": []}
@@ -231,7 +232,7 @@ class _FieldErrorNormalizeAdapter:
 async def test_pack_device_properties_pack_id_mismatch_in_candidates() -> None:
     registry = AdapterRegistry()
     adapter = _PackScopeAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await pack_device_properties(
         "serial1",
@@ -247,7 +248,7 @@ async def test_pack_device_properties_pack_id_mismatch_in_candidates() -> None:
 async def test_pack_device_properties_pack_id_mismatch_in_fallback() -> None:
     registry = AdapterRegistry()
     adapter = _NormalizeAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await pack_device_properties(
         "serial1",
@@ -278,7 +279,7 @@ async def test_pack_device_properties_normalize_exception_continues() -> None:
     """When normalize_device raises on one platform, it should try the next."""
     registry = AdapterRegistry()
     adapter = _FailingNormalizeAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform(), _platform(platform_id="android_tablet")])
     result = await pack_device_properties(
         "serial1",
@@ -294,7 +295,7 @@ async def test_pack_device_properties_normalize_exception_continues() -> None:
 async def test_pack_device_properties_field_errors_skips() -> None:
     registry = AdapterRegistry()
     adapter = _FieldErrorNormalizeAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await pack_device_properties(
         "serial1",
@@ -310,7 +311,7 @@ async def test_pack_device_properties_field_errors_skips() -> None:
 async def test_pack_device_properties_successful_fallback() -> None:
     registry = AdapterRegistry()
     adapter = _NormalizeAdapter()
-    registry.set("appium-uiautomator2", "1.0", adapter)  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await pack_device_properties(
         "serial1",
@@ -372,7 +373,7 @@ class _MovedDeviceAdapter:
 @pytest.mark.asyncio
 async def test_pack_device_properties_direct_hit_skips_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "1.0", _NormalizeAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(_NormalizeAdapter()))  # type: ignore[arg-type]
 
     async def explode(*args: object, **kwargs: object) -> dict[str, object]:
         raise AssertionError("sweep must not run when the direct query answers")
@@ -394,7 +395,7 @@ async def test_pack_device_properties_direct_hit_with_matching_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "1.0", _NormalizeAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(_NormalizeAdapter()))  # type: ignore[arg-type]
 
     async def explode(*args: object, **kwargs: object) -> dict[str, object]:
         raise AssertionError("sweep must not run when identity matches the direct answer")
@@ -415,7 +416,7 @@ async def test_pack_device_properties_direct_hit_with_matching_identity(
 @pytest.mark.asyncio
 async def test_pack_device_properties_identity_mismatch_falls_back_to_sweep() -> None:
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "1.0", _MovedDeviceAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(_MovedDeviceAdapter()))  # type: ignore[arg-type]
     result = await pack_device_properties(
         "10.0.0.5",
         "appium-uiautomator2",
@@ -432,7 +433,7 @@ async def test_pack_device_properties_identity_mismatch_falls_back_to_sweep() ->
 @pytest.mark.asyncio
 async def test_pack_device_properties_identity_not_found_anywhere() -> None:
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "1.0", _MovedDeviceAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(_MovedDeviceAdapter()))  # type: ignore[arg-type]
     result = await pack_device_properties(
         "10.0.0.5",
         "appium-uiautomator2",

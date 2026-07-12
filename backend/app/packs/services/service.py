@@ -24,7 +24,6 @@ from app.packs.models import (
 from app.packs.schemas import (
     AppiumInstallableOut,
     ManifestAppiumEnvOut,
-    ManifestDoctorCheckOut,
     PackCatalog,
     PackOut,
     PackRuntimeSummaryOut,
@@ -64,7 +63,6 @@ def build_pack_out(
         appium_server=_installable_out(manifest.get("appium_server")),
         appium_driver=_installable_out(manifest.get("appium_driver")),
         appium_env=_appium_env_out(manifest.get("appium_env", [])),
-        doctor=_doctor_out(manifest.get("doctor", [])),
         insecure_features=manifest.get("insecure_features", []),
         runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
         active_runs=active_runs,
@@ -94,20 +92,6 @@ def _appium_env_out(items: object) -> list[ManifestAppiumEnvOut]:
             id=str(item["id"]),
             applies_when=dict(item.get("applies_when") or {}),
             env={str(key): str(value) for key, value in (item.get("env") or {}).items()},
-        )
-        for item in items
-        if isinstance(item, dict) and "id" in item
-    ]
-
-
-def _doctor_out(items: object) -> list[ManifestDoctorCheckOut]:
-    if not isinstance(items, list):
-        return []
-    return [
-        ManifestDoctorCheckOut(
-            id=str(item["id"]),
-            description=str(item.get("description") or ""),
-            adapter_hook=str(item["adapter_hook"]) if item.get("adapter_hook") is not None else None,
         )
         for item in items
         if isinstance(item, dict) and "id" in item

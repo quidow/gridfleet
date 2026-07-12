@@ -40,6 +40,7 @@ from tests.pack.adapter_test_helpers import (
     adapter_post_session,
     adapter_pre_session,
 )
+from tests.pack.fake_worker import FakeWorkerHandle
 
 
 def _host_identity(value: str) -> HostIdentity:
@@ -179,7 +180,7 @@ async def test_adapter_kind_discovery_dispatches_to_adapter() -> None:
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     result = await enumerate_pack_candidates(
         [pack],
@@ -233,7 +234,9 @@ async def test_pack_wide_discovery_routes_candidates_to_matching_platforms_once(
 
     adapter.discover = discover_all  # type: ignore[method-assign]
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    handle = FakeWorkerHandle(adapter)
+    handle.discovery_scope = adapter.discovery_scope  # type: ignore[attr-defined]
+    registry.set(pack.id, pack.release, handle)
 
     result = await enumerate_pack_candidates(
         [pack],
@@ -274,7 +277,7 @@ async def test_pack_device_properties_falls_back_to_adapter_normalize_for_endpoi
 
     adapter.discover = empty_discover  # type: ignore[method-assign]
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     result = await pack_device_properties(
         "192.168.1.50",
@@ -321,7 +324,7 @@ async def test_pack_device_properties_includes_os_version_display_from_normalize
     adapter.discover = empty_discover  # type: ignore[method-assign]
     adapter.normalize_device = normalize_with_display  # type: ignore[method-assign]
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     result = await pack_device_properties(
         "192.168.1.50",
@@ -341,7 +344,7 @@ async def test_adapter_normalize_device_preserves_extended_identity_fields() -> 
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     result = await adapter_normalize_device(
         adapter_registry=registry,
@@ -365,7 +368,7 @@ async def test_health_check_dispatches_to_adapter() -> None:
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     payload = await adapter_health_check(
         adapter_registry=registry,
@@ -397,7 +400,7 @@ async def test_lifecycle_action_dispatches_to_adapter() -> None:
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     payload = await adapter_lifecycle_action(
         adapter_registry=registry,
@@ -437,7 +440,7 @@ async def test_pre_session_caps_are_merged() -> None:
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     extra = await adapter_pre_session(
         adapter_registry=registry,
@@ -470,7 +473,7 @@ async def test_post_session_dispatches_to_adapter() -> None:
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
     registry = AdapterRegistry()
-    registry.set(pack.id, pack.release, adapter)
+    registry.set(pack.id, pack.release, FakeWorkerHandle(adapter))
 
     dispatched = await adapter_post_session(
         adapter_registry=registry,
@@ -553,7 +556,7 @@ async def test_state_loop_invokes_adapter_loader_for_adapter_packs() -> None:
 
     async def _loader(pack: DesiredPack, env: RuntimeEnv) -> None:
         loader_calls.append((pack.id, pack.release))
-        registry.set(pack.id, pack.release, _RecordingAdapter(pack.id, pack.release))
+        registry.set(pack.id, pack.release, FakeWorkerHandle(_RecordingAdapter(pack.id, pack.release)))
 
     loop = PackStateLoop(
         client=_FakeClient(),
@@ -668,7 +671,7 @@ async def _simulate_caps_merge(
     adapter_caps = await adapter_pre_session(
         adapter_registry=registry,
         pack_id=pack_id,
-        pack_release=adapter.pack_release,
+        pack_release=adapter.release,
         platform_id=platform_id,
         identity_value=connection_target,
         capabilities=merged,

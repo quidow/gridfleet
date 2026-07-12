@@ -8,6 +8,7 @@ from agent_app.pack.adapter_types import HealthCheckResult
 from agent_app.pack.contexts import HealthCtx
 from agent_app.pack.router import _adapter_health_payload
 from tests.pack.adapter_test_helpers import adapter_health_check
+from tests.pack.fake_worker import FakeWorkerHandle
 
 
 def test_payload_lifts_recommended_action_to_top_level() -> None:
@@ -40,8 +41,8 @@ async def test_health_ctx_carries_claimed_ports_and_live_flag() -> None:
             return [HealthCheckResult(check_id="adb_connected", ok=True)]
 
     class _Reg:
-        def get(self, pack_id: str, release: str) -> _Adapter:
-            return _Adapter()
+        def get(self, pack_id: str, release: str) -> FakeWorkerHandle:
+            return FakeWorkerHandle(_Adapter())
 
     await adapter_health_check(
         adapter_registry=_Reg(),  # type: ignore[arg-type]

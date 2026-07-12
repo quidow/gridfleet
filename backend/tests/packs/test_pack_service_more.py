@@ -81,7 +81,6 @@ def _release() -> DriverPackRelease:
             },
             "appium_driver": {"source": "npm", "package": "driver", "version": "3.0.0"},
             "appium_env": [{"id": "wda", "applies_when": {"platform": "ios"}, "env": {"A": 1}}, "skip"],
-            "doctor": [{"id": "adb", "description": "ADB", "adapter_hook": "doctor_adb"}, "skip"],
             "insecure_features": ["adb_shell"],
         },
         platforms=[_platform()],
@@ -112,7 +111,6 @@ def test_pack_service_builds_pack_outputs_from_manifest_helpers() -> None:
     assert out.appium_server.known_bad == ["1"]
     assert out.appium_driver is not None
     assert out.appium_env[0].env == {"A": "1"}
-    assert out.doctor[0].adapter_hook == "doctor_adb"
     assert out.platforms[0].identity_scheme == "serial"
 
     empty_pack = DriverPack(
@@ -132,7 +130,6 @@ def test_pack_service_builds_pack_outputs_from_manifest_helpers() -> None:
 def test_pack_service_helper_branches_handle_empty_and_nested_values() -> None:
     assert pack_service._installable_out(None) is None
     assert pack_service._appium_env_out({"id": "bad"}) == []
-    assert pack_service._doctor_out({"id": "bad"}) == []
 
     direct = SimpleNamespace(resolved_install_spec={"appium_driver_version": 3})
     nested = SimpleNamespace(resolved_install_spec={"appium_driver": {"uiautomator2": "4.0.0"}})
