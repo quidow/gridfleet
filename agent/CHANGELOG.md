@@ -2,6 +2,20 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.35.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.34.0...gridfleet-agent-v0.35.0) (2026-07-12)
+
+
+### Features
+
+* ws-14.2 pack zero-user surface deletion ([762e186](https://github.com/quidow/gridfleet/commit/762e1860e456cd6c199ca6a664209ae4e45cab7c))
+
+
+### Documentation
+
+* **agent:** point keep-alive comments at the pool-idle constant ([9f3d435](https://github.com/quidow/gridfleet/commit/9f3d43527884b16d387c944757361cbcca329888))
+* **agent:** point the keep-alive default at its lattice parity test ([9f80af1](https://github.com/quidow/gridfleet/commit/9f80af1ee671a0cfef2a9e2e93b2e55a1bbc9ab8))
+* **main:** fix stale comments and settings doc drift ([508e051](https://github.com/quidow/gridfleet/commit/508e051f685eef325aaa88e1b892b633a1201b2b))
+
 ## [0.34.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.33.0...gridfleet-agent-v0.34.0) (2026-07-11)
 
 
