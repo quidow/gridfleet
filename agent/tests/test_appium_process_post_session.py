@@ -5,6 +5,7 @@ import pytest
 
 from agent_app.appium.process import AppiumLaunchSpec, AppiumProcessManager
 from agent_app.pack.adapter_registry import AdapterRegistry
+from tests.pack.fake_worker import FakeWorkerHandle
 
 if TYPE_CHECKING:
     import asyncio
@@ -50,7 +51,7 @@ async def test_stop_dispatches_post_session_to_adapter() -> None:
     mgr = AppiumProcessManager()
     adapter = _PostSessionRecorder("appium-uiautomator2", "1.0.0")
     registry = AdapterRegistry()
-    registry.set(adapter.pack_id, adapter.pack_release, cast("object", adapter))  # type: ignore[arg-type]
+    registry.set(adapter.pack_id, adapter.pack_release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     mgr.set_adapter_registry(registry)
     _preload(mgr, 5556, adapter.pack_id)
 

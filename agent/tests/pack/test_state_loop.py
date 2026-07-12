@@ -8,6 +8,7 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
 from agent_app.pack.state import PackStateClient, PackStateLoop
+from tests.pack.fake_worker import FakeWorkerHandle
 
 if TYPE_CHECKING:
     from agent_app.pack.manifest import DesiredPack
@@ -234,7 +235,7 @@ async def test_loop_blocks_pack_when_manifest_declares_unimplemented_hook() -> N
     registry = AdapterRegistry()
 
     async def _loader(pack: DesiredPack, env: RuntimeEnv) -> None:
-        registry.set(pack.id, pack.release, _MinimalStateAdapter())
+        registry.set(pack.id, pack.release, FakeWorkerHandle(_MinimalStateAdapter()))
 
     loop = PackStateLoop(
         client=client,

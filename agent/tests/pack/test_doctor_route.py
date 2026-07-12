@@ -10,6 +10,7 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import DoctorCheckResult
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.router import router
+from tests.pack.fake_worker import FakeWorkerHandle
 
 
 def _build_app(
@@ -49,7 +50,7 @@ class _FailingAdapter:
 @pytest.mark.asyncio
 async def test_doctor_returns_checks() -> None:
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "2026.05.3", _OkAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "2026.05.3", FakeWorkerHandle(_OkAdapter()))  # type: ignore[arg-type]
     app = _build_app(adapter_registry=registry)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/agent/pack/appium-uiautomator2/doctor")
@@ -71,7 +72,7 @@ async def test_doctor_no_adapter_returns_empty() -> None:
 @pytest.mark.asyncio
 async def test_doctor_adapter_failure_returns_synthetic_entry() -> None:
     registry = AdapterRegistry()
-    registry.set("appium-uiautomator2", "2026.05.3", _FailingAdapter())  # type: ignore[arg-type]
+    registry.set("appium-uiautomator2", "2026.05.3", FakeWorkerHandle(_FailingAdapter()))  # type: ignore[arg-type]
     app = _build_app(adapter_registry=registry)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/agent/pack/appium-uiautomator2/doctor")

@@ -18,6 +18,7 @@ from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
 from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateLoop
+from tests.pack.fake_worker import FakeWorkerHandle
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_types import DoctorCheckResult, DoctorContext
@@ -132,7 +133,7 @@ async def test_pack_state_loop_doctor_ctx_picks_up_rotated_host_id() -> None:
     identity.set("host-a")
     registry = AdapterRegistry()
     adapter = _DoctorRecordingAdapter()
-    registry.set("vendor-doctor", "0.1.0", adapter)  # type: ignore[arg-type]
+    registry.set("vendor-doctor", "0.1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     runtime_registry = RuntimeRegistry()
 
     loop = PackStateLoop(

@@ -36,6 +36,7 @@ from agent_app.appium.process import (
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
 from agent_app.tools.paths import _parse_node_version
+from tests.pack.fake_worker import FakeWorkerHandle
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -1158,7 +1159,7 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
         LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
     )
     adapter_registry = AdapterRegistry()
-    adapter_registry.set("appium-uiautomator2", "2026.04.0", adapter)  # type: ignore[arg-type]
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
 
     with (
@@ -1195,7 +1196,7 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
     lifecycle_actions = [{"id": "boot"}]
     adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="running", resolved_connection_target="SIM-UUID"))
     adapter_registry = AdapterRegistry()
-    adapter_registry.set("appium-xcuitest", "2026.04.0", adapter)  # type: ignore[arg-type]
+    adapter_registry.set("appium-xcuitest", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
 
     with (
@@ -1231,7 +1232,7 @@ async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
         LifecycleActionResult(ok=True, state="running", resolved_connection_target="device-serial")
     )
     adapter_registry = AdapterRegistry()
-    adapter_registry.set("appium-uiautomator2", "2026.04.0", adapter)  # type: ignore[arg-type]
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
 
     with (
@@ -1264,7 +1265,7 @@ async def test_start_raises_when_adapter_boot_fails() -> None:
     lifecycle_actions = [{"id": "boot"}]
     adapter = _LifecycleAdapter(LifecycleActionResult(ok=False, detail="AVD 'Bad_AVD' could not be started"))
     adapter_registry = AdapterRegistry()
-    adapter_registry.set("appium-uiautomator2", "2026.04.0", adapter)  # type: ignore[arg-type]
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
 
     with (

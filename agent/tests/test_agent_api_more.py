@@ -14,6 +14,7 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.registration import RegistrationService
+from tests.pack.fake_worker import FakeWorkerHandle
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterator
@@ -116,7 +117,7 @@ async def test_pack_device_health_endpoint_covers_forwarding(client: AsyncClient
     )
     adapter = _FakeAdapter()
     registry = AdapterRegistry()
-    registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
     with _latest_desired_override(desired_pack):
@@ -157,7 +158,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
     )
     adapter = _FakeAdapter()
     registry = AdapterRegistry()
-    registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
     with _latest_desired_override(desired_pack):
