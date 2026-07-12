@@ -95,12 +95,6 @@ class ManifestAppiumEnvOut(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
-class ManifestDoctorCheckOut(BaseModel):
-    id: str
-    description: str
-    adapter_hook: str | None = None
-
-
 class PackRuntimeSummaryOut(BaseModel):
     installed_hosts: int = 0
     blocked_hosts: int = 0
@@ -120,7 +114,6 @@ class PackOut(BaseModel):
     appium_server: AppiumInstallableOut | None = None
     appium_driver: AppiumInstallableOut | None = None
     appium_env: list[ManifestAppiumEnvOut] = Field(default_factory=list)
-    doctor: list[ManifestDoctorCheckOut] = Field(default_factory=list)
     insecure_features: list[str] = Field(default_factory=list)
     runtime_policy: RuntimePolicy = Field(default_factory=RuntimePolicy)
     active_runs: int = 0

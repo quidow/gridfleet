@@ -203,6 +203,23 @@ features:
         load_manifest_yaml(manifest_text)
 
 
+def test_manifest_rejects_removed_doctor_block() -> None:
+    """The manifest doctor block was deleted in WS-14.2; extra="forbid" must reject it."""
+    yaml_text = _base_yaml() + "\ndoctor:\n  - id: adb\n    description: ADB present\n"
+    with pytest.raises(ManifestValidationError, match="doctor"):
+        load_manifest_yaml(yaml_text)
+
+
+def test_platform_rejects_removed_host_fields_schema() -> None:
+    """Platform.host_fields_schema was deleted in WS-14.2; extra="forbid" must reject it."""
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        _IDENTITY_LINE + "\n    host_fields_schema: []",
+    )
+    with pytest.raises(ManifestValidationError, match="host_fields_schema"):
+        load_manifest_yaml(yaml_text)
+
+
 def test_health_check_entry_accepts_applies_when() -> None:
     yaml_text = _base_yaml().replace(
         _IDENTITY_LINE,

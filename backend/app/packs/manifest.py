@@ -233,7 +233,6 @@ class Platform(BaseModel):
     capabilities: Capabilities
     identity: Identity
     device_fields_schema: list[FieldSchema] = Field(default_factory=list)
-    host_fields_schema: list[FieldSchema] = Field(default_factory=list)
     lifecycle_actions: list[LifecycleAction] = Field(default_factory=list)
     health_checks: list[HealthCheckLabel] = Field(default_factory=list)
     display: PlatformDisplay | None = None
@@ -249,16 +248,6 @@ class Platform(BaseModel):
     def _check_default_capability_templates(self) -> Platform:
         _validate_capability_templates(self.default_capabilities, where=f"platform {self.id}")
         return self
-
-
-class DoctorCheck(BaseModel):
-    """A diagnostic check for driver health."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    description: str
-    adapter_hook: str | None = None
 
 
 class ToolDependency(BaseModel):
@@ -328,7 +317,6 @@ class Manifest(BaseModel):
     appium_server: AppiumInstallable
     appium_driver: AppiumInstallable
     platforms: list[Platform]
-    doctor: list[DoctorCheck] = []
     insecure_features: list[str] = Field(default_factory=list)
     appium_env: list[AppiumEnvRule] = Field(default_factory=list)
     runtime_packages: list[RuntimePackage] = Field(default_factory=list)
