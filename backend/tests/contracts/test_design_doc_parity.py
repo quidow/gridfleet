@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from app import main as app_main
+from app.agent_comm import operations
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOOPS_DOC = REPO_ROOT / "docs" / "design" / "03-health-and-reconciliation.md"
@@ -50,3 +51,33 @@ def test_every_roster_loop_has_a_doc_row() -> None:
 def test_every_documented_loop_exists_in_roster() -> None:
     stale = _documented_loop_names() - _roster_loop_names()
     assert not stale, f"doc 3 documents loops absent from _build_leader_loop_tasks: {sorted(stale)}"
+
+
+DIAL_DOC = REPO_ROOT / "docs" / "design" / "04-backend-agent-contract.md"
+
+_DIAL_SECTION = "## Endpoint catalog (backend → agent)"
+_DIAL_ROW = re.compile(r"^\|\s*`([a-z_][a-z0-9_]*)`\s*\|")
+
+
+def _documented_dial_wrappers() -> set[str]:
+    names = {m.group(1) for line in _section(DIAL_DOC, _DIAL_SECTION).splitlines() if (m := _DIAL_ROW.match(line))}
+    assert names, "parsed zero wrapper rows from doc 4 -- table format changed?"
+    return names
+
+
+def _operations_public_surface() -> set[str]:
+    return {
+        name
+        for name, fn in inspect.getmembers(operations, inspect.iscoroutinefunction)
+        if not name.startswith("_") and fn.__module__ == operations.__name__
+    }
+
+
+def test_every_dial_wrapper_has_a_doc_row() -> None:
+    missing = _operations_public_surface() - _documented_dial_wrappers()
+    assert not missing, f"agent_comm.operations wrappers missing from doc 4's catalog: {sorted(missing)}"
+
+
+def test_every_documented_dial_wrapper_exists() -> None:
+    stale = _documented_dial_wrappers() - _operations_public_surface()
+    assert not stale, f"doc 4 documents wrappers absent from agent_comm.operations: {sorted(stale)}"
