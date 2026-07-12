@@ -25,7 +25,7 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
-from app.sessions import probe_inflight, service_sync
+from app.sessions import service_sync
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, build_review_service
@@ -845,25 +845,6 @@ async def test_orphan_kill_metric_not_incremented_when_terminate_fails(
     after = service_sync.GRID_ORPHAN_SESSIONS_KILLED_TOTAL._value.get()
 
     assert after == before
-
-
-async def test_orphan_with_inflight_probe_spared(
-    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
-) -> None:
-    device = await _seed_device_with_node(
-        db_session, db_host, identity_value="orph-probe", operational_state=DeviceOperationalState.available
-    )
-    await db_session.commit()
-
-    target = f"http://{db_host.ip}:4723"
-    _stub_appium_direct["list"][target] = ["probe-sess-uuid"]
-    probe_inflight.mark_probe_started(str(device.id))
-    try:
-        await _make_sync_service().sync(db_session)
-    finally:
-        probe_inflight.mark_probe_finished(str(device.id))
-
-    assert _stub_appium_direct["terminated"] == []
 
 
 async def test_list_sessions_none_skips_node(

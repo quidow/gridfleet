@@ -32,7 +32,6 @@ from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
 from app.sessions.models import Session
-from app.sessions.probe_inflight import is_probe_inflight
 from app.sessions.service import device_has_running_session
 
 if TYPE_CHECKING:
@@ -218,8 +217,8 @@ async def _get_device_health(
 
 
 async def _host_has_live_sessions(db: AsyncSession, device: Device) -> bool:
-    """True when any device on this host has a live/pending session row or an
-    in-flight viability probe — the adapter's disruptive cure rung (adb bounce)
+    """True when any device on this host has a live/pending session row — probe
+    rows included (WS-16.1) — the adapter's disruptive cure rung (adb bounce)
     must not run then, it would sever every transport on the host."""
     row = await db.execute(
         select(Session.id)
@@ -227,10 +226,7 @@ async def _host_has_live_sessions(db: AsyncSession, device: Device) -> bool:
         .where(Device.host_id == device.host_id, live_session_predicate())
         .limit(1)
     )
-    if row.first() is not None:
-        return True
-    host_device_ids = (await db.scalars(select(Device.id).where(Device.host_id == device.host_id))).all()
-    return any(is_probe_inflight(str(device_id)) for device_id in host_device_ids)
+    return row.first() is not None
 
 
 async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
@@ -511,7 +507,7 @@ class ConnectivityService:
         # Fresh facts at dispatch time (the probe-phase snapshot is stale by the
         # agent round-trips): a session/probe that appeared since the probe makes
         # the adapter refuse port cures; host-wide liveness gates its bounce rung.
-        fresh_live = await device_has_running_session(db, device.id) or is_probe_inflight(str(device.id))
+        fresh_live = await device_has_running_session(db, device.id)
         host_live = await _host_has_live_sessions(db, device)
         extra_args: dict[str, Any] = {"has_live_session": fresh_live, "host_has_live_sessions": host_live}
         if claimed_ports:

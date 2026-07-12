@@ -435,7 +435,6 @@ def reset_event_bus(bus: EventBus) -> None:
 
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
-SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
 
 
 async def seed_ready_loop_snapshots(db: AsyncSession) -> None:
@@ -478,18 +477,13 @@ async def track_previously_offline_device(db: AsyncSession, identity_value: str)
 
 async def reset_session_viability_control_plane_state(db: AsyncSession) -> None:
     await db.execute(
-        delete(ControlPlaneStateEntry).where(
-            ControlPlaneStateEntry.namespace.in_(
-                [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE]
-            )
-        )
+        delete(ControlPlaneStateEntry).where(ControlPlaneStateEntry.namespace.in_([SESSION_VIABILITY_STATE_NAMESPACE]))
     )
     await db.commit()
 
 
 async def get_session_viability_control_plane_state(db: AsyncSession) -> dict[str, Any]:
     return {
-        "running": sorted((await control_plane_state_store.get_values(db, SESSION_VIABILITY_RUNNING_NAMESPACE)).keys()),
         "state": await control_plane_state_store.get_values(db, SESSION_VIABILITY_STATE_NAMESPACE),
     }
 
