@@ -19,7 +19,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.intent_types import CommandKind
+from app.devices.services.intent_types import VERIFICATION_OUTCOME_PASSED, CommandKind
 from app.devices.services.recovery_projection import RecoveryBlockKind, recovery_availability
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services import remediation_log
@@ -32,6 +32,7 @@ from app.runs.service_reservation import RunReservationService
 from app.verification.services.execution import (
     _register_verification_node_intent,
     _revoke_verification_node_intent,
+    _stamp_verification_outcome,
 )
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
@@ -105,10 +106,12 @@ async def test_verification_lease_outranks_derived_stop_without_revoke(
     assert ladder.node_directive is not None
     assert ladder.node_directive.kind == DIRECTIVE_STOP
 
-    # Mirror _finalize_success ordering: append the verification_passed reset, then
-    # revoke the lease + reconcile. The reset ends the episode; baseline sustains the
+    # Mirror _finalize_success: durable facts first (the verification_passed
+    # reset; the outcome stamp that tombstones the lease), then the hygiene
+    # revoke + reconcile. The reset ends the episode; baseline sustains the
     # verified, in-service device running — no stop flap.
     await remediation_log.append_reset(db_session, device.id, source="verification", action="verification_passed")
+    await _stamp_verification_outcome(db_session, device, outcome=VERIFICATION_OUTCOME_PASSED)
     await _revoke_verification_node_intent(db_session, device, publisher=event_bus)
     await db_session.commit()
     await db_session.refresh(node)

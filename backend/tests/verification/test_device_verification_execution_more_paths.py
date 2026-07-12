@@ -134,6 +134,8 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     mock_crud = AsyncMock()
     mock_crud.delete_device = AsyncMock()
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value="cleanup failed"))
+    stamp_mock = AsyncMock()
+    monkeypatch.setattr(execution, "_stamp_verification_outcome", stamp_mock)
 
     create_node_manager = AsyncMock()
     create_svc = _make_svc(publisher=event_bus, crud=mock_crud, node_manager=create_node_manager)
@@ -151,8 +153,6 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     locked = _device(name="changed")
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value=None))
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
-    revoke_mock = AsyncMock()
-    monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke_mock)
     # The update-mode failure path also strips the operator:stop branding + stray
     # operator:start via a real IntentService; mock it for this db=MagicMock unit test.
     strip_revoke = AsyncMock()
@@ -172,15 +172,14 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
-    # Update-mode failure is reconciler-authoritative: the module no longer imports
-    # set_operational_state at all (enforced by test_no_direct_device_state_writes). The durable
-    # review_required fact is set before the revoke so the reconcile derives offline, and the
-    # revoke carries the publisher for the derived emit.
+    # Update-mode failure is reconciler-authoritative: the durable review_required
+    # fact and outcome stamp precede the single merged revoke, which carries the
+    # publisher for the derived emit.
     mark_mock.assert_awaited_once()
-    revoke_mock.assert_awaited_once_with(db, locked, publisher=event_bus)
-    # The branding-strip revoke runs with the operator:stop sources + the stray operator:start.
+    stamp_mock.assert_awaited_once()
     strip_revoke.assert_awaited_once()
     strip_sources = strip_revoke.await_args.kwargs["sources"]
+    assert f"verification:{locked.id}" in strip_sources
     assert f"operator:stop:node:{locked.id}" in strip_sources
     assert f"operator:start:{locked.id}" in strip_sources
 
@@ -243,11 +242,8 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The PASS terminal transition is reconciler-authoritative: no direct
-    ``set_operational_state`` push. ``_revoke_verification_node_intent`` must run only
-    after ``locked.verified_at`` is set (otherwise the reconcile it triggers sees
-    ``verified_at IS NULL`` and flaps ``available -> offline`` right after
-    registration), and it must carry the ``publisher`` so the derived ``available``
-    state still emits ``operational_state_changed``.
+    ``set_operational_state`` push, and the outcome stamp precedes the hygiene
+    revoke that carries the publisher for the derived ``available`` emit.
     """
     from app.devices.models import DeviceOperationalState
     from app.verification.services.preparation import PreparedVerificationContext
@@ -277,14 +273,14 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     _mock_viability = AsyncMock()
     _mock_viability.record_session_viability_result = AsyncMock()
 
-    verified_at_when_revoked: list[object] = []
     publisher_when_revoked: list[object] = []
 
     async def revoke(_db: object, device: SimpleNamespace, *, publisher: object = None) -> None:
-        verified_at_when_revoked.append(device.verified_at)
         publisher_when_revoked.append(publisher)
 
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke)
+    stamp_mock = AsyncMock()
+    monkeypatch.setattr(execution, "_stamp_verification_outcome", stamp_mock)
 
     svc = _make_svc(publisher=event_bus, crud=AsyncMock(), viability=_mock_viability)
     outcome = await svc._finalize_success(
@@ -297,8 +293,8 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     assert outcome.status == "completed"
     # PASS is reconciler-authoritative: the module no longer imports set_operational_state
     # (enforced by test_no_direct_device_state_writes).
-    assert len(verified_at_when_revoked) == 1
-    assert verified_at_when_revoked[0] is not None, "verified_at must be set before revoke"
+    stamp_mock.assert_awaited_once()
+    assert len(publisher_when_revoked) == 1
     assert publisher_when_revoked[0] is event_bus, "revoke must carry the publisher for the derived emit"
 
 
@@ -316,7 +312,8 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     locked = _device(review_required=False, review_reason=None)
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value=None))
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
-    monkeypatch.setattr(execution, "_revoke_verification_node_intent", AsyncMock())
+    stamp_mock = AsyncMock()
+    monkeypatch.setattr(execution, "_stamp_verification_outcome", stamp_mock)
     # The update-mode failure path strips operator:stop/operator:start via a real
     # IntentService; mock it for this db=MagicMock unit test.
     strip_revoke = AsyncMock()
@@ -328,12 +325,7 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     review_mock = MagicMock()
     review_mock.mark_review_required = mark_mock
 
-    # Track call order between mark_review_required and db.commit.
-    call_order_manager = MagicMock()
     db.commit = AsyncMock()
-    call_order_manager.attach_mock(mark_mock, "mark")
-    call_order_manager.attach_mock(strip_revoke, "strip")
-    call_order_manager.attach_mock(db.commit, "commit")
 
     shelve_svc = _make_svc(publisher=event_bus, crud=AsyncMock(), node_manager=AsyncMock(), review=review_mock)
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
@@ -351,12 +343,7 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     assert call_args.args[1] is locked  # mark_review_required(db, device, *, ...)
     assert "verification" in call_args.kwargs.get("reason", "")
     assert call_args.kwargs.get("source") == "verification"
-
-    # Ordering: mark_review_required and the branding-strip revoke must run before db.commit
-    # (the strip's reconcile derives the shelved/offline state that the commit persists).
-    call_names = [c[0] for c in call_order_manager.mock_calls]
-    assert call_names.index("mark") < call_names.index("commit")
-    assert call_names.index("strip") < call_names.index("commit")
+    stamp_mock.assert_awaited_once()
     strip_revoke.assert_awaited_once()
 
 
