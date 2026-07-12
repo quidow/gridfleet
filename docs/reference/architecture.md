@@ -12,7 +12,7 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 - Derive host liveness from the recency of the agent's consolidated status push.
 - Evaluate node health via direct-to-Appium probes.
 - Sync stray sessions on Appium that don't belong to the internal state.
-- Expire stale router allocation tickets (`grid_allocation_reaper`).
+- Expire stale queue tickets and fail crash-orphaned pending rows (`grid_allocation_reaper`).
 - Transition device maintenance lifecycles (`device_intent_reconciler`).
 - Run trivial periodic chores as `stage_due` stages of the `janitor` loop (base tick 15 s): `run_reaper`, `fleet_capacity` (60 s), `pack_drain` backstop (60 s), `data_cleanup` (hourly, skips boot), and the heartbeat-snapshot flush (15 s).
 
@@ -129,7 +129,7 @@ Agents run on physical lab hosts or VMs where devices are attached. Unlike the c
 
 ## 3. WebDriver Router (Rust / Pingora)
 
-The router (`router/`) is a standalone Rust binary that listens on `:4444` and replaces the Selenium Grid hub. For each incoming W3C `POST /session` it calls the backend's internal grid API (`/internal/grid/*`) to allocate and confirm a device, then proxies that session's WebDriver commands directly to the allocated device's Appium server. Subsequent commands on an established session are routed by session id to the same Appium upstream. The backend owns allocation, queueing, and capability matching; the router owns request forwarding. It is configured purely via `GRIDFLEET_ROUTER_*` env vars (see `docs/reference/environment.md`).
+The router (`router/`) is a standalone Rust binary that listens on `:4444` and replaces the Selenium Grid hub. For each incoming W3C `POST /session` it calls the backend's internal grid API (`/internal/grid/create-session`), which claims a matching device, creates the Appium session backend-side, records it as running, and returns the response for relay. The router then proxies that session's WebDriver commands directly to the allocated device's Appium server. Subsequent commands on an established session are routed by session id to the same Appium upstream. The backend owns allocation, queueing, capability matching, and session creation; the router owns request forwarding. It is configured purely via `GRIDFLEET_ROUTER_*` env vars (see `docs/reference/environment.md`).
 
 ### Timeout lattice — cross-component ordered budgets
 
@@ -137,14 +137,14 @@ Same-component budget rules live next to their constants as derived expressions 
 
 | Budget A | Budget B | Rule | Owner | Enforcement |
 | --- | --- | --- | --- | --- |
-| Router shared HTTP client timeout (40 s, `router/src/backend.rs`) | Backend allocate long-poll slice (`LONG_POLL_SEC` = 25 s, `backend/app/grid/constants.py`) | A > B, or every quiet allocate poll dies on the client timeout | backend | compile-time `const` assert in `router/src/backend.rs` (mirrored constant) |
-| Router confirm retry budget (3 × (10 s + 2 s) = 36 s, `router/src/backend.rs`, `proxy.rs`) | Backend confirm grace (`CONFIRM_GRACE_SEC` = 60 s, `backend/app/grid/allocation.py`) | A < B, or a retried confirm outlives the reaper's grace and the allocation is released mid-confirm | backend | compile-time `const` assert in `router/src/backend.rs` (mirrored constant) |
-| Router Appium create timeout (`create_timeout`, `router/src/proxy.rs`) | Backend `grid.claim_window_sec` (registry, floor 30 s) | A ≤ min(proxy_timeout, B − 5 s), or the reaper releases the allocation under an in-flight create | backend (registry) | derived expression + unit tests in `router/src/proxy.rs`; the registry floor keeps the −5 s cap engaged |
+| Router create-session call timeout (280 s, `router/src/backend.rs`) | Backend `LONG_POLL_SEC` + `CREATE_TIMEOUT_CAP_SEC` (25 + 240 s, `app/grid/constants.py` / `app/grid/session_create.py`) | A > B + margin, or the router gives up while the backend is still creating | backend | compile-time `const` assert in `router/src/backend.rs` (mirrored constants) |
 | Router activity-flush cadence (10 s, `router/src/tasks.rs`) | Backend session-liveness freshness window (`ACTIVITY_FRESH_WINDOW_SEC` = 30 s, `backend/app/sessions/service_sync.py`) | B = 3 × A — retune together, or live sessions fail the freshness gate and get per-session probes (or worse, idle-reaped) | router | compile-time `const` assert in `router/src/tasks.rs` (mirrored constant) |
 | Backend `grid.queue_timeout_sec` (registry) | Backend allocate long-poll slice (`LONG_POLL_SEC` = 25 s) | A > B, or a queued waiter can expire mid-poll | backend | settings invariant in `backend/app/settings/invariants.py` (write-time reject + scheduler boot gate) |
 | Agent HTTP keep-alive (630 s, `agent/agent_app/config.py`) | Backend agent-pool idle (`POOL_KEEPALIVE_EXPIRY_SEC` = 60 s, `backend/app/agent_comm/http_pool.py`) | A > B, or the backend pool reuses connections the agent already closed and non-idempotent calls fail | backend | parity test `backend/tests/contracts/test_timeout_lattice_parity.py` (loads the agent default by file path) |
 
 (One row is backend↔agent rather than backend↔router; it is the same class of rule and this table is the designated single home, so it lives here too.)
+
+The create-timeout-below-claim-window rule is a same-component derived expression in `session_create.py`; it lives next to its constants rather than as a separate cross-component lattice row.
 
 ## 4. Frontend Operator Dashboard
 
@@ -163,4 +163,4 @@ The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operato
 4. The Backend records desired Appium-node intent for that device.
 5. The reconciler drives the Agent to start Appium for that device.
 6. A CI runner makes a reservation via `/api/runs`.
-7. Testing traffic is sent to the router (`http://localhost:4444`), which allocates a matching device via the backend internal grid API and proxies WebDriver traffic directly to that device's local Appium server.
+7. Testing traffic is sent to the router (`http://localhost:4444`), which asks the backend to claim a matching device and create the session, then proxies WebDriver traffic directly to that device's local Appium server.
