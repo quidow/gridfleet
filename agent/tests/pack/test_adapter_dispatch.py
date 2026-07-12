@@ -549,6 +549,11 @@ def test_adapter_supports_probes_real_methods() -> None:
     assert adapter_supports(handle, "lifecycle_action") is False
 
 
+def test_adapter_supports_requires_worker_handshake() -> None:
+    with pytest.raises(AttributeError):
+        adapter_supports(_MinimalAdapter(), "discover")  # type: ignore[arg-type]
+
+
 def test_missing_declared_hooks_reports_unimplemented() -> None:
     missing = missing_declared_hooks(_pack_declaring_capabilities(), FakeWorkerHandle(_MinimalAdapter()))
     assert missing == ["lifecycle_action"]

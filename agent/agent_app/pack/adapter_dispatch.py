@@ -1,22 +1,15 @@
-"""Dispatch adapter hooks through supervised workers.
-
-The small legacy fallback is retained for isolated unit-test doubles that
-implement the old plain-adapter shape; production registries contain only
-``WorkerHandle`` instances.
-"""
+"""Dispatch adapter hooks through supervised workers."""
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DiscoveryContext,
     DoctorCheckResult,
     DoctorContext,
-    DriverPackAdapter,
     HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
@@ -30,30 +23,22 @@ from agent_app.pack.adapter_types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from agent_app.pack.manifest import DesiredPack
     from agent_app.pack.worker_supervisor import WorkerHandle
 
 ADAPTER_HOOK_TIMEOUT_SECONDS: float = 30.0
 
 
-def adapter_supports(handle: object, hook: str) -> bool:
-    """True when a worker handshake (or a legacy test double) advertises *hook*."""
-    supported = getattr(handle, "supported_hooks", None)
-    if supported is not None:
-        return hook in supported
-    return hasattr(handle, hook)
+def adapter_supports(handle: WorkerHandle, hook: str) -> bool:
+    """True when the worker handshake advertises *hook*."""
+    return hook in handle.supported_hooks
 
 
-_DECLARATION_HOOKS: tuple[tuple[str, str], ...] = (("lifecycle_actions", "lifecycle_action"),)
-
-
-def missing_declared_hooks(pack: DesiredPack, handle: object) -> list[str]:
-    declares = {"lifecycle_actions": any(platform.lifecycle_actions for platform in pack.platforms)}
-    return [
-        hook for declaration, hook in _DECLARATION_HOOKS if declares[declaration] and not adapter_supports(handle, hook)
-    ]
+def missing_declared_hooks(pack: DesiredPack, handle: WorkerHandle) -> list[str]:
+    declares_lifecycle = any(platform.lifecycle_actions for platform in pack.platforms)
+    if declares_lifecycle and not adapter_supports(handle, "lifecycle_action"):
+        return ["lifecycle_action"]
+    return []
 
 
 class AdapterHookTimeoutError(Exception):
@@ -100,64 +85,34 @@ def _context_payload(ctx: object) -> dict[str, Any]:
     return dict(vars(ctx))
 
 
-def _identity(handle: object) -> tuple[str, str]:
-    return str(getattr(handle, "pack_id", "")), str(getattr(handle, "release", getattr(handle, "pack_release", "")))
-
-
-def _legacy_call(handle: object, method: str, *args: object) -> Awaitable[object]:
-    fn = cast("Callable[..., Awaitable[object]]", getattr(handle, method))
-    return fn(*args)
-
-
-async def _call_hook[T](
-    handle: object,
-    hook: str,
-    payload: dict[str, Any],
-    expected: type[T],
-    legacy_call: Callable[[], Awaitable[object]],
-) -> T:
-    pack_id, release = _identity(handle)
+async def _call_hook[T](handle: WorkerHandle, hook: str, payload: dict[str, Any], expected: type[T]) -> T:
     try:
-        if hasattr(handle, "call"):
-            call = cast("Callable[[str, dict[str, Any]], Awaitable[object]]", handle.call)
-            result = await call(hook, payload)
-        else:
-            result = await asyncio.wait_for(legacy_call(), timeout=ADAPTER_HOOK_TIMEOUT_SECONDS)
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, pack_id, release) from None
+        result = await handle.call(hook, payload)
     except AdapterHookTimeoutError, AdapterHookExecutionError, AdapterContractError:
         raise
     except Exception as exc:
-        raise AdapterHookExecutionError(hook, pack_id, release, exc) from exc
+        raise AdapterHookExecutionError(hook, handle.pack_id, handle.release, exc) from exc
     if not isinstance(result, expected):
-        raise AdapterContractError(hook, pack_id, release, f"expected {expected.__name__}, got {type(result).__name__}")
+        raise AdapterContractError(
+            hook, handle.pack_id, handle.release, f"expected {expected.__name__}, got {type(result).__name__}"
+        )
     return result
 
 
-async def dispatch_discover(
-    handle: WorkerHandle | DriverPackAdapter, ctx: DiscoveryContext
-) -> list[DiscoveryCandidate]:
-    return await _call_hook(
-        handle, "discover", {"ctx": _context_payload(ctx)}, list, lambda: _legacy_call(handle, "discover", ctx)
-    )
+async def dispatch_discover(handle: WorkerHandle, ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
+    return await _call_hook(handle, "discover", {"ctx": _context_payload(ctx)}, list)
 
 
-async def dispatch_doctor(handle: WorkerHandle | DriverPackAdapter, ctx: DoctorContext) -> list[DoctorCheckResult]:
-    return await _call_hook(
-        handle, "doctor", {"ctx": _context_payload(ctx)}, list, lambda: _legacy_call(handle, "doctor", ctx)
-    )
+async def dispatch_doctor(handle: WorkerHandle, ctx: DoctorContext) -> list[DoctorCheckResult]:
+    return await _call_hook(handle, "doctor", {"ctx": _context_payload(ctx)}, list)
 
 
-async def dispatch_health_check(
-    handle: WorkerHandle | DriverPackAdapter, ctx: HealthContext
-) -> list[HealthCheckResult]:
-    return await _call_hook(
-        handle, "health_check", {"ctx": _context_payload(ctx)}, list, lambda: _legacy_call(handle, "health_check", ctx)
-    )
+async def dispatch_health_check(handle: WorkerHandle, ctx: HealthContext) -> list[HealthCheckResult]:
+    return await _call_hook(handle, "health_check", {"ctx": _context_payload(ctx)}, list)
 
 
 async def dispatch_lifecycle_action(
-    handle: WorkerHandle | DriverPackAdapter,
+    handle: WorkerHandle,
     action_id: str,
     args: dict[str, Any],
     ctx: LifecycleContext,
@@ -167,22 +122,15 @@ async def dispatch_lifecycle_action(
         "lifecycle_action",
         {"action_id": action_id, "args": args, "ctx": _context_payload(ctx)},
         LifecycleActionResult,
-        lambda: _legacy_call(handle, "lifecycle_action", action_id, args, ctx),
     )
 
 
-async def dispatch_pre_session(handle: WorkerHandle | DriverPackAdapter, spec: SessionSpec) -> dict[str, Any]:
-    return await _call_hook(
-        handle,
-        "pre_session",
-        {"spec": dataclasses.asdict(spec)},
-        dict,
-        lambda: _legacy_call(handle, "pre_session", spec),
-    )
+async def dispatch_pre_session(handle: WorkerHandle, spec: SessionSpec) -> dict[str, Any]:
+    return await _call_hook(handle, "pre_session", {"spec": dataclasses.asdict(spec)}, dict)
 
 
 async def dispatch_post_session(
-    handle: WorkerHandle | DriverPackAdapter,
+    handle: WorkerHandle,
     spec: SessionSpec,
     outcome: SessionOutcome,
 ) -> None:
@@ -191,28 +139,15 @@ async def dispatch_post_session(
         "post_session",
         {"spec": dataclasses.asdict(spec), "outcome": dataclasses.asdict(outcome)},
         type(None),
-        lambda: _legacy_call(handle, "post_session", spec, outcome),
     )
 
 
 async def dispatch_normalize_device(
-    handle: WorkerHandle | DriverPackAdapter,
+    handle: WorkerHandle,
     ctx: NormalizeDeviceContext,
 ) -> NormalizedDevice:
-    return await _call_hook(
-        handle,
-        "normalize_device",
-        {"ctx": _context_payload(ctx)},
-        NormalizedDevice,
-        lambda: _legacy_call(handle, "normalize_device", ctx),
-    )
+    return await _call_hook(handle, "normalize_device", {"ctx": _context_payload(ctx)}, NormalizedDevice)
 
 
-async def dispatch_telemetry(handle: WorkerHandle | DriverPackAdapter, ctx: TelemetryContext) -> HardwareTelemetry:
-    return await _call_hook(
-        handle,
-        "telemetry",
-        {"ctx": _context_payload(ctx)},
-        HardwareTelemetry,
-        lambda: _legacy_call(handle, "telemetry", ctx),
-    )
+async def dispatch_telemetry(handle: WorkerHandle, ctx: TelemetryContext) -> HardwareTelemetry:
+    return await _call_hook(handle, "telemetry", {"ctx": _context_payload(ctx)}, HardwareTelemetry)
