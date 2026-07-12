@@ -21,33 +21,19 @@ if TYPE_CHECKING:
     from app.devices.models import Device
 
 
-# ``now``/``parse_iso`` delegate to the shared app.core.timeutil (Q10); kept as named
-# wrappers here so the existing importers (policy.py, lifecycle_policy_summary.py) do not
-# change and mypy sees an explicit definition.
+# ``now`` delegates to the shared app.core.timeutil; it remains a named wrapper so
+# existing policy-summary callers do not change.
 def now() -> datetime:
     return timeutil.now_utc()
 
 
-def now_iso() -> str:
-    return now().isoformat()
-
-
-def parse_iso(raw: object) -> datetime | None:
-    return timeutil.parse_iso(raw)
-
-
 def default_state() -> dict[str, Any]:
-    return {
-        "deferred_stop": False,
-        "deferred_stop_reason": None,
-        "deferred_stop_since": None,
-        "maintenance_reason": None,
-    }
+    return {"maintenance_reason": None}
 
 
 def state(device: Device) -> dict[str, Any]:
     raw = device.lifecycle_policy_state if isinstance(device.lifecycle_policy_state, dict) else {}
-    return {**default_state(), **raw}
+    return {"maintenance_reason": raw.get("maintenance_reason")}
 
 
 def in_maintenance(device: Device) -> bool:
@@ -68,28 +54,6 @@ def write_state(device: Device, next_state: dict[str, Any]) -> None:
 
 def loaded_node(device: Device) -> AppiumNode | None:
     return device.__dict__.get("appium_node")
-
-
-def set_deferred_stop(next_state: dict[str, Any], *, reason: str) -> None:
-    """Mark the deferred-auto-stop intent on the working state dict.
-
-    The caller is still responsible for ``write_state`` and for emitting any
-    ``lifecycle_deferred_stop`` incident under the device row lock.
-    """
-    next_state["deferred_stop"] = True
-    next_state["deferred_stop_reason"] = reason
-    next_state["deferred_stop_since"] = now_iso()
-
-
-def clear_deferred_stop(next_state: dict[str, Any]) -> None:
-    """Clear the deferred-auto-stop intent on the working state dict.
-
-    Does NOT stamp remediation-log action rows; callers that want a specific
-    trail entry append it through ``app.lifecycle.services.remediation_log``.
-    """
-    next_state["deferred_stop"] = False
-    next_state["deferred_stop_reason"] = None
-    next_state["deferred_stop_since"] = None
 
 
 MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"

@@ -268,6 +268,11 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
     monkeypatch.setattr(execution, "_restore_create_payload_fields", lambda *args: None)
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
+    monkeypatch.setattr(
+        execution.remediation_log,
+        "load_ladder",
+        AsyncMock(return_value=execution.remediation_log.EMPTY_LADDER),
+    )
 
     _mock_viability = AsyncMock()
     _mock_viability.record_session_viability_result = AsyncMock()

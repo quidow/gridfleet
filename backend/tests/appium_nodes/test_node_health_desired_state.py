@@ -10,7 +10,8 @@ from sqlalchemy import select
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -78,15 +79,10 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
         and event.details.get("restart_requested_at") is not None
         for event in events
     )
-    intent = (
-        await db_session.execute(
-            select(DeviceIntent).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"auto_recovery:node:{device.id}",
-            )
-        )
-    ).scalar_one()
-    assert intent.payload["restart_requested_at"] == node.restart_requested_at.isoformat()
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == remediation_log.DIRECTIVE_START
+    assert ladder.node_directive.restart_watermark == node.restart_requested_at
 
 
 async def test_node_health_skips_escalation_for_intentionally_stopping_node(
@@ -129,12 +125,5 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
     await db_session.refresh(node)
     assert node.restart_requested_at is None  # no restart escalated
     assert node.health_failing_since is None  # refused probe not counted
-    intent = (
-        await db_session.execute(
-            select(DeviceIntent).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"auto_recovery:node:{device.id}",
-            )
-        )
-    ).scalar_one_or_none()
-    assert intent is None
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.node_directive is None

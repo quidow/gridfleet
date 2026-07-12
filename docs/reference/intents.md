@@ -20,8 +20,11 @@ node.
 2. **Facts** are read directly from domain rows by `gather_decision_facts` — never
    re-encoded as intent rows. They are: `in_maintenance` (maintenance_reason set),
    `device_checks_unhealthy` (`device_checks_healthy IS FALSE`), `in_service`
-   (baseline eligibility, F-G1), and the single active `DeviceReservation` row
-   (which yields `reservation_run_id`, `cooldown_active`, `cooldown_reason`).
+   (baseline eligibility, F-G1), the single active `DeviceReservation` row
+   (which yields `reservation_run_id`, `cooldown_active`, `cooldown_reason`), and
+   the remediation-log **node-process directive** (`NodeDirective`, derived by
+   `derive_ladder` from `auto_stop_commissioned` / `restart_commissioned` /
+   `recovery_started` rows — newest-in-episode wins).
 
 Precedence is the **ordered code** in the deciders, not a numeric priority in the
 payload. Payloads carry only what a decider reads.
@@ -34,9 +37,9 @@ retired numeric ladder exactly:
 1. `operator:stop:node` command → hard stop.
 2. `forced_release` command → hard stop.
 3. `in_maintenance` **fact** → graceful stop (`maintenance hold`).
-4. `health_failure:node` command → graceful stop.
-5. `device_checks_unhealthy` **fact**, and no active start command → `running_blocked` (connectivity park).
-6. any start command (`operator:start`, `verification`, `auto_recovery:node`) → running. A restart-bearing start (one carrying `restart_requested_at`) beats a plain standing order; among restarts the newest watermark wins (a later request supersedes an earlier one), and ties break lexicographically by source.
+4. remediation **stop directive** (fact) → graceful stop, structurally suppressed by any active start (stored or derived).
+5. `device_checks_unhealthy` **fact**, and no active start → `running_blocked` (connectivity park), same suppression.
+6. any start — stored `operator:start` / `verification` commands plus the derived remediation **start directive** (`in_service`-gated) → running. A restart-bearing start (one carrying `restart_requested_at`) beats a plain standing order; among restarts the newest watermark wins (a later request supersedes an earlier one) and the derived directive's watermark folds into the same newest-wins fold; ties break lexicographically by source.
 7. `in_service` **fact** (no commands) → running (`baseline:idle` standing start).
 8. otherwise → stopped.
 
@@ -45,8 +48,7 @@ route the run; cooldown → keep the run bound but block new sessions.
 
 `decide_recovery`: `operator:stop:recovery` command denies; else `in_maintenance`
 denies (with `MAINTENANCE_HOLD_SUPPRESSION_REASON`); else `cooldown_active`
-denies (with the exclusion reason); else `auto_recovery:recovery` allows; else
-default-allow.
+denies (with the exclusion reason); else default-allow.
 
 The recovery decision is consumed **read-side**, not cached by the reconciler: the
 reconciler derives node-process and grid-routing state only. `decide_recovery` is
@@ -69,10 +71,13 @@ debug view at zero decision cost. Stop mode is implied by the command kind;
 | `operator:stop:node:{device_id}` | `operator:stop:node` | `{"action": "stop"}` |
 | `operator:stop:recovery:{device_id}` | `operator:stop:recovery` | `{"allowed": false, "reason": "Operator stopped the node"}` |
 | `forced_release:{run_id}` | `forced_release` | `{"action": "stop"}` |
-| `health_failure:node:{device_id}` | `health_failure:node` | `{"action": "stop"}` |
 | `verification:{device_id}` | `verification` | `{"action": "start"}` |
-| `auto_recovery:node:{device_id}` | `auto_recovery:node` | `{"action": "start"}` (node_health restart adds `restart_requested_at`) |
-| `auto_recovery:recovery:{device_id}` | `auto_recovery:recovery` | `{"allowed": true, "reason": <text>}` |
+
+The three retired system pseudo-commands (`health_failure:node`,
+`auto_recovery:node`, `auto_recovery:recovery`) are no longer stored rows — their
+decisions derive from the remediation-log node-process directive (see the facts
+list above and [device-lifecycle.md](./device-lifecycle.md)). The table now lists
+**external will only**.
 
 ## Lifecycle
 
@@ -80,7 +85,8 @@ A stored command is deleted by exactly one of two mechanisms:
 
 1. **Explicit revoke** via `revoke_intents_and_reconcile(...)` from the flow that
    drives the underlying state change (e.g. operator start revokes
-   `operator_stop_sources` and `failure_stop_sources`).
+   `operator_stop_sources`; the derived failure-stop directive is superseded by an
+   appended `reset` row, not a revoke).
 2. **TTL** via the `expires_at` column, swept by `_gc_expired_intents` at the
    start of every reconciler tick (a bulk delete; the every-tick full scan
    re-derives the affected devices).
@@ -91,18 +97,25 @@ underlying fact dictates.
 
 ## Semantic notes
 
-1. **Start commands retire by TTL, not by a `node_running` precondition.** An
-   `operator:start` / `auto_recovery:node` row may linger a few minutes after the
-   node is running; it is a no-op while the node runs (`baseline:idle` sustains
-   `running`) and stops higher on the ladder still override it. Its TTL is
-   `appium.startup_timeout_sec` + `general.session_viability_timeout_sec` + 60 s
-   (auto-recovery / forced-release use `appium_reconciler.restart_window_sec`).
+1. **`operator:start` retires by TTL, not by a `node_running` precondition.** The
+   row may linger a few minutes after the node is running; it is a no-op while the
+   node runs (`baseline:idle` sustains `running`) and stops higher on the ladder
+   still override it. Its TTL is `appium.startup_timeout_sec` +
+   `general.session_viability_timeout_sec` + 60 s (forced-release uses
+   `appium_reconciler.restart_window_sec`).
 2. **`forced_release:{run}` retires by TTL, not a `run_active` precondition.**
    Within its short TTL a hard stop outranks an operator start on the ladder.
-3. **The connectivity park is suppressed while any active start command exists**
-   (operator start/restart, verification lease, auto-recovery). This structural
-   rule (rung 5 checks `not starts`) replaces the old scattered "revoke
-   `connectivity:*` before starting" ritual.
+3. **The connectivity park and the derived failure-stop are both suppressed while
+   any active start exists** — a stored command (operator start/restart,
+   verification lease) or the derived remediation start directive. This structural
+   rule (rungs 4–5 check `not starts and not remediation_start`) replaces the old
+   scattered "revoke `connectivity:*` / `failure_stop_sources` before starting"
+   rituals.
+
+4. **2026-07-12 (WS-15.2): the system pseudo-commands were demoted to log-derived
+   rungs**, completing the 2026-07-09 demote-facts-from-intents direction. The
+   TTL-GC sweep now serves only the external-will survivors (verification lease,
+   `forced_release`, `operator:start`).
 
 ## Out of scope
 

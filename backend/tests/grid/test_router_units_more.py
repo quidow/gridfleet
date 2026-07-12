@@ -1411,7 +1411,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     assert exc.value.status_code == 502
 
 
-async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> None:
+async def test_devices_control_reconnect_starts_without_stale_intent_revoke() -> None:
     device_id = uuid.uuid4()
     resolved = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
     node = SimpleNamespace(observed_running=False)
@@ -1422,7 +1422,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         session_viability_error="Appium node is not running",
     )
     db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
-    revoke = AsyncMock()
     start_node = AsyncMock()
     mock_reconciler_agent_ctrl = AsyncMock()
     mock_reconciler_agent_ctrl.start_node = start_node
@@ -1435,7 +1434,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
             "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch.object(IntentService, "revoke_intents_and_reconcile", new=revoke),
     ):
         reconnect = await devices_control.reconnect_device(
             device_id,
@@ -1449,15 +1447,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     assert reconnect["message"] == "Reconnected"
     assert device.session_viability_status is None
     assert device.session_viability_error is None
-    revoke.assert_awaited_once_with(
-        device_id=device_id,
-        sources=[
-            f"connectivity:{device_id}",
-            f"health_failure:node:{device_id}",
-            f"health_failure:recovery:{device_id}",
-        ],
-        publisher=event_bus,
-    )
     db.commit.assert_awaited_once()
     start_node.assert_awaited_once()
 

@@ -124,13 +124,16 @@ columns; the row-lock contract applies to application code only.
 ### Lifecycle JSON axis
 
 `Device.lifecycle_policy_state` is NOT derived by the reconciler. Helpers in
-`app.devices.services.lifecycle_policy_state` manage the four surviving JSON keys
+`app.devices.services.lifecycle_policy_state` manage the one surviving JSON key
 under the same row lock:
 
-- `deferred_stop`
-- `deferred_stop_reason`
-- `deferred_stop_since`
 - `maintenance_reason`
+
+The deferred-stop trio (`deferred_stop`, `deferred_stop_reason`,
+`deferred_stop_since`) is no longer stored — it is derived from the remediation
+log (`auto_stop_deferred` arms it, superseded by `auto_stopped` /
+`auto_stop_cleared` / any `reset`) and gated on the live-session fact at the
+projection, so a stale latch cannot form (WS-15.2).
 
 Remediation attempts and their failure/action trail live in the append-only
 `device_remediation_log` table; the "Recovery Paused" badge is projected at read time.
@@ -151,7 +154,18 @@ retries — escalate through one ladder derived by
 `device_remediation_log` table. Rows have one of four kinds: `attempt` arms the
 immutable exponential backoff window, `failure` records detection context without
 arming backoff, `action` stamps the action trail, and `reset` supersedes all earlier
-rows for that device without erasing them. The ladder is promoted to
+rows for that device without erasing them.
+
+Three reserved `action` labels also carry a **node-process directive** — the
+derived successor to the retired system pseudo-commands (WS-15.2).
+`auto_stop_commissioned` commissions a STOP; `restart_commissioned` and
+`recovery_started` commission a START. `derive_ladder` folds the newest directive
+row in the post-reset window into a `NodeDirective`, and the node-process ladder
+reads it as a fact: a STOP holds the node stopped until a reset supersedes it, a
+START (gated on `in_service`) outranks it structurally. A `restart_commissioned`
+row's own timestamp is the restart watermark ("the Appium process must have been
+spawned at or after T"); a satisfied watermark is inert, so no TTL is needed. The
+ladder is promoted to
 `Device.review_required` at `general.lifecycle_recovery_review_threshold`; an active
 backoff window defers every automated remediation, not just the one that armed it.
 Detection debounce (ip_ping duration windows, `general.node_fail_window_sec`,
@@ -159,10 +173,14 @@ probe-unanswered duration windows, and the link-repair attempt budget) stays
 per-observer and only decides when a failure event is real; the ladder owns what
 happens after.
 
-Reset sources are `operator` for an explicit operator start, `device_checks` for a
-healthy self-heal, `appium_reconciler` for a successful node start when the active
-episode came from that reconciler, and run escalation when entering maintenance.
-The operator-stop gate remains sticky, and a reset never clears
+Reset sources are `operator` for an explicit operator start (`operator_started`) or
+restart (`operator_restarted`), `verification` for a passed re-qualification
+(`verification_passed`), `device_checks` for a healthy self-heal, `recovery` when a
+recovery pass finds the node already healthy (`already_healthy`), `appium_reconciler`
+for a successful node start when the active episode came from that reconciler, and
+run escalation when entering maintenance. A reset supersedes any live directive or
+pending deferral in the episode. The operator-stop gate remains sticky, and a reset
+never clears
 `Device.review_required`, which is operator-owned. Callers outside the lifecycle
 `write_state` allowlist escalate via
 `app.lifecycle.services.actions.escalate_device_remediation_failure`.

@@ -105,15 +105,15 @@ async def test_revoke_intent_deletes(db_session: AsyncSession, db_host: Host) ->
         device_id=device.id,
         intents=[
             IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
+                source=f"operator:start:{device.id}",
+                kind=CommandKind.operator_start,
                 payload={"action": "stop", "priority": 50},
             ),
         ],
     )
     await db_session.commit()
 
-    source = f"health_failure:node:{device.id}"
+    source = f"operator:start:{device.id}"
     revoked = await service.revoke_intent(device_id=device.id, source=source)
     missing = await service.revoke_intent(device_id=device.id, source=source)
     await db_session.commit()

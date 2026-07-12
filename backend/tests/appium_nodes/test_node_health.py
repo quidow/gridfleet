@@ -11,20 +11,17 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.core.timeutil import now_utc
-from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
     DeviceEvent,
     DeviceEventType,
-    DeviceIntent,
     DeviceOperationalState,
     DeviceType,
 )
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.lifecycle_policy_state import write_state
 from app.hosts.models import Host
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -83,6 +80,7 @@ async def _running_node(
         os_version="14",
         host_id=db_host.id,
         operational_state=DeviceOperationalState.available,
+        verified_at=now_utc(),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -144,7 +142,7 @@ async def test_fold_absent_node_preserves_health_state(db_session: AsyncSession,
     assert node.health_running is None
 
 
-async def test_fold_max_failures_registers_restart_intent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_fold_max_failures_commissions_restart_directive(db_session: AsyncSession, db_host: Host) -> None:
     device, node = await _running_node(db_session, db_host, name="Restart Phone", identity="nh-restart", port=4726)
     await _set_failure_count(db_session, node, 2)
 
@@ -154,18 +152,10 @@ async def test_fold_max_failures_registers_restart_intent(db_session: AsyncSessi
 
     await db_session.refresh(node)
     assert node.restart_requested_at is not None
-    intents = (
-        (
-            await db_session.execute(
-                select(DeviceIntent).where(
-                    DeviceIntent.device_id == device.id, DeviceIntent.source.like("auto_recovery:%")
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert len(intents) == 2
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.node_directive is not None
+    assert ladder.node_directive.kind == remediation_log.DIRECTIVE_START
+    assert ladder.node_directive.restart_watermark == node.restart_requested_at
 
 
 def _section_at(stamp: str, *entries: dict[str, object]) -> dict[str, object]:
@@ -228,20 +218,13 @@ async def test_health_check_fail_events_fire_on_edges_only(db_session: AsyncSess
 
 async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_host: Host) -> None:
     device, node = await _running_node(db_session, db_host, name="Recovery Phone", identity="nh-recovery", port=4727)
-    locked = await device_locking.lock_device(db_session, device.id)
-    state = policy_state(locked)
-    state.update(
-        {
-            "deferred_stop": True,
-            "deferred_stop_reason": "Probe failed",
-            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "Probe failed",
-            "recovery_suppressed_reason": None,
-        }
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="Probe failed",
     )
-    write_state(locked, state)
     await _set_failure_count(db_session, node, 1)
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db_session, device, health_running=False, health_state="error", mark_offline=False
@@ -268,7 +251,8 @@ async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_ho
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.deferred_stop_pending is False
 
 
 async def test_fold_skips_stale_observation_identity(db_session: AsyncSession, db_host: Host) -> None:

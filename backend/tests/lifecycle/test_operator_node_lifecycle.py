@@ -346,18 +346,12 @@ async def test_operator_stop_active_tracks_sticky_stop(
     assert await operator_stop_active(db_session, device.id) is False, "operator start lifts the stop"
 
 
-async def test_operator_start_revokes_blocking_health_failure_stop(
+async def test_operator_start_supersedes_blocking_stop_directive(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """An explicit operator start must clear a leftover ``health_failure:node`` stop.
-
-    That crash-handler stop (priority 60) outranks the operator start intent
-    (priority 20); if the operator path only revokes its own stop intents, the
-    failure stop silently blocks the start and the node never comes up.
-    """
-    from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import CommandKind, IntentRegistration
+    """An explicit operator start supersedes the derived stop episode."""
+    from app.lifecycle.services import remediation_log
 
     device = await create_device(db_session, host_id=db_host.id, name="op-start-unblock", verified=True)
     node = AppiumNode(
@@ -369,16 +363,12 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     await db_session.flush()
     device.appium_node = node
 
-    await IntentService(db_session).register_intents_and_reconcile(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop"},
-            )
-        ],
-        publisher=event_bus,
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="stale stop",
     )
     await db_session.commit()
 
@@ -388,19 +378,9 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
 
-    remaining = (
-        (
-            await db_session.execute(
-                select(DeviceIntent.source).where(
-                    DeviceIntent.device_id == device.id,
-                    DeviceIntent.source == f"health_failure:node:{device.id}",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert remaining == [], "operator start did not revoke the blocking health_failure:node stop intent"
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.node_directive is None
+    assert ladder.last_action == "operator_started"
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
 

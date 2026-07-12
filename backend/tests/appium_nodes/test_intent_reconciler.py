@@ -22,6 +22,7 @@ from app.devices.services.intent_reconciler import (
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.state import derive_operational_state
+from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.fakes.review import build_review_service
@@ -166,16 +167,12 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     node.pid = 1234
     node.active_connection_target = device.connection_target
     await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop", "stop_mode": "graceful"},
-            ),
-        ],
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="health failure",
     )
     await db_session.commit()
 
@@ -186,6 +183,58 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.stop_pending is True
     assert node.accepting_new_sessions is False
+
+
+async def test_derived_auto_stop_commission_stages_graceful_agent_drain(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="derived-graceful")
+    node = await _seed_node(db_session, device.id, generation=2)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="node crashed",
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+
+
+async def test_derived_restart_commission_sets_running_and_watermark(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="derived-restart")
+    node = await _seed_node(db_session, device.id)
+    entry = await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_RESTART_COMMISSIONED,
+        reason="Node health restart",
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.restart_requested_at == entry.at
 
 
 async def test_hard_stop_on_idle_device_stages_agent_drain(
@@ -254,16 +303,12 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     node.active_connection_target = device.connection_target
     db_session.add(Session(session_id="active-sess-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
-            ),
-        ],
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="health failure",
     )
     await db_session.commit()
 
@@ -293,16 +338,12 @@ async def test_graceful_stop_holds_node_running_while_session_pending(
     node.active_connection_target = device.connection_target
     db_session.add(Session(session_id="alloc-pending-1", device_id=device.id, status=SessionStatus.pending))
     await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
-            ),
-        ],
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="health failure",
     )
     await db_session.commit()
 
@@ -332,16 +373,12 @@ async def test_graceful_stop_applies_once_session_ends(
     session = Session(session_id="ending-sess-1", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
-            ),
-        ],
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="health failure",
     )
     await db_session.commit()
 
@@ -408,16 +445,12 @@ async def test_pull_host_watermark_only_change_pokes_agent(
     node.desired_state = AppiumDesiredState.running
     node.desired_port = 4723
     await db_session.commit()
-    requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
-    await IntentService(db_session).register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"auto_recovery:node:{device.id}",
-                kind=CommandKind.auto_recovery_start,
-                payload={"action": "start", "restart_requested_at": requested_at.isoformat()},
-            )
-        ],
+    entry = await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="node_health",
+        action=remediation_log.ACTION_RESTART_COMMISSIONED,
+        reason="Node health restart",
     )
     await db_session.commit()
     poke = AsyncMock()
@@ -430,7 +463,7 @@ async def test_pull_host_watermark_only_change_pokes_agent(
     )
 
     await db_session.refresh(node)
-    assert node.restart_requested_at == requested_at
+    assert node.restart_requested_at == entry.at
     poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, pool=None, circuit_breaker=ANY)
 
 

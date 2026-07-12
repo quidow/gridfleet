@@ -314,8 +314,7 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
     """A dead session on a device with a held graceful-stop intent goes offline."""
-    from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import CommandKind, IntentRegistration
+    from app.lifecycle.services import remediation_log
 
     device = await _seed_device_with_node(
         db_session, db_host, identity_value="dead-stop", operational_state=DeviceOperationalState.busy
@@ -324,15 +323,12 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    await IntentService(db_session).register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop"},
-            ),
-        ],
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="health_check_fail",
+        action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+        reason="session dead",
     )
     await db_session.commit()
 
@@ -929,55 +925,6 @@ async def test_sweep_never_inserts_sessions(
 
     rows = (await db_session.execute(select(Session).where(Session.device_id == device.id))).scalars().all()
     assert rows == []
-
-
-# --------------------------------------------------------------------------- #
-# Stale deferred_stop sweep                                                    #
-# --------------------------------------------------------------------------- #
-
-
-async def test_sweep_clears_stale_deferred_stop_for_devices_without_sessions(
-    db_session: AsyncSession, db_host: Host
-) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-stuck-stop-sweep",
-        connection_target="policy-stuck-stop-sweep",
-        name="Stuck Deferred Stop Sweep Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    db_session.add(device)
-    await db_session.flush()
-    session = Session(session_id="sess-stuck-stop-sweep", device_id=device.id, status=SessionStatus.running)
-    db_session.add(session)
-    await db_session.commit()
-
-    result = await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive"
-    )
-    assert result == "deferred"
-
-    # Simulate the historical bug: a session ended directly in the DB.
-    session.status = SessionStatus.passed
-    session.ended_at = datetime.now(UTC)
-    await db_session.commit()
-
-    await db_session.refresh(device)
-    assert device.lifecycle_policy_state["deferred_stop"] is True
-
-    await _make_sync_service(lifecycle=_make_real_lifecycle()).sync(db_session)
-
-    reloaded = await db_session.get(Device, device.id)
-    assert reloaded is not None
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state["deferred_stop"] is False
 
 
 # --------------------------------------------------------------------------- #

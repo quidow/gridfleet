@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -10,23 +9,21 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceRemediationLogEntry
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.services.intent_types import IntentRegistration
     from app.hosts.models import Host
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_attempt_auto_recovery_registers_auto_recovery_intent(
+async def test_attempt_auto_recovery_records_recovery_start_action(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -41,27 +38,6 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     )
     db_session.add(node)
     await db_session.commit()
-
-    from app.devices.services.intent import IntentService
-
-    async def _register_then_mark_running(
-        db: AsyncSession,
-        *,
-        device_id: UUID,
-        intents: list[IntentRegistration],
-        publisher: object,
-    ) -> None:
-        """Run real intent registration so the auto_recovery intent row is
-        written, then simulate the reconciler bringing the node up so
-        wait_for_node_running exits on its first poll instead of blocking
-        for its full 60s timeout."""
-        await _real_register(IntentService(db), device_id=device_id, intents=intents, publisher=publisher)
-        observed_node = (
-            await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
-        ).scalar_one_or_none()
-        if observed_node is not None:
-            observed_node.pid = 12345
-            observed_node.active_connection_target = "127.0.0.1:4723"
 
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.policy import LifecyclePolicyService
@@ -82,12 +58,7 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         viability=viability,
         node_manager=AsyncMock(),
     )
-    _real_register = IntentService.register_intents_and_reconcile
-    with patch.object(
-        IntentService,
-        "register_intents_and_reconcile",
-        new=AsyncMock(side_effect=partial(_register_then_mark_running, db_session)),
-    ):
+    with patch("app.devices.services.intent.IntentService.reconcile_now", new=AsyncMock()):
         await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -95,24 +66,16 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             reason="test",
         )
 
-    intent = (
-        await db_session.execute(
-            select(DeviceIntent).where(
-                DeviceIntent.device_id == device.id,
-                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+    entries = (
+        (
+            await db_session.execute(
+                select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device.id)
             )
         )
-    ).scalar_one()
-    assert intent.payload["action"] == "start"
-    # Auto-recovery must not pin a stale port. Pinning desired_port in the
-    # intent payload causes port-mismatch flap once the agent restarts the
-    # node on a different allocator-picked port: when this intent becomes the
-    # priority winner after higher-priority transient intents (active_session,
-    # health_failure) clear, ``decide_convergence_action`` sees observed.port
-    # != row.desired_port and fires ``stop``, taking the device offline. The
-    # intent_reconciler falls back to live ``node.port`` when the payload
-    # omits ``desired_port`` (see app/devices/services/intent_reconciler.py).
-    assert "desired_port" not in intent.payload
+        .scalars()
+        .all()
+    )
+    assert any(entry.action == remediation_log.ACTION_RECOVERY_STARTED for entry in entries)
 
 
 async def test_auto_recovery_intent_falls_back_to_live_node_port(
@@ -128,7 +91,6 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
     intent_reconciler must drive ``node.desired_port == P2``, not P1.
     """
     from app.devices.services.intent_reconciler import reconcile_device
-    from app.devices.services.intent_types import CommandKind
 
     device = await create_device(db_session, host_id=db_host.id, name="port-flap-repro", verified=True)
     node = AppiumNode(
@@ -141,13 +103,11 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
     )
     db_session.add(node)
     await db_session.flush()
-    db_session.add(
-        DeviceIntent(
-            device_id=device.id,
-            source=f"auto_recovery:node:{device.id}",
-            kind=CommandKind.auto_recovery_start.value,
-            payload={"action": "start"},
-        )
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="recovery",
+        action=remediation_log.ACTION_RECOVERY_STARTED,
     )
     await db_session.commit()
 

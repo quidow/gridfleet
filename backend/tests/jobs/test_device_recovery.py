@@ -203,9 +203,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     lc_viability = AsyncMock()
     lc_viability.run_session_viability_probe = probe_mock
 
-    async def _register_and_make_available(
-        _self: IntentService, *, device_id: object, intents: object, publisher: object
-    ) -> None:
+    async def _reconcile_and_make_available(_self: IntentService, device_id: object, *, publisher: object) -> None:
         db = _self._db
         dev = await db.get(Device, device_id)
         if dev is not None:
@@ -217,8 +215,8 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
 
     with patch.object(
         IntentService,
-        "register_intents_and_reconcile",
-        new=_register_and_make_available,
+        "reconcile_now",
+        new=_reconcile_and_make_available,
     ):
         _sf = _session_factory(db_session)
         worked = await DurableJobService(

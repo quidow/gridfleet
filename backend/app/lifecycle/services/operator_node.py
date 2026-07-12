@@ -25,7 +25,6 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     CommandKind,
     IntentRegistration,
-    failure_stop_sources,
 )
 from app.lifecycle.services import remediation_log
 from app.packs.services.platform_resolver import applicable_resource_ports, resolve_pack_platform
@@ -209,12 +208,6 @@ class OperatorNodeLifecycleService:
         await _reserve_parallel_resources(db, device, node=node)
 
         revoke_sources = list(operator_stop_sources(device.id))
-        if caller in {"operator_route", "operator_restart"}:
-            # An explicit operator start overrides any failure state. Clear the
-            # crash/connectivity stop intents too — a leftover health_failure:node
-            # stop (priority 60) would otherwise outrank the operator start
-            # (priority 20) and silently block it.
-            revoke_sources += failure_stop_sources(device.id)
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=revoke_sources,
@@ -227,7 +220,7 @@ class OperatorNodeLifecycleService:
         )
         if caller in {"operator_route", "operator_restart"}:
             ladder = await remediation_log.load_ladder(db, device.id)
-            if ladder.armed or ladder.last_failure_reason:
+            if ladder.episode_active:
                 await remediation_log.append_reset(db, device.id, source="operator", action="operator_started")
             await self._review.clear_review_required(
                 db, device, reason="Operator started Appium node", source="start_node"
@@ -277,6 +270,9 @@ class OperatorNodeLifecycleService:
             publisher=self._publisher,
         )
         if caller == "operator_restart":
+            ladder = await remediation_log.load_ladder(db, device.id)
+            if ladder.episode_active:
+                await remediation_log.append_reset(db, device.id, source="operator", action="operator_restarted")
             await self._review.clear_review_required(
                 db, device, reason="Operator restarted Appium node", source="restart_node"
             )

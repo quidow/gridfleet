@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -20,10 +19,6 @@ from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import (
-    CommandKind,
-    IntentRegistration,
-)
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import escalate_device_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
@@ -132,32 +127,16 @@ class NodeHealthService:
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()
         if node is None:
             return
-        window_sec = self._settings.get_int("appium_reconciler.restart_window_sec")
-        requested_at = now_utc()
-        deadline = requested_at + timedelta(seconds=window_sec)
-        # The command row TTL bounds the restart intent row; the watermark bounds
-        # the process spawn time the agent must satisfy.
-        await IntentService(db).register_intents_and_reconcile(
-            device_id=device.id,
-            intents=[
-                IntentRegistration(
-                    source=f"auto_recovery:node:{device.id}",
-                    kind=CommandKind.auto_recovery_start,
-                    payload={
-                        "action": "start",
-                        "restart_requested_at": requested_at.isoformat(),
-                    },
-                    expires_at=deadline,
-                ),
-                IntentRegistration(
-                    source=f"auto_recovery:recovery:{device.id}",
-                    kind=CommandKind.auto_recovery_allow,
-                    payload={"allowed": True, "reason": "Node health restart"},
-                    expires_at=deadline,
-                ),
-            ],
-            publisher=self._publisher,
+        # The commission row's timestamp IS the restart watermark ("spawned at
+        # or after T"); a satisfied watermark is inert, so no TTL is needed.
+        await remediation_log.append_action(
+            db,
+            device.id,
+            source="node_health",
+            action=remediation_log.ACTION_RESTART_COMMISSIONED,
+            reason="Node health restart",
         )
+        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
         await db.commit()
 
     async def _process_node_health(

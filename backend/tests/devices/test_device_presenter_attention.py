@@ -128,18 +128,27 @@ async def test_serialize_orchestration_includes_intent_kinds() -> None:
     ]
 
     class Result:
+        def __init__(self, rows: list[DeviceIntent]) -> None:
+            self._rows = rows
+
         def scalars(self) -> Result:
             return self
 
         def all(self) -> list[DeviceIntent]:
-            return intents
+            return self._rows
 
         def scalar_one_or_none(self) -> None:  # the reservation-facts query
             return None
 
     class Session:
+        def __init__(self) -> None:
+            self._execute_count = 0
+
         async def execute(self, *_args: object, **_kwargs: object) -> Result:
-            return Result()
+            self._execute_count += 1
+            # The first query loads intents; later queries are the reservation
+            # and remediation-log fact reads used by gather_decision_facts.
+            return Result(intents if self._execute_count == 1 else [])
 
     device = SimpleNamespace(
         id=uuid.uuid4(),

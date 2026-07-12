@@ -45,6 +45,7 @@ from app.devices.services.decision import (
 from app.devices.services.event import record_event
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
+from app.lifecycle.services import remediation_log
 from app.runs.models import RunState
 from app.sessions.live_session_predicate import device_has_live_session
 
@@ -60,6 +61,7 @@ if TYPE_CHECKING:
     from app.core.type_defs import SessionFactory
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.remediation_log import LadderState
     from app.packs.models import DriverPack
 
 logger = get_logger(__name__)
@@ -212,9 +214,10 @@ async def _reconcile_all_devices(
         )
 
 
-async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime) -> DecisionFacts:
-    """Facts the desired-state deciders fold in. One query (reservation); the
-    rest reads the already-locked device row."""
+async def gather_decision_facts(
+    db: AsyncSession, device: Device, now: datetime, *, ladder: LadderState | None = None
+) -> DecisionFacts:
+    """Facts the desired-state deciders fold in: reservation and remediation-log slice."""
     entry = (
         await db.execute(
             select(DeviceReservation)
@@ -239,6 +242,8 @@ async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime)
             cooldown_active = True
             cooldown_reason = entry.exclusion_reason
     withdrawal = WithdrawalFacts.from_device(device)
+    if ladder is None:
+        ladder = await remediation_log.load_ladder(db, device.id)
     return DecisionFacts(
         in_maintenance=withdrawal.in_maintenance,
         device_checks_unhealthy=device.device_checks_healthy is False,
@@ -246,6 +251,7 @@ async def gather_decision_facts(db: AsyncSession, device: Device, now: datetime)
         reservation_run_id=reservation_run_id,
         cooldown_active=cooldown_active,
         cooldown_reason=cooldown_reason,
+        remediation_directive=ladder.node_directive,
     )
 
 

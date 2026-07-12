@@ -20,6 +20,7 @@ from app.devices.services.decision import (
     parse_command,
 )
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
+from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_STOP, NodeDirective
 
 NOW = datetime(2026, 7, 9, 12, 0, 0, tzinfo=UTC)
 DEVICE = uuid.uuid4()
@@ -44,9 +45,14 @@ def facts(**kw: object) -> DecisionFacts:
         reservation_run_id=None,
         cooldown_active=False,
         cooldown_reason=None,
+        remediation_directive=None,
     )
     defaults.update(kw)
     return DecisionFacts(**defaults)
+
+
+def directive(kind: str, *, reason: str | None = None, watermark: datetime | None = None) -> NodeDirective:
+    return NodeDirective(kind=kind, reason=reason, restart_watermark=watermark)
 
 
 # --- node_process ladder ---
@@ -73,19 +79,13 @@ def test_forced_release_beats_operator_start() -> None:
     assert (d.desired_state, d.stop_mode) == ("stopped", "hard")
 
 
-def test_maintenance_fact_beats_auto_recovery_start() -> None:
-    d = decide_node_process([cmd(CommandKind.auto_recovery_start)], facts(in_maintenance=True))
+def test_maintenance_fact_beats_derived_recovery_start() -> None:
+    d = decide_node_process([], facts(in_maintenance=True, remediation_directive=directive(DIRECTIVE_START)))
     assert (d.desired_state, d.stop_mode) == ("stopping_graceful", "graceful")
 
 
 def test_maintenance_fact_suppresses_baseline() -> None:
     d = decide_node_process([], facts(in_maintenance=True))
-    assert (d.desired_state, d.stop_mode) == ("stopping_graceful", "graceful")
-
-
-def test_health_failure_stop_beats_verification_start() -> None:
-    # Why the verification path revokes failure_stop_sources before starting.
-    d = decide_node_process([cmd(CommandKind.health_failure_stop), cmd(CommandKind.verification_start)], facts())
     assert (d.desired_state, d.stop_mode) == ("stopping_graceful", "graceful")
 
 
@@ -107,9 +107,8 @@ def test_newest_watermark_wins_among_starts() -> None:
     d = decide_node_process(
         [
             cmd(CommandKind.operator_start, restart_requested_at=older),
-            cmd(CommandKind.auto_recovery_start, restart_requested_at=newer),
         ],
-        facts(),
+        facts(remediation_directive=directive(DIRECTIVE_START, watermark=newer)),
     )
     assert d.desired_state == "running"
     assert d.restart_requested_at == newer
@@ -118,8 +117,8 @@ def test_newest_watermark_wins_among_starts() -> None:
 def test_watermark_start_wins_over_plain_start() -> None:
     watermark = NOW - timedelta(seconds=5)
     d = decide_node_process(
-        [cmd(CommandKind.operator_start), cmd(CommandKind.auto_recovery_start, restart_requested_at=watermark)],
-        facts(),
+        [cmd(CommandKind.operator_start)],
+        facts(remediation_directive=directive(DIRECTIVE_START, watermark=watermark)),
     )
     assert d.desired_state == "running"
     assert d.restart_requested_at == watermark
@@ -129,6 +128,101 @@ def test_plain_starts_carry_no_watermark() -> None:
     d = decide_node_process([cmd(CommandKind.operator_start)], facts())
     assert d.desired_state == "running"
     assert d.restart_requested_at is None
+
+
+def test_derived_stop_directive_gracefully_stops() -> None:
+    d = decide_node_process([], facts(remediation_directive=directive(DIRECTIVE_STOP, reason="node crashed")))
+
+    assert (d.desired_state, d.stop_mode, d.reason) == ("stopping_graceful", "graceful", "node crashed")
+
+
+def test_derived_stop_beats_connectivity_park() -> None:
+    d = decide_node_process(
+        [], facts(device_checks_unhealthy=True, remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.desired_state == "stopping_graceful"
+
+
+def test_maintenance_beats_derived_stop() -> None:
+    d = decide_node_process(
+        [], facts(in_maintenance=True, remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.reason == "maintenance hold"
+
+
+def test_operator_stop_beats_derived_start() -> None:
+    d = decide_node_process([cmd(CommandKind.operator_stop)], facts(remediation_directive=directive(DIRECTIVE_START)))
+
+    assert (d.desired_state, d.stop_mode) == ("stopped", "hard")
+
+
+def test_verification_start_suppresses_derived_stop() -> None:
+    """A verification lease structurally replaces the retired revoke-before-register ritual."""
+    d = decide_node_process(
+        [cmd(CommandKind.verification_start)], facts(remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.desired_state == "running"
+
+
+def test_operator_start_suppresses_derived_stop() -> None:
+    d = decide_node_process(
+        [cmd(CommandKind.operator_start)], facts(remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert d.desired_state == "running"
+
+
+def test_derived_start_suppresses_derived_stop_history() -> None:
+    d = decide_node_process([], facts(remediation_directive=directive(DIRECTIVE_START)))
+
+    assert d.desired_state == "running"
+
+
+def test_derived_start_suppresses_connectivity_park() -> None:
+    d = decide_node_process([], facts(device_checks_unhealthy=True, remediation_directive=directive(DIRECTIVE_START)))
+
+    assert d.desired_state == "running"
+
+
+def test_derived_start_carries_restart_watermark() -> None:
+    watermark = NOW - timedelta(seconds=5)
+    d = decide_node_process([], facts(remediation_directive=directive(DIRECTIVE_START, watermark=watermark)))
+
+    assert d.desired_state == "running"
+    assert d.restart_requested_at == watermark
+
+
+def test_derived_watermark_folds_with_stored_watermarks_newest_wins() -> None:
+    older = NOW - timedelta(seconds=10)
+    newer = NOW - timedelta(seconds=5)
+    first = decide_node_process(
+        [cmd(CommandKind.operator_start, restart_requested_at=older)],
+        facts(remediation_directive=directive(DIRECTIVE_START, watermark=newer)),
+    )
+    second = decide_node_process(
+        [cmd(CommandKind.operator_start, restart_requested_at=newer)],
+        facts(remediation_directive=directive(DIRECTIVE_START, watermark=older)),
+    )
+
+    assert first.restart_requested_at == newer
+    assert second.restart_requested_at == newer
+
+
+def test_derived_start_requires_in_service() -> None:
+    d = decide_node_process([], facts(in_service=False, remediation_directive=directive(DIRECTIVE_START)))
+
+    assert (d.desired_state, d.stop_mode) == ("stopped", None)
+
+
+def test_derived_stop_holds_out_of_service_too() -> None:
+    d = decide_node_process(
+        [], facts(in_service=False, remediation_directive=directive(DIRECTIVE_STOP, reason="crashed"))
+    )
+
+    assert (d.desired_state, d.stop_mode) == ("stopping_graceful", "graceful")
 
 
 # --- grid_routing ladder ---
@@ -157,12 +251,9 @@ def test_recovery_default_allows() -> None:
     assert (d.allowed, d.reason) == (True, None)
 
 
-def test_operator_recovery_deny_beats_auto_allow() -> None:
+def test_operator_recovery_deny_beats_default_allow() -> None:
     d = decide_recovery(
-        [
-            cmd(CommandKind.operator_recovery_deny, reason_detail="Operator stopped the node"),
-            cmd(CommandKind.auto_recovery_allow, reason_detail="recovering"),
-        ],
+        [cmd(CommandKind.operator_recovery_deny, reason_detail="Operator stopped the node")],
         facts(),
     )
     assert d.allowed is False
@@ -179,27 +270,17 @@ def test_maintenance_denies_recovery_with_exact_constant() -> None:
 
 def test_cooldown_denies_recovery_with_exclusion_reason() -> None:
     d = decide_recovery(
-        [cmd(CommandKind.auto_recovery_allow)],
+        [],
         facts(reservation_run_id=RUN, cooldown_active=True, cooldown_reason="run failure cooldown"),
     )
     assert d.allowed is False
     assert d.reason == "run failure cooldown"
 
 
-def test_auto_recovery_allow_threads_reason_and_source() -> None:
-    d = decide_recovery(
-        [
-            cmd(
-                CommandKind.auto_recovery_allow,
-                source=f"auto_recovery:recovery:{DEVICE}",
-                reason_detail="Node health restart",
-            )
-        ],
-        facts(),
-    )
-    assert d.allowed is True
-    assert d.reason == "Node health restart"
-    assert d.source == f"auto_recovery:recovery:{DEVICE}"
+def test_recovery_default_allow_has_no_reason_or_source() -> None:
+    d = decide_recovery([], facts())
+
+    assert (d.allowed, d.reason, d.source) == (True, None, None)
 
 
 # --- parsing ---

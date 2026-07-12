@@ -7,19 +7,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
 
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, DeviceIntent, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType
 from app.devices.routers import control as devices_control
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.intent_types import (
-    CommandKind,
-    IntentRegistration,
-)
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -91,35 +85,6 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     )
     db_session.add(node)
     await db_session.flush()
-    service = IntentService(db_session)
-    await service.register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"connectivity:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop", "stop_mode": "defer"},
-            ),
-            IntentRegistration(
-                source=f"health_failure:node:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"action": "stop", "stop_mode": "graceful"},
-            ),
-            IntentRegistration(
-                source=f"health_failure:recovery:{device.id}",
-                kind=CommandKind.health_failure_stop,
-                payload={"allowed": False, "reason": "Node health failure"},
-            ),
-        ],
-    )
-    await reconcile_device(db_session, device.id, publisher=event_bus)
-    await db_session.commit()
-    await db_session.refresh(device)
-    assert device.session_viability_status == "failed"
-    # Health-failure no longer denies recovery (only operator-stop, maintenance, and
-    # cooldown facts do); the seeded connectivity/health_failure:recovery rows are inert
-    # here and exist only to prove reconnect revokes them below.
-
     mock_ra = AsyncMock()
     mock_ra.restart_node = AsyncMock(return_value=node)
     with (
@@ -146,10 +111,6 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     await db_session.refresh(device)
     assert device.session_viability_status is None
     assert device.session_viability_error is None
-    remaining_sources = set((await db_session.execute(select(DeviceIntent.source))).scalars().all())
-    assert f"connectivity:{device.id}" not in remaining_sources
-    assert f"health_failure:node:{device.id}" not in remaining_sources
-    assert f"health_failure:recovery:{device.id}" not in remaining_sources
 
 
 # ---------------------------------------------------------------------------

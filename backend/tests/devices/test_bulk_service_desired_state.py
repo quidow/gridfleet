@@ -25,18 +25,17 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_bulk_restart_persists_watermark_when_auto_recovery_intent_present(
+async def test_bulk_restart_persists_watermark_when_recovery_directive_present(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression: with an auto_recovery:node start command already registered,
+    """Regression: with a remediation start directive already present,
     the operator restart command must still carry its restart watermark into the
     desired row.
     """
     from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
     from app.devices.services import bulk as bulk_service
-    from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import CommandKind, IntentRegistration
+    from app.lifecycle.services import remediation_log
 
     device = await create_device(db_session, host_id=db_host.id, name="bk-restart", verified=True)
     node = AppiumNode(
@@ -54,17 +53,13 @@ async def test_bulk_restart_persists_watermark_when_auto_recovery_intent_present
         caller="bulk",
         write=DesiredStateWrite(target=AppiumDesiredState.running, desired_port=4723),
     )
-    # Simulate the standing baseline registered by lifecycle_policy when a
-    # device boots healthy. Same axis as the operator restart, but no watermark.
-    await IntentService(db_session).register_intents(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=f"auto_recovery:node:{device.id}",
-                kind=CommandKind.auto_recovery_start,
-                payload={"action": "start"},
-            ),
-        ],
+    # Simulate a recovery start on the same axis as the operator restart, but
+    # without a watermark.
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="recovery",
+        action=remediation_log.ACTION_RECOVERY_STARTED,
     )
     await db_session.commit()
     assert node.restart_requested_at is None
