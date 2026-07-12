@@ -66,6 +66,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
     # Eager-load appium_node so the probe's ``device.appium_node`` read
     # at viability.py:383 does not trigger lazy IO in the async context.
     device = await device_locking.lock_device(db_session, device.id)
+    await db_session.commit()
 
     original_lock = device_locking.lock_device
 

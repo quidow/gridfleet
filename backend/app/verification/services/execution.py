@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
@@ -31,10 +32,14 @@ from app.grid.allocation import node_target
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.operator_node import operator_start_source, operator_stop_sources
 from app.packs.services import platform_catalog as pack_platform_catalog
-from app.sessions import probe_inflight
-from app.sessions.service_probes import ProbeSource, record_probe_session
+from app.sessions.service_probes import (
+    ProbeSource,
+    claim_probe_session,
+    confirm_probe_session,
+    finalize_probe_session,
+)
 from app.sessions.service_viability import build_probe_capabilities, grid_probe_response_to_result
-from app.sessions.viability_types import SessionViabilityCheckedBy
+from app.sessions.viability_types import SessionViabilityCheckedBy, SessionViabilityProbeInProgressError
 from app.verification.services.job_state import enum_value, set_stage
 
 device_is_virtual = pack_platform_catalog.device_is_virtual
@@ -203,6 +208,56 @@ class VerificationExecutionService:
 
         return None
 
+    async def _run_session_probe(
+        self,
+        job: dict[str, Any],
+        db: AsyncSession,
+        device: Device,
+        capabilities: dict[str, Any],
+        timeout_sec: int,
+    ) -> str | None:
+        """Run a verification probe behind its birth-row claim."""
+        target = node_target(device)
+        try:
+            locked = await device_locking.lock_device(db, device.id)
+            probe_row = await claim_probe_session(
+                db,
+                device=locked,
+                source=ProbeSource.verification,
+                capabilities=capabilities,
+                router_target=target,
+            )
+            await db.commit()
+        except SessionViabilityProbeInProgressError as exc:
+            detail = str(exc)
+            await set_stage(job, "session_probe", "failed", detail=detail)
+            return detail
+
+        ok = False
+        error: str | None = "Session create request failed: probe aborted"
+        probe_result = ProbeResult(status="indeterminate", detail=error)
+        try:
+
+            async def _promote(appium_session_id: str) -> None:
+                if await confirm_probe_session(db, probe_row, appium_session_id=appium_session_id):
+                    await db.commit()
+
+            ok, error = await self._viability.probe_session_direct(
+                build_probe_capabilities(capabilities), timeout_sec, target=target, on_created=_promote
+            )
+            probe_result = grid_probe_response_to_result((ok, error))
+        finally:
+            await finalize_probe_session(db, probe_row, result=probe_result)
+            await db.commit()
+
+        if ok:
+            await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
+            return None
+
+        failure = error or "Session probe failed"
+        await set_stage(job, "session_probe", "failed", detail=failure)
+        return failure
+
     async def run_probe(
         self, job: dict[str, Any], db: AsyncSession, device: Device
     ) -> tuple[AppiumNode | None, str | None]:
@@ -248,33 +303,8 @@ class VerificationExecutionService:
                 device,
                 active_connection_target=started_node.active_connection_target,
             )
-            # Register the device as inflight for the same reason as the viability
-            # probe (see ``app.sessions.probe_inflight``): the Grid slot the probe
-            # creates is otherwise indistinguishable from a real session in the
-            # session_sync loop and would be persisted as a phantom row.
-            device_key = str(device.id)
-            probe_inflight.mark_probe_started(device_key)
-            try:
-                ok, error = await self._viability.probe_session_direct(
-                    build_probe_capabilities(capabilities), timeout_sec, target=node_target(device)
-                )
-            finally:
-                probe_inflight.mark_probe_finished(device_key)
-            await record_probe_session(
-                db,
-                device=device,
-                attempted_at=now_utc(),
-                result=grid_probe_response_to_result((ok, error)),
-                source=ProbeSource.verification,
-                capabilities=capabilities,
-            )
-            if ok:
-                await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
-                return started_node, None
-
-            failure = error or "Session probe failed"
-            await set_stage(job, "session_probe", "failed", detail=failure)
-            return started_node, failure
+            session_error = await self._run_session_probe(job, db, device, capabilities, timeout_sec)
+            return started_node, session_error
         finally:
             await db.commit()
 

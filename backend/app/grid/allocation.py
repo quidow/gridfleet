@@ -51,7 +51,6 @@ from app.runs.models import TERMINAL_STATES
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
-from app.sessions.probe_inflight import viability_probe_lock_active
 
 if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
@@ -59,10 +58,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Registry default for ``general.session_viability_timeout_sec``, used only when the
-# service is constructed without a settings reader (unit tests); production wiring
-# always passes one (``composition.py``).
-_SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC = 120
 _RESTART_WINDOW_FALLBACK_SEC = 120
 
 GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
@@ -73,10 +68,6 @@ GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
 GRID_QUEUE_DEPTH = Gauge(
     "gridfleet_grid_queue_depth",
     "Waiting tickets in grid_session_queue.",
-)
-GRID_ALLOCATION_PROBE_DEFERRED_TOTAL = Counter(
-    "gridfleet_grid_allocation_probe_deferred",
-    "Device claims skipped because a session-viability probe held the device's probe lock.",
 )
 GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL = Counter(
     "gridfleet_grid_stereotype_lookup_error",
@@ -583,31 +574,9 @@ class AllocationService:
         candidate: dict[str, Any],
         run_id: uuid.UUID | None,
     ) -> AllocationResult | None:
-        # A session-viability probe is a REAL Appium session on an ``available``
-        # device, posted directly to the node — no Session row exists until the
-        # probe completes, so the live-session recheck below cannot see it. Its
-        # only allocation-visible footprint is the control-plane probe lock.
-        # Claiming mid-probe races the probe's uia2 startup for the device's
-        # static systemPort and fails the client create ("local port #8200 is
-        # busy", proven live 2026-06-07). Skip the device for this tick — the
-        # ticket stays waiting and retries on its next poll. Checked BEFORE the
-        # row lock (DEBT-2): the read costs a DB round trip and must not extend
-        # the lock hold; the probe's own staleness rule tolerates the tiny
-        # unlocked-check-to-locked-claim race (one failed create + retry, same
-        # exposure as the _eligible_devices snapshot).
-        viability_timeout_sec = (
-            int(cast("int", self._settings.get("general.session_viability_timeout_sec")))
-            if self._settings is not None
-            else _SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC
-        )
-        if await viability_probe_lock_active(db, device.id, timeout_sec=viability_timeout_sec):
-            GRID_ALLOCATION_PROBE_DEFERRED_TOTAL.inc()
-            logger.info(
-                "grid_allocation_deferred_probe_inflight device=%s ticket=%s",
-                device.id,
-                ticket.id,
-            )
-            return None
+        # A mid-flight viability probe claims its device with a live Session row
+        # from birth (WS-16.1): _eligible_devices' ~live_session_exists() and the
+        # locked recheck below both see it — no pre-lock probe gate needed.
         locked = await device_locking.lock_device(db, device.id)
         if not await self._recheck_claimable_under_lock(db, locked):
             return None

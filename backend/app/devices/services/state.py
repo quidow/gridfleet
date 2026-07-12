@@ -20,10 +20,10 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.claims import (
-    device_has_live_session,
+    device_has_masking_live_session,
     device_has_verification_lease,
-    live_session_exists,
-    live_session_predicate,
+    masking_live_session_exists,
+    masking_live_session_predicate,
     verification_lease_exists,
 )
 from app.devices.services.health_view import device_allows_allocation
@@ -136,7 +136,7 @@ class WithdrawalFacts:
 class DeviceStateFacts:
     """All inputs the device-state derivation needs, pre-gathered (no IO here)."""
 
-    has_running_session: bool  # a Session row status=running, ended_at IS NULL
+    has_running_session: bool  # a non-probe live Session row (probes claim, don't mask — WS-16.1)
     has_verification_lease: bool  # an active verification intent (§16 task 4)
     in_maintenance: bool  # lifecycle_policy_state["maintenance_reason"] set (§16.1)
     stop_in_flight: bool  # appium_node_stop_in_flight(device)
@@ -176,7 +176,7 @@ async def gather_device_state_facts(
             await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
         ).scalar_one()
 
-    has_running_session = await device_has_live_session(db, device.id)
+    has_running_session = await device_has_masking_live_session(db, device.id)
     has_verification_lease = await device_has_verification_lease(db, device.id, now=now)
 
     withdrawal = WithdrawalFacts.from_device(device)
@@ -256,20 +256,20 @@ def _ready_sql() -> ColumnElement[bool]:
 
 
 def is_busyish_sql() -> ColumnElement[bool]:
-    return live_session_exists()
+    return masking_live_session_exists()
 
 
 def is_verifying_sql(*, now: datetime) -> ColumnElement[bool]:
-    return and_(~live_session_exists(), verification_lease_exists(now=now))
+    return and_(~masking_live_session_exists(), verification_lease_exists(now=now))
 
 
 def is_maintenance_sql(*, now: datetime) -> ColumnElement[bool]:
-    return and_(~live_session_exists(), ~verification_lease_exists(now=now), maintenance_sql())
+    return and_(~masking_live_session_exists(), ~verification_lease_exists(now=now), maintenance_sql())
 
 
 def is_offline_sql(*, now: datetime) -> ColumnElement[bool]:
     return and_(
-        ~live_session_exists(),
+        ~masking_live_session_exists(),
         ~verification_lease_exists(now=now),
         ~maintenance_sql(),
         or_(stop_in_flight_sql(), ~_ready_sql()),
@@ -278,7 +278,7 @@ def is_offline_sql(*, now: datetime) -> ColumnElement[bool]:
 
 def is_available_sql(*, now: datetime) -> ColumnElement[bool]:
     return and_(
-        ~live_session_exists(),
+        ~masking_live_session_exists(),
         ~verification_lease_exists(now=now),
         ~maintenance_sql(),
         ~stop_in_flight_sql(),
@@ -289,7 +289,7 @@ def is_available_sql(*, now: datetime) -> ColumnElement[bool]:
 def operational_state_sql(*, now: datetime) -> ColumnElement[str]:
     """5-way CASE mirroring ``evaluate_operational_state``'s masking order."""
     return case(
-        (live_session_exists(), DeviceOperationalState.busy.value),
+        (masking_live_session_exists(), DeviceOperationalState.busy.value),
         (verification_lease_exists(now=now), DeviceOperationalState.verifying.value),
         (maintenance_sql(), DeviceOperationalState.maintenance.value),
         (or_(stop_in_flight_sql(), ~_ready_sql()), DeviceOperationalState.offline.value),
@@ -300,7 +300,7 @@ def operational_state_sql(*, now: datetime) -> ColumnElement[str]:
 def operational_state_rank_sql(*, now: datetime) -> ColumnElement[int]:
     """ORDER BY key matching the native enum declaration order."""
     return case(
-        (live_session_exists(), 1),
+        (masking_live_session_exists(), 1),
         (verification_lease_exists(now=now), 3),
         (maintenance_sql(), 4),
         (or_(stop_in_flight_sql(), ~_ready_sql()), 2),
@@ -332,7 +332,11 @@ async def derive_operational_states(
         return {}
 
     live_ids = set(
-        (await db.execute(select(Session.device_id).where(Session.device_id.in_(ids), live_session_predicate())))
+        (
+            await db.execute(
+                select(Session.device_id).where(Session.device_id.in_(ids), masking_live_session_predicate())
+            )
+        )
         .scalars()
         .all()
     )

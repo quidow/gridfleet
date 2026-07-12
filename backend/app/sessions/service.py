@@ -20,6 +20,7 @@ from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.filters import SessionFilters, exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 
 if TYPE_CHECKING:
     import uuid
@@ -194,9 +195,11 @@ async def close_running_session(
     # only at confirm (allocation.py), and the row carries a placeholder ``alloc-<uuid>``
     # session_id no consumer ever saw start. Emitting ``session.ended`` for it would be an
     # unpaired event (a spurious "session ended" toast in the UI), so suppress it —
-    # matching the reaper's silent close of the same pending class (C12). A confirmed
-    # (``running``) row always emits ended.
-    never_confirmed = session.status == SessionStatus.pending
+    # matching the reaper's silent close of the same pending class (C12). Probe rows are
+    # suppressed for the same unpaired-event reason: probes never emit session.started,
+    # so a sweep-closed crash-orphaned probe row must not emit ended (WS-16.1). A confirmed
+    # (``running``) client row always emits ended.
+    suppress_ended_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
     session.ended_at = now_utc()
     # Re-read the owning run's COMMITTED state rather than trust ``attached_run``: a
     # concurrent cancel/abort can terminalize the run AFTER the caller eager-loaded it
@@ -212,7 +215,7 @@ async def close_running_session(
         if committed is not None:
             run_state, run_error = committed.state, committed.error
     _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
-    if not never_confirmed:
+    if not suppress_ended_event:
         queue_session_ended_event(db, session, device=session.device, publisher=publisher)
     await db.flush()
     if session.device_id is not None:

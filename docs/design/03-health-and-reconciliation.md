@@ -124,7 +124,7 @@ Every public health fact has exactly one durable home:
 | `connectivity.previously_offline` | `host_sweep` connectivity fold | remembers why a reconnect is treated as recovery rather than first startup |
 | `hardware_telemetry.state` | `host_sweep` hardware-telemetry fold | stale/fresh telemetry bookkeeping |
 | `host_sweep.observation_fold` | `host_sweep` observation folds | per-host stamp watermark per pushed section, an optimization that skips redundant work; folds remain idempotent |
-| `session_viability.state` / `session_viability.running` | `appium_sweep` viability pass | cadence and in-progress guard for deeper session probes |
+| `session_viability.state` | `appium_sweep` viability pass | cadence bookkeeping for deeper session probes (the in-flight guard is the probe's own `Session` row since WS-16.1) |
 
 These entries can be rebuilt or expire by behavior; they must not be used as canonical device/node state in new code.
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
@@ -11,11 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.leader import state_store as control_plane_state_store
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability as session_viability
+from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -26,105 +26,6 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
-
-
-async def test_viability_lock_is_stale_for_leaked_lock() -> None:
-    from app.sessions.service_viability import _viability_lock_is_stale
-
-    now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
-    leaked = {"started_at": (now - timedelta(seconds=10_000)).isoformat(), "checked_by": "recovery"}
-    assert _viability_lock_is_stale(leaked, now=now, timeout_sec=60) is True
-
-
-async def test_viability_lock_not_stale_for_in_progress_lock() -> None:
-    from app.sessions.service_viability import _viability_lock_is_stale
-
-    now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
-    fresh = {"started_at": (now - timedelta(seconds=30)).isoformat(), "checked_by": "manual"}
-    assert _viability_lock_is_stale(fresh, now=now, timeout_sec=60) is False
-
-
-async def test_viability_lock_not_reclaimed_when_timestamp_missing_or_malformed() -> None:
-    """Conservative: only reclaim a lock we can prove is old. A missing or
-    unparseable started_at is treated as a live probe (the in-progress guard
-    still holds) — the probe always writes a valid ISO timestamp."""
-    from app.sessions.service_viability import _viability_lock_is_stale
-
-    now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
-    assert _viability_lock_is_stale({"checked_by": "x"}, now=now, timeout_sec=60) is False
-    assert _viability_lock_is_stale({"started_at": "already"}, now=now, timeout_sec=60) is False
-    assert _viability_lock_is_stale(None, now=now, timeout_sec=60) is False
-
-
-@pytest.mark.usefixtures("seeded_driver_packs")
-async def test_run_session_viability_probe_reclaims_stale_lock(
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A leaked viability lock (a probe whose process died before releasing it)
-    must not block the device's viability checks forever. A stale lock is
-    reclaimed so the probe proceeds instead of raising 'already in progress'.
-    """
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="stale-lock-target",
-        operational_state=DeviceOperationalState.available,
-        verified=True,
-    )
-    appium_node = AppiumNode(
-        device_id=device.id,
-        port=9999,
-        desired_state=AppiumDesiredState.running,
-        desired_port=9999,
-        pid=1234,
-        active_connection_target="probe-target",
-    )
-    db_session.add(appium_node)
-    # A week-old leaked lock — far older than any probe could legitimately run.
-    await control_plane_state_store.set_value(
-        db_session,
-        session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(device.id),
-        {"started_at": "2026-05-24T20:31:52+00:00", "checked_by": "recovery"},
-    )
-    await db_session.commit()
-    device_id = device.id
-
-    async def fake_probe(
-        capabilities: dict[str, Any], timeout_sec: int, *, target: str | None = None
-    ) -> tuple[bool, str | None]:
-        return True, None
-
-    async def always_ready(*_a: object, **_kw: object) -> bool:
-        return True
-
-    async def fake_get_caps(*_a: object, **_kw: object) -> dict[str, Any]:
-        return {"platformName": "Android"}
-
-    svc = SessionViabilityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        session_factory=db_session_maker,
-        capability=DeviceCapabilityService(),
-        health=AsyncMock(),
-    )
-    monkeypatch.setattr(svc, "probe_session_direct", fake_probe)
-    monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
-    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", fake_get_caps)
-
-    async with db_session_maker() as session:
-        stmt = (
-            select(Device)
-            .where(Device.id == device_id)
-            .options(selectinload(Device.appium_node), selectinload(Device.host))
-        )
-        device_obj = (await session.execute(stmt)).scalar_one()
-        result = await svc.run_session_viability_probe(session, device_obj, checked_by="manual")
-
-    assert result["status"] == "passed", f"stale lock blocked the probe: {result}"
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -149,12 +50,23 @@ async def test_probe_lock_collision_raises_typed_in_progress_error(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    # A *fresh* in-flight lock (not stale, so it is not reclaimed).
-    await control_plane_state_store.set_value(
-        db_session,
-        session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(device.id),
-        {"started_at": datetime.now(UTC).isoformat(), "checked_by": "verification"},
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+        active_connection_target="probe-target",
+    )
+    device.appium_node = node
+    db_session.add(node)
+    db_session.add(
+        Session(
+            session_id="probe-collision-live",
+            device_id=device.id,
+            test_name=PROBE_TEST_NAME,
+            status=SessionStatus.pending,
+        )
     )
     await db_session.commit()
 
@@ -217,6 +129,7 @@ async def test_session_viability_restore_handles_external_reservation(
         timeout_sec: int,
         *,
         target: str | None = None,
+        on_created: object | None = None,
     ) -> tuple[bool, str | None]:
         nonlocal observed_target
         observed_target = target

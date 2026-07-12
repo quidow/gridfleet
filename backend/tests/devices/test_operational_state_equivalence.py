@@ -24,6 +24,7 @@ from app.devices.services.state import (
     operational_state_sql,
 )
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
 
@@ -135,6 +136,20 @@ async def test_operational_state_evaluator_and_sql_agree(
 
     pending = await add_device("live-pending", DeviceOperationalState.busy)
     db_session.add(Session(session_id="equivalence-pending", device_id=pending.id, status=SessionStatus.pending))
+    await db_session.flush()
+
+    # WS-16.1 (D14): probe rows claim but do not mask — a live probe session
+    # leaves the busy projection untouched, so probe cadence never flips the
+    # device's ledger or emits operational-state edges.
+    probing = await add_device("live-probe", DeviceOperationalState.available)
+    db_session.add(
+        Session(
+            session_id="equivalence-probe",
+            device_id=probing.id,
+            test_name=PROBE_TEST_NAME,
+            status=SessionStatus.running,
+        )
+    )
     await db_session.flush()
 
     leased = await add_device("verification-live", DeviceOperationalState.verifying)

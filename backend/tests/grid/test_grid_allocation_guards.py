@@ -21,6 +21,7 @@ from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -102,25 +103,20 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.db
-async def test_claim_defers_while_viability_probe_in_flight(
+async def test_claim_skips_device_with_live_probe_row(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
-    """Variant B (2026-06-07): a viability probe is a REAL Appium session on an
-    ``available`` device, posted directly to the node — no Session row exists until
-    the probe completes, so _claim's live-session recheck cannot see it. Its only
-    in-flight footprint is the control-plane probe lock. Claiming mid-probe races
-    the probe's uia2 startup for the device's static systemPort and fails the
-    client create ("local port #8200 is busy"); _claim must skip the device while
-    the lock is live and let the ticket retry on its next poll tick."""
-    from app.core.leader import state_store
-    from app.core.timeutil import now_utc
-    from app.sessions.probe_inflight import SESSION_VIABILITY_RUNNING_NAMESPACE
-
-    await state_store.try_claim_value(
-        db_session,
-        SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(seeded_available_device.id),
-        {"started_at": now_utc().isoformat(), "checked_by": "scheduled"},
+    """A running viability probe claims its device with a Session row from birth
+    (WS-16.1): _claim's live-session recheck under the row lock sees the row and
+    skips the device — the ticket stays waiting and retries on its next poll.
+    Replaces the pre-lock probe-lock gate."""
+    db_session.add(
+        Session(
+            session_id=f"probe-{uuid.uuid4()}",
+            device_id=seeded_available_device.id,
+            test_name=PROBE_TEST_NAME,
+            status=SessionStatus.pending,
+        )
     )
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
@@ -133,23 +129,22 @@ async def test_claim_defers_while_viability_probe_in_flight(
 
 
 @pytest.mark.db
-async def test_claim_proceeds_when_probe_lock_is_stale(
+async def test_claim_proceeds_over_terminal_probe_row(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
-    """A probe lock leaked by a dead probe process must not park the device out of
-    allocation: _claim applies the same staleness rule the probe's own reclaim path
-    uses, so a provably-old lock does not defer the claim."""
-    from datetime import timedelta
+    """A completed probe's terminal row releases the claim: an ended probe row
+    must not park the device out of allocation (the birth-row analogue of the
+    old stale-lock reclaim)."""
+    from datetime import UTC, datetime
 
-    from app.core.leader import state_store
-    from app.core.timeutil import now_utc
-    from app.sessions.probe_inflight import SESSION_VIABILITY_RUNNING_NAMESPACE
-
-    await state_store.try_claim_value(
-        db_session,
-        SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(seeded_available_device.id),
-        {"started_at": (now_utc() - timedelta(hours=1)).isoformat(), "checked_by": "scheduled"},
+    db_session.add(
+        Session(
+            session_id=f"probe-{uuid.uuid4()}",
+            device_id=seeded_available_device.id,
+            test_name=PROBE_TEST_NAME,
+            status=SessionStatus.passed,
+            ended_at=datetime.now(UTC),
+        )
     )
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)

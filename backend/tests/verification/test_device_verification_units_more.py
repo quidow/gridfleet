@@ -280,11 +280,12 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     )
     assert started is running_node
     assert error == "probe failed"
-    viability_probe_mock.probe_session_direct.assert_awaited_once_with(
-        build_probe_capabilities({"platformName": "Android"}),
-        120,
-        target=f"http://{db_host.ip}:4723",
-    )
+    viability_probe_mock.probe_session_direct.assert_awaited_once()
+    probe_call = viability_probe_mock.probe_session_direct.await_args
+    assert probe_call is not None
+    assert probe_call.args[:2] == (build_probe_capabilities({"platformName": "Android"}), 120)
+    assert probe_call.kwargs["target"] == f"http://{db_host.ip}:4723"
+    assert callable(probe_call.kwargs["on_created"])
 
     from sqlalchemy import select
 
@@ -435,16 +436,16 @@ async def test_run_probe_swallows_transient_converge_kick_failure(
     assert error is not None
 
 
-async def test_run_probe_marks_device_inflight_during_probe_session(
+async def test_run_probe_claims_with_probe_row_while_session_open(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """run_probe must register the device in ``probe_inflight`` while the Grid
-    probe session is open, so session_sync ignores the slot. The Appium driver
-    strips ``gridfleet:*`` markers from matched caps, so the registry is the
-    only mechanism that can identify a verification probe's slot."""
-    from app.sessions import probe_inflight
+    """run_probe claims the device with a Session row while the Appium probe
+    session is open (WS-16.1): pending at birth, promoted to the real id via
+    on_created, terminal after — the orphan sweep needs no sparing branch."""
+    from app.sessions.models import Session, SessionStatus
+    from app.sessions.probe_constants import PROBE_TEST_NAME
 
     monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
     existing = await create_device_record(
@@ -470,18 +471,21 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         AsyncMock(return_value={"platformName": "Android"}),
     )
 
-    device_key = str(existing.id)
-    seen_inflight: list[bool] = []
+    seen_mid_probe: list[tuple[object, str]] = []
 
     viability_inflight_mock = AsyncMock()
 
-    async def _probe_direct(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, None]:
-        seen_inflight.append(probe_inflight.is_probe_inflight(device_key))
+    async def _probe_direct(
+        _caps: object, _timeout: int, *, target: str | None, on_created: object = None
+    ) -> tuple[bool, None]:
+        if on_created is not None:
+            await on_created("verification-appium-id")  # type: ignore[operator]
+        rows = (await db_session.execute(select(Session).where(Session.device_id == existing.id))).scalars().all()
+        seen_mid_probe.extend((row.status, row.session_id) for row in rows)
         return True, None
 
     viability_inflight_mock.probe_session_direct = _probe_direct
 
-    assert probe_inflight.is_probe_inflight(device_key) is False
     await VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
@@ -498,17 +502,22 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         db_session,
         existing,
     )
-    assert seen_inflight == [True]
-    assert probe_inflight.is_probe_inflight(device_key) is False
+    assert seen_mid_probe == [(SessionStatus.running, "verification-appium-id")]
+    rows = (await db_session.execute(select(Session).where(Session.device_id == existing.id))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].test_name == PROBE_TEST_NAME
+    assert rows[0].status == SessionStatus.passed
+    assert rows[0].ended_at is not None
 
 
-async def test_run_probe_clears_inflight_when_probe_session_raises(
+async def test_run_probe_finalizes_probe_row_when_probe_session_raises(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exceptions inside the probe must not leak inflight entries."""
-    from app.sessions import probe_inflight
+    """Exceptions inside the probe release the birth-row claim."""
+    from app.sessions.models import Session, SessionStatus
+    from app.sessions.probe_constants import PROBE_TEST_NAME
 
     monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
     existing = await create_device_record(
@@ -534,10 +543,16 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         AsyncMock(return_value={"platformName": "Android"}),
     )
 
-    device_key = str(existing.id)
-
     viability_raises_mock = AsyncMock()
-    viability_raises_mock.probe_session_direct = AsyncMock(side_effect=RuntimeError("probe blew up"))
+
+    async def _probe_direct(
+        _caps: object, _timeout: int, *, target: str | None, on_created: object = None
+    ) -> tuple[bool, None]:
+        if on_created is not None:
+            await on_created("verification-appium-id")  # type: ignore[operator]
+        raise RuntimeError("probe blew up")
+
+    viability_raises_mock.probe_session_direct = _probe_direct
 
     with pytest.raises(RuntimeError, match="probe blew up"):
         await VerificationExecutionService(
@@ -556,7 +571,11 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             db_session,
             existing,
         )
-    assert probe_inflight.is_probe_inflight(device_key) is False
+    rows = (await db_session.execute(select(Session).where(Session.device_id == existing.id))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].test_name == PROBE_TEST_NAME
+    assert rows[0].status == SessionStatus.error
+    assert rows[0].ended_at is not None
 
 
 async def test_stop_verification_node_cleanup_error_path(

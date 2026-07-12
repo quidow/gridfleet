@@ -747,12 +747,14 @@ async def test_should_run_scheduled_probe_covers_skip_and_due_paths(
     )
     assert await _should_run_scheduled_probe(db_session, device, 60) is True
 
-    await session_viability.control_plane_state_store.set_value(
-        db_session,
-        session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(device.id),
-        {"started_at": "now"},
+    probe_row = Session(
+        session_id=f"probe-{uuid.uuid4()}",
+        device_id=device.id,
+        test_name=PROBE_TEST_NAME,
+        status=SessionStatus.pending,
     )
+    db_session.add(probe_row)
+    await db_session.flush()
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
 
 
@@ -843,22 +845,32 @@ async def test_run_session_viability_probe_rejects_duplicate_and_not_ready(
         connection_type=ConnectionType.usb,
     )
     db_session.add(device)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+        active_connection_target="probe-target",
+    )
+    device.appium_node = node
+    db_session.add(node)
     await db_session.commit()
 
-    await session_viability.control_plane_state_store.set_value(
-        db_session,
-        session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(device.id),
-        {"started_at": "already"},
+    row = Session(
+        session_id=f"probe-{uuid.uuid4()}",
+        device_id=device.id,
+        test_name=PROBE_TEST_NAME,
+        status=SessionStatus.pending,
     )
+    db_session.add(row)
+    await db_session.commit()
     with pytest.raises(ValueError, match="already in progress"):
         await run_session_viability_probe(db_session, device, checked_by="manual")
 
-    await session_viability.control_plane_state_store.delete_value(
-        db_session,
-        session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
-        str(device.id),
-    )
+    row.status = SessionStatus.passed
+    row.ended_at = datetime.now(UTC)
+    await db_session.commit()
     monkeypatch.setattr("app.sessions.service_viability.is_ready_for_use_async", AsyncMock(return_value=False))
     monkeypatch.setattr(
         "app.sessions.service_viability.readiness_error_detail_async",
@@ -1031,8 +1043,6 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     fake_db = AsyncMock()
     # device_is_reserved calls db.execute(...).first(); return None so the device reads as unreserved.
     fake_db.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-    monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "failed"}))
 
@@ -1045,7 +1055,7 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
 
     assert state["status"] == "failed"
     assert no_node.device_config == {}
-    assert fake_db.commit.await_count >= 2
+    assert fake_db.commit.await_count >= 1
 
     device_id = uuid.uuid4()
     available = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)

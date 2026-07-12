@@ -22,7 +22,7 @@ from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.liveness import host_online_clause
 from app.hosts.models import Host
 from app.sessions.filters import exclude_non_test_sessions
-from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.live_session_predicate import masking_live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -142,9 +142,10 @@ async def _rejected_unfulfilled_counts_by_bucket(
 async def _count_active_sessions(db: AsyncSession) -> int:
     # Count ``pending`` too: state derivation derives a pending-claimed device
     # ``busy`` and counts it in total_capacity_slots, so omitting pending here
-    # over-reports available headroom during create bursts (C13). Shared via
-    # live_session_predicate.
-    stmt = select(func.count()).select_from(Session).where(live_session_predicate())
+    # over-reports available headroom during create bursts (C13). Probe rows are
+    # excluded for the same lockstep reason: they do not mask ``busy`` (WS-16.1).
+    # Shared via masking_live_session_predicate.
+    stmt = select(func.count()).select_from(Session).where(masking_live_session_predicate())
     return int((await db.execute(stmt)).scalar_one() or 0)
 
 

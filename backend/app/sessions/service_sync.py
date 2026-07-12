@@ -20,7 +20,6 @@ from app.devices.services import intent as intent_service
 from app.grid import appium_direct
 from app.grid.allocation import node_target, resolve_router_target
 from app.lifecycle.services import policy as lifecycle_policy
-from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -235,11 +234,11 @@ class SessionSyncService:
            indeterminate (network) verdict is left untouched: we never kill on
            uncertainty.
         2. Orphan kill — each running node is enumerated; any Appium session
-           with no matching DB row (and no in-flight viability probe) is
-           terminated so a leaked session cannot pin a device busy forever.
+           with no matching DB row (probe rows included) is terminated so a
+           leaked session cannot pin a device busy forever.
 
         The loop never inserts or hydrates Session rows: row creation is owned
-        by the allocation API.
+        by the allocation and probe paths.
         """
         await self._check_liveness(db)
         await self._kill_orphans(db)
@@ -545,8 +544,6 @@ class SessionSyncService:
             if not live_ids:
                 continue
             known_ids = known_ids_by_device[device.id]
-            if probe_inflight.is_probe_inflight(str(device.id)):
-                continue
             for live_id in live_ids:
                 if live_id in known_ids:
                     continue
