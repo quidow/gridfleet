@@ -20,6 +20,7 @@ from app.grid.matching import CapabilityMergeError, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas import GridQueueRead, GridRouterRead, GridStatusRead
 from app.hosts.models import Host
+from app.lifecycle.services import remediation_log
 from app.runs import service as run_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
@@ -142,6 +143,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
     template_cache: StereotypeTemplateCache = {}
     now = now_utc()
     operational_states = await derive_operational_states(db, devices, now=now)
+    ladders = await remediation_log.load_ladders(db, [device.id for device in devices])
 
     # Seed the per-operational-state buckets from the enum itself so that adding a 6th
     # DeviceOperationalState cannot turn the `counts[...] += 1` below into a fleet-wide
@@ -196,7 +198,9 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
                 restart_requested_at=node.restart_requested_at,
                 started_at=node.started_at,
                 restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
-                lifecycle_policy_state=device.lifecycle_policy_state,
+                lifecycle_policy_state=remediation_log.build_policy_view(
+                    ladders[device.id], device.lifecycle_policy_state
+                ),
                 review_required=device.review_required,
                 now=now,
             )

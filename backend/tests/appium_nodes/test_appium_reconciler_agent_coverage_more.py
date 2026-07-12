@@ -12,6 +12,7 @@ from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
@@ -182,6 +183,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     set_extra = AsyncMock()
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", set_extra)
     monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(node_agent, "reset_reconciler_start_failure_if_needed", AsyncMock(return_value=False))
 
     node = await node_agent.mark_node_started(
         db,
@@ -203,10 +205,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await _loaded_device(db_session, db_host, "mark-start-clear")
-    device.lifecycle_policy_state = {
-        "last_failure_source": "appium_reconciler",
-        "last_failure_reason": "http_error",
-    }
+    await remediation_log.append_failure(db_session, device.id, source="appium_reconciler", reason="http_error")
     await db_session.commit()
 
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
@@ -229,9 +228,9 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    assert reloaded.lifecycle_policy_state is not None
-    assert reloaded.lifecycle_policy_state.get("last_failure_source") is None
-    assert reloaded.lifecycle_policy_state.get("last_failure_reason") is None
+    ladder = await remediation_log.load_ladder(db_session, reloaded.id)
+    assert ladder.last_failure_source is None
+    assert ladder.last_failure_reason is None
 
 
 async def test_pack_cap_helpers_cover_empty_and_stereotype_resolution(monkeypatch: pytest.MonkeyPatch) -> None:

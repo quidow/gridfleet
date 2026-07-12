@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, now, parse_iso, state
+from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, now
 from app.devices.services.recovery_projection import SUPPRESSED_KINDS, recovery_availability
 from app.devices.services.state import derive_operational_state
+from app.lifecycle.services import remediation_log
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 
@@ -49,7 +50,8 @@ async def build_lifecycle_policy(
     ready: bool | None = None,
     operational_state: DeviceOperationalState | None = None,
 ) -> dict[str, Any]:
-    policy = state(device)
+    ladder = await remediation_log.load_ladder(db, device.id)
+    policy = remediation_log.build_policy_view(ladder, device.lifecycle_policy_state)
     if reservation_context is None:
         reservation_context = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     run, entry = reservation_context
@@ -58,7 +60,7 @@ async def build_lifecycle_policy(
     availability = await recovery_availability(db, device, ready=ready)
     if operational_state is None:
         operational_state = await derive_operational_state(db, device, now=now())
-    backoff_until = parse_iso(policy.get("backoff_until"))
+    backoff_until = ladder.backoff_active(now=now())
     if policy.get("deferred_stop"):
         recovery_state = "waiting_for_session_end"
     elif backoff_until is not None and backoff_until > now():

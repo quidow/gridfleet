@@ -16,6 +16,7 @@ from app.devices.services.health_view import (
     merged_liveness,
 )
 from app.devices.services.intent import IntentService
+from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,9 +53,10 @@ def _maybe_emit_health_changed(
     device: Device,
     previous: dict[str, Any],
     *,
+    policy_view: dict[str, Any],
     publisher: EventPublisher,
 ) -> None:
-    nxt = build_public_summary(device)
+    nxt = build_public_summary(device, policy_view=policy_view)
     if _status_snapshot(previous) == _status_snapshot(nxt):
         return
     publisher.queue_for_session(
@@ -78,7 +80,9 @@ class DeviceHealthService:
         locked = await _lock(db, device)
         if locked is None:
             return
-        previous = build_public_summary(locked)
+        ladder = await remediation_log.load_ladder(db, locked.id)
+        policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
+        previous = build_public_summary(locked, policy_view=policy_view)
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
         locked.device_checks_checked_at = now_utc()
@@ -88,7 +92,7 @@ class DeviceHealthService:
         # state transitions) or the next reconciler scan tick (≤ one
         # intent_reconcile_interval): a healthy device_checks signal alone does
         # not restore an offline device — the node must also be observed running.
-        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
 
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
@@ -96,14 +100,16 @@ class DeviceHealthService:
         locked = await _lock(db, device)
         if locked is None:
             return
-        previous = build_public_summary(locked)
+        ladder = await remediation_log.load_ladder(db, locked.id)
+        policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
+        previous = build_public_summary(locked, policy_view=policy_view)
         locked.session_viability_status = status
         locked.session_viability_error = error
         locked.session_viability_checked_at = now_utc()
         # Same asymmetry as update_device_checks: reconcile immediately on failure
         # (device goes offline), defer on success (rely on apply_node_state_transition
         # or the next reconciler scan tick).
-        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
 
     async def apply_node_state_transition(
         self,
@@ -122,7 +128,9 @@ class DeviceHealthService:
             return
 
         locked.appium_node = locked_node
-        previous = build_public_summary(locked)
+        ladder = await remediation_log.load_ladder(db, locked.id)
+        policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
+        previous = build_public_summary(locked, policy_view=policy_view)
 
         # UNSET = caller is not making a health statement: leave the columns
         # (and the checked-at stamp) untouched. Explicit None = clear.
@@ -157,7 +165,7 @@ class DeviceHealthService:
         should_reconcile = mark_offline or health_running is not False
         if should_act and should_reconcile:
             await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
-        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:
         locked = await _lock(db, device)

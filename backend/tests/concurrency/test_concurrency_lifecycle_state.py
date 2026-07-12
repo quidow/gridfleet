@@ -55,7 +55,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy import select
 
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState, DeviceRemediationLogEntry
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -133,17 +133,18 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
     await asyncio.gather(*[writer(s, r) for s, r in inputs])
 
     async with db_session_maker() as verify:
-        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+        rows = (
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
-    state = device_row.lifecycle_policy_state
-    assert state is not None, "lifecycle_policy_state is None after concurrent writes"
-    assert state["last_failure_source"] in {s for s, _ in inputs}
-    assert state["last_failure_reason"] in {r for _, r in inputs}
-
-    expected_reason = next(r for s, r in inputs if s == state["last_failure_source"])
-    assert state["last_failure_reason"] == expected_reason, (
-        f"Torn write: source={state['last_failure_source']!r}, reason={state['last_failure_reason']!r}, state={state}"
-    )
+    failure_pairs = {(row.source, row.reason) for row in rows if row.kind == "failure"}
+    assert failure_pairs == set(inputs)
 
 
 # ---------------------------------------------------------------------------
@@ -297,33 +298,15 @@ async def test_concurrent_health_failure_stale_overwrite(
     )
 
     async with db_session_maker() as verify:
-        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+        rows = (
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
-    state = device_row.lifecycle_policy_state
-    assert state is not None, "lifecycle_policy_state is None after concurrent writes"
-
-    # Writer B committed src-b/reason-b while A was sleeping.
-    # Without a row lock, writer A then commits src-a/reason-a on top of B's
-    # already-committed state — a stale overwrite.
-    #
-    # The correct behaviour (after Task 9) is that A's transaction is
-    # serialized with B's via SELECT FOR UPDATE, so the final state reflects
-    # the true last-writer-wins ordering (src-a, since A commits after B).
-    # Either way the source and reason must match within a single writer.
-    #
-    # TODAY: writer A overwrites B, so state shows src-a/reason-a even though
-    # B committed src-b/reason-b after A's read but before A's write.
-    # The assertion below treats src-b as the "expected" last state (since B
-    # committed more recently from wall-clock perspective), catching the stale
-    # overwrite that happens when A clobbers B.
-    assert state["last_failure_source"] == "src-b", (
-        f"Stale overwrite detected: writer A (src-a) overwrote writer B's "
-        f"committed values (src-b/reason-b) because A held a stale in-memory "
-        f"dict and no row lock prevented the clobber.  "
-        f"Got last_failure_source={state['last_failure_source']!r}, "
-        f"last_failure_reason={state['last_failure_reason']!r}.  "
-        f"Full state: {state}"
-    )
-    assert state["last_failure_reason"] == "reason-b", (
-        f"Stale overwrite: expected reason-b but got {state['last_failure_reason']!r}"
-    )
+    failure_pairs = {(row.source, row.reason) for row in rows if row.kind == "failure"}
+    assert {("src-a", "reason-a"), ("src-b", "reason-b")} <= failure_pairs

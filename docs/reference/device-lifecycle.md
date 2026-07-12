@@ -123,12 +123,17 @@ columns; the row-lock contract applies to application code only.
 
 ### Lifecycle JSON axis
 
-`Device.lifecycle_policy_state` (the JSON column for `deferred_stop`,
-`backoff_until`, `maintenance_reason`, the `last_failure_*` trail, etc.) is NOT
-derived by the reconciler.  Helpers in `app.devices.services.lifecycle_policy_state`
-manage that column directly under the same row lock.  It holds durable facts and the
-remediation trail only — the "Recovery Paused" badge is no longer stored here (see
-the recovery availability projection below).
+`Device.lifecycle_policy_state` is NOT derived by the reconciler. Helpers in
+`app.devices.services.lifecycle_policy_state` manage the four surviving JSON keys
+under the same row lock:
+
+- `deferred_stop`
+- `deferred_stop_reason`
+- `deferred_stop_since`
+- `maintenance_reason`
+
+Remediation attempts and their failure/action trail live in the append-only
+`device_remediation_log` table; the "Recovery Paused" badge is projected at read time.
 
 ### Adapter-recommended link repair
 
@@ -141,26 +146,25 @@ device TCP-reachable.
 ### Shared remediation escalation ladder
 
 All automated remediations — recovery probes, node-health restarts, appium start
-retries — escalate through one ladder owned by
-`app/lifecycle/services/escalation.py`: `recovery_backoff_attempts` and
-`backoff_until` on `lifecycle_policy_state`, exponential backoff from
-`general.lifecycle_recovery_backoff_base_sec` capped at
-`general.lifecycle_recovery_backoff_max_sec`, promoted to
-`Device.review_required` at `general.lifecycle_recovery_review_threshold`. An armed
+retries — escalate through one ladder derived by
+`app/lifecycle/services/remediation_log.py` from the append-only
+`device_remediation_log` table. Rows have one of four kinds: `attempt` arms the
+immutable exponential backoff window, `failure` records detection context without
+arming backoff, `action` stamps the action trail, and `reset` supersedes all earlier
+rows for that device without erasing them. The ladder is promoted to
+`Device.review_required` at `general.lifecycle_recovery_review_threshold`; an active
 backoff window defers every automated remediation, not just the one that armed it.
 Detection debounce (ip_ping duration windows, `general.node_fail_window_sec`,
 probe-unanswered duration windows, and the link-repair attempt budget) stays
 per-observer and only decides when a failure event is real; the ladder owns what
 happens after.
 
-A successful node start clears only reconciler-sourced residue
-(`last_failure_source == "appium_reconciler"`). Backoff from failed recovery probes
-or node-health restarts survives until a verified recovery — a probe pass, an
-operator start (`clear_operator_start_suppression`), or the connectivity self-heal
-(`LifecyclePolicyService.clear_escalation_residue_on_self_heal` →
-`clear_stale_escalation_residue`, gated on `operator_stop_active` so an operator
-hold stays sticky, S10 staleness gate preserved) — clears it. Callers outside the
-lifecycle `write_state` allowlist escalate via
+Reset sources are `operator` for an explicit operator start, `device_checks` for a
+healthy self-heal, `appium_reconciler` for a successful node start when the active
+episode came from that reconciler, and run escalation when entering maintenance.
+The operator-stop gate remains sticky, and a reset never clears
+`Device.review_required`, which is operator-owned. Callers outside the lifecycle
+`write_state` allowlist escalate via
 `app.lifecycle.services.actions.escalate_device_remediation_failure`.
 
 ### Recovery availability projection

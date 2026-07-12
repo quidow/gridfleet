@@ -27,7 +27,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     failure_stop_sources,
 )
-from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
+from app.lifecycle.services import remediation_log
 from app.packs.services.platform_resolver import applicable_resource_ports, resolve_pack_platform
 
 if TYPE_CHECKING:
@@ -226,12 +226,9 @@ class OperatorNodeLifecycleService:
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
-            # An explicit operator start overrides any prior recovery suppression.
-            # request_start already revoked the operator:stop deny intents above;
-            # clear the matching JSON residue so the device stops deriving
-            # recovery_state="suppressed" (presenter "blocked" / "Recovery Paused")
-            # while it is actually running and available.
-            clear_operator_start_suppression(device)
+            ladder = await remediation_log.load_ladder(db, device.id)
+            if ladder.armed or ladder.last_failure_reason:
+                await remediation_log.append_reset(db, device.id, source="operator", action="operator_started")
             await self._review.clear_review_required(
                 db, device, reason="Operator started Appium node", source="start_node"
             )

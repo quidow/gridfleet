@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS
 from app.core.observability import get_logger
-from app.lifecycle.services.actions import is_reconciler_failure_residue
 
 logger = get_logger(__name__)
 
@@ -32,6 +31,7 @@ class DesiredRow:
     started_at: datetime | None = None
     # Carried lock-free from the desired-rows SELECT for the confirm_running pre-check.
     lifecycle_policy_state: dict[str, Any] | None = field(default=None)
+    reconciler_failure_present: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +212,7 @@ async def _execute_action(
         return
     if action.kind == "confirm_running":
         # ponytail: cheap pre-check skips the Device row lock in the steady-state path
-        if is_reconciler_failure_residue(row.lifecycle_policy_state):
+        if row.reconciler_failure_present:
             await reset_start_failure(row=row)
         return
     if action.kind == "db_clear_stale_running":

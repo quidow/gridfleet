@@ -39,6 +39,7 @@ from app.devices.services import (
 from app.devices.services import (
     platform_label as platform_label_service,
 )
+from app.lifecycle.services import remediation_log
 from app.runs import service as run_service
 from app.sessions.dependencies import SessionServicesDep
 
@@ -125,7 +126,14 @@ async def list_devices(
         total = None
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
-    health_summary_map = {str(device.id): device_health.build_public_summary(device) for device in devices}
+    ladders = await remediation_log.load_ladders(db, [device.id for device in devices])
+    health_summary_map = {
+        str(device.id): device_health.build_public_summary(
+            device,
+            policy_view=remediation_log.build_policy_view(ladders[device.id], device.lifecycle_policy_state),
+        )
+        for device in devices
+    }
     label_map = await platform_label_service.load_platform_label_map(
         db,
         ((device.pack_id, device.platform_id) for device in devices),
@@ -162,6 +170,7 @@ async def get_device(
     include: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
+    ladder = await remediation_log.load_ladder(db, device.id)
     platform_label = await platform_label_service.load_platform_label(
         db,
         pack_id=device.pack_id,
@@ -170,7 +179,10 @@ async def get_device(
     return await device_services.presenter.serialize_device_detail(
         db,
         device,
-        health_summary=device_health.build_public_summary(device),
+        health_summary=device_health.build_public_summary(
+            device,
+            policy_view=remediation_log.build_policy_view(ladder, device.lifecycle_policy_state),
+        ),
         platform_label=platform_label,
         include_orchestration=include is not None and "orchestration" in include.split(","),
     )

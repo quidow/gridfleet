@@ -12,6 +12,7 @@ from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.devices.models import DeviceOperationalState
 from app.hosts.models import Host, HostStatus
+from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -61,9 +62,15 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
         identity_value="reconciler-001",
         connection_target="reconciler-target",
         operational_state=DeviceOperationalState.available,
-        lifecycle_policy_state={
-            "backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
-        },
+    )
+    await remediation_log.append_entry(
+        db_session,
+        device.id,
+        kind=remediation_log.KIND_ATTEMPT,
+        source="node_health",
+        action="recovery_failed",
+        reason="backoff",
+        backoff_until=datetime.now(UTC) + timedelta(minutes=5),
     )
     restart_requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
     node = AppiumNode(
@@ -81,16 +88,14 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
 
     desired_one = await appium_reconciler._fetch_desired_row(db_session, device.id)
     missing = await appium_reconciler._fetch_desired_row(db_session, uuid.uuid4())
-    backoff = await appium_reconciler.fetch_backoff_until(db_session)
+    backoff = await remediation_log.load_active_backoffs(db_session, now=datetime.now(UTC))
 
     assert desired_one is not None
     assert desired_one.stop_pending is True
     assert missing is None
     assert device.id in backoff
 
-    device.lifecycle_policy_state = {"backoff_until": "not-a-date"}
-    await db_session.commit()
-    assert await appium_reconciler.fetch_backoff_until(db_session) == {}
+    assert device.id in backoff
 
 
 async def test_reconcile_host_filters_backoff_rows_from_explicit_health_payload(
@@ -166,18 +171,18 @@ async def test_record_and_reset_start_failure_state(
         settings=FakeSettingsReader({}),
     )
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
-    assert device.lifecycle_policy_state["backoff_until"] is not None
-    assert device.lifecycle_policy_state["last_failure_source"] == "appium_reconciler"
-    assert device.lifecycle_policy_state["last_failure_reason"] == "timeout"
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.attempts == 1
+    assert ladder.backoff_until is not None
+    assert ladder.last_failure_source == "appium_reconciler"
+    assert ladder.last_failure_reason == "timeout"
 
     await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") in (None, 0)
-    assert device.lifecycle_policy_state.get("last_failure_source") is None
-    assert device.lifecycle_policy_state.get("last_failure_reason") is None
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.attempts == 0
+    assert ladder.last_failure_source is None
+    assert ladder.last_failure_reason is None
 
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler._lock_device_for_reconciler", AsyncMock(return_value=None)
@@ -202,10 +207,7 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
         identity_value="non-reconciler-001",
         operational_state=DeviceOperationalState.available,
     )
-    device.lifecycle_policy_state = {
-        "last_failure_source": "connectivity",
-        "last_failure_reason": "ping_timeout",
-    }
+    await remediation_log.append_failure(db_session, device.id, source="connectivity", reason="ping_timeout")
     await db_session.commit()
 
     row = _desired_row(device_id=device.id)
@@ -216,12 +218,12 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
 
     await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state.get("last_failure_source") == "connectivity"
-    assert device.lifecycle_policy_state.get("last_failure_reason") == "ping_timeout"
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.last_failure_source == "connectivity"
+    assert ladder.last_failure_reason == "ping_timeout"
 
 
-async def test_reset_start_failure_clears_orphaned_reason(
+async def test_reset_start_failure_ignores_missing_log_episode(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -233,10 +235,6 @@ async def test_reset_start_failure_clears_orphaned_reason(
         identity_value="orphaned-reason-001",
         operational_state=DeviceOperationalState.available,
     )
-    device.lifecycle_policy_state = {
-        "last_failure_source": None,
-        "last_failure_reason": "ghost_error",
-    }
     await db_session.commit()
 
     row = _desired_row(device_id=device.id)
@@ -247,9 +245,9 @@ async def test_reset_start_failure_clears_orphaned_reason(
 
     await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state.get("last_failure_source") is None
-    assert device.lifecycle_policy_state.get("last_failure_reason") is None
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.attempts == 0
+    assert ladder.last_failure_reason is None
 
 
 async def test_confirm_running_skips_lock_when_no_failure_residue(
@@ -328,15 +326,15 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
     )._make_reset_start_failure(session_scope=_scope)
 
     # Row carries the same residue state lock-free
-    row = _desired_row(
-        device_id=device.id,
-        lifecycle_policy_state={
-            "recovery_backoff_attempts": 2,
-            "backoff_until": None,
-            "last_failure_source": "appium_reconciler",
-            "last_failure_reason": "timeout",
-        },
+    await remediation_log.append_attempt(
+        db_session,
+        device.id,
+        source="appium_reconciler",
+        reason="timeout",
+        settings=FakeSettingsReader({}),
     )
+    await db_session.commit()
+    row = _desired_row(device_id=device.id, reconciler_failure_present=True)
     from app.appium_nodes.services.reconciler_convergence import ConvergenceAction, _execute_action
 
     await _execute_action(
@@ -347,9 +345,9 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
         reset_start_failure=reset_fn,
     )
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") in (None, 0)
-    assert device.lifecycle_policy_state.get("last_failure_source") is None
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.attempts == 0
+    assert ladder.last_failure_source is None
 
 
 async def test_touch_last_observed_noop() -> None:

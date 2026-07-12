@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +20,9 @@ from app.devices.services.recovery_projection import (
     RecoveryBlockKind,
     recovery_availability,
 )
+from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ async def test_maintenance_blocks_with_constant(db_session: AsyncSession, db_hos
     locked = await device_locking.lock_device(db_session, device.id)
     set_maintenance_reason(locked, "operator hold")
     await db_session.commit()
-    result = await recovery_availability(db_session, locked)
+    result = await recovery_availability(db_session, device)
     assert (result.allowed, result.kind) == (False, RecoveryBlockKind.maintenance)
     assert result.reason == MAINTENANCE_HOLD_SUPPRESSION_REASON
 
@@ -90,7 +91,7 @@ async def test_deferred_stop_blocks(db_session: AsyncSession, db_host: Host) -> 
     state["deferred_stop"] = True
     write_state(locked, state)
     await db_session.commit()
-    result = await recovery_availability(db_session, locked)
+    result = await recovery_availability(db_session, device)
     assert (result.allowed, result.kind) == (False, RecoveryBlockKind.deferred_stop)
 
 
@@ -105,10 +106,18 @@ async def test_live_session_blocks(db_session: AsyncSession, db_host: Host) -> N
 
 async def test_backoff_window_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="backoff")
-    locked = await device_locking.lock_device(db_session, device.id)
-    state = policy_state(locked)
-    state["backoff_until"] = (datetime.now(UTC) + timedelta(seconds=600)).isoformat()
-    write_state(locked, state)
+    await remediation_log.append_attempt(
+        db_session,
+        device.id,
+        source="node_health",
+        reason="backoff",
+        settings=FakeSettingsReader(
+            {
+                "general.lifecycle_recovery_backoff_base_sec": 600,
+                "general.lifecycle_recovery_backoff_max_sec": 600,
+            }
+        ),
+    )
     await db_session.commit()
-    result = await recovery_availability(db_session, locked)
+    result = await recovery_availability(db_session, device)
     assert (result.allowed, result.kind) == (False, RecoveryBlockKind.backoff)

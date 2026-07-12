@@ -24,15 +24,9 @@ from app.devices.services.intent_types import (
     failure_stop_sources,
 )
 from app.devices.services.lifecycle_policy_state import (
-    clear_backoff,
     clear_deferred_stop,
-    clear_stale_escalation_residue,
     loaded_node,
     now,
-    record_recovery_failed,
-    record_recovery_recovered,
-    record_recovery_started,
-    set_action,
     set_deferred_stop,
     write_state,
 )
@@ -41,6 +35,7 @@ from app.devices.services.lifecycle_policy_state import (
 )
 from app.devices.services.recovery_projection import recovery_availability
 from app.devices.services.state import derive_operational_state
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.lifecycle.services.operator_node import operator_stop_active
@@ -65,17 +60,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Self-heal escalation-residue reset: residue must be older than this before a
-# healthy connectivity tick is allowed to wipe it, so an in-flight failure sequence
-# (verify-failure arms the backoff seconds before its auto-stop lands) is not
-# clobbered by a transient healthy probe racing in between (regression S10).
-_SELF_HEAL_MIN_AGE_INTERVAL_FACTOR = 2.0  # at least two connectivity check intervals
-_SELF_HEAL_MIN_AGE_FLOOR_SEC = 120.0  # absolute floor (= factor x default 60s interval)
-# Agent-local device-health probes arrive on a fixed 60 s cadence
-# (DEVICE_HEALTH_INTERVAL_SEC, agent_app/probes.py); the configurable
-# general.device_check_interval_sec knob died with the dial-out stages.
-_DEVICE_HEALTH_OBSERVATION_INTERVAL_SEC = 60.0
-
 
 class LifecyclePolicyService:
     def __init__(
@@ -98,14 +82,13 @@ class LifecyclePolicyService:
         self._review = review
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
-        device, current_state, run, entry, early = await self._evaluate_recovery_guards(
+        device, _current_state, run, entry, early = await self._evaluate_recovery_guards(
             db, device, source=source, reason=reason
         )
         if early is not None:
             return early
 
-        record_recovery_started(current_state)
-        write_state(device, current_state)
+        await remediation_log.append_action(db, device.id, source=source, action="recovery_started")
 
         node = loaded_node(device)
         operational_state = await derive_operational_state(db, device, now=now_utc())
@@ -127,9 +110,7 @@ class LifecyclePolicyService:
             try:
                 await self._register_recovery_start_intents(db, device, run=run, entry=entry, reason=reason)
             except NodeManagerError as exc:
-                return await self._record_recovery_node_start_failure(
-                    db, device, current_state, exc=exc, source=source, run=run
-                )
+                return await self._record_recovery_node_start_failure(db, device, exc=exc, source=source, run=run)
 
         # Wait for the reconciler to observe the node running before probing.
         # The reconciler runs asynchronously; probing immediately after
@@ -163,9 +144,9 @@ class LifecyclePolicyService:
             return False
 
         if result.get("status") != "passed":
-            return await self._handle_recovery_probe_failure(db, device, current_state, result)
+            return await self._handle_recovery_probe_failure(db, device, result)
 
-        return await self._finalize_recovery_success(db, device, current_state, source=source, reason=reason)
+        return await self._finalize_recovery_success(db, device, source=source, reason=reason)
 
     async def _revoke_if_already_healthy(
         self, db: AsyncSession, device: Device, entry: DeviceReservation | None, *, reason: str
@@ -335,7 +316,6 @@ class LifecyclePolicyService:
         self,
         db: AsyncSession,
         device: Device,
-        current_state: dict[str, Any],
         *,
         exc: NodeManagerError,
         source: str,
@@ -344,18 +324,11 @@ class LifecyclePolicyService:
         outcome = await escalate_remediation_failure(
             db,
             device,
-            current_state,
             settings=self._settings,
             review=self._review,
             source=source,
             reason=str(exc),
         )
-        record_recovery_failed(
-            current_state,
-            source=source,
-            reason=str(exc),
-        )
-        write_state(device, current_state)
         await self._record_backoff_incident_pair(
             db,
             device,
@@ -368,20 +341,12 @@ class LifecyclePolicyService:
         await db.commit()
         return False
 
-    async def _handle_recovery_probe_failure(
-        self, db: AsyncSession, device: Device, current_state: dict[str, Any], result: dict[str, Any]
-    ) -> bool:
+    async def _handle_recovery_probe_failure(self, db: AsyncSession, device: Device, result: dict[str, Any]) -> bool:
         failure_reason = result.get("error") or "Recovery viability probe failed"
-        record_recovery_failed(
-            current_state,
-            source="session_viability",
-            reason=failure_reason,
-        )
-        write_state(device, current_state)  # eager-write before potential intermediate commit in complete_auto_stop
         await self._actions.complete_auto_stop(
             db,
             device,
-            current_state,
+            policy_state(device),
             reason=failure_reason,
             source="session_viability",
             detail="Manager stopped the device after a failed recovery viability probe",
@@ -393,22 +358,14 @@ class LifecyclePolicyService:
         # can never clobber a concurrent writer on the same device.
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
         run, _entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
-        fresh_state = policy_state(device)
         outcome = await escalate_remediation_failure(
             db,
             device,
-            fresh_state,
             settings=self._settings,
             review=self._review,
             source="session_viability",
             reason=failure_reason,
         )
-        record_recovery_failed(
-            fresh_state,
-            source="session_viability",
-            reason=failure_reason,
-        )
-        write_state(device, fresh_state)
         await self._record_backoff_incident_pair(
             db,
             device,
@@ -421,23 +378,10 @@ class LifecyclePolicyService:
         await db.commit()
         return False
 
-    async def _finalize_recovery_success(
-        self, db: AsyncSession, device: Device, current_state: dict[str, Any], *, source: str, reason: str
-    ) -> bool:
-        # Re-lock and rebuild state from fresh DB row: run_session_viability_probe
-        # commits multiple times during execution, releasing the row lock that
-        # _reload_device acquired at the top of this function. Without this re-lock,
-        # the trailing writes below would clobber any concurrent writer on the same device.
+    async def _finalize_recovery_success(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        fresh_state = policy_state(device)
-        # Carry forward this writer's intent in current_state into fresh_state, but
-        # only the fields this branch will touch downstream:
-        fresh_state["recovery_backoff_attempts"] = current_state.get("recovery_backoff_attempts", 0)
-        current_state = fresh_state
         # Re-resolve the reservation under lock as well:
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
-
-        clear_backoff(current_state)
 
         if run is not None and run.state not in TERMINAL_STATES:
             if run_reservation_service.reservation_entry_is_excluded(entry):
@@ -469,13 +413,8 @@ class LifecyclePolicyService:
 
         await db.commit()
 
-        # Re-lock for the trailing lifecycle write: the per-branch commits above
-        # released the FOR UPDATE acquired earlier in this function.
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        fresh_state = policy_state(device)
-        record_recovery_recovered(fresh_state)
-        current_state = fresh_state
-        write_state(device, current_state)
+        await remediation_log.append_reset(db, device.id, source=source, action="auto_recovered", reason=reason)
         await self._incidents.record_lifecycle_incident(
             db,
             device,
@@ -533,13 +472,7 @@ class LifecyclePolicyService:
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
-        current_state["last_failure_source"] = source
-        current_state["last_failure_reason"] = reason
-        # Persist this writer's intent into the session's identity map immediately
-        # so the next intermediate commit lands these fields in the DB. Otherwise
-        # downstream helpers that re-lock + refresh would lose this writer's intent
-        # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
-        write_state(device, current_state)
+        await remediation_log.append_failure(db, device.id, source=source, reason=reason)
 
         if policy_state(device).get("maintenance_reason") is not None:
             # The maintenance hold already drives the projected "Recovery Paused"
@@ -551,6 +484,9 @@ class LifecyclePolicyService:
         if await self._actions.has_running_client_session(db, device.id):
             set_deferred_stop(current_state, reason=reason)
             write_state(device, current_state)
+            await remediation_log.append_action(
+                db, device.id, source=source, action="auto_stop_deferred", reason=reason
+            )
             await self._incidents.record_lifecycle_incident(
                 db,
                 device,
@@ -653,11 +589,9 @@ class LifecyclePolicyService:
     async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
-        current_state["last_failure_source"] = "connectivity"
-        current_state["last_failure_reason"] = reason
         clear_deferred_stop(current_state)
-        # Persist intent before any await/commit (see handle_health_failure).
         write_state(device, current_state)
+        await remediation_log.append_failure(db, device.id, source="connectivity", reason=reason)
 
         # D1: connectivity loss is not exclusion-worthy. The device transitions
         # to offline through the connectivity loop's _stop_disconnected_node /
@@ -676,7 +610,7 @@ class LifecyclePolicyService:
     async def clear_escalation_residue_on_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
         """Reset the shared escalation ladder when a healthy device self-healed.
 
-        Covers the gap that the operator-start (``clear_operator_start_suppression``)
+        Covers the gap that the operator-start reset
         path does not: an agent restart → reconvergence leaves the node running and
         the device available without any recovery path firing, so a stale backoff
         window / attempt counter keeps the node's effective-state ``blocked`` forever.
@@ -686,26 +620,19 @@ class LifecyclePolicyService:
         ``operator_stop_active``: an active operator-stop deny intent (operator_recovery_deny kind)
         makes the hold legitimate and operator-owned — it must stay sticky (N13).
 
-        Final gate: only clear residue older than ``min_age_seconds`` (>= 2x the
-        connectivity check interval). A verify-failure arms the backoff seconds
-        before its auto-stop lands, and a concurrent healthy connectivity tick can
-        race in between — clearing fresh residue would wipe an in-flight shelving
-        sequence (regression S10). Returns True when residue was actually cleared so
-        the incident fires exactly once; subsequent cycles no-op.
+        A healthy tick racing an in-flight failure sequence may supersede that
+        episode immediately; the append-only trail remains intact and the next
+        failure starts a fresh episode (WS-15.1 plan-time narrowing 4). Returns
+        True when a reset was appended so the incident fires exactly once;
+        subsequent cycles no-op.
         """
         device = await _reload_device(db, device)
         if await operator_stop_active(db, device.id):
             return False
-        # Residue must survive at least two connectivity ticks before we treat it
-        # as stale, so an in-flight failure sequence (backoff → auto-stop) is
-        # never wiped by a transient healthy probe landing between the two.
-        min_age_seconds = max(
-            _SELF_HEAL_MIN_AGE_FLOOR_SEC,
-            _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR * _DEVICE_HEALTH_OBSERVATION_INTERVAL_SEC,
-        )
-        cleared = clear_stale_escalation_residue(device, min_age_seconds=min_age_seconds)
-        if not cleared:
+        ladder = await remediation_log.load_ladder(db, device.id)
+        if not (ladder.armed or ladder.last_failure_reason):
             return False
+        await remediation_log.append_reset(db, device.id, source="device_checks", action="self_healed", reason=reason)
         await self._incidents.record_lifecycle_incident(
             db,
             device,
@@ -794,9 +721,9 @@ class LifecyclePolicyService:
         pending_since = current_state.get("deferred_stop_since")
         pending_reason = current_state.get("deferred_stop_reason")
         clear_deferred_stop(current_state)
-        if action is not None:
-            set_action(current_state, action)
         write_state(device, current_state)
+        if action is not None:
+            await remediation_log.append_action(db, device.id, source=source, action=action, reason=reason)
 
         if record_incident:
             detail = (
@@ -830,13 +757,14 @@ class LifecyclePolicyService:
         failure_reason: str | None = None,
     ) -> None:
         device = await _reload_device(db, device)
-        current_state = policy_state(device)
         if failure_source is not None:
-            current_state["last_failure_source"] = failure_source
-        if failure_reason is not None:
-            current_state["last_failure_reason"] = failure_reason
-        set_action(current_state, action)
-        write_state(device, current_state)
+            await remediation_log.append_failure(
+                db,
+                device.id,
+                source=failure_source,
+                reason=failure_reason or "Control action failure",
+            )
+        await remediation_log.append_action(db, device.id, source=failure_source or "lifecycle", action=action)
 
 
 RECOVERY_PROBE_ATTEMPTS = 3

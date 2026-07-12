@@ -15,28 +15,6 @@ if TYPE_CHECKING:
     import pytest
 
 
-async def test_fetch_backoff_until_parses_valid_rows_and_skips_bad_values() -> None:
-    valid_id = uuid.uuid4()
-    naive_id = uuid.uuid4()
-    db = MagicMock()
-    db.execute = AsyncMock(
-        return_value=SimpleNamespace(
-            all=lambda: [
-                (uuid.uuid4(), None),
-                (uuid.uuid4(), {"backoff_until": 123}),
-                (uuid.uuid4(), {"backoff_until": "not-a-date"}),
-                (valid_id, {"backoff_until": "2026-05-13T12:00:00+00:00"}),
-                (naive_id, {"backoff_until": "2026-05-13T12:00:00"}),
-            ]
-        )
-    )
-
-    backoff = await appium_reconciler.fetch_backoff_until(db)
-
-    assert backoff[valid_id] == datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
-    assert backoff[naive_id] == datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
-
-
 async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     device_id = uuid.uuid4()
     db = MagicMock()

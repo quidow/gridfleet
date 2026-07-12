@@ -25,6 +25,7 @@ from app.devices.services.intent_reconciler import gather_decision_facts
 from app.devices.services.serialization_types import DeviceSerializationContext
 from app.devices.services.state import derive_operational_state, derive_operational_states
 from app.hosts import service_hardware_telemetry as hardware_telemetry
+from app.lifecycle.services import remediation_log
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
 
@@ -127,7 +128,7 @@ class DevicePresenterService:
         )
         lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
         if health_summary is None:
-            health_summary = device_health.build_public_summary(device)
+            health_summary = device_health.build_public_summary(device, policy_view=policy)
         hardware_status = hardware_telemetry.current_hardware_health_status(device)
         needs_attention = device_attention.compute_needs_attention(
             operational_state,
@@ -211,6 +212,8 @@ class DevicePresenterService:
         platform_label: str | None = None,
         include_orchestration: bool = False,
     ) -> dict[str, Any]:
+        ladder = await remediation_log.load_ladder(db, device.id)
+        policy_view = remediation_log.build_policy_view(ladder, device.lifecycle_policy_state)
         payload = await self.serialize_device(
             db,
             device,
@@ -218,7 +221,7 @@ class DevicePresenterService:
             health_summary=health_summary,
             platform_label=platform_label,
         )
-        payload["appium_node"] = _serialize_appium_node_for_detail(device)
+        payload["appium_node"] = _serialize_appium_node_for_detail(device, policy_view=policy_view)
         if include_orchestration:
             payload["orchestration"] = await _serialize_orchestration(db, device)
         return payload
@@ -252,7 +255,7 @@ async def _ensure_appium_node_loaded(db: AsyncSession, device: Device) -> None:
         await db.refresh(device, attribute_names=["appium_node"])
 
 
-def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
+def _serialize_appium_node_for_detail(device: Device, *, policy_view: dict[str, Any]) -> dict[str, Any] | None:
     node = device.appium_node
     if node is None:
         return None
@@ -268,7 +271,7 @@ def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
         "last_observed_at": node.last_observed_at,
         "health_running": node.health_running,
         "health_state": node.health_state,
-        "lifecycle_policy_state": copy.deepcopy(device.lifecycle_policy_state or {}),
+        "lifecycle_policy_state": copy.deepcopy(policy_view),
         "review_required": device.review_required,
     }
 

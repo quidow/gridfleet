@@ -29,13 +29,13 @@ from app.devices.services.intent_types import (
     CommandKind,
     IntentRegistration,
 )
-from app.devices.services.lifecycle_policy_state import set_maintenance_reason, write_state
-from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
 )
 from app.lifecycle.services import policy as lifecycle_policy_module
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import DeferredStopOutcome, LifecyclePolicyService
@@ -327,10 +327,15 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
     )
     db_session.add(device)
     await db_session.commit()
-    device.lifecycle_policy_state = {
-        **(device.lifecycle_policy_state or {}),
-        "backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
-    }
+    await remediation_log.append_entry(
+        db_session,
+        device.id,
+        kind=remediation_log.KIND_ATTEMPT,
+        source="node_health",
+        action="recovery_failed",
+        reason="backoff",
+        backoff_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
     await db_session.commit()
 
     recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
@@ -951,16 +956,16 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
 
     assert recovered is False
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state is not None
-    backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.backoff_until is not None
+    backoff_until = ladder.backoff_until
     assert 5 <= (backoff_until - recovery_started_at).total_seconds() <= 8
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
     policy = await build_lifecycle_policy(db_session, reloaded)
-    assert device.lifecycle_policy_state is not None
     assert policy["recovery_state"] == "backoff"
-    assert policy["backoff_until"] == device.lifecycle_policy_state["backoff_until"]
+    assert policy["backoff_until"] == ladder.backoff_until.isoformat()
 
 
 async def test_lifecycle_summary_reports_deferred_and_excluded_states(
@@ -1209,7 +1214,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     # last_action must be refreshed so the audit trail does not show a stale
     # ``auto_stop_deferred`` after the intent was cleared by the healthy
     # session-end branch (see ``clear_pending_auto_stop_on_recovery``).
-    assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
+    assert (await remediation_log.load_ladder(db_session, reloaded.id)).last_action == "auto_stop_cleared"
     # reconcile_device (now called with publisher) derives operational_state
     # authoritatively. The intent reconciler set desired_state=stopped, so
     # stop_in_flight is True → offline is the correct derived value here.
@@ -1543,6 +1548,12 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
         active_connection_target="",
     )
     db_session.add(node)
+    await remediation_log.append_failure(
+        db_session,
+        device.id,
+        source="node_health",
+        reason="ADB hung",
+    )
     await db_session.commit()
 
     # Health reads healthy even though last_failure_* still describes a
@@ -1567,9 +1578,10 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["deferred_stop"] is False
-    assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
+    ladder = await remediation_log.load_ladder(db_session, reloaded.id)
+    assert ladder.last_action == "auto_stop_cleared"
     # last_failure_* is preserved (historical) but no longer drives behavior.
-    assert reloaded.lifecycle_policy_state["last_failure_reason"] == "ADB hung"
+    assert ladder.last_failure_reason == "ADB hung"
 
 
 def test_lifecycle_run_import_order_is_acyclic() -> None:
@@ -1675,6 +1687,8 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     monkeypatch.setattr(
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
+    append_failure = AsyncMock()
+    monkeypatch.setattr(lifecycle_policy_module.remediation_log, "append_failure", append_failure)
     incident = AsyncMock()
     monkeypatch.setattr(LifecycleIncidentService, "record_lifecycle_incident", incident)
 
@@ -1682,7 +1696,7 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
     incident.assert_not_awaited()
     # The failure trail is still written for observability.
-    assert device.lifecycle_policy_state["last_failure_reason"] == "bad"
+    append_failure.assert_awaited_once_with(db, device.id, source="checks", reason="bad")
 
 
 async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
@@ -1799,6 +1813,21 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     )
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
     monkeypatch.setattr(lifecycle_policy_module, "recovery_availability", _allow_recovery())
+    monkeypatch.setattr(
+        lifecycle_policy_module.remediation_log,
+        "append_action",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module.remediation_log,
+        "append_attempt",
+        AsyncMock(
+            return_value=(
+                SimpleNamespace(backoff_until=datetime.now(UTC) + timedelta(seconds=60)),
+                SimpleNamespace(attempts=1),
+            )
+        ),
+    )
     mock_record_incident = AsyncMock()
     monkeypatch.setattr(
         LifecycleIncidentService,
@@ -1816,8 +1845,10 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
         is False
     )
 
-    assert device.state["last_action"] == "recovery_failed"
-    assert device.state["last_failure_reason"].endswith("has no host assigned")
+    lifecycle_policy_module.remediation_log.append_attempt.assert_awaited_once()
+    assert lifecycle_policy_module.remediation_log.append_attempt.await_args.kwargs["reason"].endswith(
+        "has no host assigned"
+    )
     assert mock_record_incident.await_count == 2
     db.commit.assert_awaited()
 
@@ -1839,6 +1870,9 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
 
         async def refresh(self, _item: object) -> None:
             return None
+
+        async def execute(self, _statement: object) -> SimpleNamespace:
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
 
     device = SimpleNamespace(
         id=uuid.uuid4(),
@@ -1943,7 +1977,10 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         )
         is False
     )  # type: ignore[arg-type]
-    assert failing.lifecycle_policy_state["last_action"] == "recovery_failed"
+    assert any(
+        getattr(entry, "kind", None) == "attempt" and getattr(entry, "reason", None) == "probe failed"
+        for entry in db2.added
+    )
     mock_complete_auto_stop.assert_awaited_once()
 
 
@@ -1956,9 +1993,19 @@ async def test_node_start_failure_promotes_to_review_at_threshold(db_session: As
         operational_state=DeviceOperationalState.offline,
     )
     locked = await device_locking.lock_device(db_session, device.id)
-    state = policy_state(locked)
-    state["recovery_backoff_attempts"] = 4
-    write_state(locked, state)
+    for _ in range(4):
+        await remediation_log.append_attempt(
+            db_session,
+            locked.id,
+            source="device_checks",
+            reason="previous failure",
+            settings=FakeSettingsReader(
+                {
+                    "general.lifecycle_recovery_backoff_base_sec": 60,
+                    "general.lifecycle_recovery_backoff_max_sec": 900,
+                }
+            ),
+        )
     await db_session.commit()
 
     svc = _make_svc()
@@ -1966,7 +2013,6 @@ async def test_node_start_failure_promotes_to_review_at_threshold(db_session: As
     result = await svc._record_recovery_node_start_failure(
         db_session,
         locked,
-        policy_state(locked),
         exc=NodeManagerError("agent rejected start"),
         source="device_checks",
         run=None,
@@ -1975,7 +2021,8 @@ async def test_node_start_failure_promotes_to_review_at_threshold(db_session: As
     refreshed = await db_session.get(Device, device.id)
     assert refreshed is not None
     assert refreshed.review_required is True
-    assert policy_state(refreshed)["recovery_backoff_attempts"] == 5
+    ladder = await remediation_log.load_ladder(db_session, refreshed.id)
+    assert ladder.attempts == 5
 
 
 # ---------------------------------------------------------------------------

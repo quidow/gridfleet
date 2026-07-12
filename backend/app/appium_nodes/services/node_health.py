@@ -24,9 +24,8 @@ from app.devices.services.intent_types import (
     CommandKind,
     IntentRegistration,
 )
-from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import escalate_device_remediation_failure
-from app.lifecycle.services.escalation import backoff_active
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 
 if TYPE_CHECKING:
@@ -328,7 +327,8 @@ class NodeHealthService:
             )
             locked_node.health_failing_since = observed_at
 
-            deadline = backoff_active(policy_state(device))
+            ladder = await remediation_log.load_ladder(db, device.id)
+            deadline = ladder.backoff_active(now=now_utc())
             if deadline is not None:
                 logger.warning(
                     "Node for device %s reached failure window; restart deferred by shared backoff until %s",

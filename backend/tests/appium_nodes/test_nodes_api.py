@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,14 +13,13 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.lifecycle_policy_state import (
-    clear_operator_start_suppression,
-    clear_stale_escalation_residue,
     set_maintenance_reason,
 )
 from app.devices.services.lifecycle_policy_state import (
     write_state as write_lifecycle_policy_state,
 )
 from app.hosts.models import Host, HostStatus
+from app.lifecycle.services import remediation_log
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
 
@@ -379,6 +377,12 @@ async def test_restart_node_clears_stale_recovery_suppression(
             "recovery_backoff_attempts": 0,
         },
     )
+    await remediation_log.append_failure(
+        db_session,
+        uuid.UUID(device_id),
+        source="node_health",
+        reason="Node health checks recovered",
+    )
     await db_session.commit()
 
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
@@ -430,6 +434,12 @@ async def test_start_node_clears_operator_stop_suppression(
             "recovery_backoff_attempts": 0,
         },
     )
+    await remediation_log.append_failure(
+        db_session,
+        uuid.UUID(device_id),
+        source="node_health",
+        reason="Node health checks recovered",
+    )
     # The badge is projected from the sticky operator deny intent (the fact an
     # operator stop leaves behind), not from the JSON residue above.
     await IntentService(db_session).register_intents(
@@ -455,7 +465,8 @@ async def test_start_node_clears_operator_stop_suppression(
     assert resp.status_code == 200
 
     await db_session.refresh(locked)
-    assert locked.lifecycle_policy_state["last_action"] == "operator_started"
+    ladder = await remediation_log.load_ladder(db_session, locked.id)
+    assert ladder.last_action == "operator_started"
 
     after = await client.get(f"/api/devices/{device_id}")
     # Lifecycle no longer derives "suppressed", so it no longer drives
@@ -463,94 +474,6 @@ async def test_start_node_clears_operator_stop_suppression(
     # node-still-starting health signal — pid is not yet observed in this
     # harness — not the suppression residue this fix targets.)
     assert after.json()["lifecycle_policy_summary"]["state"] != "suppressed"
-
-
-async def test_clear_operator_start_suppression_noop_on_clean_state(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """A device with no backoff/attempt/failure residue emits no action churn."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
-    clear_operator_start_suppression(locked)
-    assert locked.lifecycle_policy_state["last_action"] == "sentinel"
-
-
-async def test_clear_stale_escalation_residue_noop_on_clean_state(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """A device with no backoff/attempt/failure residue emits no action churn."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
-    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["last_action"] == "sentinel"
-
-
-async def test_clear_stale_escalation_residue_skips_fresh_residue(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Residue recorded just now (in-flight failure sequence) must NOT be cleared
-    by a racing healthy connectivity tick (regression S10)."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(
-        locked,
-        {
-            **locked.lifecycle_policy_state,
-            "last_failure_reason": "Recovery probe failed",
-            "last_action": "recovery_failed",
-            "last_action_at": datetime.now(UTC).isoformat(),
-        },
-    )
-    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["last_failure_reason"] == "Recovery probe failed"
-
-
-async def test_clear_stale_escalation_residue_clears_aged_residue(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Residue older than the staleness threshold (hours-old leftover after a
-    natural reconverge) is cleared and stamps ``self_healed``."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(
-        locked,
-        {
-            **locked.lifecycle_policy_state,
-            "last_failure_reason": "Recovery probe failed",
-            "last_action": "recovery_failed",
-            "last_action_at": (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(),
-        },
-    )
-    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is True
-    assert locked.lifecycle_policy_state["last_failure_reason"] is None
-    assert locked.lifecycle_policy_state["last_action"] == "self_healed"
-
-
-async def test_clear_stale_escalation_residue_skips_residue_without_timestamp(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    """Residue with no parseable ``last_action_at`` is treated as not-yet-stale so
-    an in-flight sequence is never cleared on an untrusted timestamp."""
-    device = await _create_device(db_session, default_host_id)
-    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
-    write_lifecycle_policy_state(
-        locked,
-        {
-            **locked.lifecycle_policy_state,
-            "last_failure_reason": "Recovery probe failed",
-            "last_action": "recovery_failed",
-            "last_action_at": None,
-        },
-    )
-    assert clear_stale_escalation_residue(locked, min_age_seconds=120.0) is False
-    assert locked.lifecycle_policy_state["last_failure_reason"] == "Recovery probe failed"
 
 
 async def test_port_allocation_increments(

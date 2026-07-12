@@ -2317,11 +2317,24 @@ async def test_devices_core_router_branches() -> None:
     assert filters.tags == {"lab": "east"}
 
     device_id = uuid.uuid4()
-    device = SimpleNamespace(id=device_id, pack_id="pack", platform_id="android", connection_target="serial")
+    device = SimpleNamespace(
+        id=device_id,
+        pack_id="pack",
+        platform_id="android",
+        connection_target="serial",
+        lifecycle_policy_state=None,
+    )
     serialized = {"id": str(device_id)}
     with (
         patch("app.devices.routers.core.run_service.get_device_reservation_map", new=AsyncMock(return_value={})),
-        patch("app.devices.routers.core.device_health.build_public_summary", new=Mock(return_value={"healthy": True})),
+        patch(
+            "app.devices.routers.core.device_health.build_public_summary",
+            new=Mock(return_value={"healthy": True}),
+        ),
+        patch(
+            "app.devices.routers.core.remediation_log.load_ladders",
+            new=AsyncMock(return_value={device_id: devices_core.remediation_log.EMPTY_LADDER}),
+        ),
         patch(
             "app.devices.routers.core.platform_label_service.load_platform_label_map",
             new=AsyncMock(return_value={("pack", "android"): "Android"}),

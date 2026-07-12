@@ -28,7 +28,7 @@ from app.devices.services.lifecycle_policy_state import (
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.readiness import is_ready_for_use_async
-from app.lifecycle.services.escalation import backoff_active
+from app.lifecycle.services import remediation_log
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -112,7 +112,8 @@ async def recovery_availability(  # noqa: PLR0911 - the guard ladder is one retu
     if await device_has_live_session(db, device.id):
         return RecoveryAvailability(False, CLIENT_SESSION_RUNNING_SUPPRESSION_REASON, RecoveryBlockKind.session)
 
-    deadline = backoff_active(state)
+    ladder = await remediation_log.load_ladder(db, device.id)
+    deadline = ladder.backoff_active(now=now)
     if deadline is not None:
         return RecoveryAvailability(False, f"Backing off until {deadline.isoformat()}", RecoveryBlockKind.backoff)
 
