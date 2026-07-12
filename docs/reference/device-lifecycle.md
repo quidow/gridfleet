@@ -22,7 +22,9 @@ truth for current state and is written only by
 2. **Read paths** call `derive_operational_state` / `derive_operational_states`, or
    use the SQL predicates and CASE for filtering, counts, and ordering. They:
    - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
-     intent, reservation row, maintenance flag, readiness, stop-in-flight).
+     intent, reservation row, maintenance flag, readiness, stop-in-flight); an
+     outcome-stamped verification lease is terminal and no longer derives
+     `verifying`.
    - Evaluates `evaluate_operational_state(facts)` → `DeviceOperationalState`.
    - The SQL form uses the same masking order and shared claim predicates.
 3. **The edge detector** runs in the locked intent reconciler scan, compares the
@@ -38,7 +40,8 @@ operation. Otherwise write the fact, commit, and rely on the scan:
 1. **Read-your-writes** — the same flow reads the derived state or desired node
    columns after the write (e.g. `update_session_status` re-locks and acts on
    `node.stop_pending`; verification registers its lease and immediately waits
-   for the node to spawn against a timeout budget). Skipping the inline
+   for the node to spawn against a timeout budget, while an outcome-stamped lease
+   is terminal and no longer derives `verifying`). Skipping the inline
    reconcile here is a correctness bug, not a latency cost.
 2. **Intent registration/revocation** — `register_intents_and_reconcile` /
    `revoke_intents_and_reconcile` are one atomic operation under one device-row
@@ -51,7 +54,7 @@ operation. Otherwise write the fact, commit, and rely on the scan:
 
 | Axis | Derived from |
 |------|-------------|
-| `operational_state` | Session row, verification intent, appium-node stop-in-flight, device readiness, `maintenance_reason` in `lifecycle_policy_state` |
+| `operational_state` | Session row, unstamped verification intent, appium-node stop-in-flight, device readiness, `maintenance_reason` in `lifecycle_policy_state`; an outcome-stamped lease is terminal and does not derive `verifying` |
 | `operational_state_last_emitted` | Last state transition event emitted by the reconciler edge detector |
 | `is_reserved` (computed) | Existence of an active `DeviceReservation` row — not a column on `Device` |
 

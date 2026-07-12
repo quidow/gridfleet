@@ -71,7 +71,7 @@ debug view at zero decision cost. Stop mode is implied by the command kind;
 | `operator:stop:node:{device_id}` | `operator:stop:node` | `{"action": "stop"}` |
 | `operator:stop:recovery:{device_id}` | `operator:stop:recovery` | `{"allowed": false, "reason": "Operator stopped the node"}` |
 | `forced_release:{run_id}` | `forced_release` | `{"action": "stop"}` |
-| `verification:{device_id}` | `verification` | `{"action": "start"}` |
+| `verification:{device_id}` | `verification` | `{"action": "start"}`; finalization stamps a terminal `"outcome": "passed"\|"failed"` |
 
 The three retired system pseudo-commands (`health_failure:node`,
 `auto_recovery:node`, `auto_recovery:recovery`) are no longer stored rows — their
@@ -95,6 +95,12 @@ There are no preconditions and no orphan sweeps. Facts have no lifecycle at all 
 they are read fresh each tick, so a decision reappears (or doesn't) as the
 underlying fact dictates.
 
+The verification lease is finalized in two beats: the finalizer first stamps a
+terminal `outcome` (`passed`/`failed`) onto the payload — from that statement on
+the row is a tombstone, neither a claim for the `verifying` projection nor a
+command for the ladder — then revokes it as row hygiene. A finalization that
+crashes between the beats leaves a tombstone the TTL sweep collects.
+
 ## Semantic notes
 
 1. **`operator:start` retires by TTL, not by a `node_running` precondition.** The
@@ -116,6 +122,13 @@ underlying fact dictates.
    rungs**, completing the 2026-07-09 demote-facts-from-intents direction. The
    TTL-GC sweep now serves only the external-will survivors (verification lease,
    `forced_release`, `operator:start`).
+5. **2026-07-12 (WS-15.3): verification finalization writes its durable facts
+   before any intent mutation** — `verified_at` / `review_required`, the episode
+   reset, the viability result, and the outcome stamp land first, so the
+   remaining finalization statements derive the same projection in any order.
+   The write-order laws in `execution.py` are gone;
+   `tests/verification/test_finalization_permutations.py` pins the
+   order-independence.
 
 ## Out of scope
 
