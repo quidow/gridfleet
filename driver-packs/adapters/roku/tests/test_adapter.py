@@ -1,25 +1,22 @@
 from __future__ import annotations
 
-import inspect
-
 import pytest
 from adapter import Adapter
+from agent_app.pack.worker_protocol import HOOK_SPECS
 
-REQUIRED_METHODS = {
+IMPLEMENTED_HOOKS = {
     "discover",
-    "doctor",
     "health_check",
     "lifecycle_action",
-    "pre_session",
-    "post_session",
     "normalize_device",
-    "telemetry",
 }
 
 
-def test_adapter_protocol() -> None:
-    methods = {name for name, _ in inspect.getmembers(Adapter, predicate=inspect.isfunction)}
-    assert REQUIRED_METHODS.issubset(methods)
+def test_adapter_advertises_exactly_its_real_hooks() -> None:
+    """The worker handshake probes callables over HOOK_SPECS; stubs would advertise
+    capability the adapter does not have (WS-14.2)."""
+    probed = {hook for hook in HOOK_SPECS if callable(getattr(Adapter, hook, None))}
+    assert probed == IMPLEMENTED_HOOKS
 
 
 @pytest.mark.asyncio

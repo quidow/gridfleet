@@ -8,18 +8,12 @@ from typing import Any, Literal
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DiscoveryContext,
-    DoctorCheckResult,
-    DoctorContext,
-    HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
     LifecycleActionResult,
     LifecycleContext,
     NormalizedDevice,
     NormalizeDeviceContext,
-    SessionOutcome,
-    SessionSpec,
-    TelemetryContext,
 )
 from agent_app.pack.adapter_utils import tcp_reachable
 
@@ -67,9 +61,6 @@ class Adapter:
 
         return await discover_roku_devices(ctx)
 
-    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
-        return []
-
     async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
         target = ctx.device_identity_value
         # Single-shot TCP probes were flipping ``ping``/``ecp`` to unhealthy
@@ -108,16 +99,7 @@ class Adapter:
             return LifecycleActionResult(ok=True, state="reachable" if reachable else "unreachable")
         return LifecycleActionResult(ok=False, detail=f"Unsupported: {action_id}")
 
-    async def pre_session(self, spec: SessionSpec) -> dict[str, Any]:
-        return {}
-
-    async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
-        return None
-
     async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
         from .normalize import normalize_device
 
         return await normalize_device(ctx)
-
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
-        return HardwareTelemetry(supported=False)
