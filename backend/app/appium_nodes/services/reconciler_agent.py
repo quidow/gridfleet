@@ -87,7 +87,6 @@ __all__ = [
     "NodePortConflictError",
     "NodeStartDetails",
     "ReconcilerAgentService",
-    "agent_url",
     "build_agent_start_payload",
     "build_node_launch_payload",
     "mark_node_started",
@@ -225,11 +224,6 @@ def require_management_host(device: Device, *, action: str = "use remote managem
     if host is None or device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot {action}")
     return host
-
-
-async def agent_url(device: Device) -> str:
-    host = require_management_host(device)
-    return f"http://{host.ip}:{host.agent_port}"
 
 
 def build_agent_start_payload(

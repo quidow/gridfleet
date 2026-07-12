@@ -156,13 +156,6 @@ def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalStat
     return DeviceOperationalState.available
 
 
-def device_in_service(device: Device) -> bool:
-    """Eligibility gate for ``baseline:idle`` node starts (F-G1) — the
-    ``WithdrawalFacts`` projection. See that class's docstring for the
-    node-health exclusion rationale."""
-    return WithdrawalFacts.from_device(device).in_service()
-
-
 async def gather_device_state_facts(
     db: AsyncSession, device: Device, *, now: datetime, packs: dict[str, DriverPack] | None = None
 ) -> DeviceStateFacts:

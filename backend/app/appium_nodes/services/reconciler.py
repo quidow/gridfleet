@@ -56,7 +56,7 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.hosts.liveness import host_online, host_online_clause
+from app.hosts.liveness import host_online
 from app.hosts.models import Host
 from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
@@ -118,16 +118,6 @@ def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
         stop_pending=row.stop_pending,
         lifecycle_policy_state=row.lifecycle_policy_state,
     )
-
-
-async def fetch_desired_rows(db: AsyncSession, *, offline_after_sec: float) -> list[DesiredRow]:
-    stmt = (
-        _desired_select()
-        .join(Host, Host.id == Device.host_id)
-        .where(host_online_clause(offline_after_sec=offline_after_sec))
-    )
-    rows = (await db.execute(stmt)).all()
-    return [_row_to_desired(row) for row in rows]
 
 
 async def fetch_desired_rows_for_host(db: AsyncSession, host_id: uuid.UUID) -> list[DesiredRow]:

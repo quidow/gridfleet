@@ -11,8 +11,8 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler_agent import (
     ReconcilerAgentService,
-    agent_url,
     build_agent_start_payload,
+    require_management_host,
 )
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -283,7 +283,7 @@ async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None
     )
 
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await agent_url(device)
+        require_management_host(device)
 
 
 # ---------------------------------------------------------------------------
