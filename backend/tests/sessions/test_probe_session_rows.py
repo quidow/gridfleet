@@ -151,3 +151,97 @@ async def test_sweep_close_of_probe_row_emits_no_session_ended(db_session: Async
     await db_session.commit()
     assert row.ended_at is not None
     assert [event for event in publisher.events if event[0].startswith("session.")] == []
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_viability_probe_lives_as_row_and_stays_silent(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The full viability probe run: pending birth row before POST /session,
+    running with the real Appium id between create and terminate, terminal
+    after — and zero session.* / operational-state events along the way."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.models import Device, DeviceOperationalState
+    from app.devices.services.capability import DeviceCapabilityService
+    from app.sessions import service_viability
+    from app.sessions.models import Session
+    from tests.fakes import FakeSettingsReader
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="probe-birth-row",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=42,
+            active_connection_target=device.connection_target,
+        )
+    )
+    await db_session.commit()
+
+    observed: dict[str, Any] = {}
+
+    async def fake_create(_base: str, _payload: dict[str, Any], *, timeout: float) -> tuple[str, None, bool]:
+        rows = (await db_session.execute(select(Session).where(Session.device_id == device.id))).scalars().all()
+        observed["at_create"] = [(r.status, r.session_id) for r in rows]
+        return "real-appium-id", None, False
+
+    async def fake_terminate(_base: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        rows = (await db_session.execute(select(Session).where(Session.device_id == device.id))).scalars().all()
+        observed["at_terminate"] = [(r.status, r.session_id) for r in rows]
+        return True
+
+    monkeypatch.setattr(service_viability.appium_direct, "create_session", fake_create)
+    monkeypatch.setattr(service_viability.appium_direct, "terminate_session", fake_terminate)
+    monkeypatch.setattr(service_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={"platformName": "Android"})
+    )
+
+    publisher = _RecordingPublisher()
+    svc = service_viability.SessionViabilityService(
+        publisher=publisher,
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    reloaded = (
+        await db_session.execute(
+            select(Device)
+            .where(Device.id == device.id)
+            .options(selectinload(Device.appium_node), selectinload(Device.host))
+        )
+    ).scalar_one()
+    state = await svc.run_session_viability_probe(
+        db_session, reloaded, checked_by=service_viability.SessionViabilityCheckedBy.manual
+    )
+    assert state["status"] == "passed"
+
+    # Birth: a pending row with the transient probe- id existed BEFORE create returned.
+    assert len(observed["at_create"]) == 1
+    assert observed["at_create"][0][0] == SessionStatus.pending
+    assert observed["at_create"][0][1].startswith("probe-")
+    # Promotion: the running row carried the real Appium id before terminate.
+    assert observed["at_terminate"] == [(SessionStatus.running, "real-appium-id")]
+    # Terminal: exactly one row, ended, passed, real id preserved.
+    rows = (await db_session.execute(select(Session).where(Session.device_id == device.id))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == SessionStatus.passed
+    assert rows[0].session_id == "real-appium-id"
+    assert rows[0].ended_at is not None
+    # Event silence: no session.* and no operational-state edges from probe activity.
+    assert [e for e in publisher.events if e[0].startswith("session.")] == []
+    assert [e for e in publisher.events if e[0] == "device.operational_state_changed"] == []

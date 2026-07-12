@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,7 +100,12 @@ class SessionViabilityProbe(Protocol):
         checked_by: SessionViabilityCheckedBy,
     ) -> dict[str, Any]: ...
     async def probe_session_direct(
-        self, capabilities: dict[str, Any], timeout_sec: int, *, target: str | None = ...
+        self,
+        capabilities: dict[str, Any],
+        timeout_sec: int,
+        *,
+        target: str | None = ...,
+        on_created: Callable[[str], Awaitable[None]] | None = ...,
     ) -> tuple[bool, str | None]: ...
 
 

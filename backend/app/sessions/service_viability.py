@@ -13,25 +13,19 @@ from app.core.timeutil import parse_iso as _parse_timestamp
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import readiness as device_readiness
-from app.devices.services.claims import active_reservation_exists, device_is_reserved
+from app.devices.services.claims import active_reservation_exists, device_has_live_session, device_is_reserved
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import verification_intent_source
 from app.devices.services.state import derive_operational_state, is_available_sql
 from app.grid import appium_direct
 from app.grid.allocation import node_target
-from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
-
-# Aliased re-export: the lock surface moved to ``probe_inflight`` (the allocator
-# consults it and must not import this module — circular via ``node_target``);
-# the historical private name stays importable for existing tests.
-from app.sessions.probe_inflight import (
-    SESSION_VIABILITY_RUNNING_NAMESPACE,
+from app.sessions.service_probes import (
+    ProbeSource,
+    claim_probe_session,
+    confirm_probe_session,
+    finalize_probe_session,
 )
-from app.sessions.probe_inflight import (
-    viability_lock_is_stale as _viability_lock_is_stale,
-)
-from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import (
     SessionViabilityCheckedBy,
     SessionViabilityProbeInProgressError,
@@ -39,16 +33,18 @@ from app.sessions.viability_types import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.sessions.models import Session
     from app.sessions.protocols import DeviceCapabilityReader, DeviceSessionViabilityWriter, HealthFailureHandler
 
 __all__ = [
     "PROBE_TEST_NAME",
     "SESSION_VIABILITY_KEY",
-    "SESSION_VIABILITY_RUNNING_NAMESPACE",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityProbeInProgressError",
     "SessionViabilityProbeNotPermittedError",
@@ -125,6 +121,7 @@ class SessionViabilityService:
         timeout_sec: int,
         *,
         target: str | None = None,
+        on_created: Callable[[str], Awaitable[None]] | None = None,
     ) -> tuple[bool, str | None]:
         """Create-then-terminate a session directly against the device's Appium node.
 
@@ -137,6 +134,11 @@ class SessionViabilityService:
         - transport failure → ``"Session create request failed: …"`` → indeterminate
         - HTTP >=400 refusal → raw server message → refused
         - cleanup (terminate) failure → ``"Session created but cleanup failed…"`` → indeterminate
+
+        ``on_created`` runs with the real Appium session id between create and
+        terminate — the probe row's promotion point (WS-16.1). If it raises, the
+        created session is not terminated here; it converges as an unknown id
+        through the orphan sweep once the probe row leaves the pending state.
         """
         if target is None:
             return False, "Session create request failed: no Appium node target"
@@ -149,62 +151,39 @@ class SessionViabilityService:
                 return False, f"Session create request failed: {error}"
             return False, error or "Session create failed"
 
+        if on_created is not None:
+            await on_created(session_id)
+
         if not await appium_direct.terminate_session(base, session_id, timeout=timeout_sec):
             return False, "Session created but cleanup failed"
 
         return True, None
 
-    async def _claim_viability_lock(
-        self,
-        db: AsyncSession,
-        device_key: str,
-        *,
-        checked_by: SessionViabilityCheckedBy,
-    ) -> None:
-        acquired = await control_plane_state_store.try_claim_value(
-            db,
-            SESSION_VIABILITY_RUNNING_NAMESPACE,
-            device_key,
-            {"started_at": _now_iso(), "checked_by": checked_by},
-        )
-        if not acquired:
-            # A probe whose process died between claim and release leaks the lock
-            # with no TTL, blocking this device's viability checks forever. If the
-            # existing lock is older than any probe could legitimately run, reclaim
-            # it; otherwise a probe really is in flight.
-            existing = await control_plane_state_store.get_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-            timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
-            if _viability_lock_is_stale(existing, now=now_utc(), timeout_sec=timeout_sec):
-                logger.warning("session_viability_reclaiming_stale_lock", device_id=device_key, existing_lock=existing)
-                await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-                acquired = await control_plane_state_store.try_claim_value(
-                    db,
-                    SESSION_VIABILITY_RUNNING_NAMESPACE,
-                    device_key,
-                    {"started_at": _now_iso(), "checked_by": checked_by},
-                )
-        if not acquired:
-            raise SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
-        await db.commit()
-
-    async def _acquire_probe_lock_and_revalidate(
+    async def _claim_probe_row(
         self,
         db: AsyncSession,
         device: Device,
         *,
         checked_by: SessionViabilityCheckedBy,
-    ) -> None:
+        capabilities: dict[str, Any],
+        router_target: str | None,
+    ) -> Session:
+        """Claim the device for the probe: row lock, re-validate, insert the birth row.
+
+        The committed Session row is the probe's only in-flight footprint (P7):
+        the allocator's ``~live_session_exists()`` funnel and locked recheck and
+        the orphan sweep's pending-device sparing all read it. Commits —
+        publishing the claim cross-process and releasing the row lock.
+        """
         locked = await device_locking.lock_device(db, device.id)
-        # Re-validate can_probe under the row lock. The pre-lock check
-        # ran on an unlocked snapshot, so a concurrent allocation (a new
-        # reservation) or a fact write may have changed the derived
-        # state between the gate and this lock.
-        # Raise to match the pre-lock branch's contract: manual callers
-        # surface as HTTP 409, recovery callers retry via the policy
-        # loop. Writing a ``failed`` viability record here would bump
-        # ``consecutive_failures`` on a race the device is not
-        # responsible for and could push a healthy device closer to the
-        # escalation threshold.
+        # Re-validate can_probe under the row lock: the pre-lock check ran on an
+        # unlocked snapshot, so a concurrent allocation (a new reservation) or a
+        # fact write may have changed the derived state between the gate and this
+        # lock. Client sessions still mask ``busy``, so they surface here as a
+        # gating rejection; probe rows do not mask and surface inside
+        # claim_probe_session as a claim collision. Raising (not recording a
+        # ``failed`` viability result) keeps a race the device is not responsible
+        # for from feeding consecutive_failures toward escalation.
         locked_reserved = await device_is_reserved(db, locked.id)
         locked_state = await derive_operational_state(db, locked, now=now_utc())
         locked_can_probe = (locked_state == DeviceOperationalState.available and not locked_reserved) or (
@@ -214,7 +193,15 @@ class SessionViabilityService:
             raise SessionViabilityProbeNotPermittedError(
                 "Session viability checks only run for available devices (state changed concurrently)"
             )
+        row = await claim_probe_session(
+            db,
+            device=locked,
+            source=ProbeSource(checked_by),
+            capabilities=capabilities,
+            router_target=router_target,
+        )
         await db.commit()
+        return row
 
     async def _escalate_probe_failure(
         self,
@@ -250,114 +237,101 @@ class SessionViabilityService:
         *,
         checked_by: SessionViabilityCheckedBy,
     ) -> dict[str, Any]:
-        device_key = str(device.id)
-        await self._claim_viability_lock(db, device_key, checked_by=checked_by)
-        # Once the lock is claimed, EVERY exit path — gate rejection, readiness
-        # failure, probe exception, success, or task cancellation (a client
-        # disconnect cancels the request task) — must reach the ``finally`` that
-        # releases it. The lock has no TTL, so a leak parks the device's viability
-        # checks until the 5-minute stale-reclaim window and surfaces to operators
-        # as a 409 "probe already in progress" on a device running no probe. The
-        # gate checks below stay inside this ``try`` so a failure between the claim
-        # and the probe body still releases the lock.
-        try:
-            device_reserved = await device_is_reserved(db, device.id)
-            # A recovery probe deliberately ignores reservation: a device that goes ``offline``
-            # mid-run keeps its reservation row, and the recovery probe is the only path that can
-            # re-validate it. The device is ``offline``/``verifying`` here, so it serves no client
-            # session — probing cannot steal an in-use Grid slot. Scheduled/manual probes still
-            # require no active reservation.
-            device_state = await derive_operational_state(db, device, now=now_utc())
-            can_probe = (device_state == DeviceOperationalState.available and not device_reserved) or (
-                checked_by == SessionViabilityCheckedBy.recovery and device_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
-            )
-            if not can_probe:
-                raise SessionViabilityProbeNotPermittedError("Session viability checks only run for available devices")
-            if not await is_ready_for_use_async(db, device):
-                raise ValueError(await readiness_error_detail_async(db, device, action="run a session viability check"))
+        device_reserved = await device_is_reserved(db, device.id)
+        # A recovery probe deliberately ignores reservation: a device that goes ``offline``
+        # mid-run keeps its reservation row, and the recovery probe is the only path that can
+        # re-validate it. The device is ``offline``/``verifying`` here, so it serves no client
+        # session — probing cannot steal an in-use Grid slot. Scheduled/manual probes still
+        # require no active reservation.
+        device_state = await derive_operational_state(db, device, now=now_utc())
+        can_probe = (device_state == DeviceOperationalState.available and not device_reserved) or (
+            checked_by == SessionViabilityCheckedBy.recovery and device_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+        )
+        if not can_probe:
+            raise SessionViabilityProbeNotPermittedError("Session viability checks only run for available devices")
+        if not await is_ready_for_use_async(db, device):
+            raise ValueError(await readiness_error_detail_async(db, device, action="run a session viability check"))
 
-            attempted_at = _now_iso()
-            config_changed = _clear_session_viability_from_config(device)
-            timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
-            node = device.appium_node
-            if not node or not node.observed_running:
-                state = await _write_session_viability(
-                    db,
-                    device,
-                    status="failed",
-                    attempted_at=attempted_at,
-                    error="Appium node is not running",
-                    checked_by=checked_by,
-                    health=self._health,
-                )
-                if config_changed:
-                    await db.commit()
-                return state
-
-            await self._acquire_probe_lock_and_revalidate(db, device, checked_by=checked_by)
-
-            capabilities = build_probe_capabilities(await self._capability.get_device_capabilities(db, device))
-            # Register the device as having an in-flight probe so the session_sync
-            # loop ignores the Grid slot the probe is about to create. Without this
-            # the slot is persisted as a phantom Session row: Appium strips the
-            # client-supplied ``gridfleet:testName`` / ``gridfleet:probeSession``
-            # markers from matched caps, so the probe filter cannot recognise it.
-            probe_inflight.mark_probe_started(device_key)
-            try:
-                ok, error = await self.probe_session_direct(capabilities, timeout_sec, target=node_target(device))
-            finally:
-                probe_inflight.mark_probe_finished(device_key)
-            await record_probe_session(
-                db,
-                device=device,
-                attempted_at=_parse_timestamp(attempted_at) or now_utc(),
-                result=grid_probe_response_to_result((ok, error)),
-                source=ProbeSource(checked_by),
-                capabilities=capabilities,
-            )
-
+        attempted_at = _now_iso()
+        _clear_session_viability_from_config(device)
+        timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
+        node = device.appium_node
+        if not node or not node.observed_running:
             state = await _write_session_viability(
                 db,
                 device,
-                status="passed" if ok else "failed",
+                status="failed",
                 attempted_at=attempted_at,
-                error=error,
+                error="Appium node is not running",
                 checked_by=checked_by,
                 health=self._health,
             )
-
-            # §14.4a: a recovery probe is the validator for the eager exit-maintenance
-            # re-validation. Now that it has completed (pass or fail), revoke the
-            # verification lease so the post-probe reconcile derives the device's real
-            # state (`available` on pass, `offline` on genuine failure) instead of
-            # re-deriving `verifying` and stranding it until the lease's `expires_at`
-            # safety net. Mirrors verification_execution._finalize_*; the revoke-triggered
-            # reconcile re-injects `baseline:idle` for a now-available device. No-op for
-            # background auto-recovery on an `offline` device (no lease present).
-            if checked_by == SessionViabilityCheckedBy.recovery:
-                await IntentService(db).revoke_intents(
-                    device_id=device.id,
-                    sources=[verification_intent_source(device.id)],
-                )
-
-            # Derive the post-probe state inline: the probe created and deleted a
-            # Grid session but left no running Session row, and a recovery probe
-            # just revoked the verification lease. This reconcile advances the
-            # operational-state ledger (available on pass, offline on genuine
-            # failure) and emits the transition now — without it the device reads
-            # `verifying`/stale until the backstop reconciler scan.
-            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
-
             await db.commit()
-            if config_changed:
-                await db.commit()
-            await self._escalate_probe_failure(db, device, state, result=(ok, error), checked_by=checked_by)
             return state
-        except Exception:
-            raise
+
+        capabilities = build_probe_capabilities(await self._capability.get_device_capabilities(db, device))
+        target = node_target(device)
+        row = await self._claim_probe_row(
+            db, device, checked_by=checked_by, capabilities=capabilities, router_target=target
+        )
+
+        # From here every exit must leave the row terminal: the committed row is the
+        # claim, and finalize is the release. A process crash instead leaves a live
+        # row for the ordinary crash-orphan machinery — the reaper fails a stale
+        # ``pending`` claim past grid.claim_window_sec; the liveness sweep closes a
+        # ``running`` one and kills its Appium session. No bespoke TTL (WS-16.1).
+        ok = False
+        error: str | None = "Session create request failed: probe aborted"
+        probe_result = ProbeResult(status="indeterminate", detail=error)
+        try:
+
+            async def _promote(appium_session_id: str) -> None:
+                # Guarded: a claim the reaper already failed is not resurrected; the
+                # probe still terminates its own session on the normal path below.
+                if await confirm_probe_session(db, row, appium_session_id=appium_session_id):
+                    await db.commit()
+
+            ok, error = await self.probe_session_direct(capabilities, timeout_sec, target=target, on_created=_promote)
+            probe_result = grid_probe_response_to_result((ok, error))
         finally:
-            await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
+            await finalize_probe_session(db, row, result=probe_result)
             await db.commit()
+
+        state = await _write_session_viability(
+            db,
+            device,
+            status="passed" if ok else "failed",
+            attempted_at=attempted_at,
+            error=error,
+            checked_by=checked_by,
+            health=self._health,
+        )
+
+        # §14.4a: a recovery probe is the validator for the eager exit-maintenance
+        # re-validation. Now that it has completed (pass or fail), revoke the
+        # verification lease so the post-probe reconcile derives the device's real
+        # state (`available` on pass, `offline` on genuine failure) instead of
+        # re-deriving `verifying` and stranding it until the lease's `expires_at`
+        # safety net. Mirrors verification_execution._finalize_*; the revoke-triggered
+        # reconcile re-injects `baseline:idle` for a now-available device. No-op for
+        # background auto-recovery on an `offline` device (no lease present).
+        if checked_by == SessionViabilityCheckedBy.recovery:
+            await IntentService(db).revoke_intents(
+                device_id=device.id,
+                sources=[verification_intent_source(device.id)],
+            )
+
+        # Derive the post-probe state inline: the probe row is terminal and a
+        # recovery probe just revoked the verification lease. This reconcile
+        # advances the operational-state ledger (available on pass, offline on
+        # genuine failure) and emits the transition now — without it the device
+        # reads ``verifying``/stale until the backstop reconciler scan. Under the
+        # claim-without-masking rule the probe itself never moved the ledger.
+        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+
+        await db.commit()
+        await self._escalate_probe_failure(db, device, state, result=(ok, error), checked_by=checked_by)
+        return state
 
     async def check_due_devices(self, db: AsyncSession) -> None:
         interval_sec = self._settings.get("general.session_viability_interval_sec")
@@ -451,10 +425,6 @@ def _clear_session_viability_from_config(device: Device) -> bool:
     return True
 
 
-async def _is_probe_running(db: AsyncSession, device_key: str) -> bool:
-    return await control_plane_state_store.get_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key) is not None
-
-
 async def _is_device_probe_eligible(db: AsyncSession, device: Device, interval_sec: int) -> bool:
     if interval_sec <= 0:
         return False
@@ -463,7 +433,9 @@ async def _is_device_probe_eligible(db: AsyncSession, device: Device, interval_s
         return False
     if not await is_ready_for_use_async(db, device):
         return False
-    return not await _is_probe_running(db, str(device.id))
+    # The live row IS the in-flight probe marker (WS-16.1); a client row cannot
+    # reach here (it would mask ``busy`` and fail the state gate above).
+    return not await device_has_live_session(db, device.id)
 
 
 async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval_sec: int) -> bool:
