@@ -386,7 +386,7 @@ async def test_allocate_replay_of_cancelled_ticket_is_400(
     db_session.add(ticket)
     await db_session.commit()
     resp = await client.post(
-        "/internal/grid/allocate", json={"body": _body(platformName="iOS"), "ticket": str(ticket.id)}
+        "/internal/grid/create-session", json={"body": _body(platformName="iOS"), "ticket": str(ticket.id)}
     )
     assert resp.status_code == 400
     assert resp.json()["status"] == "invalid"
@@ -400,7 +400,7 @@ async def test_allocate_replay_of_expired_ticket_is_410(
     db_session.add(ticket)
     await db_session.commit()
     resp = await client.post(
-        "/internal/grid/allocate", json={"body": _body(platformName="iOS"), "ticket": str(ticket.id)}
+        "/internal/grid/create-session", json={"body": _body(platformName="iOS"), "ticket": str(ticket.id)}
     )
     assert resp.status_code == 410
     assert resp.json()["status"] == "expired"
@@ -470,34 +470,6 @@ async def test_routes_falls_back_to_stored_target_when_node_target_gone(
     assert resp.status_code == 200
     routes = {r["session_id"]: r["target"] for r in resp.json()["routes"]}
     assert routes.get("stored-1") == "http://stored.example:4730"
-
-
-@pytest.mark.db
-async def test_resume_allocation_falls_back_to_stored_target(
-    db_session: AsyncSession,
-) -> None:
-    """#6: resume_allocation prefers a recomputed live target, else the stored one."""
-    from app.appium_nodes.models import AppiumNode
-
-    await seed_test_packs(db_session)
-    _, device, node = await seed_host_and_running_node(db_session, identity=f"grid-guard-resume-{uuid.uuid4().hex[:8]}")
-    ticket_id = uuid.uuid4()
-    row = Session(
-        session_id="alloc-resume-1",
-        device_id=device.id,
-        status=SessionStatus.pending,
-        router_target="http://stored.example:4730",
-        ticket_id=ticket_id,
-    )
-    db_session.add(row)
-    await db_session.flush()
-    # Detach the node so node_target() is None and the stored fallback is used.
-    await db_session.delete(await db_session.get(AppiumNode, node.id))
-    await db_session.flush()
-
-    result = await _service().resume_allocation(db_session, ticket_id=ticket_id)
-    assert result is not None
-    assert result.target == "http://stored.example:4730"
 
 
 @pytest.mark.db

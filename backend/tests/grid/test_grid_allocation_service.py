@@ -441,7 +441,7 @@ async def _started_events_for(session_id: str) -> list[dict[str, Any]]:
 
 
 @pytest.mark.db
-async def test_confirm_emits_one_session_started_for_free_row(
+async def test_promote_to_running_emits_one_session_started_for_free_row(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
 ) -> None:
     """confirm() is the authoritative emission point: a run-less allocation emits
@@ -451,7 +451,9 @@ async def test_confirm_emits_one_session_started_for_free_row(
     await db_session.flush()
     result = await allocation_service.try_allocate(db_session, ticket=ticket)
     assert result is not None
-    await allocation_service.confirm(db_session, allocation_id=result.allocation_id, appium_session_id="free-ssn")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=result.allocation_id, appium_session_id="free-ssn"
+    )
     await db_session.commit()
 
     started = await _started_events_for("free-ssn")
@@ -473,7 +475,9 @@ async def test_confirm_emits_one_session_started_with_run_id(
     await db_session.flush()
     result = await allocation_service.try_allocate(db_session, ticket=ticket)
     assert result is not None
-    await allocation_service.confirm(db_session, allocation_id=result.allocation_id, appium_session_id="run-ssn")
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=result.allocation_id, appium_session_id="run-ssn"
+    )
     await db_session.commit()
 
     started = await _started_events_for("run-ssn")
@@ -508,9 +512,65 @@ async def test_confirm_conflicting_running_row_raises_not_pending_not_500(
     await db_session.flush()
 
     with pytest.raises(AllocationNotPendingError):
-        await allocation_service.confirm(
+        await allocation_service.promote_to_running(
             db_session, allocation_id=result.allocation_id, appium_session_id="conflict-ssn"
         )
+
+
+@pytest.mark.db
+async def test_resume_interrupted_fails_orphaned_pending(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    ticket_id = ticket.id
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+
+    await allocation_service.resume_interrupted(db_session, ticket_id=ticket_id)
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.status == SessionStatus.error
+
+
+@pytest.mark.db
+async def test_resume_interrupted_terminates_lost_running(
+    db_session: AsyncSession,
+    seeded_available_device: Device,
+    allocation_service: AllocationService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    ticket_id = ticket.id
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await allocation_service.promote_to_running(
+        db_session, allocation_id=result.allocation_id, appium_session_id="lost-ssn"
+    )
+    killed: list[tuple[str, str]] = []
+
+    async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        killed.append((target, session_id))
+        return True
+
+    from app.grid import allocation as allocation_module
+
+    monkeypatch.setattr(allocation_module.appium_direct, "terminate_session", fake_kill)
+    await allocation_service.resume_interrupted(db_session, ticket_id=ticket_id)
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert killed and killed[0][1] == "lost-ssn"
+    assert row.ended_at is not None
+
+
+@pytest.mark.db
+async def test_resume_interrupted_no_live_row_is_noop(
+    db_session: AsyncSession, allocation_service: AllocationService
+) -> None:
+    await allocation_service.resume_interrupted(db_session, ticket_id=uuid.uuid4())
 
 
 @pytest.mark.db

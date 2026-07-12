@@ -631,18 +631,11 @@ async def test_session_detail_exposes_actual_capabilities(
     assert data["actual_capabilities"] == {"platformName": "Android", "appium:systemPort": 8201}
 
 
-def test_confirm_request_drops_oversized_capabilities() -> None:
-    from app.grid.schemas_internal import ConfirmRequest
+def test_create_session_request_preserves_raw_body_shape() -> None:
+    from app.grid.schemas_internal import CreateSessionRequest
 
-    ok = ConfirmRequest(appium_session_id="s1", appium_capabilities={"a": 1})
-    assert ok.appium_capabilities == {"a": 1}
-
-    # > 32 KB serialized -> dropped, NOT rejected: caps capture must never fail a confirm.
-    oversized = ConfirmRequest(appium_session_id="s1", appium_capabilities={"blob": "x" * (33 * 1024)})
-    assert oversized.appium_capabilities is None
-
-    absent = ConfirmRequest(appium_session_id="s1")
-    assert absent.appium_capabilities is None
+    request = CreateSessionRequest(body={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
+    assert request.body["capabilities"]["alwaysMatch"]["platformName"] == "Android"
 
 
 async def test_register_and_finished_endpoints_are_removed(client: AsyncClient) -> None:

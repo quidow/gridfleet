@@ -92,7 +92,7 @@ async def create_and_promote(
     actual_caps = value.get("capabilities") if isinstance(value, dict) else None
     try:
         async with db_factory() as db:
-            await allocation_service.confirm(
+            await allocation_service.promote_to_running(
                 db,
                 allocation_id=allocation.allocation_id,
                 appium_session_id=session_id,

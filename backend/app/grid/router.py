@@ -53,7 +53,7 @@ def _queue_entry(ticket: GridSessionQueueTicket) -> dict[str, Any]:
 
 async def _live_sessions_by_device(db: DbDep) -> dict[Any, list[str]]:
     # running|pending via the shared chokepoint: a pending allocation
-    # (allocate->confirm window) already claims its device, so the public status
+    # (create-session window) already claims its device, so the public status
     # must count it rather than report the device free (wave-5 re-review B2).
     # Deterministic order (newest first) so a device with >1 live session surfaces a
     # stable session each poll instead of flickering on Postgres row order.

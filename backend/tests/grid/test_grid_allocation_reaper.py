@@ -76,7 +76,7 @@ async def expired_pending_session(db_session: AsyncSession, allocation_service: 
     assert result is not None
     row = await db_session.get(Session, result.allocation_id)
     assert row is not None
-    row.started_at = datetime.now(UTC) - timedelta(seconds=120)
+    row.started_at = datetime.now(UTC) - timedelta(seconds=60)
     await db_session.flush()
     return row
 
@@ -126,6 +126,19 @@ async def test_reaper_wakes_session_sync_after_failing_pending(
     await db_session.refresh(expired_pending_session)
     assert expired_pending_session.status == SessionStatus.error
     assert woke == [True]
+
+
+@pytest.mark.db
+async def test_reaper_keeps_young_pending_session(
+    db_session: AsyncSession, expired_pending_session: Session, reaper: GridAllocationReaperLoop
+) -> None:
+    expired_pending_session.started_at = datetime.now(UTC) - timedelta(seconds=10)
+    await db_session.flush()
+
+    await reaper.run_cycle(db_session)
+
+    await db_session.refresh(expired_pending_session)
+    assert expired_pending_session.status == SessionStatus.pending
 
 
 @pytest.mark.db

@@ -1,8 +1,8 @@
-"""Internal allocation endpoints for the grid router component.
+"""Internal grid endpoints for the grid router component.
 
-The Rust router on :4444 calls these to allocate a device, confirm/fail/end
-its Appium session, and fetch the live route table. Mounted under
-``/internal/grid`` and auth-gated in ``app.main``. The allocate handler owns
+The Rust router on :4444 calls these to create/end Appium sessions, cancel
+tickets, and fetch the live route table. Mounted under
+``/internal/grid`` and auth-gated in ``app.main``. The create-session handler owns
 the long-poll; each attempt runs in a fresh transaction via the services'
 ``session_factory`` so device row locks and commits never pin one
 request-scoped session.
@@ -15,6 +15,7 @@ needed.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from typing import TYPE_CHECKING, cast
@@ -28,11 +29,11 @@ from app.core.db_retry import retry_on_serialization_failure
 from app.core.dependencies import DbDep
 from app.core.timeutil import now_utc
 from app.devices.models import Device
+from app.grid import session_create
 from app.grid.allocation import (
     GRID_ALLOCATE_QUEUE_WAIT_SECONDS,
     GRID_ALLOCATION_OUTCOME_TOTAL,
     GRID_TRY_ALLOCATE_DURATION_SECONDS,
-    AllocationNotPendingError,
     AllocationResult,
     RunNotActiveError,
     resolve_router_target,
@@ -44,11 +45,9 @@ from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas_internal import (
     ActivityRequest,
-    AllocateRequest,
-    AllocateResponse,
-    ConfirmRequest,
+    CreateSessionRequest,
+    CreateSessionResponse,
     EndedRequest,
-    FailRequest,
     RouteEntry,
     RoutesResponse,
 )
@@ -61,7 +60,7 @@ router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid
 
 
 async def _get_or_create_ticket(
-    db: AsyncSession, payload: AllocateRequest, ticket_id: uuid.UUID | None
+    db: AsyncSession, payload: CreateSessionRequest, ticket_id: uuid.UUID | None
 ) -> GridSessionQueueTicket:
     if ticket_id is not None:
         existing = await db.get(GridSessionQueueTicket, ticket_id)
@@ -73,35 +72,20 @@ async def _get_or_create_ticket(
     return ticket
 
 
-@router.post("/allocate", response_model=AllocateResponse)
-async def allocate(payload: AllocateRequest, services: GridServicesDep) -> AllocateResponse | JSONResponse:
+@router.post("/create-session", response_model=CreateSessionResponse)
+async def create_session(
+    payload: CreateSessionRequest, services: GridServicesDep
+) -> CreateSessionResponse | JSONResponse:
     allocation = services.allocation
+    raw_body = json.dumps(payload.body, separators=(",", ":")).encode("utf-8")
     started = time.monotonic()
     deadline = started + LONG_POLL_SEC
     ticket_id = payload.ticket
 
-    def _allocated(result: AllocationResult) -> AllocateResponse:
-        # Queue-wait at the allocated return: separates "devices scarce" from
-        # "allocation path slow" (the per-attempt service time is timed below).
-        GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="allocated").observe(time.monotonic() - started)
-        return AllocateResponse(
-            status="allocated",
-            allocation_id=result.allocation_id,
-            target=result.target,
-            claim_window_sec=int(cast("int", services.settings.get("grid.claim_window_sec"))),
-            device_id=result.device_id,
-        )
-
     if ticket_id is not None:
-        # Lost-Allocated-response retry: a live Session carrying this ticket id
-        # IS the allocation -- return it rather than double-claiming. Checked
-        # once, not per poll: within a single long-poll no other worker can
-        # claim on this ticket's behalf.
         async with services.session_factory() as db:
-            resumed = await allocation.resume_allocation(db, ticket_id=ticket_id)
-            if resumed is not None:
-                await db.commit()
-                return _allocated(resumed)
+            await allocation.resume_interrupted(db, ticket_id=ticket_id)
+            await db.commit()
 
     while True:
         result: AllocationResult | None
@@ -128,50 +112,38 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
             GRID_TRY_ALLOCATE_DURATION_SECONDS.observe(time.monotonic() - attempt_started)
             await db.commit()
         if result is not None:
-            return _allocated(result)
+            GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="allocated").observe(time.monotonic() - started)
+            claim_window = int(cast("int", services.settings.get("grid.claim_window_sec")))
+            outcome = await session_create.create_and_promote(
+                services.session_factory,
+                allocation,
+                allocation=result,
+                raw_body=raw_body,
+                claim_window_sec=claim_window,
+            )
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome=outcome.kind).inc()
+            return CreateSessionResponse(
+                status=outcome.kind,
+                session_id=outcome.session_id or None,
+                target=result.target if outcome.kind == "created" else None,
+                device_id=result.device_id if outcome.kind == "created" else None,
+                appium_status=outcome.appium_status or None,
+                appium_body=outcome.appium_body,
+                message=outcome.message or None,
+            )
         if time.monotonic() >= deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
             GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="queued").observe(time.monotonic() - started)
-            return AllocateResponse(status="queued", ticket=ticket_id)
+            return CreateSessionResponse(status="queued", ticket=ticket_id)
         await asyncio.sleep(RETRY_INTERVAL_SEC)
 
 
-@router.delete("/allocate/{ticket_id}", status_code=204)
+@router.delete("/tickets/{ticket_id}", status_code=204)
 async def cancel_ticket(ticket_id: uuid.UUID, db: DbDep) -> Response:
     ticket = await db.get(GridSessionQueueTicket, ticket_id)
     if ticket is not None and ticket.status == GridQueueStatus.waiting:
         transition_ticket(ticket, GridQueueStatus.cancelled, reason="router_cancelled")
         await db.commit()
-    return Response(status_code=204)
-
-
-@router.post("/sessions/{allocation_id}/confirm", status_code=204)
-async def confirm(allocation_id: uuid.UUID, payload: ConfirmRequest, db: DbDep, services: GridServicesDep) -> Response:
-    try:
-        await services.allocation.confirm(
-            db,
-            allocation_id=allocation_id,
-            appium_session_id=payload.appium_session_id,
-            appium_capabilities=payload.appium_capabilities,
-        )
-    except AllocationNotPendingError:
-        # The router rolls the just-created Appium session back best-effort on 409.
-        # Record the reported id on the terminal row first (wave-5 #7) so the orphan
-        # sweep can kill exactly this session if that rollback DELETE fails — even
-        # while the device already holds a new pending allocation.
-        await services.allocation.record_doomed_appium_session(
-            db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id
-        )
-        await db.commit()
-        return Response(status_code=409)
-    await db.commit()
-    return Response(status_code=204)
-
-
-@router.post("/sessions/{allocation_id}/fail", status_code=204)
-async def fail(allocation_id: uuid.UUID, payload: FailRequest, db: DbDep, services: GridServicesDep) -> Response:
-    await services.allocation.fail(db, allocation_id=allocation_id, message=payload.message)
-    await db.commit()
     return Response(status_code=204)
 
 
