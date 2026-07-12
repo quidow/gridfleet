@@ -163,7 +163,13 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     assert loaded_node is not None
     loaded_device.appium_node = loaded_node
 
-    result = await run_session_viability_probe(db_session, loaded_device, checked_by="manual")
+    with patch.object(
+        SessionViabilityService,
+        "probe_session_direct",
+        new_callable=AsyncMock,
+        return_value=(False, "Session create request failed: unreachable"),
+    ):
+        result = await run_session_viability_probe(db_session, loaded_device, checked_by="manual")
 
     assert result["status"] == "failed"
     await db_session.refresh(loaded_device)
