@@ -123,8 +123,6 @@ class PackLifecycleService:
         db: AsyncSession,
         pack_id: str,
         target: PackState,
-        *,
-        override: bool = False,
     ) -> DriverPack:
         pack = (
             await db.execute(select(DriverPack).where(DriverPack.id == pack_id).options(*_pack_with_releases_options()))
