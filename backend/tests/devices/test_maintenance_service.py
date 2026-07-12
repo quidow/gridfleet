@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,7 @@ from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalSt
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services.maintenance import MaintenanceService
 from app.events.protocols import EventPublisher
+from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, settle_after_commit_tasks
@@ -311,19 +313,18 @@ async def test_exit_maintenance_preserves_active_backoff(
         host_id=db_host.id,
         name="exit-preserves-backoff",
         operational_state=DeviceOperationalState.maintenance,
-        lifecycle_policy_state={
-            "last_action": "recovery_failed",
-            "last_action_at": "2026-05-09T21:14:19+00:00",
-            "last_failure_reason": "Max node health failures reached",
-            "last_failure_source": "node_health",
-            "recovery_backoff_attempts": 3,
-            "backoff_until": backoff_until,
-            "deferred_stop": False,
-            "deferred_stop_reason": None,
-            "deferred_stop_since": None,
-            "maintenance_reason": "Operator entered maintenance",
-        },
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
+    for _ in range(3):
+        await remediation_log.append_entry(
+            db_session,
+            device.id,
+            kind=remediation_log.KIND_ATTEMPT,
+            source="node_health",
+            action="recovery_failed",
+            reason="Max node health failures reached",
+            backoff_until=datetime.fromisoformat(backoff_until),
+        )
     await db_session.commit()
 
     await MaintenanceService(
@@ -334,8 +335,10 @@ async def test_exit_maintenance_preserves_active_backoff(
     assert device.lifecycle_policy_state is not None
     # The maintenance fact is cleared; the real backoff condition survives.
     assert device.lifecycle_policy_state.get("maintenance_reason") is None
-    assert device.lifecycle_policy_state.get("backoff_until") == backoff_until
-    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 3
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.backoff_until is not None
+    assert ladder.backoff_until.isoformat() == backoff_until
+    assert ladder.attempts == 3
 
 
 async def test_enter_and_exit_maintenance_commit_false_branches(

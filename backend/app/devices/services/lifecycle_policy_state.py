@@ -8,7 +8,6 @@ window. See app/services/lifecycle_policy.py for canonical usage.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect as sa_inspect
@@ -16,6 +15,8 @@ from sqlalchemy import inspect as sa_inspect
 from app.core import timeutil
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
 
@@ -37,15 +38,9 @@ def parse_iso(raw: object) -> datetime | None:
 
 def default_state() -> dict[str, Any]:
     return {
-        "last_failure_source": None,
-        "last_failure_reason": None,
-        "last_action": None,
-        "last_action_at": None,
         "deferred_stop": False,
         "deferred_stop_reason": None,
         "deferred_stop_since": None,
-        "backoff_until": None,
-        "recovery_backoff_attempts": 0,
         "maintenance_reason": None,
     }
 
@@ -75,16 +70,6 @@ def loaded_node(device: Device) -> AppiumNode | None:
     return device.__dict__.get("appium_node")
 
 
-def set_action(next_state: dict[str, Any], action: str) -> None:
-    next_state["last_action"] = action
-    next_state["last_action_at"] = now_iso()
-
-
-def clear_backoff(next_state: dict[str, Any]) -> None:
-    next_state["backoff_until"] = None
-    next_state["recovery_backoff_attempts"] = 0
-
-
 def set_deferred_stop(next_state: dict[str, Any], *, reason: str) -> None:
     """Mark the deferred-auto-stop intent on the working state dict.
 
@@ -99,32 +84,12 @@ def set_deferred_stop(next_state: dict[str, Any], *, reason: str) -> None:
 def clear_deferred_stop(next_state: dict[str, Any]) -> None:
     """Clear the deferred-auto-stop intent on the working state dict.
 
-    Does NOT stamp ``last_action`` — callers that want a specific trail entry
-    (e.g. ``auto_stop_cleared``) call ``set_action`` themselves.
+    Does NOT stamp remediation-log action rows; callers that want a specific
+    trail entry append it through ``app.lifecycle.services.remediation_log``.
     """
     next_state["deferred_stop"] = False
     next_state["deferred_stop_reason"] = None
     next_state["deferred_stop_since"] = None
-
-
-def record_recovery_started(next_state: dict[str, Any]) -> None:
-    set_action(next_state, "recovery_started")
-
-
-def record_recovery_failed(
-    next_state: dict[str, Any],
-    *,
-    source: str,
-    reason: str,
-) -> None:
-    next_state["last_failure_source"] = source
-    next_state["last_failure_reason"] = reason
-    set_action(next_state, "recovery_failed")
-
-
-def record_recovery_recovered(next_state: dict[str, Any]) -> None:
-    clear_backoff(next_state)
-    set_action(next_state, "auto_recovered")
 
 
 MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
@@ -137,82 +102,6 @@ MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
 CLIENT_SESSION_RUNNING_SUPPRESSION_REASON = "A client session is still running"
 
 
-def clear_operator_start_suppression(device: Device) -> None:
-    """Re-arm the escalation ladder when an operator explicitly starts the node.
-
-    An operator start overrides any prior automated-remediation failure, so it
-    clears the shared backoff window, the attempt counter, and the stale failure
-    trail, then stamps a coherent action. The "Recovery Paused" badge itself is
-    now projected at read time from live facts (the operator start already revoked
-    the deny intent), so there is no stored suppression reason to clear.
-
-    No-op when nothing is armed so an already-clean device emits no action churn.
-
-    Caller must hold the device row lock and is responsible for the commit; this
-    helper performs an in-memory read-modify-write through ``write_state``.
-    """
-    next_state = state(device)
-    armed = bool(next_state.get("backoff_until")) or bool(next_state.get("recovery_backoff_attempts"))
-    if not armed and not next_state.get("last_failure_reason"):
-        return
-    clear_backoff(next_state)
-    next_state["last_failure_source"] = None
-    next_state["last_failure_reason"] = None
-    set_action(next_state, "operator_started")
-    write_state(device, next_state)
-
-
-def clear_stale_escalation_residue(device: Device, *, min_age_seconds: float) -> bool:
-    """Reset the shared escalation ladder when a device self-heals naturally.
-
-    A device can recover without any recovery path firing: an agent restart →
-    reconvergence leaves the node running, the device available, and the health
-    checks green, but neither ``attempt_auto_recovery`` (which short-circuits
-    when the node is already running) nor an operator start ran. The backoff
-    window and attempt counter recorded by the last failed remediation therefore
-    linger on the JSON forever, keeping the node's effective-state ``blocked``
-    despite the device being healthy.
-
-    Clears the backoff window, the attempt counter, and the stale failure trail,
-    then stamps ``self_healed``. Returns True when residue was actually cleared so
-    callers can record the self-heal exactly once.
-
-    Staleness gate (``min_age_seconds``): only clear residue whose recording
-    (``last_action_at``) is older than the threshold. A failure sequence still
-    in flight — verify-failure arms the backoff seconds before the auto-stop
-    lands, and a concurrent healthy connectivity tick can race in between — must
-    NOT be wiped (regression S10). Genuinely stale residue (hours-old leftovers
-    after a natural reconverge) is. A missing/unparseable ``last_action_at`` is
-    treated as not-yet-stale (returns False) so an in-flight sequence is never
-    cleared on a timestamp we cannot trust.
-
-    No-op (returns False) when nothing is armed so a clean device emits no action
-    churn on every connectivity cycle.
-
-    Caller must hold the device row lock, must gate on ``operator_stop_active``
-    (an active operator-stop deny intent makes the hold legitimate and sticky by
-    design), and is responsible for the commit; this helper performs an in-memory
-    read-modify-write through ``write_state``.
-    """
-    next_state = state(device)
-    has_residue = (
-        bool(next_state.get("backoff_until"))
-        or bool(next_state.get("recovery_backoff_attempts"))
-        or bool(next_state.get("last_failure_reason"))
-    )
-    if not has_residue:
-        return False
-    recorded_at = parse_iso(next_state.get("last_action_at"))
-    if recorded_at is None or (now() - recorded_at).total_seconds() < min_age_seconds:
-        return False
-    clear_backoff(next_state)
-    next_state["last_failure_source"] = None
-    next_state["last_failure_reason"] = None
-    set_action(next_state, "self_healed")
-    write_state(device, next_state)
-    return True
-
-
 def set_maintenance_reason(device: Device, reason: str) -> None:
     next_state = state(device)
     next_state["maintenance_reason"] = reason
@@ -223,13 +112,3 @@ def clear_maintenance_reason(device: Device) -> None:
     next_state = state(device)
     next_state["maintenance_reason"] = None
     write_state(device, next_state)
-
-
-def set_backoff(next_state: dict[str, Any], *, base_seconds: int, max_seconds: int) -> str:
-    attempts = int(next_state.get("recovery_backoff_attempts") or 0) + 1
-    next_state["recovery_backoff_attempts"] = attempts
-    seconds = min(max_seconds, base_seconds * (2 ** (attempts - 1)))
-    backoff_until = now() + timedelta(seconds=seconds)
-    backoff_until_iso = backoff_until.isoformat()
-    next_state["backoff_until"] = backoff_until_iso
-    return backoff_until_iso
