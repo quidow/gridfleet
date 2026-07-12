@@ -40,6 +40,7 @@ from app.devices.services.state import (
 )
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
+from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     import uuid
@@ -116,8 +117,12 @@ class DeviceCrudService:
             devices = kept
         if filters.device_health is not None or filters.node_health is not None or filters.viability is not None:
             kept_health: list[Device] = []
+            ladders = await remediation_log.load_ladders(db, [device.id for device in devices])
             for device in devices:
-                health_summary = device_health.build_public_summary(device)
+                health_summary = device_health.build_public_summary(
+                    device,
+                    policy_view=remediation_log.build_policy_view(ladders[device.id], device.lifecycle_policy_state),
+                )
                 if filters.device_health is not None and health_summary["device"]["status"] != filters.device_health:
                     continue
                 if filters.node_health is not None and health_summary["node"]["status"] != filters.node_health:

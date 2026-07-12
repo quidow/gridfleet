@@ -253,7 +253,7 @@ async def test_converge_host_rows_resets_start_failure_when_observed_matches_db(
         port=4723,
         pid=12345,
         active_connection_target="emulator-5554",
-        lifecycle_policy_state={"last_failure_source": "appium_reconciler", "last_failure_reason": "timeout"},
+        reconciler_failure_present=True,
     )
     observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     reset_start_failure = AsyncMock()

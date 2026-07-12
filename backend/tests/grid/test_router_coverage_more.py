@@ -379,7 +379,7 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
 async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     device_id = uuid.uuid4()
-    device = SimpleNamespace(id=device_id, pack_id="pack", platform_id="platform")
+    device = SimpleNamespace(id=device_id, pack_id="pack", platform_id="platform", lifecycle_policy_state=None)
     request = SimpleNamespace(query_params=QueryParams("tags.pool=smoke&tags.=ignored"))
     filters = devices_core.build_device_query_filters(
         request,
@@ -420,7 +420,21 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         ),
     )
     monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))
-    monkeypatch.setattr(devices_core.device_health, "build_public_summary", lambda device: {"healthy": True})
+    monkeypatch.setattr(
+        devices_core.remediation_log,
+        "load_ladders",
+        AsyncMock(return_value={device_id: devices_core.remediation_log.EMPTY_LADDER}),
+    )
+    monkeypatch.setattr(
+        devices_core.remediation_log,
+        "load_ladder",
+        AsyncMock(return_value=devices_core.remediation_log.EMPTY_LADDER),
+    )
+    monkeypatch.setattr(
+        devices_core.device_health,
+        "build_public_summary",
+        lambda device, *, policy_view: {"healthy": True},
+    )
     monkeypatch.setattr(
         devices_core.platform_label_service,
         "load_platform_label_map",

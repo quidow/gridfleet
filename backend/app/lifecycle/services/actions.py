@@ -16,14 +16,13 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
-    clear_backoff,
     clear_deferred_stop,
-    set_action,
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import EscalationOutcome, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs import service as run_reservation_service
@@ -271,8 +270,8 @@ class LifecyclePolicyActionsService:
         fresh["deferred_stop"] = next_state.get("deferred_stop", False)
         fresh["deferred_stop_reason"] = next_state.get("deferred_stop_reason")
         fresh["deferred_stop_since"] = next_state.get("deferred_stop_since")
-        set_action(fresh, "auto_stopped")
         write_state(device, fresh)
+        await remediation_log.append_action(db, device.id, source=source, action="auto_stopped", reason=reason)
         await self._incidents.record_lifecycle_incident(
             db,
             device,
@@ -303,12 +302,10 @@ class LifecyclePolicyActionsService:
         """
         device = await _lock_for_state_write(db, device)
         fresh = policy_state(device)
-        fresh["last_failure_source"] = source
-        fresh["last_failure_reason"] = reason
         clear_deferred_stop(fresh)
-        clear_backoff(fresh)
-        set_action(fresh, action)
         write_state(device, fresh)
+        await remediation_log.append_reset(db, device.id, source=source, action=action)
+        await remediation_log.append_failure(db, device.id, source=source, reason=reason)
 
     async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
         # Include ``pending``: a device in the grid allocate->confirm window is
@@ -338,46 +335,24 @@ async def escalate_device_remediation_failure(
     source: str,
     reason: str,
 ) -> EscalationOutcome:
-    """Shared-ladder escalation for callers outside the lifecycle write_state allowlist.
-
-    Stamps the failure trail, records one failed remediation, and persists the
-    mutated policy state. The caller holds the device row lock and owns the
-    transaction commit.
-    """
-    fresh = policy_state(device)
-    fresh["last_failure_source"] = source
-    fresh["last_failure_reason"] = reason
-    outcome = await escalate_remediation_failure(
+    """Shared-ladder escalation for callers outside the lifecycle write_state allowlist."""
+    return await escalate_remediation_failure(
         db,
         device,
-        fresh,
         settings=settings,
         review=ReviewService(),
         source=source,
         reason=reason,
     )
-    write_state(device, fresh)
-    return outcome
 
 
-def is_reconciler_failure_residue(state: dict[str, Any] | None) -> bool:
-    """True when lifecycle policy state carries appium-reconciler start-failure residue."""
-    if state is None:
+async def reset_reconciler_start_failure_if_needed(db: AsyncSession, device: Device) -> bool:
+    """A successful node start supersedes only reconciler-sourced episodes."""
+    ladder = await remediation_log.load_ladder(db, device.id)
+    if not (ladder.armed or ladder.last_failure_reason) or ladder.last_failure_source != "appium_reconciler":
         return False
-    has_reconciler_failure = state.get("last_failure_source") == "appium_reconciler"
-    has_orphaned_reason = bool(state.get("last_failure_reason") and not state.get("last_failure_source"))
-    return has_reconciler_failure or has_orphaned_reason
-
-
-def reset_reconciler_start_failure_state(device: Device) -> None:
-    fresh = policy_state(device)
-    if not is_reconciler_failure_residue(fresh):
-        return
-    fresh["last_failure_source"] = None
-    fresh["last_failure_reason"] = None
-    fresh["recovery_backoff_attempts"] = 0
-    fresh["backoff_until"] = None
-    write_state(device, fresh)
+    await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
+    return True
 
 
 def _crash_intents(device: Device) -> list[IntentRegistration]:

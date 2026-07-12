@@ -17,7 +17,6 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, func, select, update
@@ -55,18 +54,18 @@ from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.liveness import host_online
 from app.hosts.models import Host
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
-    is_reconciler_failure_residue,
-    reset_reconciler_start_failure_state,
+    reset_reconciler_start_failure_if_needed,
 )
 
 if TYPE_CHECKING:
     import uuid
     from contextlib import AbstractAsyncContextManager
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -103,7 +102,7 @@ def _desired_select() -> Select[Any]:
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
 
 
-def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
+def _row_to_desired(row: Any, *, reconciler_failure_present: bool = False) -> DesiredRow:  # noqa: ANN401
     return DesiredRow(
         device_id=row.device_id,
         host_id=row.host_id,
@@ -117,13 +116,24 @@ def _row_to_desired(row: Any) -> DesiredRow:  # noqa: ANN401
         active_connection_target=row.active_connection_target,
         stop_pending=row.stop_pending,
         lifecycle_policy_state=row.lifecycle_policy_state,
+        reconciler_failure_present=reconciler_failure_present,
     )
 
 
 async def fetch_desired_rows_for_host(db: AsyncSession, host_id: uuid.UUID) -> list[DesiredRow]:
     stmt = _desired_select().where(Device.host_id == host_id)
     rows = (await db.execute(stmt)).all()
-    return [_row_to_desired(row) for row in rows]
+    ladders = await remediation_log.load_ladders(db, [row.device_id for row in rows])
+    return [
+        _row_to_desired(
+            row,
+            reconciler_failure_present=(
+                ladders[row.device_id].last_failure_source == "appium_reconciler"
+                and ladders[row.device_id].last_failure_reason is not None
+            ),
+        )
+        for row in rows
+    ]
 
 
 async def converge_pushed_host(
@@ -138,7 +148,7 @@ async def converge_pushed_host(
     """Converge one host from the observation that its status push proved it alive."""
     async with session_factory() as db:
         rows = await fetch_desired_rows_for_host(db, host_id)
-        backoff = await fetch_backoff_until(db)
+        backoff = await remediation_log.load_active_backoffs(db, now=now_utc())
     await reconciler.reconcile_host(
         host_id=host_id,
         host_ip=host_ip,
@@ -152,26 +162,15 @@ async def converge_pushed_host(
 async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredRow | None:
     stmt = _desired_select().where(Device.id == device_id)
     row = (await db.execute(stmt)).first()
-    return _row_to_desired(row) if row is not None else None
-
-
-async def fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
-    rows = (await db.execute(select(Device.id, Device.lifecycle_policy_state))).all()
-    backoff: dict[uuid.UUID, datetime] = {}
-    for device_id, state_json in rows:
-        if not isinstance(state_json, dict):
-            continue
-        raw = state_json.get("backoff_until")
-        if not isinstance(raw, str):
-            continue
-        try:
-            parsed = datetime.fromisoformat(raw)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            backoff[device_id] = parsed
-        except TypeError, ValueError:
-            continue
-    return backoff
+    if row is None:
+        return None
+    ladder = await remediation_log.load_ladder(db, row.device_id)
+    return _row_to_desired(
+        row,
+        reconciler_failure_present=(
+            ladder.last_failure_source == "appium_reconciler" and ladder.last_failure_reason is not None
+        ),
+    )
 
 
 def _session_scope(db: AsyncSession | None) -> SessionScope:
@@ -301,10 +300,8 @@ async def _reset_start_failure(
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
-        current = lifecycle_policy_state(device)
-        if not is_reconciler_failure_residue(current):
+        if not await reset_reconciler_start_failure_if_needed(db, device):
             return
-        reset_reconciler_start_failure_state(device)
         await db.commit()
 
 

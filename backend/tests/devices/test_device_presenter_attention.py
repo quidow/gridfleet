@@ -168,6 +168,7 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: 
         desired_state=AppiumDesiredState.running,
     )
     device = SimpleNamespace(
+        id=uuid.uuid4(),
         appium_node=_node,
         lifecycle_policy_state={"last_action": "recovery_started"},
         review_required=False,
@@ -175,6 +176,11 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: 
     svc = DevicePresenterService(settings=FakeSettingsReader({}))
     monkeypatch.setattr(svc, "serialize_device", AsyncMock(return_value={"id": "device"}))
     monkeypatch.setattr(device_presenter, "_serialize_orchestration", AsyncMock(return_value={"intents": []}))
+    monkeypatch.setattr(
+        device_presenter.remediation_log,
+        "load_ladder",
+        AsyncMock(return_value=device_presenter.remediation_log.EMPTY_LADDER),
+    )
 
     payload = await svc.serialize_device_detail(AsyncMock(), device, include_orchestration=True)
 

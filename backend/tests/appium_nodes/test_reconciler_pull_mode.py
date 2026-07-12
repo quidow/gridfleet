@@ -24,6 +24,7 @@ from app.core.metrics_recorders import (
     APPIUM_PULL_MODE_SKIPPED_ACTIONS,
 )
 from app.devices.models import DeviceOperationalState
+from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -252,7 +253,8 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
     assert node.desired_port is not None
     assert node.desired_port != 4723
     first_new_port = node.desired_port
-    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+    first_ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert first_ladder.attempts == 1
 
     # Second sweep, same (port, at) report still in the agent's ring: dedupe
     # must skip both the re-pin and the backoff increment.
@@ -261,7 +263,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
     await db_session.refresh(node)
     await db_session.refresh(device)
     assert node.desired_port == first_new_port
-    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1
 
 
 @pytest.mark.db
@@ -321,8 +323,10 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
     )
     after_first = datetime.now(UTC)
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
-    first_backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
+    first_ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert first_ladder.attempts == 1
+    assert first_ladder.backoff_until is not None
+    first_backoff_until = first_ladder.backoff_until
     assert before_first + timedelta(seconds=5) <= first_backoff_until <= after_first + timedelta(seconds=5)
 
     t1 = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
@@ -332,8 +336,10 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
     )
     after_second = datetime.now(UTC)
     await db_session.refresh(device)
-    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 2
-    second_backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
+    second_ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert second_ladder.attempts == 2
+    assert second_ladder.backoff_until is not None
+    second_backoff_until = second_ladder.backoff_until
     assert before_second + timedelta(seconds=10) <= second_backoff_until <= after_second + timedelta(seconds=10)
 
 
@@ -387,7 +393,7 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
     await db_session.refresh(node)
     await db_session.refresh(device)
     assert node.desired_port == 4723
-    assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1
 
 
 @pytest.mark.db

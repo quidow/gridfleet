@@ -17,6 +17,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services import policy as lifecycle_policy_module
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -253,7 +254,13 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     threshold = 2
     device = await _make_offline_verified_device(db_session, db_host, "review-promotion")
 
-    settings = FakeSettingsReader(_settings_stub(threshold))
+    settings = FakeSettingsReader(
+        {
+            **_settings_stub(threshold),
+            "general.lifecycle_recovery_backoff_base_sec": 0,
+            "general.lifecycle_recovery_backoff_max_sec": 0,
+        }
+    )
     viability = AsyncMock()
     viability.run_session_viability_probe = _failing_probe()
     svc = LifecyclePolicyService(
@@ -280,17 +287,8 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         await db_session.refresh(device)
         assert first is False
         assert device.review_required is False
-        attempts_after_first = int(device.lifecycle_policy_state.get("recovery_backoff_attempts") or 0)
+        attempts_after_first = (await remediation_log.load_ladder(db_session, device.id)).attempts
         assert attempts_after_first == 1
-
-        # Backoff blocks the next attempt unless we elapse it. Backdate the
-        # backoff window so the second call can probe instead of returning
-        # backoff-suppressed. Reassign the whole JSON dict to flag the SA
-        # change tracker — in-place mutation on a JSON column does not.
-        state = dict(device.lifecycle_policy_state or {})
-        state["backoff_until"] = None
-        device.lifecycle_policy_state = state
-        await db_session.commit()
 
         # Attempt #2 — counter crosses threshold, device gets shelved.
         second = await svc.attempt_auto_recovery(db_session, device, source="device_checks", reason="r2")

@@ -94,7 +94,6 @@ def set_deferred_stop(next_state: dict[str, Any], *, reason: str) -> None:
     next_state["deferred_stop"] = True
     next_state["deferred_stop_reason"] = reason
     next_state["deferred_stop_since"] = now_iso()
-    set_action(next_state, "auto_stop_deferred")
 
 
 def clear_deferred_stop(next_state: dict[str, Any]) -> None:

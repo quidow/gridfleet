@@ -37,9 +37,7 @@ from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
-from app.lifecycle.services.actions import (
-    reset_reconciler_start_failure_state,
-)
+from app.lifecycle.services.actions import reset_reconciler_start_failure_if_needed
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
@@ -170,7 +168,7 @@ async def mark_node_started(
         device,
         mark_offline=False,
     )
-    reset_reconciler_start_failure_state(device)
+    await reset_reconciler_start_failure_if_needed(db, device)
     # Pull re-applies drain/stop flags from the last pull on crash-restart (the
     # agent re-derives accepting_new_sessions/stop_pending from desired state
     # every launch), so the belt-and-suspenders outbox re-push that used to run

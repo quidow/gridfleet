@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
@@ -9,13 +8,11 @@ import pytest
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
-from app.devices.services.lifecycle_policy_state import now, write_state
-from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.lifecycle.services import actions
+from app.lifecycle.services import actions, remediation_log
 from app.lifecycle.services.actions import (
     LifecyclePolicyActionsService,
     escalate_device_remediation_failure,
-    reset_reconciler_start_failure_state,
+    reset_reconciler_start_failure_if_needed,
 )
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
@@ -56,40 +53,52 @@ async def test_reset_start_failure_keeps_recovery_sourced_backoff(db_session: As
     """A successful node start must not wipe backoff recorded by a failed recovery probe."""
     device = await create_device(db_session, host_id=db_host.id, name="keep-recovery-sourced-backoff")
     locked = await device_locking.lock_device(db_session, device.id)
-    state = policy_state(locked)
-    state["last_failure_source"] = "session_viability"
-    state["last_failure_reason"] = "Recovery probe failed"
-    state["recovery_backoff_attempts"] = 2
-    state["backoff_until"] = (now() + timedelta(seconds=600)).isoformat()
-    write_state(locked, state)
+    settings = FakeSettingsReader(
+        {
+            "general.lifecycle_recovery_backoff_base_sec": 60,
+            "general.lifecycle_recovery_backoff_max_sec": 900,
+        }
+    )
+    await remediation_log.append_attempt(
+        db_session, locked.id, source="session_viability", reason="Recovery probe failed", settings=settings
+    )
+    await remediation_log.append_attempt(
+        db_session, locked.id, source="session_viability", reason="Recovery probe failed", settings=settings
+    )
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    reset_reconciler_start_failure_state(locked)
-    after = policy_state(locked)
-    assert after["recovery_backoff_attempts"] == 2
-    assert after["backoff_until"] is not None
-    assert after["last_failure_source"] == "session_viability"
+    assert await reset_reconciler_start_failure_if_needed(db_session, locked) is False
+    after = await remediation_log.load_ladder(db_session, locked.id)
+    assert after.attempts == 2
+    assert after.backoff_until is not None
+    assert after.last_failure_source == "session_viability"
 
 
 @pytest.mark.db
 async def test_reset_start_failure_clears_reconciler_sourced_residue(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="clear-reconciler-sourced-residue")
     locked = await device_locking.lock_device(db_session, device.id)
-    state = policy_state(locked)
-    state["last_failure_source"] = "appium_reconciler"
-    state["last_failure_reason"] = "port_conflict"
-    state["recovery_backoff_attempts"] = 3
-    state["backoff_until"] = (now() + timedelta(seconds=600)).isoformat()
-    write_state(locked, state)
+    settings = FakeSettingsReader(
+        {
+            "general.lifecycle_recovery_backoff_base_sec": 60,
+            "general.lifecycle_recovery_backoff_max_sec": 900,
+        }
+    )
+    await remediation_log.append_attempt(
+        db_session, locked.id, source="appium_reconciler", reason="port_conflict", settings=settings
+    )
+    await remediation_log.append_attempt(
+        db_session, locked.id, source="appium_reconciler", reason="port_conflict", settings=settings
+    )
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    reset_reconciler_start_failure_state(locked)
-    after = policy_state(locked)
-    assert after["recovery_backoff_attempts"] == 0
-    assert after["backoff_until"] is None
-    assert after["last_failure_source"] is None
+    assert await reset_reconciler_start_failure_if_needed(db_session, locked) is True
+    after = await remediation_log.load_ladder(db_session, locked.id)
+    assert after.attempts == 0
+    assert after.backoff_until is None
+    assert after.last_failure_source is None
 
 
 @pytest.mark.db
@@ -111,9 +120,9 @@ async def test_escalate_device_remediation_failure_backs_off_and_shelves(
     )
     await db_session.commit()
     assert first.attempts == 1 and first.shelved is False
-    after = policy_state(locked)
-    assert after["backoff_until"] is not None
-    assert after["last_failure_source"] == "appium_reconciler"
+    after = await remediation_log.load_ladder(db_session, locked.id)
+    assert after.backoff_until is not None
+    assert after.last_failure_source == "appium_reconciler"
 
     locked = await device_locking.lock_device(db_session, device.id)
     second = await escalate_device_remediation_failure(
