@@ -25,6 +25,7 @@ This glossary defines the product terms that show up across the API, UI, and ope
 | Static group | A group whose members are explicitly added and removed |
 | Dynamic group | A group whose members are resolved from filter rules at read time |
 | Lifecycle policy summary | The operator-facing summary of whether a device is idle, backoff-limited, excluded, suppressed, recoverable, or otherwise impacted by lifecycle automation |
+| Reconciler (two families) | Two unrelated backend module families share this name: the device intent reconciler (`app/devices/services/intent_reconciler.py`, the `device_intent_reconciler` loop) derives each device's desired state from intents and durable facts, while the Appium node reconciler family (`app/appium_nodes/services/reconciler*.py`) is observe-only convergence of agent-reported Appium process state and never decides desired state |
 
 ## Identity And Transport
 
