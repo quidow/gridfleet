@@ -52,7 +52,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [
     pytest.mark.db,
@@ -454,7 +454,7 @@ def _observation_failure_total() -> float:
     )
 
 
-def _build_push_service(session_factory: object) -> HostStatusPushService:
+def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> HostStatusPushService:
     settings = FakeSettingsReader({})
     node_health = NodeHealthService(
         publisher=event_bus,
@@ -497,7 +497,7 @@ def _build_push_service(session_factory: object) -> HostStatusPushService:
     )
 
 
-def _consolidated_payload(devices: list[_SeededDevice], churn: float) -> dict[str, object]:
+def _consolidated_payload(devices: list[_SeededDevice], churn: float, iteration: int) -> dict[str, object]:
     node_section = _node_section(devices, churn)
     return {
         "appium_processes": {
@@ -505,7 +505,7 @@ def _consolidated_payload(devices: list[_SeededDevice], churn: float) -> dict[st
             "recent_restart_events": [],
             "start_failures": [],
         },
-        "host_telemetry": _host_telemetry_sample(0),
+        "host_telemetry": _host_telemetry_sample(iteration),
         "node_health": node_section,
         "device_health": _device_section(devices, churn),
         "device_telemetry": _telemetry_section(devices, churn),
@@ -525,7 +525,7 @@ def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]
         print(f"    {n / ITERS:8.1f}  {sig}")
 
 
-async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: object) -> None:
+async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]) -> None:
     service = _build_push_service(db_session_maker)
     tap = _QueryTap()
     commits = _CommitTap()
@@ -544,7 +544,7 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: obje
             if CHURN > 0 and iteration > 0:
                 host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
                 await db_session.commit()
-            payload = _consolidated_payload(devices, CHURN)
+            payload = _consolidated_payload(devices, CHURN, iteration)
             tap.armed = True
             commits.armed = True
             t0 = perf_counter()
