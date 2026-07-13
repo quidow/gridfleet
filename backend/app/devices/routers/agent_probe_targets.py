@@ -11,6 +11,7 @@ from app.appium_nodes.services import resource_service
 from app.core.dependencies import DbDep
 from app.devices.models import Device
 from app.devices.schemas.probe_targets import ProbeTargetOut, ProbeTargetsOut
+from app.devices.services.state import maintenance_sql
 from app.hosts.models import Host
 from app.settings.dependencies import SettingsServicesDep
 
@@ -31,6 +32,7 @@ async def probe_targets(
             await db.execute(
                 select(Device)
                 .where(Device.host_id == host_id)
+                .where(~maintenance_sql())
                 .options(selectinload(Device.appium_node))
                 .order_by(Device.id)
             )

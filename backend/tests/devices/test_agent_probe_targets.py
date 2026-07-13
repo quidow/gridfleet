@@ -131,3 +131,30 @@ async def test_probe_targets_returns_404_for_unknown_host(client: AsyncClient) -
     response = await client.get("/agent/devices/probe-targets", params={"host_id": str(uuid.uuid4())})
 
     assert response.status_code == 404
+
+
+@pytest.mark.db
+async def test_probe_targets_excludes_maintenance_devices(
+    client: AsyncClient, db_session: AsyncSession, db_host: Host
+) -> None:
+    active = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="active-device",
+        connection_target="active-device",
+        name="Active device",
+    )
+    await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="maint-device",
+        connection_target="maint-device",
+        name="Maintenance device",
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
+    )
+
+    response = await client.get("/agent/devices/probe-targets", params={"host_id": str(db_host.id)})
+
+    assert response.status_code == 200
+    targets = {entry["connection_target"] for entry in response.json()["devices"]}
+    assert targets == {active.connection_target}
