@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +42,23 @@ logger = get_logger(__name__)
 LOOP_NAME = "node_health"
 
 
+@dataclass(frozen=True)
+class _NodeObservation:
+    """One pushed node-health observation, folded under the two-axis guard.
+
+    ``port``/``pid``/``active_connection_target`` are the identity the fold saw
+    for the node; a mismatch against the locked row means the observation
+    predates a node change and is skipped. ``revision`` is the ingest-stamped
+    guard revision (``None`` for a tokenless/legacy section)."""
+
+    result: ProbeResult
+    port: int | None = None
+    pid: int | None = None
+    active_connection_target: str | None = None
+    observed_at: datetime = field(default_factory=now_utc)
+    revision: int | None = None
+
+
 class NodeHealthService:
     def __init__(
         self,
@@ -71,6 +89,12 @@ class NodeHealthService:
         if not isinstance(raw_nodes, list):
             return
         observed_at = parse_iso(section.get("reported_at")) or now_utc()
+        # Ingest-time revision stamped by the push endpoint (two-axis guard). A
+        # tokenless/legacy section carries none; fall back to a fresh draw so the
+        # write still lands (it simply cannot lose the guard to a later racer).
+        revision = section.get("observation_revision")
+        if not isinstance(revision, int):
+            revision = None
         by_port: dict[int, dict[str, Any]] = {
             entry["port"]: entry
             for entry in raw_nodes
@@ -104,7 +128,16 @@ class NodeHealthService:
             entry = by_port.get(node.port)
             if entry is None:
                 continue
-            result = from_status_response(entry)
+            observation = _NodeObservation(
+                result=from_status_response(entry),
+                port=node.port,
+                pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
+                active_connection_target=(
+                    entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
+                ),
+                observed_at=observed_at,
+                revision=revision,
+            )
             try:
                 # No load_sessions: the node-health path never reads device.sessions
                 # off this row — apply_node_state_transition and the recovery-control
@@ -115,18 +148,7 @@ class NodeHealthService:
                 await db.commit()
                 continue
 
-            await self._process_node_health(
-                db,
-                node,
-                locked_device,
-                result=result,
-                observed_port=node.port,
-                observed_pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
-                observed_active_connection_target=(
-                    entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
-                ),
-                observed_at=observed_at,
-            )
+            await self._process_node_health(db, node, locked_device, observation=observation)
             await db.commit()
         record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
 
@@ -152,22 +174,26 @@ class NodeHealthService:
         node: AppiumNode,
         device: Device,
         *,
-        result: ProbeResult,
-        observed_port: int | None = None,
-        observed_pid: int | None = None,
-        observed_active_connection_target: str | None = None,
-        observed_at: datetime | None = None,
+        observation: _NodeObservation,
     ) -> None:
+        result = observation.result
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if locked_node is None:
             # Node was deleted between the caller's lock_device and here. Bail out
             # quietly; lower layers will reconcile on the next sweep.
             return
 
-        if observed_port is not None and (
-            locked_node.port != observed_port
-            or locked_node.pid != observed_pid
-            or locked_node.active_connection_target != observed_active_connection_target
+        # Two-axis guard, checked before any event/write work: a stale or
+        # already-applied observation (revision not strictly greater than the
+        # node's stored revision) skips the whole node so it emits no spurious
+        # health event and reruns no remediation.
+        if observation.revision is not None and observation.revision <= locked_node.health_observation_revision:
+            return
+
+        if observation.port is not None and (
+            locked_node.port != observation.port
+            or locked_node.pid != observation.pid
+            or locked_node.active_connection_target != observation.active_connection_target
         ):
             logger.info(
                 "Node health check for device %s skipped stale probe result after node changed",
@@ -198,9 +224,7 @@ class NodeHealthService:
             # (``ack``/``refused``) moves the node's health state.
             return
 
-        healthy = result.status == "ack"
-
-        if healthy:
+        if result.status == "ack":
             if locked_node.health_failing_since is not None:
                 logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
                 await self._recovery_control.record_control_action(
@@ -263,10 +287,13 @@ class NodeHealthService:
                 health_running=True,
                 health_state=None,
                 mark_offline=False,
+                revision=observation.revision,
+                observed_at=observation.observed_at,
             )
-            return
-
-        await self._record_health_failure(db, node, locked_node, device, observed_at=observed_at or now_utc())
+        else:
+            await self._record_health_failure(
+                db, node, locked_node, device, observed_at=observation.observed_at, revision=observation.revision
+            )
 
     async def _record_health_failure(
         self,
@@ -276,6 +303,7 @@ class NodeHealthService:
         device: Device,
         *,
         observed_at: datetime,
+        revision: int | None = None,
     ) -> None:
         if locked_node.health_failing_since is None:
             locked_node.health_failing_since = observed_at
@@ -293,6 +321,8 @@ class NodeHealthService:
             health_running=False,
             health_state="error",
             mark_offline=verdict,
+            revision=revision,
+            observed_at=observed_at,
         )
         logger.warning(
             "Node health check failed for device %s (port %d): %.0fs/%.0fs",

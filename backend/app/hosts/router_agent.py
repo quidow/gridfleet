@@ -7,7 +7,6 @@ from app.hosts import service as host_service
 from app.hosts.dependencies import HostServicesDep
 from app.hosts.models import Host
 from app.hosts.schemas import HostStatusPush
-from app.hosts.service_status_push import push_sections
 from app.packs.dependencies import PackServicesDep
 
 router = APIRouter(prefix="/agent/hosts", tags=["agent-hosts"])
@@ -25,7 +24,10 @@ async def status(db: DbDep, hosts: HostServicesDep, packs: PackServicesDep, push
         except ValueError as exc:
             raise HTTPException(status_code=426, detail=str(exc)) from exc
     host_id, host_ip, agent_port = host.id, host.ip, host.agent_port
-    await hosts.status_push.apply_status_push(db, host, push)
+    # apply_status_push stamps the ingest-time observation revision onto the
+    # guarded sections; reuse that stamped payload for the observation stages so
+    # the inline folds see the revision drawn before restart-ingest/convergence.
+    sections = await hosts.status_push.apply_status_push(db, host, push)
     if push.packs is not None:
         await packs.status.apply_status(db, {"host_id": str(push.host_id), **push.packs})
     await db.commit()
@@ -34,7 +36,7 @@ async def status(db: DbDep, hosts: HostServicesDep, packs: PackServicesDep, push
             host_id=host_id,
             host_ip=host_ip,
             agent_port=agent_port,
-            payload=push_sections(push),
+            payload=sections,
         )
     except Exception:
         logger.exception("push_observation_processing_failed", host_id=str(host_id))

@@ -455,6 +455,7 @@ class ConnectivityService:
         ip_ping_entry: dict[str, Any] | None,
         ip_ping_window_sec: float,
         observed_at: datetime,
+        revision: int | None = None,
     ) -> None:
         # A healthy probe re-arms link repair: clear the failed-attempt budget so a
         # later genuine link death can dispatch a fresh round.
@@ -468,7 +469,9 @@ class ConnectivityService:
         summary = (
             f"Healthy (ip_ping failing for {elapsed:.0f}s/{ip_ping_window_sec:.0f}s)" if elapsed > 0 else "Healthy"
         )
-        await self._health.update_device_checks(db, device, healthy=True, summary=summary)
+        await self._health.update_device_checks(
+            db, device, healthy=True, summary=summary, revision=revision, observed_at=observed_at
+        )
         await self._maybe_auto_recover(db, device)
 
     async def _maybe_dispatch_repair(
@@ -578,13 +581,23 @@ class ConnectivityService:
             await link_repair.reset_repair_attempts(db, device.identity_value)
         return healthy
 
-    async def _escalate_health_failure(self, db: AsyncSession, device: Device, *, summary: str) -> None:
+    async def _escalate_health_failure(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        summary: str,
+        observed_at: datetime | None = None,
+        revision: int | None = None,
+    ) -> None:
         """Shared unhealthy escalation: record the failed check, then hand the
         device to lifecycle policy unless it is already offline (re-escalating
         an offline device would churn recovery intents every cycle)."""
         operational_state = await derive_operational_state(db, device, now=now_utc())
         was_offline = operational_state == DeviceOperationalState.offline
-        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
+        await self._health.update_device_checks(
+            db, device, healthy=False, summary=summary, revision=revision, observed_at=observed_at
+        )
         if not was_offline:
             await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
 
@@ -596,6 +609,7 @@ class ConnectivityService:
         *,
         window_sec: float,
         observed_at: datetime,
+        revision: int | None = None,
     ) -> bool:
         """Debounce unanswered probes (AgentCallError → health_result None).
 
@@ -620,7 +634,13 @@ class ConnectivityService:
         )
         if failing_for_sec < window_sec:
             return False
-        await self._escalate_health_failure(db, device, summary="Health probe unanswered (agent/adapter error)")
+        await self._escalate_health_failure(
+            db,
+            device,
+            summary="Health probe unanswered (agent/adapter error)",
+            observed_at=observed_at,
+            revision=revision,
+        )
         return True
 
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
@@ -689,7 +709,15 @@ class ConnectivityService:
 
         return dict(await asyncio.gather(*(_one(device) for device in devices)))
 
-    async def _record_disconnect_if_stable(self, db: AsyncSession, device: Device, *, held: bool) -> None:
+    async def _record_disconnect_if_stable(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        held: bool,
+        observed_at: datetime | None = None,
+        revision: int | None = None,
+    ) -> None:
         """Record a device disconnect unless its held/reserved classification flipped under the lock.
 
         ``held`` is the pre-lock classification (busy/maintenance or actively
@@ -703,7 +731,9 @@ class ConnectivityService:
         this type; repeats would inflate it).
         """
         first_detection = device.device_checks_healthy is not False
-        await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
+        await self._health.update_device_checks(
+            db, device, healthy=False, summary="Disconnected", revision=revision, observed_at=observed_at
+        )
         locked_device = await device_locking.lock_device(db, device.id)
         held_after = await _is_held_or_reserved(db, locked_device)
         locked_state = await derive_operational_state(db, locked_device, now=now_utc())
@@ -781,6 +811,7 @@ class ConnectivityService:
         claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
         debounce_windows: _DebounceWindows,
         observed_at: datetime,
+        revision: int | None = None,
     ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None] | None:
         """Derive this device's health verdict, applying emulator-state, unanswered-probe
         and repair side effects. Returns ``None`` when the unanswered-probe note flipped
@@ -797,6 +828,7 @@ class ConnectivityService:
                 host,
                 window_sec=debounce_windows.probe_unanswered,
                 observed_at=observed_at,
+                revision=revision,
             )
             if flipped:
                 return None
@@ -834,6 +866,8 @@ class ConnectivityService:
         *,
         health_result: dict[str, Any] | None,
         connected_targets_by_host: dict[uuid.UUID, set[str] | None],
+        observed_at: datetime | None = None,
+        revision: int | None = None,
     ) -> None:
         """Resolve a device that did not confirm healthy: agent enumeration (cached per
         host), then either escalate a present-but-failing device or record a disconnect.
@@ -861,7 +895,13 @@ class ConnectivityService:
                 # recovery-only behavior of the old presence gate.
                 await self._maybe_auto_recover(db, device)
                 return
-            await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
+            await self._escalate_health_failure(
+                db,
+                device,
+                summary=_summarize_unhealthy_result(health_result),
+                observed_at=observed_at,
+                revision=revision,
+            )
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
         else:
             # Device disconnected.
@@ -888,7 +928,9 @@ class ConnectivityService:
                     host.hostname,
                     _audit_label(operational_state),
                 )
-                await self._record_disconnect_if_stable(db, device, held=True)
+                await self._record_disconnect_if_stable(
+                    db, device, held=True, observed_at=observed_at, revision=revision
+                )
                 return
             logger.warning(
                 "Device %s (%s) disconnected from host %s",
@@ -896,7 +938,7 @@ class ConnectivityService:
                 device.identity_value,
                 host.hostname,
             )
-            await self._record_disconnect_if_stable(db, device, held=False)
+            await self._record_disconnect_if_stable(db, device, held=False, observed_at=observed_at, revision=revision)
 
     async def fold_host_device_health(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         """Fold one host's pushed device_health section through the dial-era
@@ -908,6 +950,9 @@ class ConnectivityService:
         if host is None:
             return
         observed_at = parse_iso(section.get("reported_at")) or now_utc()
+        # Ingest-time revision stamped by the push endpoint (two-axis guard).
+        section_revision = section.get("observation_revision")
+        revision = section_revision if isinstance(section_revision, int) else None
         debounce_windows = _DebounceWindows(
             ip_ping=float(self._settings.get("device_checks.ip_ping.fail_window_sec")),
             probe_unanswered=float(self._settings.get("device_checks.probe_unanswered.fail_window_sec")),
@@ -977,6 +1022,7 @@ class ConnectivityService:
                         claimed_ports_by_id=claimed_ports_by_id,
                         debounce_windows=debounce_windows,
                         observed_at=observed_at,
+                        revision=revision,
                     )
                     if verdict is None:
                         continue
@@ -988,6 +1034,7 @@ class ConnectivityService:
                             ip_ping_entry=ip_ping_entry,
                             ip_ping_window_sec=debounce_windows.ip_ping,
                             observed_at=observed_at,
+                            revision=revision,
                         )
                         continue
                     await self._handle_unhealthy_device(
@@ -996,6 +1043,8 @@ class ConnectivityService:
                         host_ref,
                         health_result=health_result,
                         connected_targets_by_host=connected_targets_by_host,
+                        observed_at=observed_at,
+                        revision=revision,
                     )
             metrics.record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
             await db.commit()

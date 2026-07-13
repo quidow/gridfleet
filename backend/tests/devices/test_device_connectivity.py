@@ -1118,8 +1118,15 @@ async def test_disconnect_records_exactly_one_connectivity_lost_event(
     monkeypatch.setattr(device_connectivity, "_get_device_health", AsyncMock(return_value=None))
 
     async def fake_update_device_checks(
-        _db_session: AsyncSession, target: Device, *, healthy: bool, summary: str
+        _db_session: AsyncSession,
+        target: Device,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None = None,
+        observed_at: object = None,
     ) -> None:
+        del revision, observed_at
         target.device_checks_healthy = healthy
         target.device_checks_summary = summary
 

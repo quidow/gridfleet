@@ -155,7 +155,11 @@ async def test_status_push_processes_observations_after_liveness_commit(
     assert resp.status_code == 204
     process.assert_awaited_once()
     assert process.await_args.kwargs["host_id"] == online_host.id
-    assert process.await_args.kwargs["payload"]["device_health"] == body["device_health"]
+    folded_device_health = process.await_args.kwargs["payload"]["device_health"]
+    # The endpoint stamps an ingest-time observation revision onto the moved
+    # health sections before the observation stages run; the rest is verbatim.
+    assert isinstance(folded_device_health.pop("observation_revision"), int)
+    assert folded_device_health == body["device_health"]
     await db_session.refresh(online_host)
     assert online_host.last_heartbeat is not None
 

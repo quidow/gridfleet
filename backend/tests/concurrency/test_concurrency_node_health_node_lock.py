@@ -61,7 +61,7 @@ async def test_node_health_failure_path_locks_appium_node(
 
             locked_device = await device_locking.lock_device(session, device_id)
             with patch("app.appium_nodes.services.node_health.record_event", racing_record_event):
-                from app.appium_nodes.services.node_health import NodeHealthService
+                from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
 
                 await NodeHealthService(
                     publisher=event_bus,
@@ -73,7 +73,7 @@ async def test_node_health_failure_path_locks_appium_node(
                     session,
                     locked_device.appium_node,
                     locked_device,
-                    result=ProbeResult(status="refused"),
+                    observation=_NodeObservation(ProbeResult(status="refused")),
                 )
             await session.commit()
 

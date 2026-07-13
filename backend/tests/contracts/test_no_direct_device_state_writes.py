@@ -53,6 +53,9 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
     "health_running": frozenset({"app/devices/services/health.py"}),
     "health_state": frozenset({"app/devices/services/health.py"}),
     "last_health_checked_at": frozenset({"app/devices/services/health.py"}),
+    # Rerouted through the guarded device-health writer so every write takes the
+    # device row lock and a strictly-greater observation revision (two-axis guard).
+    "device_checks_healthy": frozenset({"app/devices/services/health.py"}),
     "started_at": frozenset(
         {
             "app/appium_nodes/services/reconciler_agent.py",

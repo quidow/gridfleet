@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -178,6 +178,12 @@ class Device(Base):
     device_checks_healthy: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     device_checks_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     device_checks_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Two-axis write-ordering guard: the highest observation revision applied to
+    # this device's device_checks_* axis. A writer applies only when its revision
+    # is strictly greater. See app.core.observation_revision.
+    device_checks_observation_revision: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
     session_viability_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     session_viability_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_viability_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

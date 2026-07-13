@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES, record_host_status_push
 from app.core.observability import get_logger
+from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
 from app.hosts.models import Host
 from app.hosts.service import normalize_capabilities, update_missing_prerequisites_from_health
@@ -27,6 +28,14 @@ if TYPE_CHECKING:
 # host_sweep liveness/convergence stages, host diagnostics, and the resource
 # telemetry stage — the single snapshot source (no second fetch path).
 HOST_STATUS_NAMESPACE = "status_push.host_status"
+
+# The two moved health folds (node_health, device_health) that carry an
+# ingest-stamped observation revision for the two-axis write-ordering guard.
+GUARDED_SECTIONS = ("node_health", "device_health")
+
+# Key under which the ingest-time revision is stamped onto each guarded snapshot
+# section. The inline folds read it and pass it to the guarded health writers.
+OBSERVATION_REVISION_KEY = "observation_revision"
 
 
 @dataclass(frozen=True)
@@ -66,7 +75,7 @@ class HostStatusPushService:
         self._converge_host = converge_host
         self._ingest_restart_events = ingest_restart_events
 
-    async def apply_status_push(self, db: AsyncSession, host: Host, push: HostStatusPush) -> None:
+    async def apply_status_push(self, db: AsyncSession, host: Host, push: HostStatusPush) -> dict[str, Any]:
         host.last_heartbeat = now_utc()
         if push.agent_version and host.agent_version != push.agent_version:
             host.agent_version = push.agent_version
@@ -76,13 +85,27 @@ class HostStatusPushService:
         # whatever the snapshot carried (mirrors the old health-poll order).
         if push.missing_prerequisites is not None:
             update_missing_prerequisites_from_health(host, push.missing_prerequisites)
+        sections = push_sections(push)
+        # Draw the ingest-time revision for each moved health section BEFORE the
+        # observation stages run, so a synchronous racer (restart ingest,
+        # host-offline cascade) that writes later draws a strictly-greater
+        # revision and wins the guard against this (now stale) observation.
+        await self._stamp_observation_revisions(db, sections)
         await control_plane_state_store.set_value(
             db,
             HOST_STATUS_NAMESPACE,
             str(host.id),
-            {"received_at": now_utc().isoformat(), "payload": push_sections(push)},
+            {"received_at": now_utc().isoformat(), "payload": sections},
         )
         record_host_status_push(host_id=str(host.id))
+        return sections
+
+    @staticmethod
+    async def _stamp_observation_revisions(db: AsyncSession, sections: dict[str, Any]) -> None:
+        for name in GUARDED_SECTIONS:
+            section = sections.get(name)
+            if isinstance(section, dict):
+                section[OBSERVATION_REVISION_KEY] = await next_observation_revision(db)
 
     async def process_observations(
         self, *, host_id: uuid.UUID, host_ip: str, agent_port: int, payload: dict[str, Any]

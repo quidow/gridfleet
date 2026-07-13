@@ -10,6 +10,7 @@ from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
@@ -120,12 +121,13 @@ class LifecyclePolicyActionsService:
             )
 
         if source == "connectivity":
-            # Connectivity loss is a fact, not a command: write device_checks_healthy=False
-            # and let the reconciler synthesize the connectivity: defer-stop (session-safe,
-            # priority 50) from it. Mirrors the no-node fact-write path below.
-            device.device_checks_healthy = False
-            device.device_checks_summary = reason
-            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+            # Connectivity loss is a fact, not a command: route through the guarded
+            # device-health writer so the write takes the device row lock, draws a
+            # fresh observation revision, and reconciles the connectivity defer-stop
+            # (session-safe, priority 50). Mirrors the no-node fact-write path below.
+            await DeviceHealthService(publisher=self._publisher).update_device_checks(
+                db, device, healthy=False, summary=reason
+            )
             await db.commit()
             return
 
@@ -150,11 +152,12 @@ class LifecyclePolicyActionsService:
                 )
                 await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
             else:
-                # No node row — mark device_checks_healthy=False so the reconciler
-                # derives offline (device_allows_allocation=False → ready=False).
-                device.device_checks_healthy = False
-                device.device_checks_summary = reason
-                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+                # No node row — route through the guarded device-health writer so
+                # the reconciler derives offline (device_allows_allocation=False →
+                # ready=False), taking the row lock and a fresh observation revision.
+                await DeviceHealthService(publisher=self._publisher).update_device_checks(
+                    db, device, healthy=False, summary=reason
+                )
             await db.commit()
 
     async def exclude_run_if_needed(
