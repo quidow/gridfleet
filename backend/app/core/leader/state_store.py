@@ -60,11 +60,19 @@ async def set_many(db: AsyncSession, namespace: str, values: Mapping[str, Contro
 
 
 async def delete_value(db: AsyncSession, namespace: str, key: str) -> None:
+    # synchronize_session=False: this KV delete is called several times per device
+    # per status push (repair/probe/connectivity bookkeeping), and the default
+    # "evaluate" walks the whole session identity map — which the status-push folds
+    # fill with every device/node/host — on each call, an O(deletes x rows) CPU sink.
+    # Safe here: no caller reads a deleted entry back through the identity map
+    # (get_value selects a column, get_values re-queries the DB).
     await db.execute(
-        delete(ControlPlaneStateEntry).where(
+        delete(ControlPlaneStateEntry)
+        .where(
             ControlPlaneStateEntry.namespace == namespace,
             ControlPlaneStateEntry.key == key,
         )
+        .execution_options(synchronize_session=False)
     )
 
 
