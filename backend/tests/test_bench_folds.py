@@ -17,6 +17,7 @@ part of what we are measuring).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from collections import Counter
@@ -42,6 +43,8 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = [
@@ -161,55 +164,60 @@ async def _seed_fleet(
 
 
 def _device_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
+    k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
-        "devices": {d.identity: {"healthy": True} for d in devices},
+        "devices": {
+            d.identity: {"healthy": i >= k}  # first k unhealthy
+            for i, d in enumerate(devices)
+        },
     }
 
 
 def _node_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
+    k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
         "nodes": [
             {
                 "port": d.port,
-                "pid": d.pid,
+                "pid": d.pid + (1_000_000 if i < k else 0),  # first k: changed pid
                 "connection_target": d.identity,
-                "running": True,
+                "running": i >= k,  # first k: not running
                 "observed_at": now_utc().isoformat(),
             }
-            for d in devices
+            for i, d in enumerate(devices)
         ],
     }
 
 
 def _telemetry_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
+    k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
         "devices": {
             d.identity: {
                 "observed_at": now_utc().isoformat(),
                 "support_status": "supported",
-                "battery_level_percent": 80,
-                "battery_temperature_c": 30.0,
+                "battery_level_percent": 5 if i < k else 80,
+                "battery_temperature_c": 100.0 if i < k else 30.0,  # first k: critical temp
                 "charging_state": "charging",
             }
-            for d in devices
+            for i, d in enumerate(devices)
         },
     }
 
 
 def _properties_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
-    # Steady state: detected os_version matches the seeded value, so
-    # apply_pack_device_properties finds nothing changed and never commits.
+    k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
         "devices": {
             d.identity: {
                 "identity_value": d.identity,
-                "detected_properties": {"os_version": d.spec.os_version},
+                "detected_properties": {"os_version": d.spec.drift_os_version if i < k else d.spec.os_version},
             }
-            for d in devices
+            for i, d in enumerate(devices)
         },
     }
 
@@ -234,8 +242,11 @@ class _QueryTap:
     def __init__(self) -> None:
         self.counter: Counter[str] = Counter()
         self.total = 0
+        self.armed = True
 
     def __call__(self, conn: object, cursor: object, statement: str, *a: object) -> None:
+        if not self.armed:
+            return
         self.total += 1
         self.counter[_signature(statement)] += 1
 
@@ -251,8 +262,59 @@ def _report(label: str, tap: _QueryTap, wall_ms: list[float]) -> None:
         print(f"    {n / ITERS:8.1f}  {sig}")
 
 
+def _dial_stubs() -> contextlib.ExitStack:
+    """Stub every agent-network dial the unhealthy connectivity path can reach so
+    the decision logic runs but no packet leaves. Only fold_host_device_health dials.
+    _get_agent_devices MUST return a set (not None) or the device short-circuits and
+    the write path is never measured.
+    """
+    stack = contextlib.ExitStack()
+    stack.enter_context(
+        patch("app.devices.services.connectivity._fetch_lifecycle_state", new_callable=AsyncMock, return_value=None)
+    )
+    stack.enter_context(
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set())
+    )
+    stack.enter_context(
+        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None)
+    )
+    stack.enter_context(
+        patch(
+            "app.devices.services.link_repair.dispatch_recommended_action",
+            new_callable=AsyncMock,
+            return_value={"success": False},
+        )
+    )
+    return stack
+
+
+async def _measure(
+    label: str,
+    *,
+    seed: Callable[[int], Awaitable[tuple[Host, list[_SeededDevice]]]],
+    run: Callable[[Host, list[_SeededDevice]], Awaitable[None]],
+    tap: _QueryTap,
+) -> None:
+    """Run ITERS timed iterations. Under churn, re-seed a fresh generation per
+    iteration so each iteration measures a real transition (re-observing the same
+    changed device is a cheap no-op once its escalation state is already set). The
+    tap is armed only around the timed run so seed queries are never counted.
+    """
+    tap.armed = False
+    host, devices = await seed(0)
+    wall_ms: list[float] = []
+    for iteration in range(ITERS):
+        if CHURN > 0 and iteration > 0:
+            host, devices = await seed(iteration)  # new generation = clean fresh fleet
+        tap.armed = True
+        t0 = perf_counter()
+        await run(host, devices)
+        wall_ms.append((perf_counter() - t0) * 1000)
+        tap.armed = False
+    _report(label, tap, wall_ms)
+
+
 async def test_bench_device_health_fold(db_session: AsyncSession) -> None:
-    host, devices = await _seed_fleet(db_session, FLEET, DEVICES)
     service = ConnectivityService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
@@ -260,21 +322,21 @@ async def test_bench_device_health_fold(db_session: AsyncSession) -> None:
         lifecycle_policy=AsyncMock(),
         health=DeviceHealthService(publisher=Mock()),
     )
-    section = _device_section(devices, CHURN)
     tap = _QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    wall_ms: list[float] = []
-    with patch("app.devices.services.connectivity._fetch_lifecycle_state", new_callable=AsyncMock, return_value=None):
-        for _ in range(ITERS):
-            t0 = perf_counter()
-            await service.fold_host_device_health(db_session, host.id, section)
-            wall_ms.append((perf_counter() - t0) * 1000)
+
+    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
+        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+
+    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
+        await service.fold_host_device_health(db_session, host.id, _device_section(devices, CHURN))
+
+    with _dial_stubs():
+        await _measure("fold_host_device_health", seed=_seed, run=_run, tap=tap)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    _report("fold_host_device_health", tap, wall_ms)
 
 
 async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
-    host, devices = await _seed_fleet(db_session, FLEET, DEVICES)
     service = NodeHealthService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
@@ -282,49 +344,50 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
-    section = _node_section(devices, CHURN)
     tap = _QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    wall_ms: list[float] = []
-    for _ in range(ITERS):
-        t0 = perf_counter()
-        await service.fold_host_nodes(db_session, host.id, section)
-        wall_ms.append((perf_counter() - t0) * 1000)
+
+    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
+        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+
+    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
+        await service.fold_host_nodes(db_session, host.id, _node_section(devices, CHURN))
+
+    await _measure("fold_host_nodes", seed=_seed, run=_run, tap=tap)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    _report("fold_host_nodes", tap, wall_ms)
 
 
 async def test_bench_device_telemetry_fold(db_session: AsyncSession) -> None:
-    host, devices = await _seed_fleet(db_session, FLEET, DEVICES)
     service = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
-    section = _telemetry_section(devices, CHURN)
     tap = _QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    wall_ms: list[float] = []
-    for _ in range(ITERS):
-        t0 = perf_counter()
-        await service.fold_host_device_telemetry(db_session, host.id, section)
-        wall_ms.append((perf_counter() - t0) * 1000)
+
+    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
+        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+
+    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
+        await service.fold_host_device_telemetry(db_session, host.id, _telemetry_section(devices, CHURN))
+
+    await _measure("fold_host_device_telemetry", seed=_seed, run=_run, tap=tap)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    _report("fold_host_device_telemetry", tap, wall_ms)
 
 
 async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
-    host, devices = await _seed_fleet(db_session, FLEET, DEVICES)
     discovery = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(),
         circuit_breaker=Mock(),
         serializer=Mock(),
-        identity_guard=Mock(),
+        identity_guard=AsyncMock(),
     )
     service = PropertyRefreshService(discovery=discovery)
-    section = _properties_section(devices, CHURN)
     tap = _QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    wall_ms: list[float] = []
-    for _ in range(ITERS):
-        t0 = perf_counter()
-        await service.fold_host_device_properties(db_session, host.id, section)
-        wall_ms.append((perf_counter() - t0) * 1000)
+
+    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
+        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+
+    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
+        await service.fold_host_device_properties(db_session, host.id, _properties_section(devices, CHURN))
+
+    await _measure("fold_host_device_properties", seed=_seed, run=_run, tap=tap)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-    _report("fold_host_device_properties", tap, wall_ms)
