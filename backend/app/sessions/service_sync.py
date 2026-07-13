@@ -23,6 +23,7 @@ from app.lifecycle.services import policy as lifecycle_policy
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 
 if TYPE_CHECKING:
     import uuid
@@ -139,19 +140,33 @@ def _effective_idle_timeout_sec(session: Session, *, idle_timeout: int, ceiling:
     return max(idle_timeout, extension)
 
 
-async def _terminate_for_close(session: Session, target: str | None, *, reap_reason: str | None) -> _LivenessVerdict:
+async def _terminate_for_close(
+    session: Session, target: str | None, *, reap_reason: str | None, force_close: bool = False
+) -> _LivenessVerdict:
     """Terminate the Appium session for a reap/node-stop close, returning the verdict.
 
     Caller holds the per-host semaphore and has already decided this session should
     close (``reap_reason is not None or node_stopped``). A ``defer`` verdict means the
     DB row must stay open (no resolvable target, or an unconfirmed terminate).
+
+    ``force_close`` (probe rows only): close the DB row even when the terminate is
+    unconfirmed or no target resolves. A probe row carries no client session and emits
+    no ``session.ended`` event, so a blind close cannot strand a live foreign session —
+    the reason the default is a conservative ``defer`` for client rows. Once the probe
+    row is closed its id leaves ``live_session_predicate``, so ``_kill_orphans`` on a
+    running node terminates any residual Appium session on the next tick. Without this a
+    probe whose Appium endpoint died (the node respawned on a new port) defers every
+    tick forever and pins its device un-allocatable (WS-16.1 leak).
     """
+    action: _LivenessAction = "close_reap" if reap_reason is not None else "close_node_stopped"
     if target is None:
         # No resolvable Appium target at all: closing the DB row would
         # orphan a possibly-still-live Appium session (and _kill_orphans
         # also skips a None-target device), re-allocating the device while
         # the session keeps holding it. Defer to a later tick when a target
-        # resolves rather than close blind (C3).
+        # resolves rather than close blind (C3) — unless this is a probe row.
+        if force_close:
+            return _LivenessVerdict(action=action, reap_reason=reap_reason)
         return _LivenessVerdict(action="defer", reap_reason=reap_reason, defer_detail="no resolvable Appium target")
     if not await appium_direct.terminate_session(target, session.session_id):
         # Terminate unconfirmed (5xx/timeout): the Appium session may
@@ -159,9 +174,11 @@ async def _terminate_for_close(session: Session, target: str | None, *, reap_rea
         # re-allocation under the live foreign session (wave-5 #3) —
         # keep the row and retry next tick, mirroring run-release.
         # An already-gone session converges: terminate_session maps
-        # 404 to True, so the retry closes it.
+        # 404 to True, so the retry closes it. A probe row force-closes
+        # here instead (no client session to strand).
+        if force_close:
+            return _LivenessVerdict(action=action, reap_reason=reap_reason)
         return _LivenessVerdict(action="defer", reap_reason=reap_reason, defer_detail="Appium terminate failed")
-    action: _LivenessAction = "close_reap" if reap_reason is not None else "close_node_stopped"
     return _LivenessVerdict(action=action, reap_reason=reap_reason)
 
 
@@ -346,7 +363,13 @@ class SessionSyncService:
                 return _LivenessVerdict(action="leave", reap_reason=None)
             async with host_semaphores[device.host_id]:
                 if reap_reason is not None or node_stopped:
-                    return await _terminate_for_close(session, target, reap_reason=reap_reason)
+                    # A probe row (never-commanded past grace, or on a stopped node) whose
+                    # Appium endpoint is unreachable would otherwise defer forever — the
+                    # bounded probe create timeout means a still-running probe row this old
+                    # has no live owner, so force the close (WS-16.1 leak).
+                    return await _terminate_for_close(
+                        session, target, reap_reason=reap_reason, force_close=session.test_name == PROBE_TEST_NAME
+                    )
                 if target is None:
                     return _LivenessVerdict(action="leave", reap_reason=None)  # nothing to probe
                 alive = await appium_direct.session_alive(target, session.session_id)

@@ -27,6 +27,7 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions import service_sync
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
@@ -531,6 +532,41 @@ async def test_never_commanded_session_over_grace_reaped(
     assert device.operational_state_last_emitted == DeviceOperationalState.available
     assert after_grace == before_grace + 1
     assert after_idle == before_idle
+
+
+async def test_leaked_probe_row_force_closed_when_terminate_fails(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A leaked probe row (test_name=PROBE_TEST_NAME) whose Appium endpoint is dead —
+    terminate_session fails every tick — must be force-closed by the sweep, not deferred
+    forever. Client rows still defer (test_idle_session_terminate_failure_defers_close);
+    a probe row carries no client session and emits no session.ended, so a blind close is
+    safe, and orphan-kill mops up any residual Appium session on the next tick. Without
+    this the row pins its device un-allocatable indefinitely (WS-16.1 leak)."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="probe-leak-1", operational_state=DeviceOperationalState.available
+    )
+    session = Session(
+        session_id="sess-leaked-probe",
+        device_id=device.id,
+        test_name=PROBE_TEST_NAME,
+        status=SessionStatus.running,
+        started_at=datetime.now(UTC) - timedelta(seconds=200),
+        last_activity_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    async def fake_terminate_fail(target: str, session_id: str, **_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate_fail)
+
+    await _idle_sync_service(idle_timeout_sec=86400, first_command_grace_sec=180).sync(db_session)
+
+    await db_session.refresh(session)
+    assert session.status != SessionStatus.running
+    assert session.ended_at is not None
 
 
 async def test_never_commanded_session_under_grace_untouched(
