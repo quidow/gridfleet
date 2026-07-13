@@ -19,6 +19,7 @@ from app.devices.services.intent_types import verification_intent_source
 from app.devices.services.state import derive_operational_state, is_available_sql
 from app.grid import appium_direct
 from app.grid.allocation import node_target
+from app.grid.session_create import effective_create_timeout
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import (
     ProbeSource,
@@ -254,7 +255,16 @@ class SessionViabilityService:
 
         attempted_at = _now_iso()
         _clear_session_viability_from_config(device)
-        timeout_sec = self._settings.get_int("general.session_viability_timeout_sec")
+        # Bound the probe's Appium-create timeout below grid.claim_window_sec, exactly
+        # as backend-owned client creates do (effective_create_timeout). The probe holds
+        # a ``pending`` birth-row from claim until create returns; if the create runs the
+        # full session_viability_timeout_sec and that meets/exceeds the claim window, the
+        # allocation reaper fails the still-in-flight row as a crash orphan and flaps the
+        # device available->offline (WS-16.1). Slow cold uiautomator2 creates hit this.
+        timeout_sec = min(
+            self._settings.get_int("general.session_viability_timeout_sec"),
+            int(effective_create_timeout(self._settings.get_int("grid.claim_window_sec"))),
+        )
         node = device.appium_node
         if not node or not node.observed_running:
             state = await _write_session_viability(

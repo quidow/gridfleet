@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.capability import DeviceCapabilityService
+from app.grid.session_create import CREATE_TIMEOUT_MARGIN_SEC, effective_create_timeout
 from app.sessions import service_viability as session_viability
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -960,6 +961,114 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     assert device.device_config == {}
     handler.assert_awaited_once()
     assert handler.await_args.kwargs["reason"] == "Appium session viability probe failed"
+
+
+async def _capture_probe_create_timeout(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    settings: FakeSettingsReader,
+    identity: str,
+    port: int,
+) -> int:
+    """Run a viability probe on an available device and return the timeout the probe
+    passed to ``probe_session_direct`` (the Appium-create timeout)."""
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name=f"Probe Timeout {identity}",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=port,
+        desired_state=AppiumDesiredState.running,
+        desired_port=port,
+        pid=1234,
+        active_connection_target=identity,
+    )
+    device.appium_node = node
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available, hold=None)
+    monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
+    monkeypatch.setattr(
+        session_viability,
+        "IntentService",
+        MagicMock(
+            return_value=MagicMock(reconcile_now=AsyncMock(), mark_dirty=AsyncMock(), revoke_intents=AsyncMock())
+        ),
+    )
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "passed"}))
+    probe_spy = AsyncMock(return_value=(True, None))
+    monkeypatch.setattr(_svc, "probe_session_direct", probe_spy)
+
+    await run_session_viability_probe(
+        db_session,
+        device,
+        checked_by=session_viability.SessionViabilityCheckedBy.manual,
+        settings=settings,
+    )
+
+    probe_spy.assert_awaited_once()
+    # probe_session_direct(capabilities, timeout_sec, *, target, on_created)
+    return int(probe_spy.await_args.args[1])
+
+
+async def test_probe_create_timeout_is_bounded_below_claim_window(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe whose configured timeout meets/exceeds ``grid.claim_window_sec`` must
+    still be capped below the claim window, so the allocation reaper cannot fail the
+    probe's in-flight ``pending`` birth-row mid-create (WS-16.1 flap: a slow create
+    ran the full 120s ``session_viability_timeout_sec``, colliding with the equal
+    120s claim window and flapping the device available->offline)."""
+    claim_window = 120
+    passed_timeout = await _capture_probe_create_timeout(
+        db_session,
+        db_host,
+        monkeypatch,
+        settings=FakeSettingsReader(
+            {"general.session_viability_timeout_sec": 120, "grid.claim_window_sec": claim_window}
+        ),
+        identity="probe-timeout-cap-001",
+        port=4790,
+    )
+    assert passed_timeout <= claim_window - CREATE_TIMEOUT_MARGIN_SEC
+    assert passed_timeout == int(effective_create_timeout(claim_window))
+
+
+async def test_probe_create_timeout_below_claim_window_passes_through(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured timeout already comfortably below the claim window is honored
+    as-is — the cap only lowers, never raises, the probe's create timeout."""
+    passed_timeout = await _capture_probe_create_timeout(
+        db_session,
+        db_host,
+        monkeypatch,
+        settings=FakeSettingsReader({"general.session_viability_timeout_sec": 30, "grid.claim_window_sec": 120}),
+        identity="probe-timeout-passthrough-001",
+        port=4791,
+    )
+    assert passed_timeout == 30
 
 
 async def test_run_session_viability_probe_restores_previous_state_on_exception(
