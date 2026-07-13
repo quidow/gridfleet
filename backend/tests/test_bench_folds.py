@@ -18,6 +18,7 @@ part of what we are measuring).
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import re
 from collections import Counter
@@ -31,7 +32,10 @@ import pytest
 from sqlalchemy import event
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
+from app.appium_nodes.services.reconciler import ReconcilerService, converge_pushed_host
+from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
 from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.connectivity import ConnectivityService
@@ -40,6 +44,7 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
+from app.hosts.service_status_push import HostStatusPushService, ObservationFold
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -425,3 +430,133 @@ async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
         tap.armed = False
     _report("fold_host_telemetry", tap, wall_ms)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
+
+
+class _CommitTap:
+    def __init__(self) -> None:
+        self.count = 0
+        self.armed = True
+
+    def __call__(self, conn: object) -> None:
+        if self.armed:
+            self.count += 1
+
+
+def _observation_failure_total() -> float:
+    """Sum every child counter of HOST_PUSH_OBSERVATION_FAILURES. process_observations
+    swallows per-stage exceptions and bumps this; a stubbing gap would silently skip a
+    stage and undercount, so the whole-push bench asserts this does not rise."""
+    return sum(
+        sample.value
+        for metric in HOST_PUSH_OBSERVATION_FAILURES.collect()
+        for sample in metric.samples
+        if sample.name.endswith("_total")
+    )
+
+
+def _build_push_service(session_factory: object) -> HostStatusPushService:
+    settings = FakeSettingsReader({})
+    node_health = NodeHealthService(
+        publisher=event_bus,
+        settings=settings,
+        recovery_control=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
+    )
+    connectivity = ConnectivityService(
+        publisher=event_bus,
+        settings=settings,
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
+    )
+    hardware_telemetry = HardwareTelemetryService(publisher=event_bus, settings=settings)
+    discovery = PackDiscoveryService(
+        agent_get_pack_devices=AsyncMock(), circuit_breaker=Mock(), serializer=Mock(), identity_guard=AsyncMock()
+    )
+    property_refresh = PropertyRefreshService(discovery=discovery)
+    resource_telemetry = HostResourceTelemetryService(settings=settings)
+    reconciler = ReconcilerService(
+        publisher=event_bus, settings=settings, pool=None, circuit_breaker=Mock(), session_factory=session_factory
+    )
+    heartbeat = HeartbeatService(
+        publisher=event_bus, settings=settings, pool=Mock(), circuit_breaker=Mock(), session_factory=session_factory
+    )
+    return HostStatusPushService(
+        publisher=event_bus,
+        session_factory=session_factory,
+        observation_folds=(
+            ObservationFold("node_health", node_health.fold_host_nodes),
+            ObservationFold("device_health", connectivity.fold_host_device_health),
+            ObservationFold("device_telemetry", hardware_telemetry.fold_host_device_telemetry),
+            ObservationFold("device_properties", property_refresh.fold_host_device_properties),
+            ObservationFold("host_telemetry", resource_telemetry.fold_host_telemetry),
+        ),
+        converge_host=functools.partial(converge_pushed_host, session_factory=session_factory, reconciler=reconciler),
+        ingest_restart_events=heartbeat.ingest_restart_events,
+    )
+
+
+def _consolidated_payload(devices: list[_SeededDevice], churn: float) -> dict[str, object]:
+    node_section = _node_section(devices, churn)
+    return {
+        "appium_processes": {
+            "nodes": node_section["nodes"],
+            "recent_restart_events": [],
+            "start_failures": [],
+        },
+        "host_telemetry": _host_telemetry_sample(0),
+        "node_health": node_section,
+        "device_health": _device_section(devices, churn),
+        "device_telemetry": _telemetry_section(devices, churn),
+        "device_properties": _properties_section(devices, churn),
+    }
+
+
+def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]) -> None:
+    avg = sum(wall_ms) / len(wall_ms)
+    q_per_push = tap.total / ITERS
+    print(f"\n{'=' * 78}\nwhole_push (all stages): {DEVICES} devices x {ITERS} iters  churn={CHURN}")
+    print(f"  wall per push:     avg {avg:.1f} ms   ({', '.join(f'{w:.0f}' for w in wall_ms)})")
+    print(f"  QUERIES per push:  {q_per_push:.0f}   ({q_per_push / DEVICES:.2f} per device)")
+    print(f"  COMMITS per push:  {commits.count / ITERS:.1f}")
+    print("  top statements per push:")
+    for sig, n in tap.counter.most_common(18):
+        print(f"    {n / ITERS:8.1f}  {sig}")
+
+
+async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: object) -> None:
+    service = _build_push_service(db_session_maker)
+    tap = _QueryTap()
+    commits = _CommitTap()
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", tap)
+    event.listen(engine, "commit", commits)
+    failures_before = _observation_failure_total()
+
+    tap.armed = False
+    commits.armed = False
+    host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
+    await db_session.commit()  # ensure the seed is visible to factory-opened sessions
+    wall_ms: list[float] = []
+    with _dial_stubs():
+        for iteration in range(ITERS):
+            if CHURN > 0 and iteration > 0:
+                host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+                await db_session.commit()
+            payload = _consolidated_payload(devices, CHURN)
+            tap.armed = True
+            commits.armed = True
+            t0 = perf_counter()
+            await service.process_observations(
+                host_id=host.id, host_ip=host.ip, agent_port=host.agent_port, payload=payload
+            )
+            wall_ms.append((perf_counter() - t0) * 1000)
+            tap.armed = False
+            commits.armed = False
+
+    event.remove(engine, "before_cursor_execute", tap)
+    event.remove(engine, "commit", commits)
+    _report_whole_push(tap, commits, wall_ms)
+    # Guard: a stubbing gap would make process_observations silently skip a stage.
+    assert _observation_failure_total() == failures_before, "a whole-push stage failed (check dial stubs / wiring)"
