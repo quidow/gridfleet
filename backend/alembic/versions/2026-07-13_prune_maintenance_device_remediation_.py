@@ -30,10 +30,13 @@ def upgrade() -> None:
         "WHERE d.lifecycle_policy_state->>'maintenance_reason' IS NOT NULL "
         f"LIMIT {_BATCH_SIZE})"
     )
-    # Alembic runs this migration with transaction_per_migration=True, but issuing a raw
-    # COMMIT here still works: SQLAlchemy 2.0's autobegin transparently reopens a new
-    # transaction on the next statement, so each batch commits independently (bounded
-    # WAL/lock footprint) and Alembic's own version-stamp write still lands cleanly.
+    # Each batch commits independently so transaction size / WAL stays bounded on
+    # a large table. The raw COMMIT ends Alembic's per-migration transaction;
+    # later batches then run under Postgres's implicit per-statement autocommit (no
+    # BEGIN is reissued). At the end Alembic issues one more COMMIT for its own
+    # version-stamp write, which asyncpg/Postgres accept as a harmless no-op, so the
+    # stamp still lands. NOTE: this relies on asyncpg tolerating a redundant COMMIT;
+    # revisit if the DB driver ever changes (e.g. to psycopg).
     while True:
         result = bind.execute(delete_batch)
         if result.rowcount == 0:
