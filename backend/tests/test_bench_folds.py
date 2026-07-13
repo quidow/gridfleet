@@ -181,9 +181,9 @@ def _node_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str,
         "nodes": [
             {
                 "port": d.port,
-                "pid": d.pid + (1_000_000 if i < k else 0),  # first k: changed pid
+                "pid": d.pid,  # kept matching so the fold does not stale-skip
                 "connection_target": d.identity,
-                "running": i >= k,  # first k: not running
+                "running": i >= k,  # first k: not running -> "refused" -> health-failure write path
                 "observed_at": now_utc().isoformat(),
             }
             for i, d in enumerate(devices)
