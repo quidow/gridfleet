@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,11 +13,37 @@ from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.packs.services.release_ordering import selected_release
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class PackPlatformNotFound(LookupError):  # noqa: N818
     pass
+
+
+_ResolveCache = dict[tuple[str, str, str | None], "ResolvedPackPlatform | PackPlatformNotFound"]
+_resolve_cache: contextvars.ContextVar[_ResolveCache | None] = contextvars.ContextVar(
+    "pack_platform_resolve_cache", default=None
+)
+
+
+@contextlib.contextmanager
+def pack_platform_resolution_cache() -> Iterator[None]:
+    """Memoize :func:`resolve_pack_platform` by ``(pack_id, platform_id, device_type)``
+    for the dynamic extent of this block.
+
+    Off by default (the ContextVar is ``None``). A status-push fold enters it so a
+    host's near-identical devices resolve the shared pack manifest once instead of
+    once per device — each resolve is a 3-query pack/release/platform load plus a
+    JSONB manifest decode. The cache is fresh per block, so pack edits between
+    pushes are always re-read, and it is inert for every caller outside the block.
+    """
+    token = _resolve_cache.set({})
+    try:
+        yield
+    finally:
+        _resolve_cache.reset(token)
 
 
 @dataclass(frozen=True)
@@ -53,6 +81,35 @@ class ResolvedPackPlatform:
 
 
 async def resolve_pack_platform(
+    session: AsyncSession,
+    *,
+    pack_id: str,
+    platform_id: str,
+    device_type: str | None = None,
+) -> ResolvedPackPlatform:
+    cache = _resolve_cache.get()
+    if cache is None:
+        return await _resolve_pack_platform_uncached(
+            session, pack_id=pack_id, platform_id=platform_id, device_type=device_type
+        )
+    key = (pack_id, platform_id, device_type)
+    cached = cache.get(key)
+    if cached is not None:
+        if isinstance(cached, PackPlatformNotFound):
+            raise cached
+        return cached
+    try:
+        resolved = await _resolve_pack_platform_uncached(
+            session, pack_id=pack_id, platform_id=platform_id, device_type=device_type
+        )
+    except PackPlatformNotFound as exc:
+        cache[key] = exc
+        raise
+    cache[key] = resolved
+    return resolved
+
+
+async def _resolve_pack_platform_uncached(
     session: AsyncSession,
     *,
     pack_id: str,

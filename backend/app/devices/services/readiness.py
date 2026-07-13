@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -8,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,28 @@ from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services import release_ordering as pack_release_ordering
 
 selected_release = pack_release_ordering.selected_release
+
+# Fold-scoped pack catalog: a status-push fold preloads the catalog once and enters
+# this block so the per-device readiness assessment reuses it instead of issuing a
+# pack/release/platform load per device. Off by default (ContextVar None); the
+# missing-pack self-heal in ``assess_device_async`` still covers a stale snapshot.
+_preloaded_packs: contextvars.ContextVar[dict[str, DriverPack] | None] = contextvars.ContextVar(
+    "readiness_preloaded_packs", default=None
+)
+
+
+@contextlib.contextmanager
+def preloaded_pack_catalog(packs: dict[str, DriverPack]) -> Iterator[None]:
+    """Reuse *packs* for readiness assessment within this block. The catalog is
+    fully eager-loaded (releases + platforms) and stays valid across the fold's
+    per-device commits because the control-plane session is ``expire_on_commit=False``."""
+    token = _preloaded_packs.set(packs)
+    try:
+        yield
+    finally:
+        _preloaded_packs.reset(token)
+
+
 DEVICE_FIELD_ATTRS = frozenset(
     {
         "connection_target",
@@ -176,6 +200,9 @@ async def assess_device_async(
     if not pack_id or not getattr(device, "platform_id", None):
         return _assess_device_with_pack(device, None)
     caller_supplied = packs is not None
+    if packs is None:
+        packs = _preloaded_packs.get()
+        caller_supplied = packs is not None
     if packs is None:
         packs = await load_packs_by_ids(session, [pack_id])
     pack = packs.get(pack_id)

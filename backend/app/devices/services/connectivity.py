@@ -26,7 +26,7 @@ from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids, preloaded_pack_catalog
 from app.devices.services.state import derive_operational_state, maintenance_sql
 from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+pack_platform_resolution_cache = pack_platform_resolver.pack_platform_resolution_cache
 
 
 async def _resolve_platform_or_none(db: AsyncSession, device: Device) -> ResolvedPackPlatform | None:
@@ -913,59 +914,71 @@ class ConnectivityService:
             probe_failed=float(self._settings.get("device_checks.probe_failed.fail_window_sec")),
         )
 
-        all_devices, lifecycle_capable, claimed_ports_by_id = await self._collect_prepass_devices(db, [host])
-        raw = section.get("devices")
-        observations: dict[str, Any] = raw if isinstance(raw, dict) else {}
+        # Memoize pack-platform resolution for the whole fold: a host's devices
+        # share a (pack_id, platform_id, device_type) tuple, so the per-device
+        # capability check and repair path would otherwise re-run the same 3-query
+        # manifest resolve + JSONB decode once per device.
+        with pack_platform_resolution_cache():
+            all_devices, lifecycle_capable, claimed_ports_by_id = await self._collect_prepass_devices(db, [host])
+            raw = section.get("devices")
+            observations: dict[str, Any] = raw if isinstance(raw, dict) else {}
 
-        lifecycle_by_id = await self._fetch_lifecycle_states(
-            [device for device in all_devices if device.id in lifecycle_capable]
-        )
-        health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]] = {}
-        for device in all_devices:
-            observed = observations.get(device.connection_target) if device.connection_target else None
-            health_by_device_id[device.id] = (
-                observed if isinstance(observed, dict) else None,
-                lifecycle_by_id.get(device.id),
+            lifecycle_by_id = await self._fetch_lifecycle_states(
+                [device for device in all_devices if device.id in lifecycle_capable]
             )
-
-        apply_started = perf_counter()
-        # WI-6 lazy presence: the agent enumeration (a discovery sweep — SSDP for
-        # network packs) runs at most once per host, only when a device's pushed
-        # health observation does not confirm presence. Cached so a fleet of
-        # healthy devices never pays for a sweep.
-        connected_targets_by_host: dict[uuid.UUID, set[str] | None] = {}
-        for device in all_devices:
-            host_ref = cast("Host", device.host)
-            # Per-device commit (repo contract: observation loops commit per
-            # device after the locked write window).
-            await db.commit()
-            verdict = await self._resolve_device_verdict(
-                db,
-                device,
-                host_ref,
-                health_by_device_id=health_by_device_id,
-                claimed_ports_by_id=claimed_ports_by_id,
-                debounce_windows=debounce_windows,
-                observed_at=observed_at,
-            )
-            if verdict is None:
-                continue
-            healthy, ip_ping_entry, health_result = verdict
-            if healthy:
-                await self._handle_healthy_device(
-                    db,
-                    device,
-                    ip_ping_entry=ip_ping_entry,
-                    ip_ping_window_sec=debounce_windows.ip_ping,
-                    observed_at=observed_at,
+            health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]] = {}
+            for device in all_devices:
+                observed = observations.get(device.connection_target) if device.connection_target else None
+                health_by_device_id[device.id] = (
+                    observed if isinstance(observed, dict) else None,
+                    lifecycle_by_id.get(device.id),
                 )
-                continue
-            await self._handle_unhealthy_device(
-                db,
-                device,
-                host_ref,
-                health_result=health_result,
-                connected_targets_by_host=connected_targets_by_host,
-            )
-        metrics.record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
-        await db.commit()
+
+            # Preload the pack catalog once and reuse it for every per-device
+            # readiness assessment (derive_operational_state) below, instead of a
+            # pack/release/platform load per device. Valid across the per-device
+            # commits because the control-plane session is expire_on_commit=False.
+            fold_packs = await load_packs_by_ids(db, {d.pack_id for d in all_devices if d.pack_id})
+
+            apply_started = perf_counter()
+            # WI-6 lazy presence: the agent enumeration (a discovery sweep — SSDP for
+            # network packs) runs at most once per host, only when a device's pushed
+            # health observation does not confirm presence. Cached so a fleet of
+            # healthy devices never pays for a sweep.
+            connected_targets_by_host: dict[uuid.UUID, set[str] | None] = {}
+            with preloaded_pack_catalog(fold_packs):
+                for device in all_devices:
+                    host_ref = cast("Host", device.host)
+                    # Per-device commit (repo contract: observation loops commit per
+                    # device after the locked write window).
+                    await db.commit()
+                    verdict = await self._resolve_device_verdict(
+                        db,
+                        device,
+                        host_ref,
+                        health_by_device_id=health_by_device_id,
+                        claimed_ports_by_id=claimed_ports_by_id,
+                        debounce_windows=debounce_windows,
+                        observed_at=observed_at,
+                    )
+                    if verdict is None:
+                        continue
+                    healthy, ip_ping_entry, health_result = verdict
+                    if healthy:
+                        await self._handle_healthy_device(
+                            db,
+                            device,
+                            ip_ping_entry=ip_ping_entry,
+                            ip_ping_window_sec=debounce_windows.ip_ping,
+                            observed_at=observed_at,
+                        )
+                        continue
+                    await self._handle_unhealthy_device(
+                        db,
+                        device,
+                        host_ref,
+                        health_result=health_result,
+                        connected_targets_by_host=connected_targets_by_host,
+                    )
+            metrics.record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
+            await db.commit()
