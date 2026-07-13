@@ -7,7 +7,7 @@ instead of prod py-spy sampling.
 
 Skipped in the normal suite. Run explicitly:
 
-    FOLD_BENCH=1 FOLD_BENCH_DEVICES=100 FOLD_BENCH_ITERS=3 \
+    FOLD_BENCH=1 FOLD_BENCH_DEVICES=50 FOLD_BENCH_ITERS=3 \
         uv run pytest -s -p no:randomly tests/test_bench_folds.py -o addopts=""
 
 Only the agent *network* dial is stubbed; ``_lifecycle_state_capable`` /
@@ -280,8 +280,12 @@ def _dial_stubs() -> contextlib.ExitStack:
         patch("app.devices.services.connectivity._fetch_lifecycle_state", new_callable=AsyncMock, return_value=None)
     )
     stack.enter_context(
+        # Empty set -> churned devices take the disconnect write path; returning device
+        # aliases would instead exercise the escalate path.
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set())
     )
+    # Unreachable with the current churn payload (no recommended_action -> no repair
+    # dispatch); kept as defensive coverage if a future churn payload adds one.
     stack.enter_context(
         patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None)
     )
@@ -445,7 +449,13 @@ class _CommitTap:
 def _observation_failure_total() -> float:
     """Sum every child counter of HOST_PUSH_OBSERVATION_FAILURES. process_observations
     swallows per-stage exceptions and bumps this; a stubbing gap would silently skip a
-    stage and undercount, so the whole-push bench asserts this does not rise."""
+    stage and undercount, so the whole-push bench asserts this does not rise.
+
+    Catches STAGE-level failures only: restart ingest, convergence, and each fold that
+    raises out of process_observations (including the dial-seam-bearing device_health
+    fold). It does NOT catch per-device errors that the telemetry/properties/host_telemetry
+    folds swallow internally via db.rollback() + logger.exception -- acceptable here
+    because those three folds have no agent-dial seams for a stubbing gap to break."""
     return sum(
         sample.value
         for metric in HOST_PUSH_OBSERVATION_FAILURES.collect()
