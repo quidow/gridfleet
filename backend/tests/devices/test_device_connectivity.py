@@ -2501,6 +2501,67 @@ async def test_answered_probe_resets_unanswered_counter(db_session: AsyncSession
     lifecycle_policy.handle_health_failure.assert_not_awaited()
 
 
+async def test_maintenance_device_is_not_folded_or_escalated(db_session: AsyncSession) -> None:
+    """A maintenance device is no longer probed by the agent (Task 1), so the fold
+    must exclude it from the pre-pass entirely instead of treating the missing
+    observation as an unanswered-probe failure and appending a remediation-log row."""
+    from sqlalchemy import func, select
+
+    from app.devices.models import DeviceRemediationLogEntry
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.incidents import LifecycleIncidentService
+    from app.lifecycle.services.policy import LifecyclePolicyService
+    from app.runs.service_reservation import RunReservationService
+    from tests.fakes import build_review_service
+
+    _host, device, _ = await _setup_host_and_device(
+        db_session,
+        connection_target="maint-fold",
+        device_operational_state=DeviceOperationalState.maintenance,
+        with_node=True,
+    )
+    # A real (non-mocked) lifecycle policy so a genuine escalation would append a
+    # real DeviceRemediationLogEntry row via handle_health_failure.
+    lifecycle_policy = LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+    )
+    svc = ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle_policy,
+        health=DeviceHealthService(publisher=Mock()),
+    )
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None),
+        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
+    ):
+        # The agent no longer probes it, so the fold never sees a health observation
+        # for it. Three cycles crossing the probe_unanswered debounce window (120s
+        # default) mirror test_unanswered_probe_marks_unhealthy_on_threshold above.
+        t0 = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+        await _run_connectivity_fold(svc, db_session, reported_at=t0)
+        await _run_connectivity_fold(svc, db_session, reported_at=t0 + timedelta(seconds=60))
+        await _run_connectivity_fold(svc, db_session, reported_at=t0 + timedelta(seconds=120))
+
+    count = await db_session.scalar(
+        select(func.count())
+        .select_from(DeviceRemediationLogEntry)
+        .where(DeviceRemediationLogEntry.device_id == device.id)
+    )
+    assert count == 0
+
+
 async def test_disconnected_already_recorded_device_skips_reconcile(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

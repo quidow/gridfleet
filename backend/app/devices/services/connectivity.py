@@ -26,7 +26,7 @@ from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import derive_operational_state
+from app.devices.services.state import derive_operational_state, maintenance_sql
 from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -739,6 +739,7 @@ class ConnectivityService:
             device_stmt = (
                 select(Device)
                 .where(Device.host_id == host.id)
+                .where(~maintenance_sql())
                 .options(selectinload(Device.appium_node), selectinload(Device.host))
             )
             devices = (await db.execute(device_stmt)).scalars().all()
