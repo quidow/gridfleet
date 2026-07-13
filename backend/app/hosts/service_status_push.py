@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES, record_host_status_push
+from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.hosts.models import Host
 from app.hosts.service import normalize_capabilities, update_missing_prerequisites_from_health
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     import uuid
@@ -87,6 +91,7 @@ class HostStatusPushService:
         if self._session_factory is None:
             return
         if self._ingest_restart_events is not None:
+            started = perf_counter()
             try:
                 async with self._session_factory() as db:
                     host = await db.get(Host, host_id)
@@ -95,7 +100,9 @@ class HostStatusPushService:
                         await db.commit()
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage="restart_events").inc()
+            self._log_stage("restart_events", host_id, started)
         if self._converge_host is not None:
+            started = perf_counter()
             try:
                 await self._converge_host(
                     host_id=host_id,
@@ -105,13 +112,27 @@ class HostStatusPushService:
                 )
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage="convergence").inc()
+            self._log_stage("convergence", host_id, started)
         for entry in self._observation_folds:
             section = payload.get(entry.section)
             if not isinstance(section, dict):
                 continue
+            started = perf_counter()
             try:
                 async with self._session_factory() as fold_db:
                     await entry.fold(fold_db, host_id, section)
                     await fold_db.commit()
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
+            self._log_stage(f"fold:{entry.section}", host_id, started)
+
+    @staticmethod
+    def _log_stage(stage: str, host_id: uuid.UUID, started: float) -> None:
+        """Per-stage timing for the consolidated push ingest (diagnostic: which
+        stage dominates the handler's CPU). Emitted per push per stage."""
+        logger.info(
+            "status_push_stage",
+            stage=stage,
+            host_id=str(host_id),
+            duration_ms=round((perf_counter() - started) * 1000, 1),
+        )
