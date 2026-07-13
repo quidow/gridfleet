@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import defer, selectinload
+from sqlalchemy.orm import defer
 
 from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -92,8 +92,9 @@ class NodeHealthService:
                 # live_capabilities is a large JSONB this fold never reads; deferring it
                 # skips a per-node JSON decode on every status push.
                 defer(AppiumNode.live_capabilities),
-                selectinload(AppiumNode.device).selectinload(Device.host),
-                selectinload(AppiumNode.device).selectinload(Device.appium_node).defer(AppiumNode.live_capabilities),
+                # The fold re-locks the device by id (lock_device below) and never reads
+                # node.device off this select, so eager-loading the device graph (and the
+                # circular device->appium_node back-ref) was pure per-push query overhead.
             )
             .order_by(AppiumNode.device_id)
         )
