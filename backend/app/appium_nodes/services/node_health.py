@@ -106,7 +106,10 @@ class NodeHealthService:
                 continue
             result = from_status_response(entry)
             try:
-                locked_device = await device_locking.lock_device(db, node.device_id, load_sessions=True)
+                # No load_sessions: the node-health path never reads device.sessions
+                # off this row — apply_node_state_transition and the recovery-control
+                # methods each re-lock the device and load what they need.
+                locked_device = await device_locking.lock_device(db, node.device_id)
             except NoResultFound:
                 logger.warning("Node health fold skipped: device %s no longer exists", node.device_id)
                 await db.commit()
