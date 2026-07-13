@@ -414,6 +414,7 @@ async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
     service = HostResourceTelemetryService(settings=FakeSettingsReader({}))
     tap = _QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
+    tap.armed = False  # exclude the one-time seed from the per-push query count
     host, _devices = await _seed_fleet(db_session, FLEET, DEVICES)
     wall_ms: list[float] = []
     for iteration in range(ITERS):
