@@ -2,40 +2,39 @@
 
 Implementation-level reference for the flows that move a device from "plugged in" to "running a test session". Companion to the operator-facing material under `docs/guides/` and `docs/runbooks/`.
 
-These docs exist because the recent class of node/device bugs (split-brain between DB and agent, snapshot drift, port leaks, transient-blip flapping) all came from code paths that violated invariants the system depends on but had not written down anywhere. Each doc is the contract for one set of those invariants.
+These docs exist because the recurring class of node/device bugs (split-brain between DB and agent, snapshot drift, port leaks, transient-blip flapping) came from code paths that violated invariants the system depends on but had not written down. Each doc is the contract for one set of those invariants.
+
+## The prune doctrine
+
+These docs carry **rationale, invariants, and pointers — never mechanical enumerations the code or a reference doc already owns.** Writer tables live in `PROTECTED_COLUMN_WRITERS` (`backend/tests/contracts/test_no_direct_device_state_writes.py`); the loop roster lives in `_build_leader_loop_tasks` (`backend/app/main.py`); the dial catalog lives in `backend/app/agent_comm/operations.py`; event names live in `docs/reference/events.md`. Exactly two enumerations remain in these docs — doc 3's loop roster and doc 4's dial catalog — and both are pinned in both directions by `backend/tests/contracts/test_design_doc_parity.py`.
+
+If you are about to paste a table of code facts into a design doc: add a pointer to the owner instead, or — if the table genuinely earns its keep — add a parity test in the same PR. Commit hashes and phase-migration history do not belong here; git owns history.
 
 ## Reading order
 
 | # | Doc | What it covers |
 | --- | --- | --- |
-| 1 | [Device State Model](01-device-state-model.md) | The independent axes of device state, who writes them, and the locking invariant |
-| 2 | [Node Lifecycle](02-node-lifecycle.md) | Start/stop/restart sequences, agent-ack contract, split-brain prevention rules |
-| 3 | [Health & Reconciliation Loops](03-health-and-reconciliation.md) | Background loop catalog, leader pattern, tri-state probe, snapshot vs source-of-truth |
-| 4 | [Backend ↔ Agent Contract](04-backend-agent-contract.md) | HTTP endpoint catalog, failure model, circuit breaker, idempotency |
-| 5 | [Allocations, Ports, Sessions](05-allocation-ports-sessions.md) | Owner bundles, port pools, Grid sessions, run integration |
+| 1 | [Device State Model](01-device-state-model.md) | The independent axes of device state, the read-time projection, and the locking invariant |
+| 2 | [Node Lifecycle](02-node-lifecycle.md) | Pull-model start/stop/restart, the restart watermark, split-brain prevention rules |
+| 3 | [Health & Reconciliation Loops](03-health-and-reconciliation.md) | Scheduler launch guard, the pinned loop roster, tri-state probe, one-home-per-fact |
+| 4 | [Backend ↔ Agent Contract](04-backend-agent-contract.md) | The pinned dial catalog, push surface, failure model, circuit breaker, versioning |
+| 5 | [Allocations, Ports, Sessions](05-allocation-ports-sessions.md) | Typed claims, port authority, backend-owned session create, run integration |
 
-Read in order. Each doc assumes the previous ones; a forward reference is always to a "What this doc does NOT cover" section in another file.
-
-Open follow-up specs, when present, live under `docs/design/specs/`. They are intentionally separate from the implementation-state docs: the numbered docs describe what is true today; specs describe proposed simplifications or reliability fixes that still need implementation.
+Read in order; each doc assumes the previous ones. Open follow-up specs, when present, live under `docs/design/specs/` — the numbered docs describe what is true today; specs describe proposals.
 
 ## When to update these
 
-- A new background loop, a new endpoint, or a new state field — update the corresponding doc *with the same PR* that adds the code.
-- A new split-brain class of bug — distil the invariant that was violated and add it to the relevant doc's checklist (Doc 2 has the canonical example).
-- A removed feature — remove the doc rows, do not leave stubs. These are reference docs, not change logs.
+- A change that breaks a pinned table fails `test_design_doc_parity` — update the table in the same PR.
+- A new split-brain class of bug: distil the violated invariant into the relevant doc's checklist (Doc 2 has the canonical example).
+- A removed feature: remove the doc rows; these are reference docs, not change logs.
 
 ## Citation baseline
 
-References in these docs cite **file paths and function/class names**, not line numbers. Lines drift as code moves; functions are renamed less often. If a citation no longer points to a real symbol (e.g. a file was consolidated, a function renamed), search by symbol name in the current tree and update the doc in place. Last citation refresh: 2026-06-30.
-
-## Deferred stop note (`deferred_stop`)
-
-The current implementation has a `deferred_stop` lifecycle path: the `appium_sweep` sync pass runs `_sweep_stale_deferred_stop`, `app.lifecycle.services.policy.clear_pending_auto_stop_on_recovery` clears the intent on health recovery, and lifecycle failure paths set `Device.lifecycle_policy_state["deferred_stop"] = true` when an active client session prevents an immediate stop. Doc 1 documents the JSON fields. The backstop is implemented in `backend/app/sessions/service_sync.py` and runs on every sweep cycle.
+References cite **file paths and function/class names**, not line numbers or commit hashes. If a citation no longer points to a real symbol, search by symbol name and update in place. Last citation refresh: 2026-07-13.
 
 ## Companion docs
 
-These design docs deliberately do not duplicate operator workflow content. For that, see:
-
+- `docs/reference/device-lifecycle.md` — the canonical `operational_state` writer model and remediation ladder (design docs summarize it, never contradict it)
 - `docs/guides/lifecycle-maintenance-and-recovery.md` — operator semantics for maintenance, reconnect, lifecycle states
 - `docs/guides/verification-and-readiness.md` — verification stages, readiness gates
 - `docs/guides/device-intake-and-discovery.md` — device intake lanes
