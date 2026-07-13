@@ -22,6 +22,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass
+from datetime import timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
@@ -38,6 +39,7 @@ from app.devices.services.health import DeviceHealthService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -390,4 +392,35 @@ async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
         await service.fold_host_device_properties(db_session, host.id, _properties_section(devices, CHURN))
 
     await _measure("fold_host_device_properties", seed=_seed, run=_run, tap=tap)
+    event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
+
+
+def _host_telemetry_sample(iteration: int) -> dict[str, object]:
+    # Advance recorded_at past the 60 s rate-limit each iteration so every
+    # iteration performs a real insert rather than being skipped.
+    recorded_at = now_utc() + timedelta(seconds=iteration * 120)
+    return {
+        "recorded_at": recorded_at.isoformat(),
+        "cpu_percent": 42.0,
+        "memory_used_mb": 8000,
+        "memory_total_mb": 16000,
+        "disk_used_gb": 100.0,
+        "disk_total_gb": 500.0,
+        "disk_percent": 20.0,
+    }
+
+
+async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
+    service = HostResourceTelemetryService(settings=FakeSettingsReader({}))
+    tap = _QueryTap()
+    event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
+    host, _devices = await _seed_fleet(db_session, FLEET, DEVICES)
+    wall_ms: list[float] = []
+    for iteration in range(ITERS):
+        tap.armed = True
+        t0 = perf_counter()
+        await service.fold_host_telemetry(db_session, host.id, _host_telemetry_sample(iteration))
+        wall_ms.append((perf_counter() - t0) * 1000)
+        tap.armed = False
+    _report("fold_host_telemetry", tap, wall_ms)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
