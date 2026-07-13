@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
@@ -740,7 +741,12 @@ class ConnectivityService:
                 select(Device)
                 .where(Device.host_id == host.id)
                 .where(~maintenance_sql())
-                .options(selectinload(Device.appium_node), selectinload(Device.host))
+                .options(
+                    # live_capabilities is a large JSONB this fold never reads; deferring it
+                    # off the selectin-loaded node skips a per-device JSON decode each push.
+                    selectinload(Device.appium_node).defer(AppiumNode.live_capabilities),
+                    selectinload(Device.host),
+                )
             )
             devices = (await db.execute(device_stmt)).scalars().all()
             if not devices:

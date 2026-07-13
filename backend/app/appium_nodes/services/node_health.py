@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -89,8 +89,11 @@ class NodeHealthService:
                 AppiumNode.desired_state == AppiumDesiredState.running,
             )
             .options(
+                # live_capabilities is a large JSONB this fold never reads; deferring it
+                # skips a per-node JSON decode on every status push.
+                defer(AppiumNode.live_capabilities),
                 selectinload(AppiumNode.device).selectinload(Device.host),
-                selectinload(AppiumNode.device).selectinload(Device.appium_node),
+                selectinload(AppiumNode.device).selectinload(Device.appium_node).defer(AppiumNode.live_capabilities),
             )
             .order_by(AppiumNode.device_id)
         )
