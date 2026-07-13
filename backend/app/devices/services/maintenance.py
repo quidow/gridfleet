@@ -17,6 +17,7 @@ from app.devices.services.lifecycle_policy_state import (
     set_maintenance_reason,
     state,
 )
+from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     import uuid
@@ -55,6 +56,13 @@ class MaintenanceService:
         set_maintenance_reason(device, maintenance_reason)
         if entering:
             await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": maintenance_reason})
+            await remediation_log.append_reset(
+                db,
+                device.id,
+                source="maintenance",
+                action="maintenance_entered",
+                reason=maintenance_reason,
+            )
 
         # set_maintenance_reason is the fact write; the inline reconcile derives the
         # maintenance:node graceful stop and maintenance:recovery deny from it.

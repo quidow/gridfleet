@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceRemediationLogEntry
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from app.devices.services.recovery_projection import recovery_availability
+from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -112,3 +113,38 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     # The graceful-stop + recovery-deny are derived directly from maintenance_reason
     # (no stored or synthesized intent); the ladder is pinned by
     # tests/devices/test_decision.py.
+
+
+async def test_enter_maintenance_resets_remediation_episode(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="maint-reset")
+    # Pre-existing failure residue in the episode.
+    await remediation_log.append_failure(db_session, device.id, source="device_checks", reason="boom")
+    await db_session.commit()
+
+    from app.devices.services.maintenance import MaintenanceService
+
+    service = MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus)
+    await service.enter_maintenance(db_session, device)
+
+    reset_count = await db_session.scalar(
+        select(func.count())
+        .select_from(DeviceRemediationLogEntry)
+        .where(DeviceRemediationLogEntry.device_id == device.id)
+        .where(DeviceRemediationLogEntry.kind == "reset")
+    )
+    assert reset_count == 1
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.last_failure_reason is None  # episode superseded by the reset
+
+    # Idempotent: entering again while already in maintenance adds no new reset.
+    await service.enter_maintenance(db_session, device)
+    reset_count_again = await db_session.scalar(
+        select(func.count())
+        .select_from(DeviceRemediationLogEntry)
+        .where(DeviceRemediationLogEntry.device_id == device.id)
+        .where(DeviceRemediationLogEntry.kind == "reset")
+    )
+    assert reset_count_again == 1
