@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime, Enum, Integer, String, func
-from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.dialects.postgresql import JSON, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -43,6 +43,23 @@ class Host(Base):
     total_disk_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     tool_env: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    # Registration-bound boot fence: the boot_id the agent last registered under.
+    # A status push carrying a different boot_id is a superseded/split-brain boot
+    # and is rejected (see app.hosts.service_status_push).
+    current_boot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Per-section ingest cursor for the two moved health folds: section name ->
+    # {boot_id, section_sequence, payload_sha256, revision}. Decides whether a
+    # pushed section is a genuinely new generation (draw+stamp a fresh revision)
+    # or a re-delivery (reuse the stamped revision).
+    observation_cursors: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    # Loop section-skip watermark: section name -> highest revision for which
+    # every device has been applied by the StatusFoldLoop. Written by the loop
+    # under this host row's lock.
+    observation_applied: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     devices: Mapped[list[Any]] = relationship("Device", back_populates="host")

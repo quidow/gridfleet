@@ -296,10 +296,29 @@ HOST_PUSH_OBSERVATION_FAILURES = Counter(
     "Push-time observation stages that raised and were contained.",
     labelnames=("stage",),
 )
+# Boot-fence and dedup-token diagnostics on the status-push ingest path.
+HOST_PUSH_BOOT_FENCE_REJECTIONS = Counter(
+    "gridfleet_host_push_boot_fence_rejections_total",
+    "Status pushes rejected because boot_id did not match the host's registered boot.",
+)
+HOST_PUSH_TOKEN_ANOMALIES = Counter(
+    "gridfleet_host_push_token_anomalies_total",
+    "Dedup-token anomalies on the two moved health sections.",
+    # kind: same_sequence_different_hash | hash_mismatch | tokenless_after_boot
+    labelnames=("kind",),
+)
 
 
 def record_host_status_push(*, host_id: str) -> None:
     HOST_STATUS_PUSHES.labels(host_id=host_id).inc()
+
+
+def record_host_push_boot_fence_rejection() -> None:
+    HOST_PUSH_BOOT_FENCE_REJECTIONS.inc()
+
+
+def record_host_push_token_anomaly(kind: str) -> None:
+    HOST_PUSH_TOKEN_ANOMALIES.labels(kind=kind).inc()
 
 
 DB_SERIALIZATION_RETRY_TOTAL = Counter(
