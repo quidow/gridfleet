@@ -940,13 +940,30 @@ class ConnectivityService:
             # commits because the control-plane session is expire_on_commit=False.
             fold_packs = await load_packs_by_ids(db, {d.pack_id for d in all_devices if d.pack_id})
 
+            # Snapshot which control-plane state keys actually exist for these devices
+            # (one query) so the per-device probe/connectivity/repair bookkeeping skips
+            # blind deletes and reads of absent keys — the common case for a healthy
+            # fleet. Safe because connectivity is the sole leader-owned writer of these
+            # namespaces, so the snapshot cannot go stale under us within the fold.
+            state_snapshot = await control_plane_state_store.snapshot_presence(
+                db,
+                namespaces=(
+                    CONNECTIVITY_NAMESPACE,
+                    IP_PING_NAMESPACE,
+                    PROBE_UNANSWERED_NAMESPACE,
+                    PROBE_FAILED_NAMESPACE,
+                    link_repair.REPAIR_ATTEMPTS_NAMESPACE,
+                ),
+                keys={d.identity_value for d in all_devices},
+            )
+
             apply_started = perf_counter()
             # WI-6 lazy presence: the agent enumeration (a discovery sweep — SSDP for
             # network packs) runs at most once per host, only when a device's pushed
             # health observation does not confirm presence. Cached so a fleet of
             # healthy devices never pays for a sweep.
             connected_targets_by_host: dict[uuid.UUID, set[str] | None] = {}
-            with preloaded_pack_catalog(fold_packs):
+            with preloaded_pack_catalog(fold_packs), control_plane_state_store.presence_snapshot(state_snapshot):
                 for device in all_devices:
                     host_ref = cast("Host", device.host)
                     # Per-device commit (repo contract: observation loops commit per
