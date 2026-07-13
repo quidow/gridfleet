@@ -47,6 +47,12 @@ class Session(Base):
             unique=True,
             postgresql_where=text("ended_at IS NULL AND ticket_id IS NOT NULL"),
         ),
+        # Serves the session-list endpoints (list_sessions / list_sessions_cursor):
+        # ORDER BY started_at DESC, id DESC + keyset pagination over the full
+        # historical table, with no device_id. The device_id-led composite index
+        # cannot provide that global ordering, so without this the list seq-scans
+        # and top-N sorts every row on each poll. See migration 74233793ee45.
+        Index("ix_sessions_started_at_id", text("started_at DESC"), text("id DESC")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
