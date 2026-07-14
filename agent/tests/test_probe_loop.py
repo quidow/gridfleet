@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 
 from agent_app.pack.host_identity import HostIdentity
-from agent_app.probes import ProbeLoop
+from agent_app.probes import DEVICE_HEALTH_INTERVAL_SEC, ProbeLoop
 
 
 class _Roster:
@@ -111,6 +111,20 @@ def _loop(roster: _Roster) -> ProbeLoop:
         telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
     )
+
+
+@pytest.mark.asyncio
+async def test_request_immediate_forces_device_health_stage_due() -> None:
+    loop = _loop(_Roster())
+    now = 1000.0
+    # Mark the stage freshly run so it is NOT due on its own cadence...
+    loop._stage_due("device_health", DEVICE_HEALTH_INTERVAL_SEC, now)  # records last-run
+    assert loop._stage_due("device_health", DEVICE_HEALTH_INTERVAL_SEC, now) is False
+    # ... then request_immediate forces it due on the next check.
+    loop.request_immediate("device_health")
+    assert loop._stage_due("device_health", DEVICE_HEALTH_INTERVAL_SEC, now) is True
+    # The override is consumed: cadence resumes normally afterward.
+    assert loop._stage_due("device_health", DEVICE_HEALTH_INTERVAL_SEC, now) is False
 
 
 @pytest.mark.asyncio

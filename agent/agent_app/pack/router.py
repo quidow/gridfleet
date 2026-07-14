@@ -7,7 +7,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import APIRouter, Body, Query, status
+from fastapi import APIRouter, Body, Query, Request, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import (
@@ -272,6 +272,7 @@ async def pack_device_health_route(
     },
 )
 async def pack_device_lifecycle_route(
+    request: Request,
     connection_target: str,
     action: str,
     platform: DesiredPlatformDep,
@@ -290,6 +291,14 @@ async def pack_device_lifecycle_route(
             args,
             LifecycleCtx(host_id=host_id, device_identity_value=connection_target),
         )
+        # A successful state-changing action (e.g. the backend's reconnect /
+        # release_forwarded_ports link repair) should be re-observed promptly
+        # rather than at the next fixed probe cadence. "state" is a read-only
+        # poll, so it never wakes the loop.
+        if result.ok and action != "state":
+            probe_loop = getattr(request.app.state, "probe_loop", None)
+            if probe_loop is not None:
+                probe_loop.request_immediate("device_health")
         return _adapter_lifecycle_payload(result)
     return {
         "success": False,

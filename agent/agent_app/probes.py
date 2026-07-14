@@ -48,6 +48,7 @@ class ProbeLoop:
     # Per-(boot, section) gather counter: bumped once per gather so a re-push of
     # the same gather carries the same token and the backend dedups it.
     _section_seq: dict[str, int] = field(default_factory=dict, init=False)
+    _due_overrides: set[str] = field(default_factory=set, init=False)
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     def latest_results(self) -> dict[str, Any] | None:
@@ -56,7 +57,18 @@ class ProbeLoop:
     def wake(self) -> None:
         self._wake_event.set()
 
+    def request_immediate(self, section: str = "device_health") -> None:
+        """Force ``section`` due on the next run_once (e.g. right after a repair
+        action) so the corrected observation is gathered and pushed promptly
+        instead of waiting for the fixed probe cadence."""
+        self._due_overrides.add(section)
+        self.wake()
+
     def _stage_due(self, stage: str, interval: float, now: float) -> bool:
+        if stage in self._due_overrides:
+            self._due_overrides.discard(stage)
+            self._due[stage] = now + interval  # record the run so the cadence continues normally
+            return True
         if now >= self._due.get(stage, 0.0):
             self._due[stage] = now + interval
             return True
