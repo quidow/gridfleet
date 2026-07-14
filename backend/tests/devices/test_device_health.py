@@ -590,7 +590,8 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
 async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     """When lock_device raises NoResultFound, all health update methods must return early."""
     db = object()
-    device = SimpleNamespace(id=__import__("uuid").uuid4())
+    # emulator_state is read by update_emulator_state's pre-lock write-on-diff check.
+    device = SimpleNamespace(id=__import__("uuid").uuid4(), emulator_state=None)
     monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     assert await svc._lock(db, device) is None  # type: ignore[arg-type]

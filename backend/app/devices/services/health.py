@@ -201,7 +201,16 @@ class DeviceHealthService:
         _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:
+        # Write-on-diff (M2): emulator_state is presentation-only and re-observed
+        # on every push, so take no row lock and issue no write when the value is
+        # unchanged — otherwise the per-push lifecycle fold would reacquire the
+        # device row lock every 10 s, the exact contention this work removes. The
+        # pre-lock read is a fast filter; the post-lock re-check closes the TOCTOU.
+        if device.emulator_state == state:
+            return
         locked = await _lock(db, device)
         if locked is None:
+            return
+        if locked.emulator_state == state:
             return
         locked.emulator_state = state

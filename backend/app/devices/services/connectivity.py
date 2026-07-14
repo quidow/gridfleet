@@ -54,6 +54,24 @@ resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 pack_platform_resolution_cache = pack_platform_resolver.pack_platform_resolution_cache
 
 
+def _validated_remediation_action(health_result: dict[str, Any], device: Device) -> str | None:
+    """The adapter-recommended action to auto-dispatch, or None. B6: an action
+    that is not repeat-safe is refused (a crash-after-dispatch retry could
+    double-execute it) — a loud rejection, never a silent unsafe dispatch."""
+    action = health_result.get("recommended_action")
+    if not isinstance(action, str) or not action:
+        return None
+    if not link_repair.is_repeat_safe_remediation_action(action):
+        logger.error(
+            "Refusing non-repeat-safe auto-remediation action %r for device %s; add a dispatch journal first",
+            action,
+            device.identity_value,
+        )
+        metrics.record_device_repair_attempt(action=action, outcome="not_repeat_safe")
+        return None
+    return action
+
+
 async def _resolve_platform_or_none(db: AsyncSession, device: Device) -> ResolvedPackPlatform | None:
     try:
         return await resolve_pack_platform(
@@ -489,8 +507,8 @@ class ConnectivityService:
         Driver-agnostic: the adapter decided whether and which action remediates;
         this only validates the action exists, bounds retries, and dispatches.
         """
-        action = health_result.get("recommended_action")
-        if not isinstance(action, str) or not action:
+        action = _validated_remediation_action(health_result, device)
+        if action is None:
             return False
         resolved = await _resolve_platform_or_none(db, device)
         if resolved is None:
