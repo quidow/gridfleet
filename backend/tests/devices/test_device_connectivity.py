@@ -2501,3 +2501,173 @@ async def test_probe_passes_claimed_ports_and_live_flag(
     )
     assert seen["claimed_ports"] == {"appium:systemPort": 8200}
     assert seen["has_live_session"] is False
+
+
+# --- A4.5: inline fold consumes pushed presence & lifecycle keyed by device_id ---
+
+
+@pytest_asyncio.fixture
+async def connectivity_service() -> ConnectivityService:
+    return ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=DeviceHealthService(publisher=Mock()),
+    )
+
+
+@pytest_asyncio.fixture
+async def host_with_two_devices(db_session: AsyncSession) -> SimpleNamespace:
+    host = Host(hostname="v7-fold-host", ip="10.0.0.30", os_type="linux", agent_port=5100, status=HostStatus.online)
+    db_session.add(host)
+    await db_session.flush()
+    devices: list[Device] = []
+    for index in range(2):
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"v7-fold-dev-{index}",
+            connection_target=f"v7-fold-dev-{index}",
+            name=f"V7 Fold Device {index}",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            # Verified + healthy baseline so the device derives ``available`` (not
+            # ``offline``); an absent verdict then produces a real disconnect edge.
+            verified_at=datetime.now(UTC),
+            device_checks_healthy=True,
+        )
+        db_session.add(device)
+        devices.append(device)
+    await db_session.commit()
+    for device in devices:
+        await db_session.refresh(device, attribute_names=["appium_node", "host"])
+    return SimpleNamespace(id=host.id, devices=devices)
+
+
+@pytest.mark.db
+async def test_v7_fold_uses_pushed_presence_and_lifecycle_no_dials(
+    db_session: AsyncSession,
+    host_with_two_devices: SimpleNamespace,
+    connectivity_service: ConnectivityService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.timeutil import now_utc
+
+    dev_present, dev_absent = host_with_two_devices.devices
+    get_agent = AsyncMock(return_value=set())
+    monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", get_agent)
+    fetch_life = AsyncMock(return_value={})
+    monkeypatch.setattr(connectivity_service, "_fetch_lifecycle_states", fetch_life)
+    section = {
+        "reported_at": now_utc().isoformat(),
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(dev_present.id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": False, "checks": [], "detail": "flaky", "recommended_action": None},
+                "lifecycle_state": {"status": "observed", "value": "device"},
+            },
+            {
+                "device_id": str(dev_absent.id),
+                "probe_status": "error",
+                "presence": "absent",
+                "health": None,
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            },
+        ],
+    }
+    await connectivity_service.fold_host_device_health(db_session, host_with_two_devices.id, section)
+    assert not get_agent.called  # presence pushed -> no enumeration dial
+    assert not fetch_life.called  # lifecycle pushed -> no lifecycle dial
+    await db_session.refresh(dev_present)
+    assert dev_present.emulator_state == "device"  # pushed lifecycle applied
+    await db_session.refresh(dev_absent)
+    assert dev_absent.device_checks_healthy is False  # absent -> disconnect recorded
+
+
+@pytest.mark.db
+async def test_v7_fold_membership_missing_device_is_not_gathered(
+    db_session: AsyncSession,
+    host_with_two_devices: SimpleNamespace,
+    connectivity_service: ConnectivityService,
+) -> None:
+    from app.core.timeutil import now_utc
+
+    dev_a, dev_b = host_with_two_devices.devices
+    dev_b.device_checks_healthy = True
+    await db_session.commit()
+    section = {
+        "reported_at": now_utc().isoformat(),
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(dev_a.id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    await connectivity_service.fold_host_device_health(db_session, host_with_two_devices.id, section)
+    await db_session.refresh(dev_b)
+    assert dev_b.device_checks_healthy is True  # omitted device untouched: "not gathered", never absent
+
+
+@pytest.mark.db
+async def test_v7_fold_incomplete_gather_cannot_assert_absent(
+    db_session: AsyncSession,
+    host_with_two_devices: SimpleNamespace,
+    connectivity_service: ConnectivityService,
+) -> None:
+    from app.core.timeutil import now_utc
+
+    dev_a, _ = host_with_two_devices.devices
+    section = {
+        "reported_at": now_utc().isoformat(),
+        "complete_gather": False,
+        "devices": [
+            {
+                "device_id": str(dev_a.id),
+                "probe_status": "error",
+                "presence": "unknown",
+                "health": None,
+                "lifecycle_state": {"status": "error", "value": None},
+            }
+        ],
+    }
+    await connectivity_service.fold_host_device_health(db_session, host_with_two_devices.id, section)
+    await db_session.refresh(dev_a)
+    # unknown presence must not record a disconnect episode (no connectivity_lost).
+    assert dev_a.emulator_state is None
+
+
+@pytest.mark.db
+async def test_legacy_section_still_dials(
+    db_session: AsyncSession,
+    host_with_two_devices: SimpleNamespace,
+    connectivity_service: ConnectivityService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.timeutil import now_utc
+
+    get_agent = AsyncMock(return_value=set())
+    monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", get_agent)
+    fetch_life = AsyncMock(return_value={})
+    monkeypatch.setattr(connectivity_service, "_fetch_lifecycle_states", fetch_life)
+    dev_a, _ = host_with_two_devices.devices
+    legacy = {
+        "reported_at": now_utc().isoformat(),
+        "devices": {dev_a.connection_target: {"healthy": False, "checks": []}},
+    }
+    await connectivity_service.fold_host_device_health(db_session, host_with_two_devices.id, legacy)
+    assert get_agent.called  # legacy shape -> presence dial retained
+    assert fetch_life.called  # legacy shape -> lifecycle dial retained

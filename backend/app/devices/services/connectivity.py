@@ -20,6 +20,7 @@ from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceType
 from app.devices.models.event import DeviceEventType
+from app.devices.schemas.device_health_push import PushedDeviceHealth, parse_device_health_items
 from app.devices.services import link_repair
 from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
@@ -350,6 +351,38 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device, *, health: D
     # inline on mark_offline=True, so the synthesized connectivity: stop takes effect here.
     await health.apply_node_state_transition(db, locked_device, mark_offline=True)
     return None
+
+
+def _build_health_presence_maps(
+    pushed: PushedDeviceHealth,
+    fold_devices: Sequence[Device],
+    observations: dict[str, Any],
+    lifecycle_by_id: dict[uuid.UUID, str | None],
+) -> tuple[dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]], dict[uuid.UUID, str | None]]:
+    """Per-device (health_result, lifecycle_value) and presence maps. For a v7
+    section presence/lifecycle come off the typed item (presence ``None`` means
+    "dialed"); for a legacy section presence stays ``None`` so the caller dials."""
+    health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]] = {}
+    presence_by_id: dict[uuid.UUID, str | None] = {}
+    for device in fold_devices:
+        if pushed.is_v7:
+            item = pushed.by_device_id.get(device.id)
+            observed = item.health if item is not None else None
+            life = item.lifecycle_state if item is not None else {}
+            lifecycle_value = life.get("value") if life.get("status") == "observed" else None
+            presence = item.presence if item is not None else "unknown"
+            # An incomplete gather can never assert absent (defense-in-depth
+            # beyond the agent, which already reports "unknown" in that case).
+            if not pushed.complete_gather and presence == "absent":
+                presence = "unknown"
+            presence_by_id[device.id] = presence
+        else:
+            observed = observations.get(device.connection_target) if device.connection_target else None
+            observed = observed if isinstance(observed, dict) else None
+            lifecycle_value = lifecycle_by_id.get(device.id)
+            presence_by_id[device.id] = None  # legacy: fall back to the dial
+        health_by_device_id[device.id] = (observed if isinstance(observed, dict) else None, lifecycle_value)
+    return health_by_device_id, presence_by_id
 
 
 class ConnectivityService:
@@ -728,7 +761,7 @@ class ConnectivityService:
         """
         health_result, lifecycle_state = health_by_device_id[device.id]
         if lifecycle_state is not None:
-            await self._health.update_emulator_state(db, device, lifecycle_state)
+            await self._health.update_emulator_state(db, device, lifecycle_state, source_time=observed_at)
         if health_result is None:
             flipped = await self._note_unanswered_probe(
                 db,
@@ -758,6 +791,71 @@ class ConnectivityService:
 
         return healthy, ip_ping_entry, health_result
 
+    async def _handle_present_but_failing(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        health_result: dict[str, Any] | None,
+        observed_at: datetime | None,
+    ) -> None:
+        """A device that is present (or presence-unknown) but did not confirm
+        healthy: escalate the failure, or recover-only when the probe was
+        unanswered (preserving the old presence gate's recovery-only behavior)."""
+        if health_result is None:
+            await self._maybe_auto_recover(db, device)
+            return
+        await self._escalate_health_failure(
+            db,
+            device,
+            summary=_summarize_unhealthy_result(health_result),
+            observed_at=observed_at,
+            remediation_result=health_result,
+        )
+
+    async def _record_device_disconnect(
+        self,
+        db: AsyncSession,
+        device: Device,
+        host: Host,
+        *,
+        observed_at: datetime | None,
+    ) -> None:
+        """A device that is absent from its host: stop the node and record the
+        disconnect once per episode."""
+        # Maintenance devices are placed there by operators; transient
+        # disconnects are not actionable — skip silently.
+        if in_maintenance(device):
+            return
+        # Transition gate: this disconnect was already recorded (health failed
+        # and the node already stopped), so re-running the stop / health-write
+        # / reconcile would only re-enqueue the device every cycle while it
+        # stays disconnected. Skip it; the full scan re-derives if state drifts.
+        node = device.appium_node
+        if device.device_checks_healthy is False and (node is None or not node.observed_running):
+            return
+        await _stop_disconnected_node(db, device, health=self._health)
+        operational_state = await derive_operational_state(db, device, now=now_utc())
+        if operational_state == DeviceOperationalState.offline:
+            return
+        if await _is_held_or_reserved(db, device):
+            logger.warning(
+                "Device %s (%s) appears disconnected on host %s but is %s",
+                device.name,
+                device.identity_value,
+                host.hostname,
+                _audit_label(operational_state),
+            )
+            await self._record_disconnect_if_stable(db, device, held=True, observed_at=observed_at)
+            return
+        logger.warning(
+            "Device %s (%s) disconnected from host %s",
+            device.name,
+            device.identity_value,
+            host.hostname,
+        )
+        await self._record_disconnect_if_stable(db, device, held=False, observed_at=observed_at)
+
     async def _handle_unhealthy_device(
         self,
         db: AsyncSession,
@@ -767,10 +865,22 @@ class ConnectivityService:
         health_result: dict[str, Any] | None,
         connected_targets_by_host: dict[uuid.UUID, set[str] | None],
         observed_at: datetime | None = None,
+        presence: str | None = None,
     ) -> None:
-        """Resolve a device that did not confirm healthy: agent enumeration (cached per
-        host), then either escalate a present-but-failing device or record a disconnect.
+        """Resolve a device that did not confirm healthy.
+
+        When ``presence`` is pushed (v7 section): ``"absent"`` records a
+        disconnect; ``"present"`` or ``"unknown"`` treats it as present-but-failing
+        (an incomplete gather can never assert absent). When ``presence`` is
+        ``None`` (legacy section): fall back to the per-host agent enumeration dial.
         """
+        if presence is not None:
+            if presence == "absent":
+                await self._record_device_disconnect(db, device, host, observed_at=observed_at)
+            else:
+                await self._handle_present_but_failing(db, device, health_result=health_result, observed_at=observed_at)
+            return
+
         if host.id not in connected_targets_by_host:
             connected_targets_by_host[host.id] = await _get_agent_devices(
                 host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
@@ -788,53 +898,9 @@ class ConnectivityService:
             return
 
         if _device_expected_aliases(device) & connected_targets:
-            # Present but failing — keep the health-failure path.
-            if health_result is None:
-                # Probe unanswered (e.g. no connection_target): preserve the
-                # recovery-only behavior of the old presence gate.
-                await self._maybe_auto_recover(db, device)
-                return
-            await self._escalate_health_failure(
-                db,
-                device,
-                summary=_summarize_unhealthy_result(health_result),
-                observed_at=observed_at,
-                remediation_result=health_result,
-            )
+            await self._handle_present_but_failing(db, device, health_result=health_result, observed_at=observed_at)
         else:
-            # Device disconnected.
-            # Maintenance devices are placed there by operators; transient
-            # disconnects are not actionable — skip silently.
-            if in_maintenance(device):
-                return
-            # Transition gate: this disconnect was already recorded (health failed
-            # and the node already stopped), so re-running the stop / health-write
-            # / reconcile would only re-enqueue the device every cycle while it
-            # stays disconnected. Skip it; the full scan re-derives if state drifts.
-            node = device.appium_node
-            if device.device_checks_healthy is False and (node is None or not node.observed_running):
-                return
-            await _stop_disconnected_node(db, device, health=self._health)
-            operational_state = await derive_operational_state(db, device, now=now_utc())
-            if operational_state == DeviceOperationalState.offline:
-                return
-            if await _is_held_or_reserved(db, device):
-                logger.warning(
-                    "Device %s (%s) appears disconnected on host %s but is %s",
-                    device.name,
-                    device.identity_value,
-                    host.hostname,
-                    _audit_label(operational_state),
-                )
-                await self._record_disconnect_if_stable(db, device, held=True, observed_at=observed_at)
-                return
-            logger.warning(
-                "Device %s (%s) disconnected from host %s",
-                device.name,
-                device.identity_value,
-                host.hostname,
-            )
-            await self._record_disconnect_if_stable(db, device, held=False, observed_at=observed_at)
+            await self._record_device_disconnect(db, device, host, observed_at=observed_at)
 
     async def fold_host_device_health(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         """Fold one host's pushed device_health section through the dial-era
@@ -855,21 +921,28 @@ class ConnectivityService:
         # share a (pack_id, platform_id, device_type) tuple, so the per-device
         # capability and remediation checks would otherwise re-run the same 3-query
         # manifest resolve + JSONB decode once per device.
+        pushed = parse_device_health_items(section)
         with pack_platform_resolution_cache():
             all_devices, lifecycle_capable = await self._collect_prepass_devices(db, [host])
-            raw = section.get("devices")
-            observations: dict[str, Any] = raw if isinstance(raw, dict) else {}
-
-            lifecycle_by_id = await self._fetch_lifecycle_states(
-                [device for device in all_devices if device.id in lifecycle_capable]
-            )
-            health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]] = {}
-            for device in all_devices:
-                observed = observations.get(device.connection_target) if device.connection_target else None
-                health_by_device_id[device.id] = (
-                    observed if isinstance(observed, dict) else None,
-                    lifecycle_by_id.get(device.id),
+            # v7: presence and lifecycle arrive on the typed items, so fold only the
+            # gathered membership and take no dial. A device omitted from a v7 section
+            # is "not gathered" (untouched), never asserted absent. Legacy: dict keyed
+            # by connection_target, plus the presence/lifecycle dials.
+            if pushed.is_v7:
+                fold_devices = [device for device in all_devices if device.id in pushed.by_device_id]
+                observations: dict[str, Any] = {}
+                lifecycle_by_id: dict[uuid.UUID, str | None] = {}
+            else:
+                fold_devices = all_devices
+                raw = section.get("devices")
+                observations = raw if isinstance(raw, dict) else {}
+                lifecycle_by_id = await self._fetch_lifecycle_states(
+                    [device for device in all_devices if device.id in lifecycle_capable]
                 )
+
+            health_by_device_id, presence_by_id = _build_health_presence_maps(
+                pushed, fold_devices, observations, lifecycle_by_id
+            )
 
             # Preload the pack catalog once and reuse it for every per-device
             # readiness assessment (derive_operational_state) below, instead of a
@@ -901,7 +974,7 @@ class ConnectivityService:
             # healthy devices never pays for a sweep.
             connected_targets_by_host: dict[uuid.UUID, set[str] | None] = {}
             with preloaded_pack_catalog(fold_packs), control_plane_state_store.presence_snapshot(state_snapshot):
-                for device in all_devices:
+                for device in fold_devices:
                     host_ref = cast("Host", device.host)
                     # Per-device commit (repo contract: observation loops commit per
                     # device after the locked write window).
@@ -933,6 +1006,7 @@ class ConnectivityService:
                         health_result=health_result,
                         connected_targets_by_host=connected_targets_by_host,
                         observed_at=observed_at,
+                        presence=presence_by_id[device.id],
                     )
             metrics.record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
             await db.commit()
