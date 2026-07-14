@@ -14,6 +14,9 @@ from tests.helpers import build_connectivity_service, seed_host_with_devices
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.schemas.device_health_push import DeviceHealthItem
+    from app.devices.services.connectivity import DeviceFoldOutcome
+
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
@@ -86,3 +89,79 @@ async def test_fold_terminal_noop_on_unknown_presence_advances_receipt(
     await db_session.refresh(device)
     assert device.device_checks_fold_applied_revision == revision  # marker advanced
     assert device.device_checks_healthy is None  # no health axis write from an indeterminate observation
+
+
+async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-partial")
+    good, bad = devices
+    good_id, bad_id, host_id = good.id, bad.id, host.id  # capture before per-device commits expire the rows
+    revision = await next_observation_revision(db_session)
+
+    def _present(dev_id: uuid.UUID) -> dict[str, Any]:
+        return {
+            "device_id": str(dev_id),
+            "probe_status": "observed",
+            "presence": "present",
+            "health": {"healthy": True, "checks": []},
+            "lifecycle_state": {"status": "unsupported", "value": None},
+        }
+
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 5,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [_present(good_id), _present(bad_id)],
+    }
+    service = build_connectivity_service(db_session_maker)
+    real_apply = service._apply_device_health
+    calls: list[uuid.UUID] = []
+
+    async def flaky(db: AsyncSession, device_id: uuid.UUID, item: DeviceHealthItem, **kw: object) -> DeviceFoldOutcome:
+        calls.append(device_id)
+        if device_id == bad_id:
+            raise RuntimeError("boom")
+        return await real_apply(db, device_id, item, **kw)  # type: ignore[arg-type]
+
+    service._apply_device_health = flaky  # type: ignore[method-assign]
+    settled = await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4())
+    assert settled is False  # one device retryable -> host watermark held by the loop
+    await db_session.refresh(good)
+    await db_session.refresh(bad)
+    assert good.device_checks_fold_applied_revision == revision
+    assert bad.device_checks_fold_applied_revision < revision
+
+    # Second pass replays only the retryable device: the committed peer is skipped.
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4()) is False
+    assert calls.count(good_id) == 1
+    assert calls.count(bad_id) == 2
+
+
+async def test_fold_ignores_device_absent_from_gather(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-omit")
+    present, omitted = devices
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 2,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": False,  # incomplete: cannot assert the omitted device is absent
+        "devices": [
+            {
+                "device_id": str(present.id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    service = build_connectivity_service(db_session_maker)
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    await db_session.refresh(omitted)
+    assert omitted.device_checks_fold_applied_revision == 0  # never touched — "not gathered", not absent
+    assert omitted.device_checks_healthy is None
