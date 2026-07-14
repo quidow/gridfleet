@@ -83,6 +83,21 @@ def _ok_raw(
     return fake
 
 
+def _raw_result(
+    status: int,
+    body: bytes,
+    transport_error: str | None = None,
+) -> Callable[..., Awaitable[tuple[int, bytes, str | None]]]:
+    async def fake(target: str, raw: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+        return status, body, transport_error
+
+    return fake
+
+
+def _attempt_metric_value(outcome: str) -> float:
+    return session_create.GRID_CREATE_ATTEMPT_TOTAL.labels(outcome=outcome)._value.get()  # type: ignore[attr-defined]
+
+
 @pytest.mark.db
 async def test_created_promotes_row_to_running(
     db_session: AsyncSession,
@@ -116,7 +131,7 @@ async def test_appium_http_error_fails_row_and_relays(
     outcome = await session_create.create_and_promote(
         db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
     )
-    assert outcome.kind == "create_failed" and outcome.appium_status == 500 and outcome.appium_body == body
+    assert outcome.kind == "w3c_rejected" and outcome.appium_status == 500 and outcome.appium_body == body
     row = await db_session.get(Session, claimed_allocation.allocation_id)
     assert row is not None
     assert row.status == SessionStatus.error and row.ended_at is not None
@@ -137,7 +152,7 @@ async def test_transport_error_fails_row(
     outcome = await session_create.create_and_promote(
         db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
     )
-    assert outcome.kind == "create_error" and "connect timeout" in outcome.message
+    assert outcome.kind == "target_unreachable" and "connect timeout" in outcome.message
     row = await db_session.get(Session, claimed_allocation.allocation_id)
     assert row is not None
     assert row.status == SessionStatus.error
@@ -168,12 +183,12 @@ async def test_2xx_missing_session_id_sweeps_and_fails(
     outcome = await session_create.create_and_promote(
         db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
     )
-    assert outcome.kind == "create_error" and "sessionId" in outcome.message
+    assert outcome.kind == "target_protocol_error" and "sessionId" in outcome.message
     assert listed and killed == ["stray-1"]
 
 
 @pytest.mark.db
-async def test_non_json_error_body_becomes_create_error(
+async def test_non_json_error_body_becomes_target_protocol_error(
     db_factory: async_sessionmaker[AsyncSession],
     allocation_service: AllocationService,
     claimed_allocation: AllocationResult,
@@ -186,7 +201,122 @@ async def test_non_json_error_body_becomes_create_error(
     outcome = await session_create.create_and_promote(
         db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
     )
-    assert outcome.kind == "create_error" and "502" in outcome.message
+    assert outcome.kind == "target_protocol_error" and "502" in outcome.message
+
+
+@pytest.mark.db
+@pytest.mark.parametrize(
+    ("status", "body", "transport_error", "expected_kind"),
+    [
+        (200, json.dumps(W3C_OK).encode(), None, "created"),
+        (
+            500,
+            json.dumps({"value": {"error": "session not created", "message": "no device"}}).encode(),
+            None,
+            "w3c_rejected",
+        ),
+        (0, b"", "connection refused", "target_unreachable"),
+        (502, b"<html>bad gateway</html>", None, "target_protocol_error"),
+        (200, json.dumps({"value": {}}).encode(), None, "target_protocol_error"),
+    ],
+    ids=[
+        "w3c-ok-created",
+        "json-w3c-error-rejected",
+        "transport-unreachable",
+        "html-protocol-error",
+        "missing-session-id-protocol-error",
+    ],
+)
+async def test_create_outcome_truth_table_records_attempt_metric(
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    body: bytes,
+    transport_error: str | None,
+    expected_kind: str,
+) -> None:
+    monkeypatch.setattr(
+        session_create.appium_direct,
+        "create_session_raw",
+        _raw_result(status=status, body=body, transport_error=transport_error),
+    )
+
+    async def fake_list(target: str, *, timeout: float = 10.0) -> list[str] | None:
+        return []
+
+    async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        return True
+
+    monkeypatch.setattr(session_create.appium_direct, "list_sessions", fake_list)
+    monkeypatch.setattr(session_create.appium_direct, "terminate_session", fake_kill)
+    before = _attempt_metric_value(expected_kind)
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == expected_kind
+    assert _attempt_metric_value(expected_kind) == before + 1
+
+
+@pytest.mark.db
+async def test_allocation_not_pending_rolls_back_created_session_as_promotion_failed(
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _ok_raw())
+    killed: list[str] = []
+
+    async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        killed.append(session_id)
+        return True
+
+    async def fail_promote(
+        db: AsyncSession,
+        *,
+        allocation_id: uuid.UUID,
+        appium_session_id: str,
+        appium_capabilities: dict[str, Any] | None = None,
+    ) -> None:
+        raise session_create.AllocationNotPendingError(allocation_id)
+
+    monkeypatch.setattr(session_create.appium_direct, "terminate_session", fake_kill)
+    monkeypatch.setattr(allocation_service, "promote_to_running", fail_promote)
+    before = _attempt_metric_value("promotion_failed")
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+    assert outcome.kind == "promotion_failed"
+    assert killed == ["app-1"]
+    assert _attempt_metric_value("promotion_failed") == before + 1
+
+
+@pytest.mark.db
+async def test_create_and_promote_caps_upstream_timeout_when_requested(
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_timeouts: list[float] = []
+
+    async def fake_create(target: str, raw: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+        seen_timeouts.append(timeout)
+        return 200, json.dumps(W3C_OK).encode(), None
+
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", fake_create)
+    outcome = await session_create.create_and_promote(
+        db_factory,
+        allocation_service,
+        allocation=claimed_allocation,
+        raw_body=b"{}",
+        claim_window_sec=120,
+        max_create_timeout_sec=10.0,
+    )
+    assert outcome.kind == "created"
+    assert seen_timeouts == [10.0]
 
 
 def test_effective_create_timeout_derivation() -> None:

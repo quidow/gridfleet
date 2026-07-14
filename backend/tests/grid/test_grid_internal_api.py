@@ -88,7 +88,7 @@ async def test_create_session_claims_then_creates(
 
 
 @pytest.mark.db
-async def test_create_session_relays_create_failed(
+async def test_create_session_relays_w3c_rejected(
     client: AsyncClient, seeded_available_device: Device, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def fake_create(
@@ -100,13 +100,13 @@ async def test_create_session_relays_create_failed(
         claim_window_sec: int,
     ) -> session_create.CreateOutcome:
         return session_create.CreateOutcome(
-            kind="create_failed", appium_status=500, appium_body={"value": {"error": "session not created"}}
+            kind="w3c_rejected", appium_status=500, appium_body={"value": {"error": "session not created"}}
         )
 
     monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
     resp = await client.post("/internal/grid/create-session", json={"body": _body(), "ticket": None, "run_id": None})
     assert resp.status_code == 200
-    assert resp.json()["status"] == "create_failed"
+    assert resp.json()["status"] == "w3c_rejected"
     assert resp.json()["appium_status"] == 500
 
 
