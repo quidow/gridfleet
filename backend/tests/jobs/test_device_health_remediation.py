@@ -8,6 +8,8 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core.leader import state_store
 from app.devices.models import Device
 from app.devices.models.event import DeviceEvent, DeviceEventType
@@ -17,6 +19,7 @@ from app.devices.services.remediation_job import RemediationJobService
 from app.jobs import JOB_KIND_DEVICE_HEALTH_REMEDIATION
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_COMPLETED
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -33,6 +36,7 @@ async def _create_failing_remediation_job(
     host: Host,
     *,
     name: str,
+    action_id: str = "reconnect",
 ) -> tuple[Device, uuid.UUID, uuid.UUID]:
     device = await create_device(db_session, host_id=host.id, name=name)
     failure_episode_id = uuid.uuid4()
@@ -43,7 +47,7 @@ async def _create_failing_remediation_job(
         db_session,
         device_id=device.id,
         failure_episode_id=failure_episode_id,
-        action_id="reconnect",
+        action_id=action_id,
         commit=True,
     )
     assert job_id is not None
@@ -183,11 +187,96 @@ async def test_worker_dispatches_and_records_repair_attempt(
             )
         )
     ).scalar_one()
-    assert event.details == {"action": "reconnect", "attempt": 1, "success": True}
+    assert event.details == {
+        "action": "reconnect",
+        "attempt": 1,
+        "success": True,
+        "detail": "cured_by=forward_remove",
+    }
     job = await db_session.get(Job, job_id)
     assert job is not None
     assert job.status == JOB_STATUS_COMPLETED
     assert job.snapshot.get("note") == "dispatched reconnect (success=True)"
+
+
+async def test_worker_dispatch_receives_fresh_session_and_port_facts(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+        db_session,
+        db_host,
+        name="fresh-facts-remediation-device",
+        action_id="release_forwarded_ports",
+    )
+    device_id = device.id
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=12345,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    await db_session.flush()
+    claimed_port = await appium_node_resource_service.reserve(
+        db_session,
+        host_id=db_host.id,
+        capability_key="appium:systemPort",
+        start_port=8200,
+        node_id=node.id,
+    )
+    sibling = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="host-session-sibling",
+    )
+    db_session.add(
+        Session(
+            session_id="host-session-sibling-live",
+            device_id=sibling.id,
+            status=SessionStatus.running,
+        )
+    )
+    await db_session.commit()
+    detail = "cured_by=forward_remove:" + ("x" * 240)
+    dispatch = AsyncMock(return_value={"success": True, "detail": detail})
+
+    with patch(
+        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
+        new=dispatch,
+    ):
+        await RemediationJobService(
+            session_factory=_session_factory(db_session),
+            circuit_breaker=AsyncMock(),
+            health=AsyncMock(),
+        ).run_device_health_remediation_job(
+            str(job_id),
+            {
+                "device_id": str(device.id),
+                "failure_episode_id": str(failure_episode_id),
+                "action_id": "release_forwarded_ports",
+            },
+        )
+
+    dispatch.assert_awaited_once()
+    assert dispatch.await_args.kwargs["extra_args"] == {
+        "has_live_session": False,
+        "host_has_live_sessions": True,
+        "claimed_ports": {"appium:systemPort": claimed_port},
+    }
+    db_session.expire_all()
+    event = (
+        await db_session.execute(
+            select(DeviceEvent).where(
+                DeviceEvent.device_id == device_id,
+                DeviceEvent.event_type == DeviceEventType.repair_attempted,
+            )
+        )
+    ).scalar_one()
+    assert event.details is not None
+    assert event.details["detail"] == detail[:200]
 
 
 async def test_worker_budget_exhaustion_records_repair_failed(

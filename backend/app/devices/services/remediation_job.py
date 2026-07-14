@@ -6,18 +6,24 @@ import copy
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 
+from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
+from app.devices.models import Device
 from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
 from app.devices.services.event import record_event
 from app.jobs import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.jobs.models import Job
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
+from app.sessions.service import device_has_running_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +33,16 @@ if TYPE_CHECKING:
     from app.devices.protocols import DeviceHealthProtocol
 
 logger = get_logger(__name__)
+
+
+async def _host_has_live_sessions(db: AsyncSession, device: Device) -> bool:
+    row = await db.execute(
+        select(Session.id)
+        .join(Device, Session.device_id == Device.id)
+        .where(Device.host_id == device.host_id, live_session_predicate())
+        .limit(1)
+    )
+    return row.first() is not None
 
 
 class RemediationJobService:
@@ -100,9 +116,24 @@ class RemediationJobService:
             await self._finalize(db, job_id, note="budget exhausted", error=None)
             return
 
+        has_live_session = await device_has_running_session(db, device.id)
+        host_has_live_sessions = await _host_has_live_sessions(db, device)
+        node = device.appium_node
+        claimed_ports = (
+            (await appium_node_resource_service.get_port_claims_for_nodes(db, node_ids=[node.id])).get(node.id, {})
+            if node is not None
+            else {}
+        )
+        extra_args: dict[str, Any] = {
+            "has_live_session": has_live_session,
+            "host_has_live_sessions": host_has_live_sessions,
+        }
+        if claimed_ports:
+            extra_args["claimed_ports"] = claimed_ports
+
         # The action is repeat-safe, so a crash after dispatch can safely retry.
-        # Commit the attempt reservation and release the device row lock before
-        # making the potentially slow agent request.
+        # Commit the attempt reservation after snapshotting the fresh dispatch
+        # facts, releasing the device row lock before the slow agent request.
         await db.commit()
         try:
             result = await link_repair.dispatch_recommended_action(
@@ -110,6 +141,7 @@ class RemediationJobService:
                 action,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,
+                extra_args=extra_args,
             )
         except AgentCallError:
             result = {"success": False}
@@ -119,7 +151,12 @@ class RemediationJobService:
             db,
             device.id,
             DeviceEventType.repair_attempted,
-            {"action": action, "attempt": attempt, "success": success},
+            {
+                "action": action,
+                "attempt": attempt,
+                "success": success,
+                "detail": str(result.get("detail") or "")[:200],
+            },
         )
         metrics.record_device_repair_attempt(action=action, outcome="success" if success else "failed")
         await db.commit()
