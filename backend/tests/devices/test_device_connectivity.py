@@ -26,7 +26,6 @@ from tests.helpers import get_connectivity_control_plane_state, track_previously
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Callable, Coroutine
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,8 +45,7 @@ async def _run_connectivity_fold(
     """Fold the pushed device_health section once per online host — the fan-out
     the deleted check_connectivity pass used to do. Each device's observation is
     sourced from the (mocked) _get_device_health so the legacy per-device mocks
-    keep working; the fold's internal post-repair re-probe still dials the same
-    mock, consuming the next side_effect element."""
+    keep working."""
     from sqlalchemy import select as _select
 
     from app.core.timeutil import now_utc as _now_utc
@@ -2224,156 +2222,15 @@ async def test_absent_device_hard_failure_does_not_touch_ip_ping_counter(db_sess
 
 
 # ---------------------------------------------------------------------------
-# Adapter-recommended link repair (Task 7)
+# Adapter-recommended remediation eligibility
 # ---------------------------------------------------------------------------
 
-_RESOLVED_WITH_RECONNECT = SimpleNamespace(lifecycle_actions=[SimpleNamespace(id="reconnect")], health_checks=[])
 
-
-async def _device_event_types(db_session: AsyncSession, device_id: uuid.UUID) -> list[str]:
+async def test_remediation_not_enqueued_when_pack_draining(db_session: AsyncSession) -> None:
     from sqlalchemy import select as _select
-
-    from app.devices.models.event import DeviceEvent
-
-    rows = (await db_session.execute(_select(DeviceEvent).where(DeviceEvent.device_id == device_id))).scalars().all()
-    return [r.event_type.value for r in rows]
-
-
-def _recommend_repair_patches() -> tuple[object, object]:
-    return (
-        patch(
-            "app.devices.services.connectivity.resolve_pack_platform",
-            new=AsyncMock(return_value=_RESOLVED_WITH_RECONNECT),
-        ),
-        patch("app.devices.services.connectivity.platform_has_lifecycle_action", new=Mock(return_value=True)),
-    )
-
-
-async def test_recommended_action_dispatches_repair_for_available_device(db_session: AsyncSession) -> None:
-    """Probe returns unhealthy + recommended_action=reconnect; loop dispatches the
-    action and, when the re-probe is healthy, the device stays available."""
-    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
-    unhealthy = {
-        "healthy": False,
-        "checks": [{"check_id": "adb_connected", "ok": False}],
-        "recommended_action": "reconnect",
-    }
-    dispatch = AsyncMock(return_value={"success": True})
-    rp, ph = _recommend_repair_patches()
-    with (
-        rp,
-        ph,
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            side_effect=[unhealthy, {"healthy": True}],
-        ),
-        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
-    ):
-        await _run_connectivity_fold(
-            ConnectivityService(
-                publisher=Mock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=DeviceHealthService(publisher=Mock()),
-            ),
-            db_session,
-        )
-
-    dispatch.assert_awaited_once()
-    await db_session.refresh(device)
-    assert device.operational_state_last_emitted == DeviceOperationalState.available
-    assert "repair_attempted" in await _device_event_types(db_session, device.id)
-
-
-async def test_repair_reprobe_missing_healthy_key_is_not_treated_as_recovered(db_session: AsyncSession) -> None:
-    """BUG-2: after a successful repair dispatch, a malformed/empty re-probe (no
-    ``healthy`` key, no non-ip_ping checks) must NOT be read as healthy — otherwise
-    the device is declared recovered with a still-dead link and the repair budget is
-    reset. Conservative default: missing positive evidence => not healthy."""
-    from app.core.leader import state_store
-    from app.devices.services.link_repair import REPAIR_ATTEMPTS_NAMESPACE
-
-    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
-    unhealthy = {
-        "healthy": False,
-        "checks": [{"check_id": "adb_connected", "ok": False}],
-        "recommended_action": "reconnect",
-    }
-    dispatch = AsyncMock(return_value={"success": True})
-    rp, ph = _recommend_repair_patches()
-    with (
-        rp,
-        ph,
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            side_effect=[unhealthy, {}],  # re-probe came back empty
-        ),
-        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
-    ):
-        await _run_connectivity_fold(
-            ConnectivityService(
-                publisher=Mock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=DeviceHealthService(publisher=Mock()),
-            ),
-            db_session,
-        )
-
-    dispatch.assert_awaited_once()
-    # Budget consumed and NOT reset => the empty re-probe was not treated as recovery.
-    counter = await state_store.get_value(db_session, REPAIR_ATTEMPTS_NAMESPACE, device.identity_value)
-    assert counter == 1
-
-
-async def test_recommended_action_dispatches_for_offline_wedged_device(db_session: AsyncSession) -> None:
-    """The wedge case: device already offline, probe still recommends reconnect →
-    dispatch still happens (this is what un-wedges it)."""
-    _host, device, _ = await _setup_host_and_device(
-        db_session, device_operational_state=DeviceOperationalState.offline, with_node=True
-    )
-    unhealthy = {
-        "healthy": False,
-        "checks": [{"check_id": "adb_connected", "ok": False}],
-        "recommended_action": "reconnect",
-    }
-    dispatch = AsyncMock(return_value={"success": True})
-    rp, ph = _recommend_repair_patches()
-    with (
-        rp,
-        ph,
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            side_effect=[unhealthy, None],
-        ),
-        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
-    ):
-        await _run_connectivity_fold(
-            ConnectivityService(
-                publisher=Mock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=DeviceHealthService(publisher=Mock()),
-            ),
-            db_session,
-        )
-
-    dispatch.assert_awaited_once()
-    assert "repair_attempted" in await _device_event_types(db_session, device.id)
-
-
-async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession) -> None:
     from sqlalchemy import update as _update
 
+    from app.jobs.models import Job
     from app.packs.models.pack import DriverPack, PackState
 
     _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
@@ -2386,9 +2243,8 @@ async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession
         "checks": [{"check_id": "adb_connected", "ok": False}],
         "recommended_action": "reconnect",
     }
-    dispatch = AsyncMock(return_value={"success": True})
     # No resolver patch: the draining guarantee now rests on resolve_pack_platform
-    # filtering to enabled packs (PackPlatformNotFound -> repair skipped).
+    # filtering to enabled packs (PackPlatformNotFound -> enqueue skipped).
     with (
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
@@ -2396,7 +2252,6 @@ async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession
             new_callable=AsyncMock,
             side_effect=[unhealthy],
         ),
-        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
     ):
         await _run_connectivity_fold(
             ConnectivityService(
@@ -2409,47 +2264,7 @@ async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession
             db_session,
         )
 
-    dispatch.assert_not_awaited()
-
-
-async def test_repair_budget_exhausts_then_records_failed(db_session: AsyncSession) -> None:
-    from app.core.leader import state_store
-    from app.devices.services.link_repair import REPAIR_ATTEMPTS_NAMESPACE, REPAIR_MAX_ATTEMPTS
-
-    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
-    await state_store.set_value(db_session, REPAIR_ATTEMPTS_NAMESPACE, device.identity_value, REPAIR_MAX_ATTEMPTS)
-    await db_session.commit()
-    unhealthy = {
-        "healthy": False,
-        "checks": [{"check_id": "adb_connected", "ok": False}],
-        "recommended_action": "reconnect",
-    }
-    dispatch = AsyncMock(return_value={"success": True})
-    rp, ph = _recommend_repair_patches()
-    with (
-        rp,
-        ph,
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            side_effect=[unhealthy],
-        ),
-        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
-    ):
-        await _run_connectivity_fold(
-            ConnectivityService(
-                publisher=Mock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=DeviceHealthService(publisher=Mock()),
-            ),
-            db_session,
-        )
-
-    dispatch.assert_not_awaited()
-    assert "repair_failed" in await _device_event_types(db_session, device.id)
+    assert not (await db_session.execute(_select(Job).where(Job.remediation_device_id == device.id))).scalars().all()
 
 
 # ---------------------------------------------------------------------------
@@ -2686,53 +2501,3 @@ async def test_probe_passes_claimed_ports_and_live_flag(
     )
     assert seen["claimed_ports"] == {"appium:systemPort": 8200}
     assert seen["has_live_session"] is False
-
-
-async def _device_event_payload(db_session: AsyncSession, device_id: uuid.UUID, event_type: str) -> dict[str, Any]:
-    from sqlalchemy import select as _select
-
-    from app.devices.models.event import DeviceEvent
-
-    rows = (await db_session.execute(_select(DeviceEvent).where(DeviceEvent.device_id == device_id))).scalars().all()
-    for row in rows:
-        if row.event_type.value == event_type:
-            return dict(row.details or {})
-    raise AssertionError(f"no {event_type} event for {device_id}")
-
-
-async def test_repair_event_records_curing_rung(db_session: AsyncSession) -> None:
-    # dispatch succeeds with a rung detail; re-probe healthy → repair_attempted
-    # event carries that detail.
-    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
-    unhealthy = {
-        "healthy": False,
-        "checks": [{"check_id": "claimed_ports_free", "ok": False}],
-        "recommended_action": "release_forwarded_ports",
-    }
-    dispatch = AsyncMock(return_value={"success": True, "detail": "cured_by=forward_remove"})
-    rp, ph = _recommend_repair_patches()
-    with (
-        rp,
-        ph,
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            side_effect=[unhealthy, {"healthy": True, "checks": [{"check_id": "claimed_ports_free", "ok": True}]}],
-        ),
-        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
-    ):
-        await _run_connectivity_fold(
-            ConnectivityService(
-                publisher=Mock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
-                lifecycle_policy=AsyncMock(),
-                health=DeviceHealthService(publisher=Mock()),
-            ),
-            db_session,
-        )
-
-    dispatch.assert_awaited_once()
-    payload = await _device_event_payload(db_session, device.id, "repair_attempted")
-    assert payload["detail"] == "cured_by=forward_remove"

@@ -5,9 +5,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.leader import state_store
 from app.devices.models import Device
+from app.devices.models.event import DeviceEvent, DeviceEventType
+from app.devices.services.link_repair import REPAIR_ATTEMPTS_NAMESPACE, REPAIR_MAX_ATTEMPTS
 from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.remediation_job import RemediationJobService
 from app.jobs import JOB_KIND_DEVICE_HEALTH_REMEDIATION
@@ -22,6 +26,28 @@ if TYPE_CHECKING:
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
     assert db_session.bind is not None
     return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+async def _create_failing_remediation_job(
+    db_session: AsyncSession,
+    host: Host,
+    *,
+    name: str,
+) -> tuple[Device, uuid.UUID, uuid.UUID]:
+    device = await create_device(db_session, host_id=host.id, name=name)
+    failure_episode_id = uuid.uuid4()
+    device.device_checks_healthy = False
+    device.failure_episode_id = failure_episode_id
+    await db_session.commit()
+    job_id = await enqueue_device_health_remediation(
+        db_session,
+        device_id=device.id,
+        failure_episode_id=failure_episode_id,
+        action_id="reconnect",
+        commit=True,
+    )
+    assert job_id is not None
+    return device, failure_episode_id, job_id
 
 
 def test_device_health_remediation_schema_contract() -> None:
@@ -116,3 +142,102 @@ async def test_worker_completes_when_device_no_longer_exists(db_session: AsyncSe
     assert job is not None
     assert job.status == JOB_STATUS_COMPLETED
     assert job.snapshot.get("note") == "device no longer exists"
+
+
+async def test_worker_dispatches_and_records_repair_attempt(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+        db_session,
+        db_host,
+        name="dispatch-remediation-device",
+    )
+    device_id = device.id
+    dispatch = AsyncMock(return_value={"success": True, "detail": "cured_by=forward_remove"})
+
+    with patch(
+        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
+        new=dispatch,
+    ):
+        await RemediationJobService(
+            session_factory=_session_factory(db_session),
+            circuit_breaker=AsyncMock(),
+            health=AsyncMock(),
+        ).run_device_health_remediation_job(
+            str(job_id),
+            {
+                "device_id": str(device.id),
+                "failure_episode_id": str(failure_episode_id),
+                "action_id": "reconnect",
+            },
+        )
+
+    dispatch.assert_awaited_once()
+    db_session.expire_all()
+    event = (
+        await db_session.execute(
+            select(DeviceEvent).where(
+                DeviceEvent.device_id == device_id,
+                DeviceEvent.event_type == DeviceEventType.repair_attempted,
+            )
+        )
+    ).scalar_one()
+    assert event.details == {"action": "reconnect", "attempt": 1, "success": True}
+    job = await db_session.get(Job, job_id)
+    assert job is not None
+    assert job.status == JOB_STATUS_COMPLETED
+    assert job.snapshot.get("note") == "dispatched reconnect (success=True)"
+
+
+async def test_worker_budget_exhaustion_records_repair_failed(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+        db_session,
+        db_host,
+        name="budget-remediation-device",
+    )
+    device_id = device.id
+    await state_store.set_value(
+        db_session,
+        REPAIR_ATTEMPTS_NAMESPACE,
+        device.identity_value,
+        REPAIR_MAX_ATTEMPTS,
+    )
+    await db_session.commit()
+    dispatch = AsyncMock()
+
+    with patch(
+        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
+        new=dispatch,
+    ):
+        await RemediationJobService(
+            session_factory=_session_factory(db_session),
+            circuit_breaker=AsyncMock(),
+            health=AsyncMock(),
+        ).run_device_health_remediation_job(
+            str(job_id),
+            {
+                "device_id": str(device.id),
+                "failure_episode_id": str(failure_episode_id),
+                "action_id": "reconnect",
+            },
+        )
+
+    dispatch.assert_not_awaited()
+    db_session.expire_all()
+    event = (
+        await db_session.execute(
+            select(DeviceEvent).where(
+                DeviceEvent.device_id == device_id,
+                DeviceEvent.event_type == DeviceEventType.repair_failed,
+            )
+        )
+    ).scalar_one()
+    assert event.details == {"action": "reconnect", "reason": "attempt budget exhausted"}
+    job = await db_session.get(Job, job_id)
+    assert job is not None
+    assert job.status == JOB_STATUS_COMPLETED
+    assert job.snapshot.get("note") == "budget exhausted"
