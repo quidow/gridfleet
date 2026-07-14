@@ -3,6 +3,7 @@ import contextlib
 import dataclasses
 import inspect
 import json
+import signal
 from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
@@ -609,6 +610,34 @@ async def test_stop_deletes_log_file() -> None:
     await manager.stop(4723)
 
     assert not appium_log_path(4723).exists()
+
+
+async def test_stop_deletes_active_sessions_before_terminating() -> None:
+    """Stop must DELETE live W3C sessions before signaling the process.
+
+    Regression: ``stop()`` only SIGTERM/SIGKILLed Appium and never deleted
+    sessions, so a driver's per-session resources (e.g. the Android systemPort
+    adb forward) orphaned on the host whenever Appium was killed before it could
+    tear them down — and the leaked port then failed the next session create.
+    Deleting sessions first lets the driver release them while Appium is live.
+    """
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5005)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5005, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    client = _appium_sessions_client(sessions=[{"id": "sess-1"}])
+    client.delete = AsyncMock(return_value=MagicMock(status_code=200))
+
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
+        await manager.stop(4723)
+
+    assert client.delete.await_count == 1
+    assert str(client.delete.await_args.args[0]).endswith("/session/sess-1")
+    # The session delete must precede the SIGTERM.
+    assert appium_proc.sent_signals == [signal.SIGTERM]
 
 
 async def test_stop_escalates_to_kill_after_timeout() -> None:

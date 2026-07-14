@@ -58,6 +58,7 @@ def _has_lifecycle_action(actions: list[dict[str, Any]], action_id: str) -> bool
 READINESS_TIMEOUT = 30
 READINESS_POLL_INTERVAL = 1
 STOP_GRACE_PERIOD = 5
+STOP_SESSION_DELETE_TIMEOUT = 5
 AUTO_RESTART_DELAYS_SEC = (1, 2, 4, 8, 16, 30)
 AUTO_RESTART_MAX_ATTEMPTS = 5
 AUTO_RESTART_WINDOW_SEC = 300
@@ -922,6 +923,39 @@ class AppiumProcessManager:
         except Exception as exc:
             logger.warning("adapter post_session failed for pack %s: %s", spec.pack_id, sanitize_log_value(exc))
 
+    async def _delete_active_sessions(self, port: int) -> None:
+        """Best-effort DELETE of live W3C sessions before terminating Appium.
+
+        Deleting the session while the server is still responsive lets the
+        driver release its own per-session resources — notably the adb
+        port-forwards (systemPort/mjpegServerPort/chromedriverPort) — instead of
+        orphaning them when the process is SIGKILLed or misses the SIGTERM grace
+        window. Driver-agnostic: a plain W3C ``DELETE /session/{id}``. Errors are
+        swallowed; teardown must proceed regardless.
+        """
+        client = http_client.get_client()
+        origin = _loopback_appium_origin(port)
+        try:
+            resp = await client.get(origin.join("/appium/sessions"), timeout=2)
+        except httpx.HTTPError:
+            return
+        if resp.status_code != 200:
+            return
+        payload: object = resp.json()
+        if not isinstance(payload, dict):
+            return
+        value = payload.get("value")
+        if not isinstance(value, list):
+            return
+        for session in value:
+            if not isinstance(session, dict):
+                continue
+            session_id = session.get("id")
+            if not isinstance(session_id, str):
+                continue
+            with contextlib.suppress(httpx.HTTPError):
+                await client.delete(origin.join(f"/session/{session_id}"), timeout=STOP_SESSION_DELETE_TIMEOUT)
+
     async def stop(self, port: int) -> None:
         async with self._start_lock:
             self._intentional_stop_ports.add(port)
@@ -929,6 +963,7 @@ class AppiumProcessManager:
             appium_proc = self._forget_port(port)
 
             if appium_proc and appium_proc.returncode is None:
+                await self._delete_active_sessions(port)
                 appium_proc.send_signal(signal.SIGTERM)
                 try:
                     await asyncio.wait_for(appium_proc.wait(), timeout=STOP_GRACE_PERIOD)
