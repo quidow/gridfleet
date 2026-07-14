@@ -163,6 +163,7 @@ async def _wait_for_job(
             publisher=_publisher_mock(),
             settings=settings_service,
             circuit_breaker=_noop_circuit_breaker(),
+            remediation_runner=AsyncMock(),
             verification_runner=VerificationRunnerService(
                 session_factory=session_factory,
                 publisher=_publisher_mock(),
@@ -1593,6 +1594,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             publisher=_publisher_mock(),
             settings=settings_service,
             circuit_breaker=_noop_circuit_breaker(),
+            remediation_runner=AsyncMock(),
             verification_runner=VerificationRunnerService(
                 session_factory=session_factory,
                 publisher=_publisher_mock(),
