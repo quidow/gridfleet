@@ -1125,10 +1125,11 @@ async def test_disconnect_records_exactly_one_connectivity_lost_event(
         summary: str,
         revision: int | None = None,
         observed_at: object = None,
-    ) -> None:
+    ) -> bool:
         del revision, observed_at
         target.device_checks_healthy = healthy
         target.device_checks_summary = summary
+        return True
 
     service = ConnectivityService(
         publisher=Mock(),

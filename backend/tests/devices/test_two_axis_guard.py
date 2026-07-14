@@ -131,7 +131,7 @@ async def test_device_axis_synchronous_racer_beats_stale_fold(db_session: AsyncS
     fold_revision = await next_observation_revision(db_session)
 
     # Host-offline cascade / lifecycle crash draws a fresh revision and marks down.
-    await svc.update_device_checks(db_session, device, healthy=False, summary="Host offline")
+    assert await svc.update_device_checks(db_session, device, healthy=False, summary="Host offline") is True
     await db_session.commit()
     await db_session.refresh(device)
     assert device.device_checks_healthy is False
@@ -139,7 +139,10 @@ async def test_device_axis_synchronous_racer_beats_stale_fold(db_session: AsyncS
     racer_revision = device.device_checks_observation_revision
 
     # A stale device_health fold observation must not revive the device.
-    await svc.update_device_checks(db_session, device, healthy=True, summary="Healthy", revision=fold_revision)
+    assert (
+        await svc.update_device_checks(db_session, device, healthy=True, summary="Healthy", revision=fold_revision)
+        is False
+    )
     await db_session.commit()
     await db_session.refresh(device)
     assert device.device_checks_healthy is False

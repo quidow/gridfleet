@@ -14,10 +14,12 @@ them surface a 500.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.hosts.models import Host, HostStatus, OSType
@@ -89,4 +91,85 @@ async def test_register_host_races_concurrent_same_hostname(
         except IntegrityError as exc:
             pytest.fail(f"register_host raised IntegrityError on concurrent same-hostname insert: {exc}")
     finally:
+        db_session.execute = original_execute  # type: ignore[method-assign]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_register_host_unique_conflict_fallback_holds_boot_fence_lock(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The post-IntegrityError re-fetch is part of the boot-fence write window.
+
+    Pause immediately after that SELECT. A competing status-style host lock must
+    remain blocked until registration commits; otherwise status can validate the
+    old boot between the unlocked re-fetch and ``current_boot_id`` update.
+    """
+    hostname = f"race-lock-{uuid.uuid4().hex[:8]}"
+    boot_id = uuid.uuid4()
+    original_execute = db_session.execute
+    initial_select_seen = False
+    fallback_selected = asyncio.Event()
+    release_registration = asyncio.Event()
+
+    async def _pause_after_fallback_select(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        nonlocal initial_select_seen
+        result = await original_execute(stmt, *args, **kwargs)
+        stmt_text = str(stmt).lower()
+        is_host_lookup = "from hosts" in stmt_text and "select" in stmt_text and "hostname" in stmt_text
+        if not is_host_lookup:
+            return result
+        if not initial_select_seen:
+            initial_select_seen = True
+            async with db_session_maker() as side:
+                side.add(
+                    Host(
+                        hostname=hostname,
+                        ip="10.0.99.2",
+                        os_type=OSType.linux,
+                        agent_port=5100,
+                        status=HostStatus.online,
+                        capabilities={"orchestration_contract_version": 6},
+                    )
+                )
+                await side.commit()
+            return result
+        fallback_selected.set()
+        await release_registration.wait()
+        return result
+
+    crud = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    db_session.execute = _pause_after_fallback_select  # type: ignore[assignment, method-assign]
+    registration = asyncio.create_task(
+        crud.register_host(
+            db_session,
+            HostRegister(
+                hostname=hostname,
+                ip="10.0.99.3",
+                os_type=OSType.linux,
+                agent_port=5100,
+                capabilities={"orchestration_contract_version": 6},
+                boot_id=boot_id,
+            ),
+        )
+    )
+    await asyncio.wait_for(fallback_selected.wait(), timeout=2.0)
+
+    competing_lock_acquired = asyncio.Event()
+
+    async def _lock_like_status_push() -> None:
+        async with db_session_maker() as side:
+            await side.execute(select(Host).where(Host.hostname == hostname).with_for_update())
+            competing_lock_acquired.set()
+            await side.rollback()
+
+    competing = asyncio.create_task(_lock_like_status_push())
+    try:
+        await asyncio.sleep(0.05)
+        assert not competing_lock_acquired.is_set()
+    finally:
+        release_registration.set()
+        await registration
+        await competing
         db_session.execute = original_execute  # type: ignore[method-assign]

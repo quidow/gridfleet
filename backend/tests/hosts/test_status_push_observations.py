@@ -118,7 +118,7 @@ async def test_process_observations_runs_restart_then_convergence_then_folds(
     assert order == ["restart", "converge", "fold"]
 
 
-async def test_process_observations_contains_convergence_failure(
+async def test_process_observations_holds_folds_when_convergence_fails(
     db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
 ) -> None:
     ran: list[bool] = []
@@ -141,7 +141,7 @@ async def test_process_observations_contains_convergence_failure(
         payload={"appium_processes": {}, "node_health": {"reported_at": "t"}},
     )
 
-    assert ran == [True]
+    assert ran == []
 
 
 async def test_process_observations_without_wiring_is_a_noop(db_host: Host) -> None:

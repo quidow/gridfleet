@@ -187,7 +187,7 @@ class HostCrudService:
             # half-written transient row, refetch the existing host, and
             # degrade to the re-register branch.
             await db.rollback()
-            result = await db.execute(select(Host).where(Host.hostname == data.hostname))
+            result = await db.execute(select(Host).where(Host.hostname == data.hostname).with_for_update())
             existing = result.scalar_one_or_none()
             if existing is None:
                 raise

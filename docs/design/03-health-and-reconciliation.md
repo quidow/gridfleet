@@ -33,6 +33,8 @@ One `BackgroundLoop` per independent lifecycle. Cadences, read sets, and write s
 
 Scheduling doctrine for new work: a `BackgroundLoop` per independent lifecycle; stage-due stages only as sub-cadences of an owning sweep. Observation arrives via the agent's consolidated status push (`POST /agent/hosts/status`); the backend dials an agent only to act, never to observe. `docs/reference/architecture.md` documents the push/dial split.
 
+During the partial status-fold rollout, `device_health` remains synchronous and intentionally stays outside ingest dedup/revision stamping. Its current path still performs dials and actions, so exact pushes must remain retryable after a contained inline-fold failure. It joins the guarded cursor only when the later facts-only reconciler and durable-remediation phase lands.
+
 ## The tri-state probe pattern
 
 Every signal derived from an agent or a device's Appium node is projected to `ProbeResult` (`app/agent_comm/probe_result.py`):
@@ -62,7 +64,7 @@ Every public health fact has exactly one durable home:
 - `Device.emulator_state`: the `host_sweep` device-health fold
 - `AppiumNode.desired_state`: `write_desired_state` (Doc 2)
 - `AppiumNode.health_running` / `AppiumNode.health_state`: `apply_node_state_transition`
-- `AppiumNode.health_failing_since`: the `host_sweep` node-health fold
+- `AppiumNode.health_failing_since`: the `status_fold_loop` node-health fold
 
 `build_public_summary(device)` (`app.devices.services.health_view`, re-exported via `app.devices.services.health`) is the only consumer projection; readers call it on demand. There is no eventually consistent health layer to drift.
 
@@ -70,7 +72,7 @@ Every public health fact has exactly one durable home:
 
 | Namespace | Owner | Purpose |
 | --- | --- | --- |
-| `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `host_sweep_loop` / host diagnostics | latest consolidated agent status push per host (Appium processes, host telemetry) — the single snapshot source |
+| `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `status_fold_loop`, `host_sweep_loop`, and host diagnostics | latest consolidated agent status push per host (Appium processes, health sections, host telemetry) — the single snapshot source; guarded health sections become eligible only after post-convergence stamping |
 | `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
 | `connectivity.previously_offline` | `host_sweep` connectivity fold | remembers why a reconnect is treated as recovery rather than first startup |
 | `hardware_telemetry.state` | `host_sweep` hardware-telemetry fold | stale/fresh telemetry bookkeeping |

@@ -28,7 +28,11 @@ from app.core.metrics_recorders import record_status_fold_host, record_status_fo
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.hosts.models import Host
-from app.hosts.service_status_push import HOST_STATUS_NAMESPACE, OBSERVATION_REVISION_KEY
+from app.hosts.service_status_push import (
+    HOST_STATUS_NAMESPACE,
+    OBSERVATION_RECEIVED_AT_KEY,
+    OBSERVATION_REVISION_KEY,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +44,10 @@ logger = get_logger(__name__)
 
 # Plumbing constant (not a registry setting): the reconciler poll interval.
 STATUS_FOLD_INTERVAL_SEC = 3.0
+# Bound each cycle to one poll interval so this independent lifecycle cannot
+# starve the scheduler's other loops. Unfinished hosts remain unapplied and are
+# naturally retried from the latest snapshot next cycle.
+STATUS_FOLD_CYCLE_BUDGET_SEC = 3.0
 FOLD_SECTION = "node_health"
 
 
@@ -50,6 +58,7 @@ class StatusFoldLoop(BackgroundLoop):
     def __init__(self, *, node_health: NodeHealthService, session_factory: SessionFactory) -> None:
         self._node_health = node_health
         self._sessions = session_factory
+        self._resume_after: str | None = None
 
     @property
     def _session_factory(self) -> SessionFactory:
@@ -59,16 +68,32 @@ class StatusFoldLoop(BackgroundLoop):
         return STATUS_FOLD_INTERVAL_SEC
 
     async def _run_cycle(self, db: AsyncSession) -> None:
+        cycle_started = perf_counter()
+        cycle_deadline = cycle_started + STATUS_FOLD_CYCLE_BUDGET_SEC
         snapshots = await control_plane_state_store.get_values(db, HOST_STATUS_NAMESPACE)
         if not snapshots:
             return
         applied = await self._load_applied(db, list(snapshots))
-        for host_key, snapshot in snapshots.items():
+        items = list(snapshots.items())
+        if self._resume_after is not None:
+            for index, (host_key, _snapshot) in enumerate(items):
+                if host_key == self._resume_after:
+                    items = items[index + 1 :] + items[: index + 1]
+                    break
+        for index, (host_key, snapshot) in enumerate(items):
+            if index > 0 and perf_counter() - cycle_started >= STATUS_FOLD_CYCLE_BUDGET_SEC:
+                record_status_fold_host("budget_deferred")
+                break
             try:
-                await self._fold_host(host_key, snapshot, applied.get(host_key, {}))
+                await self._fold_host(host_key, snapshot, applied.get(host_key, {}), deadline=cycle_deadline)
             except Exception:
                 record_status_fold_host("contained_error")
                 logger.exception("status_fold_host_failed", extra={"host_id": host_key})
+            finally:
+                # Rotate the next cycle after the last attempted host. A host
+                # that is persistently retryable can consume its slice without
+                # starving every host that followed it in snapshot order.
+                self._resume_after = host_key
 
     async def _load_applied(self, db: AsyncSession, host_keys: list[str]) -> dict[str, dict[str, Any]]:
         host_ids: list[uuid.UUID] = []
@@ -82,7 +107,14 @@ class StatusFoldLoop(BackgroundLoop):
         rows = await db.execute(select(Host.id, Host.observation_applied).where(Host.id.in_(host_ids)))
         return {str(hid): (value if isinstance(value, dict) else {}) for hid, value in rows.all()}
 
-    async def _fold_host(self, host_key: str, snapshot: object, applied: dict[str, Any]) -> None:
+    async def _fold_host(
+        self,
+        host_key: str,
+        snapshot: object,
+        applied: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> None:
         payload = snapshot.get("payload") if isinstance(snapshot, dict) else None
         section = payload.get(FOLD_SECTION) if isinstance(payload, dict) else None
         if not isinstance(section, dict):
@@ -98,14 +130,22 @@ class StatusFoldLoop(BackgroundLoop):
             host_id = uuid.UUID(host_key)
         except ValueError:
             return
+        raw_boot_id = snapshot.get("boot_id") if isinstance(snapshot, dict) else None
+        try:
+            boot_id = uuid.UUID(raw_boot_id) if isinstance(raw_boot_id, str) else None
+        except ValueError:
+            boot_id = None
 
         started = perf_counter()
         async with self._session_factory() as host_db:
-            settled = await self._node_health.fold_host_nodes(host_db, host_id, section)
+            settled = await self._node_health.fold_host_nodes(
+                host_db,
+                host_id,
+                section,
+                boot_id=boot_id,
+                deadline=deadline,
+            )
         record_status_fold_host("folded")
-        received = parse_iso(snapshot.get("received_at")) if isinstance(snapshot, dict) else None
-        if received is not None:
-            record_status_fold_lag(max(0.0, (now_utc() - received).total_seconds()))
         logger.debug(
             "status_fold_host_complete",
             extra={
@@ -115,19 +155,25 @@ class StatusFoldLoop(BackgroundLoop):
                 "ms": round((perf_counter() - started) * 1000, 1),
             },
         )
-        if settled:
-            await self._advance_applied(host_id, revision)
+        if settled and await self._advance_applied(host_id, revision):
+            raw_received = section.get(OBSERVATION_RECEIVED_AT_KEY)
+            if not isinstance(raw_received, str) and isinstance(snapshot, dict):
+                raw_received = snapshot.get("received_at")
+            received = parse_iso(raw_received)
+            if received is not None:
+                record_status_fold_lag(max(0.0, (now_utc() - received).total_seconds()))
 
-    async def _advance_applied(self, host_id: uuid.UUID, revision: int) -> None:
+    async def _advance_applied(self, host_id: uuid.UUID, revision: int) -> bool:
         # Serializes on the same host-row lock the push endpoint takes, so the
         # loop's completion watermark cannot race the endpoint's cursor publish.
         async with self._session_factory() as db:
             host = await db.get(Host, host_id, with_for_update=True)
             if host is None:
-                return
+                return False
             applied = dict(host.observation_applied) if isinstance(host.observation_applied, dict) else {}
             current = applied.get(FOLD_SECTION)
             if not isinstance(current, int) or current < revision:
                 applied[FOLD_SECTION] = revision
                 host.observation_applied = applied
                 await db.commit()
+            return True

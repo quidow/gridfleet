@@ -325,13 +325,13 @@ def record_host_push_token_anomaly(kind: str) -> None:
 STATUS_FOLD_NODE_RESULTS = Counter(
     "gridfleet_status_fold_node_results_total",
     "Per-node results of the async node_health fold.",
-    # outcome: retryable (others — applied/terminal_noop — are the common no-metric case)
+    # outcome: applied | terminal_noop | skipped | retryable
     labelnames=("outcome",),
 )
 STATUS_FOLD_HOSTS = Counter(
     "gridfleet_status_fold_hosts_total",
     "Host sections the StatusFoldLoop acted on, by disposition.",
-    # disposition: folded | skipped | contained_error
+    # disposition: folded | skipped | contained_error | budget_deferred
     labelnames=("disposition",),
 )
 STATUS_FOLD_LAG_SECONDS = Histogram(

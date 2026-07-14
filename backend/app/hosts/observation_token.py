@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     import uuid
 
 # Keys the agent/backend add to a section that are NOT part of the hashed body.
-TOKEN_KEYS = frozenset({"section_sequence", "payload_sha256", "observation_revision"})
+TOKEN_KEYS = frozenset({"section_sequence", "payload_sha256", "observation_revision", "observation_received_at"})
 
 SECTION_SEQUENCE_KEY = "section_sequence"
 PAYLOAD_SHA256_KEY = "payload_sha256"
@@ -59,6 +59,8 @@ def extract_token(section: dict[str, Any], *, boot_id: uuid.UUID | None) -> Sect
         return None
     sequence = section.get(SECTION_SEQUENCE_KEY)
     payload_sha256 = section.get(PAYLOAD_SHA256_KEY)
-    if not isinstance(sequence, int) or not isinstance(payload_sha256, str):
+    # bool is an int subclass in Python, but is not a valid monotonic sequence.
+    # Negative counters are likewise malformed and degrade to at-least-once.
+    if type(sequence) is not int or sequence < 0 or not isinstance(payload_sha256, str):
         return None
     return SectionToken(boot_id=str(boot_id), section_sequence=sequence, payload_sha256=payload_sha256)

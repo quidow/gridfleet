@@ -14,7 +14,7 @@ from typing import Any
 
 # Keys added to a section that are NOT part of the hashed body (must match the
 # backend). ``observation_revision`` is stamped by the backend, never the agent.
-TOKEN_KEYS = frozenset({"section_sequence", "payload_sha256", "observation_revision"})
+TOKEN_KEYS = frozenset({"section_sequence", "payload_sha256", "observation_revision", "observation_received_at"})
 
 SECTION_SEQUENCE_KEY = "section_sequence"
 PAYLOAD_SHA256_KEY = "payload_sha256"

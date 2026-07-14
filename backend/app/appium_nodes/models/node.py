@@ -73,6 +73,12 @@ class AppiumNode(Base):
     # A writer applies only when its revision is strictly greater. See
     # app.core.observation_revision.
     health_observation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    # Durable receipt for the level-triggered node-health fold. This is distinct
+    # from ``health_observation_revision``: terminal no-ops consume a generation
+    # without writing the health axis, while retryable failures leave it pending.
+    health_fold_applied_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    health_fold_boot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    health_fold_section_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     @property
     def observed_running(self) -> bool:

@@ -88,10 +88,10 @@ class DeviceHealthService:
         summary: str,
         revision: int | None = None,
         observed_at: datetime | None = None,
-    ) -> None:
+    ) -> bool:
         locked = await _lock(db, device)
         if locked is None:
-            return
+            return False
         # Two-axis guard: a synchronous higher-authority writer passes no revision
         # and draws a fresh one at write time, so it always out-ranks a stale fold
         # observation whose (lower) revision was drawn earlier at ingest. A moved
@@ -99,7 +99,7 @@ class DeviceHealthService:
         # comparison when a fresher write landed first.
         rev = revision if revision is not None else await next_observation_revision(db)
         if rev <= locked.device_checks_observation_revision:
-            return
+            return False
         ladder = await remediation_log.load_ladder(db, locked.id)
         policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
         previous = build_public_summary(locked, policy_view=policy_view)
@@ -114,6 +114,7 @@ class DeviceHealthService:
         # intent_reconcile_interval): a healthy device_checks signal alone does
         # not restore an offline device — the node must also be observed running.
         _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
+        return True
 
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None

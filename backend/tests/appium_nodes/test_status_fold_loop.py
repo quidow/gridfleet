@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services.node_health import NodeHealthService
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import node_health as node_health_module
+from app.appium_nodes.services import status_fold_loop as status_fold_module
+from app.appium_nodes.services.node_health import NodeFoldOutcome, NodeHealthService, _NodeObservation
 from app.appium_nodes.services.status_fold_loop import FOLD_SECTION, StatusFoldLoop
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observation_revision import next_observation_revision
@@ -17,13 +20,13 @@ from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_running_node
+from tests.helpers import seed_host_and_running_node, seed_host_with_devices
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    import uuid
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.devices.models import Device
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -126,8 +129,38 @@ async def test_loop_skips_when_revision_not_advanced(
     fold.assert_not_awaited()
 
 
+async def test_loop_yields_remaining_hosts_after_cycle_budget(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_keys = [str(uuid.uuid4()), str(uuid.uuid4())]
+    snapshots = {key: {"payload": {}} for key in host_keys}
+    monkeypatch.setattr(control_plane_state_store, "get_values", AsyncMock(return_value=snapshots))
+    ticks = iter(
+        (
+            0.0,
+            status_fold_module.STATUS_FOLD_CYCLE_BUDGET_SEC + 0.1,
+            0.0,
+            status_fold_module.STATUS_FOLD_CYCLE_BUDGET_SEC + 0.1,
+        )
+    )
+    monkeypatch.setattr(status_fold_module, "perf_counter", lambda: next(ticks))
+    loop = _loop(_service(), db_session_maker)
+    loop._load_applied = AsyncMock(return_value={})  # type: ignore[method-assign]
+    loop._fold_host = AsyncMock()  # type: ignore[method-assign]
+
+    await loop._run_cycle(db_session)
+    await loop._run_cycle(db_session)
+
+    folded_hosts = [call.args[0] for call in loop._fold_host.await_args_list]  # type: ignore[attr-defined]
+    assert folded_hosts == host_keys
+
+
 async def test_loop_retryable_node_holds_watermark(
-    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _host, device, node = await seed_host_and_running_node(db_session, identity="fold-retry")
     host_id = device.host_id
@@ -142,12 +175,15 @@ async def test_loop_retryable_node_holds_watermark(
     node_health = _service()
     # A node that raises mid-write makes the host section unsettled (returns False).
     node_health.fold_host_nodes = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    record_lag = Mock()
+    monkeypatch.setattr(status_fold_module, "record_status_fold_lag", record_lag)
     await _loop(node_health, db_session_maker)._run_cycle(db_session)
 
     db_session.expire_all()
     host = await db_session.get(Host, host_id)
     assert host is not None
     assert host.observation_applied.get(FOLD_SECTION) is None  # watermark not advanced
+    record_lag.assert_not_called()
 
 
 async def test_loop_contains_per_host_failure(
@@ -168,10 +204,17 @@ async def test_loop_contains_per_host_failure(
     real = _service().fold_host_nodes
     node_health = _service()
 
-    async def flaky(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> bool:
+    async def flaky(
+        db: AsyncSession,
+        host_id: uuid.UUID,
+        section: dict[str, Any],
+        *,
+        boot_id: uuid.UUID | None = None,
+        deadline: float | None = None,
+    ) -> bool:
         if host_id == h2_id:
             raise RuntimeError("boom")
-        return await real(db, host_id, section)
+        return await real(db, host_id, section, boot_id=boot_id, deadline=deadline)
 
     node_health.fold_host_nodes = flaky  # type: ignore[method-assign]
     await _loop(node_health, db_session_maker)._run_cycle(db_session)
@@ -186,3 +229,132 @@ async def test_loop_contains_per_host_failure(
     host2 = await db_session.get(Host, h2_id)
     assert host2 is not None
     assert host2.observation_applied.get(FOLD_SECTION) is None
+
+
+async def test_terminal_noop_receipt_prevents_peer_replay_after_partial_failure(
+    db_session: AsyncSession,
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-partial")
+    terminal_device, retryable_device = devices
+    terminal_node = AppiumNode(
+        device_id=terminal_device.id,
+        port=4730,
+        pid=1001,
+        active_connection_target=terminal_device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4730,
+    )
+    retryable_node = AppiumNode(
+        device_id=retryable_device.id,
+        port=4731,
+        pid=1002,
+        active_connection_target=retryable_device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4731,
+    )
+    db_session.add_all([terminal_node, retryable_node])
+    await db_session.commit()
+    terminal_device_id = terminal_device.id
+    retryable_device_id = retryable_device.id
+    terminal_node_id = terminal_node.id
+    retryable_node_id = retryable_node.id
+    host_id = host.id
+    revision = await next_observation_revision(db_session)
+    boot_id = uuid.uuid4()
+    section = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 7,
+        "observation_revision": revision,
+        "nodes": [
+            # PID mismatch is terminal for this generation: convergence owns
+            # process identity, so it must get a durable receipt.
+            _entry(terminal_node.port, 9999, terminal_node.active_connection_target, running=False),
+            _entry(
+                retryable_node.port,
+                retryable_node.pid,
+                retryable_node.active_connection_target,
+                running=False,
+            ),
+        ],
+    }
+    service = _service()
+    real_process = service._process_node_health
+    calls: list[uuid.UUID] = []
+
+    async def fail_one(
+        db: AsyncSession,
+        node: AppiumNode,
+        device: Device,
+        *,
+        observation: _NodeObservation,
+    ) -> NodeFoldOutcome:
+        calls.append(device.id)
+        if device.id == retryable_device_id:
+            raise RuntimeError("retry this node")
+        return await real_process(db, node, device, observation=observation)
+
+    service._process_node_health = fail_one  # type: ignore[method-assign]
+
+    settled = await service.fold_host_nodes(db_session, host_id, section, boot_id=boot_id)
+
+    assert settled is False
+    db_session.expire_all()
+    terminal_after = await db_session.get(AppiumNode, terminal_node_id)
+    retryable_after = await db_session.get(AppiumNode, retryable_node_id)
+    assert terminal_after is not None
+    assert retryable_after is not None
+    assert terminal_after.health_fold_applied_revision == revision
+    assert terminal_after.health_fold_boot_id == boot_id
+    assert terminal_after.health_fold_section_sequence == 7
+    assert retryable_after.health_fold_applied_revision < revision
+
+    assert await service.fold_host_nodes(db_session, host_id, section, boot_id=boot_id) is False
+    assert calls.count(terminal_device_id) == 1
+    assert calls.count(retryable_device_id) == 2
+
+
+async def test_node_fold_defers_remaining_devices_at_cycle_deadline(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-budget")
+    nodes = [
+        AppiumNode(
+            device_id=device.id,
+            port=4740 + index,
+            pid=2000 + index,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4740 + index,
+        )
+        for index, device in enumerate(devices)
+    ]
+    db_session.add_all(nodes)
+    await db_session.commit()
+    revision = await next_observation_revision(db_session)
+    section = {
+        "reported_at": now_utc().isoformat(),
+        "observation_revision": revision,
+        "nodes": [_entry(node.port, node.pid, node.active_connection_target, running=False) for node in nodes],
+    }
+    ticks = iter(
+        (
+            0.0,
+            status_fold_module.STATUS_FOLD_CYCLE_BUDGET_SEC + 0.1,
+            status_fold_module.STATUS_FOLD_CYCLE_BUDGET_SEC + 0.1,
+        )
+    )
+    monkeypatch.setattr(node_health_module, "perf_counter", lambda: next(ticks))
+    service = _service()
+    process = AsyncMock(return_value="terminal_noop")
+    service._process_node_health = process  # type: ignore[method-assign]
+
+    settled = await service.fold_host_nodes(
+        db_session,
+        host.id,
+        section,
+        deadline=status_fold_module.STATUS_FOLD_CYCLE_BUDGET_SEC,
+    )
+
+    assert settled is False
+    assert process.await_count == 1
