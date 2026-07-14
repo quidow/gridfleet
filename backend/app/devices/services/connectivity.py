@@ -541,6 +541,7 @@ class ConnectivityService:
         # sync lazy-load (MissingGreenlet). Mirrors node_health.fold_host_nodes.
         work: list[uuid.UUID] = []
         work_pack_ids: set[str] = set()
+        work_presence_keys: set[str] = set()
         for device in devices:
             if device.id not in observations.by_device_id:
                 continue  # not in this gather — never absence
@@ -548,10 +549,21 @@ class ConnectivityService:
                 metrics.record_device_health_fold_result("skipped")
                 continue
             work.append(device.id)
+            work_presence_keys.add(device.identity_value)
             if device.pack_id:
                 work_pack_ids.add(device.pack_id)
 
-        fold_scope = await DeviceHealthFoldScope.create(db, pack_ids=work_pack_ids)
+        fold_scope = await DeviceHealthFoldScope.create(
+            db,
+            pack_ids=work_pack_ids,
+            presence_namespaces=(
+                CONNECTIVITY_NAMESPACE,
+                IP_PING_NAMESPACE,
+                PROBE_UNANSWERED_NAMESPACE,
+                PROBE_FAILED_NAMESPACE,
+            ),
+            presence_keys=work_presence_keys,
+        )
         retryable = 0
         with fold_scope.activate():
             for index, device_id in enumerate(work):
@@ -562,19 +574,20 @@ class ConnectivityService:
                 item = observations.by_device_id[device_id]
                 try:
                     locked = await fold_scope.lock_device(db, device_id)
-                    outcome = (
-                        "terminal_noop"
-                        if locked is None
-                        else await self._apply_device_health(
-                            db,
-                            locked,
-                            item,
-                            receipt=receipt,
-                            observed_at=observed_at,
-                            debounce_windows=debounce_windows,
-                        )
-                    )
-                    await db.commit()
+                    if locked is None:
+                        outcome: DeviceFoldOutcome = "terminal_noop"
+                        await db.commit()
+                    else:
+                        async with locked.transactional_presence():
+                            outcome = await self._apply_device_health(
+                                db,
+                                locked,
+                                item,
+                                receipt=receipt,
+                                observed_at=observed_at,
+                                debounce_windows=debounce_windows,
+                            )
+                            await db.commit()
                     metrics.record_device_health_fold_result(outcome)
                     if outcome == "retryable":
                         retryable += 1

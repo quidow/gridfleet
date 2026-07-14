@@ -119,6 +119,32 @@ async def test_update_device_checks_still_acquires_its_own_lock(
     spy.assert_awaited_once_with(db, device.id)
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_locked_device_checks_reuses_scope_lock(
+    db_with_device: tuple[AsyncSession, Device], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.devices.services.device_health_fold_context import DeviceHealthFoldScope
+
+    db, device = db_with_device
+    scope = await DeviceHealthFoldScope.create(
+        db,
+        pack_ids=(),
+        presence_namespaces=(),
+        presence_keys=(),
+    )
+    locked = await scope.lock_device(db, device.id)
+    assert locked is not None
+    spy = AsyncMock(wraps=svc.device_locking.lock_device)
+    monkeypatch.setattr(svc.device_locking, "lock_device", spy)
+    service = DeviceHealthService(publisher=event_bus)
+
+    applied = await service.update_locked_device_checks(locked=locked, db=db, healthy=True, summary="Healthy")
+
+    assert applied is True
+    spy.assert_not_awaited()
+
+
 def test_locked_device_fold_requires_scope_factory() -> None:
     from app.devices.services.device_health_fold_context import LockedDeviceFold
 

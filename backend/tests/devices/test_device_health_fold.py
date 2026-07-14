@@ -8,10 +8,18 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from sqlalchemy import select
 
+from app.core.leader import state_store as control_plane_state_store
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services.connectivity import ConnectivityService
+from app.devices.services import link_repair
+from app.devices.services.connectivity import (
+    CONNECTIVITY_NAMESPACE,
+    IP_PING_NAMESPACE,
+    PROBE_FAILED_NAMESPACE,
+    PROBE_UNANSWERED_NAMESPACE,
+    ConnectivityService,
+)
 from app.devices.services.health import DeviceHealthService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
 from app.jobs.models import Job
@@ -149,7 +157,7 @@ async def test_fold_applies_healthy_and_advances_receipt(
     assert device.device_checks_fold_section_sequence == 3
 
 
-async def test_fold_acquires_device_lock_once_per_processed_device(
+async def test_fold_acquires_one_fold_owned_health_lock_per_processed_device(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
@@ -178,6 +186,148 @@ async def test_fold_acquires_device_lock_once_per_processed_device(
 
     assert settled is True
     assert sorted(lock_calls) == sorted(device_ids)
+
+
+async def test_fold_snapshots_only_fold_owned_control_state_namespaces(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.devices.services.device_health_fold_context as fold_context
+
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-presence")
+    device_ids = [device.id for device in devices]
+    identities = {device.identity_value for device in devices}
+    revision = await next_observation_revision(db_session)
+    real_snapshot = control_plane_state_store.snapshot_presence
+    snapshot = AsyncMock(wraps=real_snapshot)
+    monkeypatch.setattr(fold_context, "snapshot_presence", snapshot, raising=False)
+    service = build_connectivity_service(db_session_maker)
+
+    settled = await service.fold_host_devices(
+        db_session,
+        host.id,
+        _healthy_fold_section(device_ids, revision=revision),
+        boot_id=uuid.uuid4(),
+    )
+
+    assert settled is True
+    snapshot.assert_awaited_once()
+    assert set(snapshot.await_args.kwargs["namespaces"]) == {
+        CONNECTIVITY_NAMESPACE,
+        IP_PING_NAMESPACE,
+        PROBE_UNANSWERED_NAMESPACE,
+        PROBE_FAILED_NAMESPACE,
+    }
+    assert set(snapshot.await_args.kwargs["keys"]) == identities
+    assert link_repair.REPAIR_ATTEMPTS_NAMESPACE not in snapshot.await_args.kwargs["namespaces"]
+
+
+async def test_fold_discards_presence_changes_from_rolled_back_device(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.devices.services.device_health_fold_context as fold_context
+
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-presence-rollback")
+    by_id = {device.id: device for device in devices}
+    bad_id, good_id = sorted(by_id)
+    bad_identity = by_id[bad_id].identity_value
+    await control_plane_state_store.set_value(db_session, CONNECTIVITY_NAMESPACE, bad_identity, True)
+    await db_session.commit()
+    revision = await next_observation_revision(db_session)
+    captured: list[control_plane_state_store.PresenceSnapshot] = []
+    real_snapshot = control_plane_state_store.snapshot_presence
+
+    async def capture_snapshot(db: AsyncSession, **kwargs: object) -> control_plane_state_store.PresenceSnapshot:
+        snapshot = await real_snapshot(db, **kwargs)  # type: ignore[arg-type]
+        captured.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(fold_context, "snapshot_presence", capture_snapshot, raising=False)
+    service = build_connectivity_service(db_session_maker)
+    real_apply = service._apply_device_health
+    good_saw_committed_parent = False
+
+    async def fail_first(
+        db: AsyncSession,
+        locked: LockedDeviceFold,
+        item: DeviceHealthItem,
+        **kwargs: object,
+    ) -> DeviceFoldOutcome:
+        nonlocal good_saw_committed_parent
+        if locked.device.id == bad_id:
+            await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, bad_identity)
+            raise RuntimeError("fail after presence mutation")
+        good_saw_committed_parent = (CONNECTIVITY_NAMESPACE, bad_identity) in captured[0].present
+        return await real_apply(db, locked, item, **kwargs)  # type: ignore[arg-type]
+
+    service._apply_device_health = fail_first  # type: ignore[method-assign]
+    settled = await service.fold_host_devices(
+        db_session,
+        host.id,
+        _healthy_fold_section([bad_id, good_id], revision=revision),
+        boot_id=uuid.uuid4(),
+    )
+
+    assert settled is False
+    assert good_saw_committed_parent is True
+    assert await control_plane_state_store.get_value(db_session, CONNECTIVITY_NAMESPACE, bad_identity) is True
+    good_receipt = await db_session.scalar(
+        select(Device.device_checks_fold_applied_revision).where(Device.id == good_id)
+    )
+    bad_receipt = await db_session.scalar(select(Device.device_checks_fold_applied_revision).where(Device.id == bad_id))
+    assert good_receipt == revision
+    assert bad_receipt is not None and bad_receipt < revision
+
+
+async def test_fold_sees_repair_attempt_committed_after_presence_preload(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services.device_health_fold_context import DeviceHealthFoldScope
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-repair-race")
+    device = devices[0]
+    revision = await next_observation_revision(db_session)
+    real_lock = DeviceHealthFoldScope.lock_device
+    injected = False
+
+    async def inject_repair_attempt(
+        scope: DeviceHealthFoldScope,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+    ) -> LockedDeviceFold | None:
+        nonlocal injected
+        if not injected:
+            injected = True
+            async with db_session_maker() as concurrent_db:
+                assert await link_repair.next_repair_attempt(concurrent_db, device.identity_value) == 1
+                await concurrent_db.commit()
+        return await real_lock(scope, db, device_id)
+
+    monkeypatch.setattr(DeviceHealthFoldScope, "lock_device", inject_repair_attempt)
+    service = build_connectivity_service(db_session_maker)
+
+    settled = await service.fold_host_devices(
+        db_session,
+        host.id,
+        _healthy_fold_section([device.id], revision=revision),
+        boot_id=uuid.uuid4(),
+    )
+
+    assert settled is True
+    assert injected is True
+    assert (
+        await control_plane_state_store.get_value(
+            db_session,
+            link_repair.REPAIR_ATTEMPTS_NAMESPACE,
+            device.identity_value,
+        )
+        is None
+    )
 
 
 async def test_fold_preloads_pack_catalog_once_for_multiple_devices(

@@ -59,9 +59,9 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
     "failure_episode_id": frozenset({"app/devices/services/health.py"}),
     # Durable device_health fold receipt: advanced by the StatusFoldLoop device
     # fold under the device row lock (the migration is an out-of-band writer).
-    "device_checks_fold_applied_revision": frozenset({"app/devices/services/connectivity.py"}),
-    "device_checks_fold_boot_id": frozenset({"app/devices/services/connectivity.py"}),
-    "device_checks_fold_section_sequence": frozenset({"app/devices/services/connectivity.py"}),
+    "device_checks_fold_applied_revision": frozenset({"app/devices/services/device_health_fold_context.py"}),
+    "device_checks_fold_boot_id": frozenset({"app/devices/services/device_health_fold_context.py"}),
+    "device_checks_fold_section_sequence": frozenset({"app/devices/services/device_health_fold_context.py"}),
     # M2 ordering watermark for pushed emulator_state writes: written under the
     # device row lock alongside emulator_state (the migration is out-of-band).
     "emulator_state_source_time": frozenset({"app/devices/services/health.py"}),

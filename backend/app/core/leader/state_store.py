@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.leader.models import ControlPlaneStateEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Mapping
+    from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class _PresenceSnapshot:
+class PresenceSnapshot:
     """A fold-start snapshot of which ``(namespace, key)`` entries exist, for a
     fixed set of fully-preloaded namespaces. Lets a caller skip the DB round-trip
     for a get/delete on a known-absent key. Only valid when the caller is the sole
@@ -29,17 +29,17 @@ class _PresenceSnapshot:
     present: set[tuple[str, str]] = field(default_factory=set)
 
 
-_presence: contextvars.ContextVar[_PresenceSnapshot | None] = contextvars.ContextVar(
+_presence: contextvars.ContextVar[PresenceSnapshot | None] = contextvars.ContextVar(
     "control_plane_presence_snapshot", default=None
 )
 
 
-def _snapshot_for(namespace: str) -> _PresenceSnapshot | None:
+def _snapshot_for(namespace: str) -> PresenceSnapshot | None:
     snap = _presence.get()
     return snap if snap is not None and namespace in snap.namespaces else None
 
 
-async def snapshot_presence(db: AsyncSession, *, namespaces: Iterable[str], keys: Iterable[str]) -> _PresenceSnapshot:
+async def snapshot_presence(db: AsyncSession, *, namespaces: Iterable[str], keys: Iterable[str]) -> PresenceSnapshot:
     """Load, in one query, which ``(namespace, key)`` rows exist for the given
     namespaces and keys — so a fold can skip blind deletes/reads of absent keys."""
     ns = frozenset(namespaces)
@@ -53,11 +53,11 @@ async def snapshot_presence(db: AsyncSession, *, namespaces: Iterable[str], keys
             )
         )
         present = {(ns_, key_) for ns_, key_ in rows.all()}
-    return _PresenceSnapshot(namespaces=ns, present=present)
+    return PresenceSnapshot(namespaces=ns, present=present)
 
 
 @contextlib.contextmanager
-def presence_snapshot(snapshot: _PresenceSnapshot) -> Iterator[None]:
+def presence_snapshot(snapshot: PresenceSnapshot) -> Iterator[None]:
     """Within this block, get/set/delete on the snapshot's namespaces consult it to
     skip round-trips for known-absent keys, keeping it in sync on writes. Off by
     default; namespaces outside the snapshot are always hit directly."""
@@ -66,6 +66,27 @@ def presence_snapshot(snapshot: _PresenceSnapshot) -> Iterator[None]:
         yield
     finally:
         _presence.reset(token)
+
+
+@contextlib.asynccontextmanager
+async def transactional_presence_snapshot(snapshot: PresenceSnapshot) -> AsyncIterator[None]:
+    """Use a copy of *snapshot* and merge it only after normal block exit.
+
+    Callers place their database commit inside this block. An exception from the
+    mutation or commit discards the child so a later device sees only presence
+    changes backed by successful earlier commits.
+    """
+    child = PresenceSnapshot(namespaces=snapshot.namespaces, present=set(snapshot.present))
+    token = _presence.set(child)
+    merge = False
+    try:
+        yield
+        merge = True
+    finally:
+        _presence.reset(token)
+        if merge:
+            snapshot.present.clear()
+            snapshot.present.update(child.present)
 
 
 async def get_value(db: AsyncSession, namespace: str, key: str) -> ControlPlaneValue | None:
