@@ -91,6 +91,7 @@ impl BackendClient {
         raw_body: &[u8],
         ticket: Option<&str>,
         run_id: Option<&str>,
+        budget: std::time::Duration,
     ) -> reqwest::Result<CreateOutcome> {
         let body: serde_json::Value = match serde_json::from_slice(raw_body) {
             Ok(v) => v,
@@ -103,6 +104,10 @@ impl BackendClient {
         let payload = create_payload(body, ticket, run_id);
         let resp = self
             .req(reqwest::Method::POST, "/internal/grid/create-session")
+            .header(
+                "X-Gridfleet-Create-Budget-Ms",
+                budget.as_millis().to_string(),
+            )
             .json(&payload)
             .timeout(std::time::Duration::from_secs(CREATE_CALL_TIMEOUT_SECS))
             .send()
