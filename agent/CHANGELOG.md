@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.36.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.1...gridfleet-agent-v0.36.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* **agent:** delete w3c sessions before terminating appium ([288c512](https://github.com/quidow/gridfleet/commit/288c51297989adf1fae7dfaefb088cd7526f83ab))
+
 ## [0.36.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.0...gridfleet-agent-v0.36.1) (2026-07-14)
 
 
