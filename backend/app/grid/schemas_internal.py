@@ -18,14 +18,7 @@ class CreateSessionRequest(BaseModel):
 
 
 class CreateSessionResponse(BaseModel):
-    status: Literal[
-        "created",
-        "queued",
-        "w3c_rejected",
-        "target_unreachable",
-        "target_protocol_error",
-        "promotion_failed",
-    ]
+    status: Literal["created", "queued", "create_failed", "create_error"]
     session_id: str | None = None
     target: str | None = None
     device_id: uuid.UUID | None = None

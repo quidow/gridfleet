@@ -18,7 +18,7 @@ import asyncio
 import json
 import time
 import uuid
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -57,6 +57,16 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
+
+
+def _wire_status_for_create_outcome(
+    outcome: session_create.CreateOutcome,
+) -> Literal["created", "create_failed", "create_error"]:
+    if outcome.kind == "created":
+        return "created"
+    if outcome.kind == "w3c_rejected":
+        return "create_failed"
+    return "create_error"
 
 
 async def _get_or_create_ticket(
@@ -123,7 +133,7 @@ async def create_session(
             )
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome=outcome.kind).inc()
             return CreateSessionResponse(
-                status=outcome.kind,
+                status=_wire_status_for_create_outcome(outcome),
                 session_id=outcome.session_id or None,
                 target=result.target if outcome.kind == "created" else None,
                 device_id=result.device_id if outcome.kind == "created" else None,

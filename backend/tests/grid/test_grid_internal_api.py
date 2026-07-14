@@ -88,8 +88,43 @@ async def test_create_session_claims_then_creates(
 
 
 @pytest.mark.db
-async def test_create_session_relays_w3c_rejected(
-    client: AsyncClient, seeded_available_device: Device, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("outcome", "expected_status", "expected_message"),
+    [
+        (
+            session_create.CreateOutcome(
+                kind="w3c_rejected",
+                appium_status=500,
+                appium_body={"value": {"error": "session not created"}},
+            ),
+            "create_failed",
+            None,
+        ),
+        (
+            session_create.CreateOutcome(kind="target_unreachable", message="upstream unreachable"),
+            "create_error",
+            "upstream unreachable",
+        ),
+        (
+            session_create.CreateOutcome(kind="target_protocol_error", message="bad upstream response"),
+            "create_error",
+            "bad upstream response",
+        ),
+        (
+            session_create.CreateOutcome(kind="promotion_failed", message="allocation no longer pending"),
+            "create_error",
+            "allocation no longer pending",
+        ),
+    ],
+    ids=["w3c-rejected", "target-unreachable", "target-protocol-error", "promotion-failed"],
+)
+async def test_create_session_preserves_router_wire_status_contract(
+    client: AsyncClient,
+    seeded_available_device: Device,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: session_create.CreateOutcome,
+    expected_status: str,
+    expected_message: str | None,
 ) -> None:
     async def fake_create(
         db_factory: session_create.DbFactory,
@@ -99,15 +134,18 @@ async def test_create_session_relays_w3c_rejected(
         raw_body: bytes,
         claim_window_sec: int,
     ) -> session_create.CreateOutcome:
-        return session_create.CreateOutcome(
-            kind="w3c_rejected", appium_status=500, appium_body={"value": {"error": "session not created"}}
-        )
+        return outcome
 
     monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
     resp = await client.post("/internal/grid/create-session", json={"body": _body(), "ticket": None, "run_id": None})
     assert resp.status_code == 200
-    assert resp.json()["status"] == "w3c_rejected"
-    assert resp.json()["appium_status"] == 500
+    data = resp.json()
+    assert data["status"] == expected_status
+    assert data["appium_status"] == (500 if outcome.kind == "w3c_rejected" else None)
+    assert data["appium_body"] == (
+        {"value": {"error": "session not created"}} if outcome.kind == "w3c_rejected" else None
+    )
+    assert data["message"] == expected_message
 
 
 @pytest.mark.db
