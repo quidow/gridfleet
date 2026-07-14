@@ -2,6 +2,28 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.36.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.35.0...gridfleet-agent-v0.36.0) (2026-07-14)
+
+
+### Features
+
+* **agent:** emit boot_id and per-section dedup token on status push ([802a72c](https://github.com/quidow/gridfleet/commit/802a72c16b48513bdaad52282845e78dda2ae399))
+* **agent:** emit typed device_health items with presence and lifecycle on contract v7 ([5cd1117](https://github.com/quidow/gridfleet/commit/5cd1117e4d05bcded26dc2288b221ec144a87de6))
+* **agent:** wake the probe loop after a remediation action ([5b2f539](https://github.com/quidow/gridfleet/commit/5b2f539184a357925303a999de22d4008a78fd94))
+* **backend:** add status-push fold reconciler foundation ([c8ade5f](https://github.com/quidow/gridfleet/commit/c8ade5fb72d5e36741e6b7550c53adfd32b4f4e7))
+* **main:** move device health reconciliation onto status fold loop ([75b629b](https://github.com/quidow/gridfleet/commit/75b629b505cac2f84cc34774973b86978a2718ba))
+
+
+### Bug Fixes
+
+* **agent:** fail safe on incomplete device observations ([8e8b922](https://github.com/quidow/gridfleet/commit/8e8b922965df92d25eb232b14f93539f43fa8fd1))
+* **backend:** harden status push fold publication ([220c042](https://github.com/quidow/gridfleet/commit/220c042b0653c1363df797610b4b805cfcaa8dc2))
+
+
+### Dependencies
+
+* **deps:** bump mypy in /agent in the python-dependencies group ([#820](https://github.com/quidow/gridfleet/issues/820)) ([3849407](https://github.com/quidow/gridfleet/commit/3849407608c14d1c7728aa28b03c9007b36ff7ba))
+
 ## [0.35.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.34.0...gridfleet-agent-v0.35.0) (2026-07-12)
 
 
