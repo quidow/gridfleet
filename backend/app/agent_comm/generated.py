@@ -139,6 +139,7 @@ class PackDevicesResponse(BaseModel):
         extra="allow",
     )
     candidates: Annotated[list[PackDeviceCandidate] | None, Field(title="Candidates")] = None
+    complete_gather: Annotated[bool | None, Field(title="Complete Gather")] = False
 
 
 class PackDoctorResponse(BaseModel):

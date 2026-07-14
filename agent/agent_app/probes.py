@@ -190,6 +190,7 @@ class ProbeLoop:
             return None, False
         if not isinstance(enumerated, dict):
             return None, False
+        complete_gather = enumerated.get("complete_gather") is True
         present: set[str] = set()
         for cand in enumerated.get("candidates", []):
             if not isinstance(cand, dict):
@@ -202,7 +203,7 @@ class ProbeLoop:
                 ct = detected.get("connection_target")
                 if isinstance(ct, str) and ct:
                     present.add(ct)
-        return present, True
+        return present, complete_gather
 
     async def _lifecycle_item(self, entry: dict[str, Any]) -> dict[str, Any]:
         """The pushed lifecycle_state for one device: ``unsupported`` when the
@@ -220,9 +221,9 @@ class ProbeLoop:
         except Exception:
             logger.warning("device_lifecycle_state_probe_failed", exc_info=True)
             return {"status": "error", "value": None}
-        state = result.get("state") if isinstance(result, dict) else None
+        state = result.get("state") if isinstance(result, dict) and result.get("success") is True else None
         if isinstance(state, str) and state:
-            return {"status": "observed", "value": state}
+            return {"status": "observed", "value": state, "observed_at": _now_iso()}
         return {"status": "error", "value": None}
 
     async def _probe_device_health_section(self) -> dict[str, Any]:
@@ -247,7 +248,7 @@ class ProbeLoop:
         async def one(entry: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 health = await self._run_health(entry, live.get(entry.get("connection_target"), False))
-            lifecycle = await self._lifecycle_item(entry)
+                lifecycle = await self._lifecycle_item(entry)
             return {
                 "device_id": entry["device_id"],
                 "probe_status": "observed" if health is not None else "error",

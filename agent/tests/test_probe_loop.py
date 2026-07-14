@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 
 import pytest
@@ -158,9 +159,10 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
 
     async def _enumerate() -> dict[str, Any]:
         return {
+            "complete_gather": True,
             "candidates": [
                 {"identity_value": "emulator-5554", "detected_properties": {"connection_target": "emulator-5554"}}
-            ]
+            ],
         }
 
     async def _lifecycle(**kwargs: object) -> dict[str, Any]:
@@ -183,11 +185,103 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
     assert set(items) == {"d1", "d2"}
     assert items["d1"]["presence"] == "present"
     assert items["d1"]["probe_status"] == "observed"
-    assert items["d1"]["lifecycle_state"] == {"status": "observed", "value": "device"}
+    assert items["d1"]["lifecycle_state"]["status"] == "observed"
+    assert items["d1"]["lifecycle_state"]["value"] == "device"
+    assert isinstance(items["d1"]["lifecycle_state"]["observed_at"], str)
     assert items["d2"]["presence"] == "absent"
     assert items["d2"]["probe_status"] == "error"
     assert items["d2"]["health"] is None
     assert items["d2"]["lifecycle_state"] == {"status": "unsupported", "value": None}
+
+
+@pytest.mark.asyncio
+async def test_incomplete_presence_enumeration_never_asserts_absence() -> None:
+    roster = _Roster()
+
+    async def _enumerate() -> dict[str, Any]:
+        # Discovery returned a partial/failed gather. An empty candidate list is
+        # not evidence that every roster device is absent.
+        return {"complete_gather": False, "candidates": []}
+
+    loop = ProbeLoop(
+        roster_client=roster,
+        manager=_Manager(),
+        host_identity=_identity(),
+        health_probe=_health_probe,
+        telemetry_probe=_telemetry_probe,
+        properties_probe=_properties_probe,
+        enumerate_probe=_enumerate,
+    )
+    await loop._refresh_roster()
+
+    section = await loop._probe_device_health_section()
+
+    assert section["complete_gather"] is False
+    assert {item["presence"] for item in section["devices"]} == {"unknown"}
+
+
+@pytest.mark.asyncio
+async def test_failed_lifecycle_probe_does_not_publish_returned_state() -> None:
+    roster = _Roster()
+    roster.devices[0]["lifecycle_state_capable"] = True
+
+    async def _lifecycle(**kwargs: object) -> dict[str, Any]:
+        # Some adapters include their last-known state on a failed action. It is
+        # not a successful observation and must not become emulator_state.
+        return {"success": False, "state": "device", "detail": "probe failed"}
+
+    loop = ProbeLoop(
+        roster_client=roster,
+        manager=_Manager(),
+        host_identity=_identity(),
+        health_probe=_health_probe,
+        telemetry_probe=_telemetry_probe,
+        properties_probe=_properties_probe,
+        lifecycle_probe=_lifecycle,
+    )
+
+    assert await loop._lifecycle_item(roster.devices[0]) == {"status": "error", "value": None}
+
+
+@pytest.mark.asyncio
+async def test_device_health_limits_lifecycle_probe_concurrency() -> None:
+    roster = _Roster()
+    template = roster.devices[0]
+    roster.devices = [
+        {
+            **template,
+            "device_id": f"d{index}",
+            "connection_target": f"serial-{index}",
+            "identity_value": f"serial-{index}",
+            "lifecycle_state_capable": True,
+        }
+        for index in range(10)
+    ]
+    active = 0
+    peak = 0
+
+    async def _lifecycle(**kwargs: object) -> dict[str, Any]:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"success": True, "state": "device", "detail": None}
+
+    loop = ProbeLoop(
+        roster_client=roster,
+        manager=_Manager(),
+        host_identity=_identity(),
+        health_probe=_health_probe,
+        telemetry_probe=_telemetry_probe,
+        properties_probe=_properties_probe,
+        lifecycle_probe=_lifecycle,
+    )
+    await loop._refresh_roster()
+
+    await loop._probe_device_health_section()
+
+    assert peak <= 4
 
 
 @pytest.mark.asyncio
