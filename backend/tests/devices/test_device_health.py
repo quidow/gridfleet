@@ -7,7 +7,7 @@ import inspect
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -101,6 +101,30 @@ async def test_update_device_checks_persists_columns(db_with_device: tuple[Async
     assert device.device_checks_healthy is False
     assert device.device_checks_summary == "boom"
     assert device.device_checks_checked_at is not None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_device_checks_still_acquires_its_own_lock(
+    db_with_device: tuple[AsyncSession, Device], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, device = db_with_device
+    service = DeviceHealthService(publisher=event_bus)
+    spy = AsyncMock(wraps=svc.device_locking.lock_device)
+    monkeypatch.setattr(svc.device_locking, "lock_device", spy)
+
+    applied = await service.update_device_checks(db, device, healthy=True, summary="Healthy")
+
+    assert applied is True
+    spy.assert_awaited_once_with(db, device.id)
+
+
+def test_locked_device_fold_requires_scope_factory() -> None:
+    from app.devices.services.device_health_fold_context import LockedDeviceFold
+
+    device = MagicMock(spec=Device)
+    with pytest.raises(TypeError, match="DeviceHealthFoldScope"):
+        LockedDeviceFold(device)  # type: ignore[call-arg]
 
 
 @pytest.mark.db

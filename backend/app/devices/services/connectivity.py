@@ -5,7 +5,6 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import select
-from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
@@ -19,10 +18,15 @@ from app.devices.models.event import DeviceEventType
 from app.devices.schemas.device_health_push import DeviceHealthItem, parse_device_health_items
 from app.devices.services import link_repair
 from app.devices.services.claims import device_is_reserved
+from app.devices.services.device_health_fold_context import (
+    DeviceHealthFoldReceipt,
+    DeviceHealthFoldScope,
+    LockedDeviceFold,
+)
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids, preloaded_pack_catalog
+from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.state import derive_operational_state
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -45,26 +49,8 @@ if TYPE_CHECKING:
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
-pack_platform_resolution_cache = pack_platform_resolver.pack_platform_resolution_cache
 
 type DeviceFoldOutcome = Literal["applied", "terminal_noop", "skipped", "retryable"]
-
-
-@dataclass(frozen=True, slots=True)
-class _FoldReceipt:
-    """The per-device device_health fold receipt stamped on settle."""
-
-    revision: int | None
-    boot_id: uuid.UUID | None
-    section_sequence: int | None
-
-
-def _mark_device_fold_applied(device: Device, receipt: _FoldReceipt) -> None:
-    if receipt.revision is None:
-        return
-    device.device_checks_fold_applied_revision = receipt.revision
-    device.device_checks_fold_boot_id = receipt.boot_id
-    device.device_checks_fold_section_sequence = receipt.section_sequence
 
 
 def _validated_remediation_action(health_result: dict[str, Any], device: Device) -> str | None:
@@ -306,13 +292,14 @@ class ConnectivityService:
     async def _handle_healthy_device(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDeviceFold,
         *,
         ip_ping_entry: dict[str, Any] | None,
         ip_ping_window_sec: float,
         observed_at: datetime,
         revision: int | None = None,
     ) -> None:
+        device = locked.device
         counter = (
             await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
             if ip_ping_entry is not None
@@ -322,8 +309,8 @@ class ConnectivityService:
         summary = (
             f"Healthy (ip_ping failing for {elapsed:.0f}s/{ip_ping_window_sec:.0f}s)" if elapsed > 0 else "Healthy"
         )
-        applied = await self._health.update_device_checks(
-            db, device, healthy=True, summary=summary, observed_at=observed_at, revision=revision
+        applied = await self._health.update_locked_device_checks(
+            db, locked, healthy=True, summary=summary, observed_at=observed_at, revision=revision
         )
         if not applied:
             return
@@ -334,7 +321,7 @@ class ConnectivityService:
     async def _escalate_health_failure(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDeviceFold,
         *,
         summary: str,
         observed_at: datetime | None = None,
@@ -344,10 +331,11 @@ class ConnectivityService:
         """Shared unhealthy escalation: record the failed check, then hand the
         device to lifecycle policy unless it is already offline (re-escalating
         an offline device would churn recovery intents every cycle)."""
+        device = locked.device
         operational_state = await derive_operational_state(db, device, now=now_utc())
         was_offline = operational_state == DeviceOperationalState.offline
-        applied = await self._health.update_device_checks(
-            db, device, healthy=False, summary=summary, observed_at=observed_at, revision=revision
+        applied = await self._health.update_locked_device_checks(
+            db, locked, healthy=False, summary=summary, observed_at=observed_at, revision=revision
         )
         if not applied:
             return False
@@ -532,7 +520,11 @@ class ConnectivityService:
         revision = raw_rev if isinstance(raw_rev, int) else None
         raw_seq = section.get("section_sequence")
         section_sequence = raw_seq if type(raw_seq) is int and raw_seq >= 0 else None
-        receipt = _FoldReceipt(revision=revision, boot_id=boot_id, section_sequence=section_sequence)
+        receipt = DeviceHealthFoldReceipt(
+            revision=revision,
+            boot_id=boot_id,
+            section_sequence=section_sequence,
+        )
         debounce_windows = _DebounceWindows(
             ip_ping=float(self._settings.get("device_checks.ip_ping.fail_window_sec")),
             probe_failed=float(self._settings.get("device_checks.probe_failed.fail_window_sec")),
@@ -559,14 +551,9 @@ class ConnectivityService:
             if device.pack_id:
                 work_pack_ids.add(device.pack_id)
 
-        fold_packs = await load_packs_by_ids(db, work_pack_ids)
-        # A per-device rollback expires every persistent ORM object in this
-        # session. Detach the fully eager-loaded catalog graph so it remains the
-        # same read-only snapshot for later devices after a peer fails.
-        for pack in fold_packs.values():
-            db.expunge(pack)
+        fold_scope = await DeviceHealthFoldScope.create(db, pack_ids=work_pack_ids)
         retryable = 0
-        with pack_platform_resolution_cache(), preloaded_pack_catalog(fold_packs):
+        with fold_scope.activate():
             for index, device_id in enumerate(work):
                 if index > 0 and deadline is not None and perf_counter() >= deadline:
                     retryable += 1
@@ -574,13 +561,18 @@ class ConnectivityService:
                     break
                 item = observations.by_device_id[device_id]
                 try:
-                    outcome = await self._apply_device_health(
-                        db,
-                        device_id,
-                        item,
-                        receipt=receipt,
-                        observed_at=observed_at,
-                        debounce_windows=debounce_windows,
+                    locked = await fold_scope.lock_device(db, device_id)
+                    outcome = (
+                        "terminal_noop"
+                        if locked is None
+                        else await self._apply_device_health(
+                            db,
+                            locked,
+                            item,
+                            receipt=receipt,
+                            observed_at=observed_at,
+                            debounce_windows=debounce_windows,
+                        )
                     )
                     await db.commit()
                     metrics.record_device_health_fold_result(outcome)
@@ -596,17 +588,14 @@ class ConnectivityService:
     async def _apply_device_health(
         self,
         db: AsyncSession,
-        device_id: uuid.UUID,
+        locked: LockedDeviceFold,
         item: DeviceHealthItem,
         *,
-        receipt: _FoldReceipt,
+        receipt: DeviceHealthFoldReceipt,
         observed_at: datetime,
         debounce_windows: _DebounceWindows,
     ) -> DeviceFoldOutcome:
-        try:
-            device = await device_locking.lock_device(db, device_id)
-        except NoResultFound:
-            return "terminal_noop"
+        device = locked.device
         # Re-check the receipt under the lock (prefilter TOCTOU).
         if receipt.revision is not None and receipt.revision <= device.device_checks_fold_applied_revision:
             return "skipped"
@@ -615,7 +604,7 @@ class ConnectivityService:
         # health or enqueueing remediation; the old synchronous fold excluded
         # maintenance devices at its pre-pass for the same reason.
         if in_maintenance(device):
-            _mark_device_fold_applied(device, receipt)
+            locked.mark_applied(receipt)
             return "terminal_noop"
         host = cast("Host", device.host)
 
@@ -626,14 +615,14 @@ class ConnectivityService:
         # discovery verdict is ignored (a cross-subnet Roku fails multicast SSDP
         # while its unicast health check passes).
         if item.probe_status == "error":
-            _mark_device_fold_applied(device, receipt)
+            locked.mark_applied(receipt)
             return "terminal_noop"
 
         # Present: derive the verdict from the pushed health dict (facts-only).
         health_result = item.health if isinstance(item.health, dict) else None
         if health_result is None:
             # Present with no usable health payload: no positive evidence to act on.
-            _mark_device_fold_applied(device, receipt)
+            locked.mark_applied(receipt)
             return "terminal_noop"
         healthy, ip_ping_entry = await self._evaluate_health_result(
             db, device, host, health_result, debounce_windows=debounce_windows, observed_at=observed_at
@@ -641,23 +630,23 @@ class ConnectivityService:
         if healthy:
             await self._handle_healthy_device(
                 db,
-                device,
+                locked,
                 ip_ping_entry=ip_ping_entry,
                 ip_ping_window_sec=debounce_windows.ip_ping,
                 observed_at=observed_at,
                 revision=receipt.revision,
             )
         else:
-            # _escalate_health_failure -> update_device_checks(healthy=False) mints the
+            # _escalate_health_failure -> update_locked_device_checks(healthy=False) mints the
             # episode (A3.2) and, via remediation_result, atomically enqueues the durable
             # repeat-safe remediation job (A3) instead of dialing.
             await self._escalate_health_failure(
                 db,
-                device,
+                locked,
                 summary=_summarize_unhealthy_result(health_result),
                 observed_at=observed_at,
                 remediation_result=health_result,
                 revision=receipt.revision,
             )
-        _mark_device_fold_applied(device, receipt)
+        locked.mark_applied(receipt)
         return "applied"

@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
+    from app.devices.services.device_health_fold_context import LockedDeviceFold
     from app.events.protocols import EventPublisher
 
 __all__ = [
@@ -93,6 +94,44 @@ class DeviceHealthService:
         locked = await _lock(db, device)
         if locked is None:
             return False
+        return await self._update_locked_device_checks_row(
+            db,
+            locked,
+            healthy=healthy,
+            summary=summary,
+            revision=revision,
+            observed_at=observed_at,
+        )
+
+    async def update_locked_device_checks(
+        self,
+        db: AsyncSession,
+        locked: LockedDeviceFold,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None = None,
+        observed_at: datetime | None = None,
+    ) -> bool:
+        return await self._update_locked_device_checks_row(
+            db,
+            locked.device,
+            healthy=healthy,
+            summary=summary,
+            revision=revision,
+            observed_at=observed_at,
+        )
+
+    async def _update_locked_device_checks_row(
+        self,
+        db: AsyncSession,
+        locked: Device,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None,
+        observed_at: datetime | None,
+    ) -> bool:
         # Two-axis guard: a synchronous higher-authority writer passes no revision
         # and draws a fresh one at write time, so it always out-ranks a stale fold
         # observation whose (lower) revision was drawn earlier at ingest. A moved

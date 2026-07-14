@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from app.devices.protocols import HealthFailureHandler
     from app.devices.schemas.device_health_push import DeviceHealthItem
     from app.devices.services.connectivity import DeviceFoldOutcome
+    from app.devices.services.device_health_fold_context import LockedDeviceFold
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -64,6 +65,25 @@ def _health_section(
                 "health": health,
                 "lifecycle_state": {"status": "unsupported", "value": None},
             }
+        ],
+    }
+
+
+def _healthy_fold_section(device_ids: list[uuid.UUID], *, revision: int) -> dict[str, Any]:
+    return {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": revision,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device_id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+            for device_id in device_ids
         ],
     }
 
@@ -129,12 +149,43 @@ async def test_fold_applies_healthy_and_advances_receipt(
     assert device.device_checks_fold_section_sequence == 3
 
 
+async def test_fold_acquires_device_lock_once_per_processed_device(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices import locking as device_locking
+
+    host, devices = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-one-lock")
+    device_ids = [device.id for device in devices]
+    revision = await next_observation_revision(db_session)
+    real_lock = device_locking.lock_device
+    lock_calls: list[uuid.UUID] = []
+
+    async def counting_lock(db: AsyncSession, device_id: uuid.UUID, **kwargs: object) -> Device:
+        lock_calls.append(device_id)
+        return await real_lock(db, device_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(device_locking, "lock_device", counting_lock)
+    service = build_connectivity_service(db_session_maker)
+
+    settled = await service.fold_host_devices(
+        db_session,
+        host.id,
+        _healthy_fold_section(device_ids, revision=revision),
+        boot_id=uuid.uuid4(),
+    )
+
+    assert settled is True
+    assert sorted(lock_calls) == sorted(device_ids)
+
+
 async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import app.devices.services.connectivity as conn_mod
+    import app.devices.services.device_health_fold_context as fold_context
     import app.devices.services.readiness as readiness_mod
 
     host, devices = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-pack-catalog")
@@ -159,7 +210,7 @@ async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
     real_load = readiness_mod.load_packs_by_ids
     load_packs = AsyncMock(wraps=real_load)
     monkeypatch.setattr(readiness_mod, "load_packs_by_ids", load_packs)
-    monkeypatch.setattr(conn_mod, "load_packs_by_ids", load_packs, raising=False)
+    monkeypatch.setattr(fold_context, "load_packs_by_ids", load_packs)
 
     service = build_connectivity_service(db_session_maker)
     settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
@@ -556,11 +607,17 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
     real_apply = service._apply_device_health
     calls: list[uuid.UUID] = []
 
-    async def flaky(db: AsyncSession, device_id: uuid.UUID, item: DeviceHealthItem, **kw: object) -> DeviceFoldOutcome:
+    async def flaky(
+        db: AsyncSession,
+        locked: LockedDeviceFold,
+        item: DeviceHealthItem,
+        **kw: object,
+    ) -> DeviceFoldOutcome:
+        device_id = locked.device.id
         calls.append(device_id)
         if device_id == bad_id:
             raise RuntimeError("boom")
-        return await real_apply(db, device_id, item, **kw)  # type: ignore[arg-type]
+        return await real_apply(db, locked, item, **kw)  # type: ignore[arg-type]
 
     service._apply_device_health = flaky  # type: ignore[method-assign]
     settled = await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4())

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         DeviceVerificationUpdate,
     )
     from app.devices.schemas.filters import DeviceQueryFilters
+    from app.devices.services.device_health_fold_context import LockedDeviceFold
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
@@ -169,6 +170,16 @@ class DeviceHealthProtocol(Protocol):
         self,
         db: AsyncSession,
         device: Device,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None = ...,
+        observed_at: datetime | None = ...,
+    ) -> bool: ...
+    async def update_locked_device_checks(
+        self,
+        db: AsyncSession,
+        locked: LockedDeviceFold,
         *,
         healthy: bool,
         summary: str,
