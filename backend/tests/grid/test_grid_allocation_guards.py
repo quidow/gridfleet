@@ -493,6 +493,25 @@ async def test_not_accepting_device_not_grid_eligible(
 
 
 @pytest.mark.db
+async def test_try_allocate_skips_excluded_device(db_session: AsyncSession, seeded_driver_packs: None) -> None:
+    _ = seeded_driver_packs
+    _, dev_a, _ = await seed_host_and_running_node(db_session, identity=f"grid-excl-a-{uuid.uuid4().hex[:8]}")
+    _, dev_b, _ = await seed_host_and_running_node(db_session, identity=f"grid-excl-b-{uuid.uuid4().hex[:8]}")
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+
+    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session, exclude_device_ids={dev_a.id})}
+    assert dev_a.id not in eligible_ids
+    assert dev_b.id in eligible_ids
+
+    result = await _service().try_allocate(db_session, ticket=ticket, exclude_device_ids={dev_a.id})
+
+    assert result is not None
+    assert result.device_id == dev_b.id
+
+
+@pytest.mark.db
 async def test_claim_declines_when_node_not_accepting_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:

@@ -364,7 +364,13 @@ class AllocationService:
             "tickets_expired": tickets_expired,
         }
 
-    async def try_allocate(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
+    async def try_allocate(
+        self,
+        db: DbSession,
+        *,
+        ticket: GridSessionQueueTicket,
+        exclude_device_ids: set[uuid.UUID] | None = None,
+    ) -> AllocationResult | None:
         # Liveness heartbeat: a still-polling client proves it is alive on every tick.
         # The FIFO veto and the reaper read last_polled_at to expire abandoned tickets
         # long before queue_timeout (harness C8). Stamp before any early return so even
@@ -418,7 +424,7 @@ class AllocationService:
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
-        eligible = await self._eligible_devices(db)
+        eligible = await self._eligible_devices(db, exclude_device_ids=exclude_device_ids)
         # Batch the reservation load for every eligible device once instead of one
         # SELECT per device per long-poll tick (#11).
         reservation_map = await run_service.get_device_reservation_map(db, [d.id for d in eligible])
@@ -478,7 +484,9 @@ class AllocationService:
             await appium_direct.terminate_session(target, row.session_id)
         await self.mark_ended(db, appium_session_id=row.session_id)
 
-    async def _eligible_devices(self, db: DbSession) -> list[Device]:
+    async def _eligible_devices(
+        self, db: DbSession, *, exclude_device_ids: set[uuid.UUID] | None = None
+    ) -> list[Device]:
         now = now_utc()
         stmt = (
             select(Device)
@@ -488,6 +496,8 @@ class AllocationService:
             .where(node_accepting_new_sessions_predicate())
             .where(~live_session_exists())
         )
+        if exclude_device_ids:
+            stmt = stmt.where(~Device.id.in_(exclude_device_ids))
         devices = list((await db.execute(stmt)).scalars().all())
         GRID_ELIGIBLE_DEVICES.set(len(devices))
         return devices
