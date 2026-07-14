@@ -8,6 +8,7 @@ decide whether the section is a new generation or a re-delivery.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
@@ -20,7 +21,7 @@ from app.hosts.service_status_push import HOST_STATUS_NAMESPACE, BootFenceError,
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient, Response
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 async def _make_host(db_session: AsyncSession, *, hostname: str, boot_id: uuid.UUID | None = None) -> Host:
@@ -218,3 +219,44 @@ def test_canonical_section_hash_matches_agent_golden() -> None:
         "payload_sha256": "ignored",
     }
     assert canonical_section_hash(section) == "7c50675aa686cac3e8c02272cefcf6564e5ea61873933a3cdaa519eeec27110e"
+
+
+async def test_concurrent_pushes_serialize_on_host_lock(
+    db_session_maker: async_sessionmaker[AsyncSession], db_session: AsyncSession
+) -> None:
+    """B1: two concurrent pushes cannot both read the same cursor and commit in
+    reverse. The host-row FOR UPDATE serializes them, so even when the lower
+    sequence commits first the cursor ends at the higher sequence."""
+    boot = uuid.uuid4()
+    host = await _make_host(db_session, hostname="b1-concurrency", boot_id=boot)
+    svc = HostStatusPushService(publisher=Mock())
+
+    lower_locked = asyncio.Event()
+    release_lower = asyncio.Event()
+
+    async def push_lower() -> None:  # section_sequence 11: acquires the lock first
+        async with db_session_maker() as session:
+            locked = await session.get(Host, host.id, with_for_update=True)
+            assert locked is not None
+            lower_locked.set()
+            await release_lower.wait()
+            await svc.apply_status_push(
+                session, locked, HostStatusPush(host_id=host.id, boot_id=boot, node_health=_node_section(sequence=11))
+            )
+            await session.commit()
+
+    async def push_higher() -> None:  # section_sequence 12: blocks on the lock
+        await lower_locked.wait()
+        async with db_session_maker() as session:
+            release_lower.set()  # let the lower push commit and free the lock
+            locked = await session.get(Host, host.id, with_for_update=True)
+            assert locked is not None
+            await svc.apply_status_push(
+                session, locked, HostStatusPush(host_id=host.id, boot_id=boot, node_health=_node_section(sequence=12))
+            )
+            await session.commit()
+
+    await asyncio.gather(push_lower(), push_higher())
+
+    await db_session.refresh(host)
+    assert host.observation_cursors["node_health"]["section_sequence"] == 12
