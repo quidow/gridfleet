@@ -1020,7 +1020,6 @@ class ConnectivityService:
                         receipt=receipt,
                         observed_at=observed_at,
                         debounce_windows=debounce_windows,
-                        complete_gather=observations.complete_gather,
                     )
                     await db.commit()
                     metrics.record_device_health_fold_result(outcome)
@@ -1033,7 +1032,7 @@ class ConnectivityService:
                     logger.exception("device_health_fold_device_failed", extra={"device_id": str(device_id)})
         return retryable == 0
 
-    async def _apply_device_health(  # noqa: PLR0911 - explicit facts-only verdict state machine
+    async def _apply_device_health(
         self,
         db: AsyncSession,
         device_id: uuid.UUID,
@@ -1042,7 +1041,6 @@ class ConnectivityService:
         receipt: _FoldReceipt,
         observed_at: datetime,
         debounce_windows: _DebounceWindows,
-        complete_gather: bool,
     ) -> DeviceFoldOutcome:
         try:
             device = await device_locking.lock_device(db, device_id)
@@ -1060,29 +1058,12 @@ class ConnectivityService:
             return "terminal_noop"
         host = cast("Host", device.host)
 
-        # Presence completeness gates only absence. A successful direct health
-        # observation remains usable when discovery failed and presence is
-        # unknown; otherwise one failed sweep would freeze health for the host.
-        # A complete gather's explicit absence is independent, stronger evidence
-        # than the direct health-probe error an absent device normally produces.
-        if item.presence == "absent":
-            if not complete_gather:
-                _mark_device_fold_applied(device, receipt)
-                return "terminal_noop"
-            # _record_disconnect_if_stable -> update_device_checks(healthy=False) mints
-            # the failure episode under the row lock (A3.2); no separate transition call.
-            await self._record_disconnect_if_stable(
-                db,
-                device,
-                held=await _is_held_or_reserved(db, device),
-                observed_at=observed_at,
-                revision=receipt.revision,
-            )
-            _mark_device_fold_applied(device, receipt)
-            return "applied"
-
-        # Present but the direct probe errored: no positive health evidence to
-        # apply for this generation.
+        # Presence is a discovery signal (SSDP / ``adb devices`` / usbmux
+        # enumeration) and is never an input to a registered device's liveness
+        # verdict — discovery and health are distinct concerns. A registered
+        # device is disconnected only when its health check fails; an absent
+        # discovery verdict is ignored (a cross-subnet Roku fails multicast SSDP
+        # while its unicast health check passes).
         if item.probe_status == "error":
             _mark_device_fold_applied(device, receipt)
             return "terminal_noop"
