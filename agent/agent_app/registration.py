@@ -55,12 +55,14 @@ class RegistrationService:
         host_identity: HostIdentity | None = None,
         on_advertised_ip_change: Callable[[str], Awaitable[None]] | None = None,
         refresh_interval: float | None = None,
+        boot_id: str | None = None,
     ) -> None:
         self._capabilities_cache = capabilities_cache
         self._version_guidance = version_guidance
         self._host_identity = host_identity
         self._on_advertised_ip_change = on_advertised_ip_change
         self._refresh_interval = refresh_interval
+        self._boot_id = boot_id
 
     def _handle_version_guidance(self, data: dict[str, Any]) -> None:
         changed = self._version_guidance.update(data)
@@ -79,6 +81,7 @@ class RegistrationService:
             "agent_port": agent_port,
             "capabilities": capabilities,
             "host_info": hardware_info.collect(),
+            "boot_id": self._boot_id,
         }
 
         client = get_shared_http_client()

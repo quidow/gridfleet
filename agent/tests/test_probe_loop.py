@@ -155,3 +155,65 @@ async def test_roster_fetch_failure_keeps_device_results_and_refreshes_node_heal
     assert after["device_telemetry"] is before_device_telemetry
     assert after["device_properties"] is before_device_properties
     assert after["node_health"] is not before_node_health
+
+
+@pytest.mark.asyncio
+async def test_moved_sections_carry_dedup_token() -> None:
+    loop = _loop(_Roster())
+
+    await loop.run_once()
+    results = loop.latest_results()
+    assert results is not None
+
+    for name in ("node_health", "device_health"):
+        section = results[name]
+        assert isinstance(section["section_sequence"], int)
+        assert isinstance(section["payload_sha256"], str)
+
+    # Non-moved sections stay tokenless (they are not dedup-gated backend-side).
+    for name in ("device_telemetry", "device_properties"):
+        assert "section_sequence" not in results[name]
+        assert "payload_sha256" not in results[name]
+
+
+@pytest.mark.asyncio
+async def test_section_sequence_increments_per_gather() -> None:
+    loop = _loop(_Roster())
+
+    await loop.run_once()
+    first = loop.latest_results()
+    assert first is not None
+    first_seq = first["node_health"]["section_sequence"]
+
+    # Force a fresh node_health gather; its sequence must advance.
+    loop._due["node_health"] = 0.0
+    await loop.run_once()
+    second = loop.latest_results()
+    assert second is not None
+    assert second["node_health"]["section_sequence"] == first_seq + 1
+
+
+@pytest.mark.asyncio
+async def test_payload_sha256_matches_canonical_hash() -> None:
+    from agent_app.observation_token import canonical_section_hash
+
+    loop = _loop(_Roster())
+    await loop.run_once()
+    results = loop.latest_results()
+    assert results is not None
+    section = results["node_health"]
+    assert section["payload_sha256"] == canonical_section_hash(section)
+
+
+def test_canonical_section_hash_matches_backend_golden() -> None:
+    """Parity guard: the agent and backend canonical hashes MUST agree. This
+    golden digest is asserted identically in the backend suite."""
+    from agent_app.observation_token import canonical_section_hash
+
+    section = {
+        "reported_at": "2026-07-14T00:00:00+00:00",
+        "nodes": [{"port": 4723, "running": True}],
+        "section_sequence": 5,
+        "payload_sha256": "ignored",
+    }
+    assert canonical_section_hash(section) == "7c50675aa686cac3e8c02272cefcf6564e5ea61873933a3cdaa519eeec27110e"

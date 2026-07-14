@@ -206,3 +206,15 @@ async def test_boot_fence_rejected_raises(db_session: AsyncSession) -> None:
     except BootFenceError:
         return
     raise AssertionError("expected BootFenceError")
+
+
+def test_canonical_section_hash_matches_agent_golden() -> None:
+    """Parity guard: the backend and agent canonical hashes MUST agree. This
+    golden digest is asserted identically in the agent suite (test_probe_loop)."""
+    section = {
+        "reported_at": "2026-07-14T00:00:00+00:00",
+        "nodes": [{"port": 4723, "running": True}],
+        "section_sequence": 5,
+        "payload_sha256": "ignored",
+    }
+    assert canonical_section_hash(section) == "7c50675aa686cac3e8c02272cefcf6564e5ea61873933a3cdaa519eeec27110e"
