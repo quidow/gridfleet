@@ -448,3 +448,27 @@ async def test_loop_records_oldest_unapplied_section_age(
 
     assert recorded, "oldest-unapplied gauge was not recorded"
     assert recorded[0] >= 20.0  # the 20s-old pending section dominates
+
+
+def test_production_status_fold_loop_registers_both_health_sections() -> None:
+    """main.py wires the StatusFoldLoop with both the node_health and device_health
+    folds, so both axes reconcile off the request path."""
+    import ast
+    from pathlib import Path
+
+    main_py = Path(__file__).resolve().parents[2] / "app" / "main.py"
+    tree = ast.parse(main_py.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "StatusFoldLoop"
+    ]
+    assert len(calls) == 1
+    sections_kw = next(kw for kw in calls[0].keywords if kw.arg == "sections")
+    assert isinstance(sections_kw.value, ast.Tuple)
+    section_consts = {
+        entry.args[0].id
+        for entry in sections_kw.value.elts
+        if isinstance(entry, ast.Call) and entry.args and isinstance(entry.args[0], ast.Name)
+    }
+    assert {"FOLD_SECTION", "DEVICE_FOLD_SECTION"} <= section_consts

@@ -361,6 +361,18 @@ def record_status_fold_oldest_unapplied(seconds: float) -> None:
     STATUS_FOLD_OLDEST_UNAPPLIED_SECONDS.set(seconds)
 
 
+STATUS_FOLD_DEVICE_RESULTS = Counter(
+    "gridfleet_status_fold_device_results_total",
+    "Device-health fold per-device outcomes on the StatusFoldLoop.",
+    # outcome: applied | terminal_noop | skipped | retryable
+    labelnames=("outcome",),
+)
+
+
+def record_device_health_fold_result(outcome: str) -> None:
+    STATUS_FOLD_DEVICE_RESULTS.labels(outcome=outcome).inc()
+
+
 DB_SERIALIZATION_RETRY_TOTAL = Counter(
     "db_serialization_retry_total",
     "Transactions rolled back and re-run after a transient Postgres deadlock/serialization failure (40P01/40001).",

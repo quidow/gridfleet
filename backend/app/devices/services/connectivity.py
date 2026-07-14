@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx2 as httpx
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
@@ -20,7 +21,7 @@ from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceType
 from app.devices.models.event import DeviceEventType
-from app.devices.schemas.device_health_push import PushedDeviceHealth, parse_device_health_items
+from app.devices.schemas.device_health_push import DeviceHealthItem, PushedDeviceHealth, parse_device_health_items
 from app.devices.services import link_repair
 from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
@@ -51,6 +52,25 @@ if TYPE_CHECKING:
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 pack_platform_resolution_cache = pack_platform_resolver.pack_platform_resolution_cache
+
+type DeviceFoldOutcome = Literal["applied", "terminal_noop", "skipped", "retryable"]
+
+
+@dataclass(frozen=True, slots=True)
+class _FoldReceipt:
+    """The per-device device_health fold receipt stamped on settle."""
+
+    revision: int | None
+    boot_id: uuid.UUID | None
+    section_sequence: int | None
+
+
+def _mark_device_fold_applied(device: Device, receipt: _FoldReceipt) -> None:
+    if receipt.revision is None:
+        return
+    device.device_checks_fold_applied_revision = receipt.revision
+    device.device_checks_fold_boot_id = receipt.boot_id
+    device.device_checks_fold_section_sequence = receipt.section_sequence
 
 
 def _validated_remediation_action(health_result: dict[str, Any], device: Device) -> str | None:
@@ -488,6 +508,7 @@ class ConnectivityService:
         ip_ping_entry: dict[str, Any] | None,
         ip_ping_window_sec: float,
         observed_at: datetime,
+        revision: int | None = None,
     ) -> None:
         counter = (
             await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
@@ -499,7 +520,7 @@ class ConnectivityService:
             f"Healthy (ip_ping failing for {elapsed:.0f}s/{ip_ping_window_sec:.0f}s)" if elapsed > 0 else "Healthy"
         )
         applied = await self._health.update_device_checks(
-            db, device, healthy=True, summary=summary, observed_at=observed_at
+            db, device, healthy=True, summary=summary, observed_at=observed_at, revision=revision
         )
         if not applied:
             return
@@ -515,6 +536,7 @@ class ConnectivityService:
         summary: str,
         observed_at: datetime | None = None,
         remediation_result: dict[str, Any] | None = None,
+        revision: int | None = None,
     ) -> bool:
         """Shared unhealthy escalation: record the failed check, then hand the
         device to lifecycle policy unless it is already offline (re-escalating
@@ -522,7 +544,7 @@ class ConnectivityService:
         operational_state = await derive_operational_state(db, device, now=now_utc())
         was_offline = operational_state == DeviceOperationalState.offline
         applied = await self._health.update_device_checks(
-            db, device, healthy=False, summary=summary, observed_at=observed_at
+            db, device, healthy=False, summary=summary, observed_at=observed_at, revision=revision
         )
         if not applied:
             return False
@@ -667,6 +689,7 @@ class ConnectivityService:
         *,
         held: bool,
         observed_at: datetime | None = None,
+        revision: int | None = None,
     ) -> None:
         """Record a device disconnect unless its held/reserved classification flipped under the lock.
 
@@ -682,7 +705,7 @@ class ConnectivityService:
         """
         first_detection = device.device_checks_healthy is not False
         applied = await self._health.update_device_checks(
-            db, device, healthy=False, summary="Disconnected", observed_at=observed_at
+            db, device, healthy=False, summary="Disconnected", observed_at=observed_at, revision=revision
         )
         if not applied:
             return
@@ -901,6 +924,160 @@ class ConnectivityService:
             await self._handle_present_but_failing(db, device, health_result=health_result, observed_at=observed_at)
         else:
             await self._record_device_disconnect(db, device, host, observed_at=observed_at)
+
+    async def fold_host_devices(
+        self,
+        db: AsyncSession,
+        host_id: uuid.UUID,
+        section: dict[str, Any],
+        *,
+        boot_id: uuid.UUID | None = None,
+        deadline: float | None = None,
+    ) -> bool:
+        """Facts-only device_health fold for the StatusFoldLoop (Phase 4). Consumes
+        the pushed presence/health/lifecycle items (A4), threads the ingest revision
+        through the guarded device-checks writer, and enqueues remediation via a
+        durable job (A3) rather than dialing. No outbound HTTP.
+
+        Returns True when every device settled (applied or a deliberate no-op) and
+        False when at least one device was retryable, so the loop advances this
+        host's device_health watermark only on True.
+        """
+        observations = parse_device_health_items(section)
+        observed_at = parse_iso(section.get("reported_at")) or now_utc()
+        raw_rev = section.get("observation_revision")
+        revision = raw_rev if isinstance(raw_rev, int) else None
+        raw_seq = section.get("section_sequence")
+        section_sequence = raw_seq if type(raw_seq) is int and raw_seq >= 0 else None
+        receipt = _FoldReceipt(revision=revision, boot_id=boot_id, section_sequence=section_sequence)
+        debounce_windows = _DebounceWindows(
+            ip_ping=float(self._settings.get("device_checks.ip_ping.fail_window_sec")),
+            probe_unanswered=float(self._settings.get("device_checks.probe_unanswered.fail_window_sec")),
+            probe_failed=float(self._settings.get("device_checks.probe_failed.fail_window_sec")),
+        )
+        stmt = (
+            select(Device)
+            .where(Device.host_id == host_id)
+            .options(selectinload(Device.appium_node).defer(AppiumNode.live_capabilities), selectinload(Device.host))
+            .order_by(Device.id)
+        )
+        devices = (await db.execute(stmt)).scalars().all()
+        # Snapshot device ids up front: a rollback below expires every loaded row,
+        # so an attribute read on an un-processed device afterward would trigger a
+        # sync lazy-load (MissingGreenlet). Mirrors node_health.fold_host_nodes.
+        work: list[uuid.UUID] = []
+        for device in devices:
+            if device.id not in observations.by_device_id:
+                continue  # not in this gather — never absence
+            if revision is not None and revision <= device.device_checks_fold_applied_revision:
+                metrics.record_device_health_fold_result("skipped")
+                continue
+            work.append(device.id)
+
+        retryable = 0
+        with pack_platform_resolution_cache():
+            for index, device_id in enumerate(work):
+                if index > 0 and deadline is not None and perf_counter() >= deadline:
+                    retryable += 1
+                    metrics.record_device_health_fold_result("retryable")
+                    break
+                item = observations.by_device_id[device_id]
+                try:
+                    outcome = await self._apply_device_health(
+                        db,
+                        device_id,
+                        item,
+                        receipt=receipt,
+                        observed_at=observed_at,
+                        debounce_windows=debounce_windows,
+                        complete_gather=observations.complete_gather,
+                    )
+                    await db.commit()
+                    metrics.record_device_health_fold_result(outcome)
+                    if outcome == "retryable":
+                        retryable += 1
+                except Exception:
+                    await db.rollback()
+                    retryable += 1
+                    metrics.record_device_health_fold_result("retryable")
+                    logger.exception("device_health_fold_device_failed", extra={"device_id": str(device_id)})
+        return retryable == 0
+
+    async def _apply_device_health(  # noqa: PLR0911 - explicit facts-only verdict state machine
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        item: DeviceHealthItem,
+        *,
+        receipt: _FoldReceipt,
+        observed_at: datetime,
+        debounce_windows: _DebounceWindows,
+        complete_gather: bool,
+    ) -> DeviceFoldOutcome:
+        try:
+            device = await device_locking.lock_device(db, device_id)
+        except NoResultFound:
+            return "terminal_noop"
+        # Re-check the receipt under the lock (prefilter TOCTOU).
+        if receipt.revision is not None and receipt.revision <= device.device_checks_fold_applied_revision:
+            return "skipped"
+        host = cast("Host", device.host)
+
+        # Indeterminate evidence (probe error / unknown presence): never a verdict.
+        # The push-era counterpart of the dial-era indeterminate-probe veto.
+        if item.probe_status == "error" or item.presence == "unknown":
+            _mark_device_fold_applied(device, receipt)
+            return "terminal_noop"
+        # Absence can only be asserted on a complete gather (B3).
+        if item.presence == "absent":
+            if not complete_gather:
+                _mark_device_fold_applied(device, receipt)
+                return "terminal_noop"
+            if not in_maintenance(device):
+                # _record_disconnect_if_stable -> update_device_checks(healthy=False) mints
+                # the failure episode under the row lock (A3.2); no separate transition call.
+                await self._record_disconnect_if_stable(
+                    db,
+                    device,
+                    held=await _is_held_or_reserved(db, device),
+                    observed_at=observed_at,
+                    revision=receipt.revision,
+                )
+            _mark_device_fold_applied(device, receipt)
+            return "applied"
+
+        # Present: derive the verdict from the pushed health dict (facts-only).
+        health_result = item.health if isinstance(item.health, dict) else None
+        if health_result is None:
+            # Present with no usable health payload: no positive evidence to act on.
+            _mark_device_fold_applied(device, receipt)
+            return "terminal_noop"
+        healthy, ip_ping_entry = await self._evaluate_health_result(
+            db, device, host, health_result, debounce_windows=debounce_windows, observed_at=observed_at
+        )
+        if healthy:
+            await self._handle_healthy_device(
+                db,
+                device,
+                ip_ping_entry=ip_ping_entry,
+                ip_ping_window_sec=debounce_windows.ip_ping,
+                observed_at=observed_at,
+                revision=receipt.revision,
+            )
+        else:
+            # _escalate_health_failure -> update_device_checks(healthy=False) mints the
+            # episode (A3.2) and, via remediation_result, atomically enqueues the durable
+            # repeat-safe remediation job (A3) instead of dialing.
+            await self._escalate_health_failure(
+                db,
+                device,
+                summary=_summarize_unhealthy_result(health_result),
+                observed_at=observed_at,
+                remediation_result=health_result,
+                revision=receipt.revision,
+            )
+        _mark_device_fold_applied(device, receipt)
+        return "applied"
 
     async def fold_host_device_health(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         """Fold one host's pushed device_health section through the dial-era
