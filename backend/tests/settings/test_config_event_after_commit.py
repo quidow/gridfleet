@@ -14,7 +14,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-CAPS_V6 = {"orchestration_contract_version": 6}
+CAPS_V7 = {"orchestration_contract_version": 7}
 
 
 async def test_register_host_queues_host_registered(
@@ -22,7 +22,7 @@ async def test_register_host_queues_host_registered(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     payload = HostRegister(
-        hostname="contract-host", ip="10.0.0.42", os_type="linux", agent_port=5100, capabilities=CAPS_V6
+        hostname="contract-host", ip="10.0.0.42", os_type="linux", agent_port=5100, capabilities=CAPS_V7
     )
     host, _is_new = await HostCrudService(publisher=event_bus, settings=FakeSettingsReader({})).register_host(
         db_session, payload
@@ -39,7 +39,7 @@ async def test_approve_host_queues_status_changed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     payload = HostRegister(
-        hostname="approve-host", ip="10.0.0.43", os_type="linux", agent_port=5100, capabilities=CAPS_V6
+        hostname="approve-host", ip="10.0.0.43", os_type="linux", agent_port=5100, capabilities=CAPS_V7
     )
     host, _ = await HostCrudService(
         publisher=event_bus, settings=FakeSettingsReader({"agent.auto_accept_hosts": False})
