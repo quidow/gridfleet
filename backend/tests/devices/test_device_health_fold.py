@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
@@ -128,10 +130,16 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
     service._apply_device_health = flaky  # type: ignore[method-assign]
     settled = await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4())
     assert settled is False  # one device retryable -> host watermark held by the loop
-    await db_session.refresh(good)
-    await db_session.refresh(bad)
-    assert good.device_checks_fold_applied_revision == revision
-    assert bad.device_checks_fold_applied_revision < revision
+
+    async def _fold_rev(dev_id: uuid.UUID) -> int:
+        # Read the committed receipt directly: the fold's per-device rollback expires
+        # the loaded rows, so an ORM attribute read here can trigger a sync lazy-load.
+        value = await db_session.scalar(select(Device.device_checks_fold_applied_revision).where(Device.id == dev_id))
+        assert value is not None
+        return value
+
+    assert await _fold_rev(good_id) == revision
+    assert await _fold_rev(bad_id) < revision
 
     # Second pass replays only the retryable device: the committed peer is skipped.
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4()) is False
@@ -261,3 +269,69 @@ async def test_pushed_emulator_state_unchanged_takes_no_lock(
     service = build_connectivity_service(db_session_maker)
     await service.apply_pushed_emulator_state(db_session, host.id, _emulator_section(device.id, "device"))
     assert calls == 0  # unchanged value → update_emulator_state early-returns before the lock
+
+
+async def test_batch_loaders_match_per_device(db_session: AsyncSession) -> None:
+    from sqlalchemy.orm import selectinload
+
+    from app.devices.services.state import derive_operational_state, derive_operational_states
+    from app.lifecycle.services.remediation_log import load_ladder, load_ladders
+
+    _host, seeded = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-parity")
+    # Reload with the relationships the per-device derivation reads, so it does not
+    # lazy-load in a sync context (the batch variant bulk-loads them instead).
+    stmt = (
+        select(Device)
+        .where(Device.id.in_([d.id for d in seeded]))
+        .options(selectinload(Device.appium_node), selectinload(Device.host))
+        .order_by(Device.id)
+    )
+    devices = list((await db_session.execute(stmt)).scalars().all())
+    now = now_utc()
+    batch_states = await derive_operational_states(db_session, devices, now=now)
+    batch_ladders = await load_ladders(db_session, [d.id for d in devices])
+    for device in devices:
+        assert batch_states[device.id] == await derive_operational_state(db_session, device, now=now)
+        single = await load_ladder(db_session, device.id)
+        assert batch_ladders[device.id].attempts == single.attempts  # ladder equivalence
+
+
+async def test_stale_failing_fold_enqueues_remediation_that_self_cancels(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.devices.services.connectivity as conn_mod
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-residual")
+    device = devices[0]
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 4,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device.id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {
+                    "healthy": False,
+                    "checks": [{"check_id": "reconnect_probe", "ok": False}],
+                    "recommended_action": "reconnect",
+                },
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    service = build_connectivity_service(db_session_maker)
+    enqueue = AsyncMock(return_value=uuid.uuid4())
+    monkeypatch.setattr(conn_mod, "enqueue_device_health_remediation", enqueue)
+    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    assert settled is True
+    # A stale FAILING observation that transiently wins enqueues exactly one repeat-safe
+    # remediation job (reconnect); the job worker's current-fact recheck (A3) cancels it
+    # if a newer healthy fact commits before it runs.
+    enqueue.assert_awaited_once()
+    assert enqueue.await_args.kwargs["action_id"] == "reconnect"
