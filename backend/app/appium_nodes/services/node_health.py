@@ -12,7 +12,7 @@ from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
-from app.core.metrics_recorders import record_background_loop_phase
+from app.core.metrics_recorders import record_background_loop_phase, record_node_health_fold_result
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
@@ -75,7 +75,7 @@ class NodeHealthService:
         self._health = health
         self._incidents = incidents
 
-    async def fold_host_nodes(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold_host_nodes(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> bool:
         """Fold pushed node_health facts into the durable node-health state.
 
         Entries match DB nodes by port; the entry's observed (pid,
@@ -84,10 +84,16 @@ class NodeHealthService:
         is convergence's problem (appium_processes drives stop), not a health
         failure — it has no positive evidence, the push-era counterpart of the
         dial-era indeterminate-probe veto.
+
+        Returns True when every node settled (applied or a deliberate no-op) and
+        False when at least one node was retryable (raised mid-write). The
+        StatusFoldLoop advances its per-host section-skip watermark only on True,
+        so a retryable node is retried next cycle without replaying the peers
+        that already committed (their revision guard skips them).
         """
         raw_nodes = section.get("nodes")
         if not isinstance(raw_nodes, list):
-            return
+            return True
         observed_at = parse_iso(section.get("reported_at")) or now_utc()
         # Ingest-time revision stamped by the push endpoint (two-axis guard). A
         # tokenless/legacy section carries none; fall back to a fresh draw so the
@@ -123,34 +129,57 @@ class NodeHealthService:
             .order_by(AppiumNode.device_id)
         )
         nodes = (await db.execute(stmt)).scalars().all()
-        apply_started = perf_counter()
+        # Snapshot the per-node work up front: a rollback below expires every
+        # loaded ORM row, so an attribute read on an un-processed node afterward
+        # would trigger a sync lazy-load (MissingGreenlet). device_id + the
+        # observation carry everything the loop needs.
+        work: list[tuple[AppiumNode, uuid.UUID, _NodeObservation]] = []
         for node in nodes:
             entry = by_port.get(node.port)
             if entry is None:
                 continue
-            observation = _NodeObservation(
-                result=from_status_response(entry),
-                port=node.port,
-                pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
-                active_connection_target=(
-                    entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
-                ),
-                observed_at=observed_at,
-                revision=revision,
+            # _process_node_health never reads the passed node's attributes before
+            # re-locking it, so carrying the (possibly later-expired) row here is
+            # safe; device_id is captured now while the row is live.
+            work.append(
+                (
+                    node,
+                    node.device_id,
+                    _NodeObservation(
+                        result=from_status_response(entry),
+                        port=node.port,
+                        pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
+                        active_connection_target=(
+                            entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
+                        ),
+                        observed_at=observed_at,
+                        revision=revision,
+                    ),
+                )
             )
+
+        apply_started = perf_counter()
+        retryable = 0
+        for node, device_id, observation in work:
             try:
                 # No load_sessions: the node-health path never reads device.sessions
                 # off this row — apply_node_state_transition and the recovery-control
                 # methods each re-lock the device and load what they need.
-                locked_device = await device_locking.lock_device(db, node.device_id)
+                locked_device = await device_locking.lock_device(db, device_id)
             except NoResultFound:
-                logger.warning("Node health fold skipped: device %s no longer exists", node.device_id)
+                logger.warning("Node health fold skipped: device %s no longer exists", device_id)
                 await db.commit()
                 continue
-
-            await self._process_node_health(db, node, locked_device, observation=observation)
-            await db.commit()
+            try:
+                await self._process_node_health(db, node, locked_device, observation=observation)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                retryable += 1
+                record_node_health_fold_result("retryable")
+                logger.exception("node_health_fold_node_failed", extra={"device_id": str(device_id)})
         record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
+        return retryable == 0
 
     async def _attempt_node_restart(self, db: AsyncSession, *, device: Device) -> None:
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()

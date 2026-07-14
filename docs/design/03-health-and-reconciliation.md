@@ -23,12 +23,13 @@ One `BackgroundLoop` per independent lifecycle. Cadences, read sets, and write s
 
 | Loop | Owns |
 | --- | --- |
-| `host_sweep_loop` | Host liveness from push recency (`evaluate_host` in `app/hosts/liveness.py` is the single `Host.status` edge detector), the offline cascade, node convergence from the latest pushed snapshot, the watermark-gated observation folds (node health, device health, host/device telemetry, device properties), and the cadence-gated `/agent/health` partition diagnostic |
+| `host_sweep_loop` | Host liveness from push recency (`evaluate_host` in `app/hosts/liveness.py` is the single `Host.status` edge detector), the offline cascade, node convergence from the latest pushed snapshot, the inline observation folds (device health, host/device telemetry, device properties), and the cadence-gated `/agent/health` partition diagnostic |
 | `appium_sweep_loop` | The direct-to-Appium session observation pass (liveness probes + orphan-session kill) and the scheduled session-viability pass behind a 60 s scan throttle |
 | `durable_job_worker_loop` | Durable `jobs` table execution |
 | `grid_allocation_reaper_loop` | Queue-ticket expiry and crash-orphaned pending `Session` rows |
 | `device_intent_reconciler_loop` | Expired deny-intent GC, reservation cooldown clears, and the operational-state edge detector: it compares the read-time projection with `Device.operational_state_last_emitted`, queues `device.operational_state_changed`, and advances the ledger — it does not write current state (Doc 1) |
 | `janitor_loop` | Housekeeping stages `run_reaper`, `fleet_capacity`, `pack_drain` (backstop only — release paths complete drains inline), `data_cleanup`, `flush`; stage roster in `_build_janitor` (`backend/app/main.py`), stage cadences are plumbing constants, never registry settings |
+| `status_fold_loop` | The level-triggered `node_health` observation-application, folded off the request path: reads each host's latest pushed snapshot and applies the `node_health` section whose ingest-stamped revision exceeds the host's `observation_applied` watermark, under the two-axis guard, with per-host and per-node containment |
 
 Scheduling doctrine for new work: a `BackgroundLoop` per independent lifecycle; stage-due stages only as sub-cadences of an owning sweep. Observation arrives via the agent's consolidated status push (`POST /agent/hosts/status`); the backend dials an agent only to act, never to observe. `docs/reference/architecture.md` documents the push/dial split.
 

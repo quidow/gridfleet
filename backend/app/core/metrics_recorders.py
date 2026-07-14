@@ -321,6 +321,38 @@ def record_host_push_token_anomaly(kind: str) -> None:
     HOST_PUSH_TOKEN_ANOMALIES.labels(kind=kind).inc()
 
 
+# StatusFoldLoop diagnostics: per-node fold outcomes and per-cycle bookkeeping.
+STATUS_FOLD_NODE_RESULTS = Counter(
+    "gridfleet_status_fold_node_results_total",
+    "Per-node results of the async node_health fold.",
+    # outcome: retryable (others — applied/terminal_noop — are the common no-metric case)
+    labelnames=("outcome",),
+)
+STATUS_FOLD_HOSTS = Counter(
+    "gridfleet_status_fold_hosts_total",
+    "Host sections the StatusFoldLoop acted on, by disposition.",
+    # disposition: folded | skipped | contained_error
+    labelnames=("disposition",),
+)
+STATUS_FOLD_LAG_SECONDS = Histogram(
+    "gridfleet_status_fold_lag_seconds",
+    "Snapshot-received-to-fold-complete lag for a folded host section.",
+    buckets=(0.5, 1, 2, 3, 5, 8, 13, 21, 34),
+)
+
+
+def record_node_health_fold_result(outcome: str) -> None:
+    STATUS_FOLD_NODE_RESULTS.labels(outcome=outcome).inc()
+
+
+def record_status_fold_host(disposition: str) -> None:
+    STATUS_FOLD_HOSTS.labels(disposition=disposition).inc()
+
+
+def record_status_fold_lag(seconds: float) -> None:
+    STATUS_FOLD_LAG_SECONDS.observe(seconds)
+
+
 DB_SERIALIZATION_RETRY_TOTAL = Counter(
     "db_serialization_retry_total",
     "Transactions rolled back and re-run after a transient Postgres deadlock/serialization failure (40P01/40001).",

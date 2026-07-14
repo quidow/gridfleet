@@ -15,6 +15,7 @@ from app.analytics import router as analytics
 from app.appium_nodes import routers as appium_node_routers
 from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
+from app.appium_nodes.services.status_fold_loop import StatusFoldLoop
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -186,6 +187,10 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
     job_worker = app_services.jobs
     janitor = _build_janitor(app_services)
+    status_fold = StatusFoldLoop(
+        node_health=app_services.appium_nodes.node_health,
+        session_factory=app_services.appium_nodes.session_factory,
+    )
 
     _leader_loops: list[tuple[Any, str]] = [
         (host_sweep.run(), "host_sweep_loop"),
@@ -194,6 +199,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
         (allocation_reaper.run(), "grid_allocation_reaper_loop"),
         (intent_reconciler.run(), "device_intent_reconciler_loop"),
         (janitor.run(), "janitor_loop"),
+        (status_fold.run(), "status_fold_loop"),
     ]
     return [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
 
