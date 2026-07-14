@@ -206,3 +206,58 @@ async def test_stale_device_fold_does_not_override_fresh_synchronous_write(
     await db_session.refresh(device)
     assert device.device_checks_healthy is False  # ... but the stale healthy verdict LOST the guard
     assert device.device_checks_fold_applied_revision == stale_revision  # not retried forever
+
+
+def _emulator_section(device_id: uuid.UUID, value: str) -> dict[str, Any]:
+    return {
+        "reported_at": now_utc().isoformat(),
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device_id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "observed", "value": value},
+            }
+        ],
+    }
+
+
+async def test_pushed_emulator_state_applied_synchronously(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="em-sync")
+    device = devices[0]
+    service = build_connectivity_service(db_session_maker)
+    await service.apply_pushed_emulator_state(db_session, host.id, _emulator_section(device.id, "device"))
+    await db_session.commit()  # the push handler commits em_db after this synchronous step
+    await db_session.refresh(device)
+    assert device.emulator_state == "device"
+
+
+async def test_pushed_emulator_state_unchanged_takes_no_lock(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices import locking as device_locking
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="em-unchanged")
+    device = devices[0]
+    device.emulator_state = "device"
+    device.emulator_state_source_time = now_utc()
+    await db_session.commit()
+
+    calls = 0
+    real_lock = device_locking.lock_device
+
+    async def counting_lock(db: AsyncSession, device_id: uuid.UUID, **kwargs: object) -> Device:
+        nonlocal calls
+        calls += 1
+        return await real_lock(db, device_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(device_locking, "lock_device", counting_lock)
+    service = build_connectivity_service(db_session_maker)
+    await service.apply_pushed_emulator_state(db_session, host.id, _emulator_section(device.id, "device"))
+    assert calls == 0  # unchanged value → update_emulator_state early-returns before the lock

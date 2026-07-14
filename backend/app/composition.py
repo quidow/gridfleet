@@ -352,6 +352,7 @@ def compose_app(
                     ObservationFold("device_properties", property_refresh_svc.fold_host_device_properties),
                     ObservationFold("host_telemetry", resource_telemetry_svc.fold_host_telemetry),
                 ),
+                apply_pushed_emulator_state=connectivity_svc.apply_pushed_emulator_state,
                 converge_host=functools.partial(
                     converge_pushed_host,
                     session_factory=session_factory,

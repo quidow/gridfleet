@@ -21,6 +21,7 @@ def _service(
     observation_folds: tuple[ObservationFold, ...] = (),
     converge_host: Callable[..., Awaitable[None]] | None = None,
     ingest_restart_events: Callable[[AsyncSession, Host, dict[str, Any]], Awaitable[None]] | None = None,
+    apply_pushed_emulator_state: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]] | None = None,
 ) -> HostStatusPushService:
     return HostStatusPushService(
         publisher=AsyncMock(),
@@ -28,6 +29,7 @@ def _service(
         observation_folds=observation_folds,
         converge_host=converge_host,
         ingest_restart_events=ingest_restart_events,
+        apply_pushed_emulator_state=apply_pushed_emulator_state,
     )
 
 
@@ -152,3 +154,29 @@ async def test_process_observations_without_wiring_is_a_noop(db_host: Host) -> N
         agent_port=db_host.agent_port,
         payload={"node_health": {"reported_at": "t"}},
     )
+
+
+async def test_emulator_state_applied_synchronously_from_device_health_section(
+    db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
+    seen: list[dict[str, Any]] = []
+
+    async def apply_emulator(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+        seen.append(section)
+
+    service = _service(db_session_maker, apply_pushed_emulator_state=apply_emulator)
+    section = {"reported_at": "t1", "devices": [{"device_id": "d", "lifecycle_state": {"status": "observed"}}]}
+    await service.process_observation_folds(host_id=db_host.id, payload={"device_health": section})
+
+    assert seen == [section]  # the guarded section's lifecycle is read synchronously on the push path
+
+
+async def test_emulator_state_step_isolated_from_the_liveness_path(
+    db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
+    async def boom(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+        raise RuntimeError("emulator apply failed")
+
+    service = _service(db_session_maker, apply_pushed_emulator_state=boom)
+    # A raising emulator_state step must never propagate out of the observation phase.
+    await service.process_observation_folds(host_id=db_host.id, payload={"device_health": {"reported_at": "t1"}})

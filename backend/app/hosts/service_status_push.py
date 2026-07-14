@@ -134,6 +134,9 @@ class HostStatusPushService:
         observation_folds: tuple[ObservationFold, ...] = (),
         converge_host: Callable[..., Awaitable[None]] | None = None,
         ingest_restart_events: Callable[[AsyncSession, Host, dict[str, Any]], Awaitable[None]] | None = None,
+        apply_pushed_emulator_state: (
+            Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]] | None
+        ) = None,
         publication_concurrency: int | None = None,
     ) -> None:
         self._publisher = publisher
@@ -141,6 +144,7 @@ class HostStatusPushService:
         self._observation_folds = observation_folds
         self._converge_host = converge_host
         self._ingest_restart_events = ingest_restart_events
+        self._apply_pushed_emulator_state = apply_pushed_emulator_state
         if (
             publication_concurrency is None
             and CONFIGURED_DB_POOL_CAPACITY is not None
@@ -441,6 +445,25 @@ class HostStatusPushService:
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
             self._log_stage(f"fold:{entry.section}", host_id, started)
+        # device_health folds async on the StatusFoldLoop (Phase 4), but its cheap
+        # lifecycle-state (emulator_state) application stays synchronous per spec:
+        # read the guarded section's lifecycle items here and apply write-on-diff (M2).
+        await self._apply_emulator_state(host_id=host_id, payload=payload)
+
+    async def _apply_emulator_state(self, *, host_id: uuid.UUID, payload: dict[str, Any]) -> None:
+        if self._apply_pushed_emulator_state is None or self._session_factory is None:
+            return
+        section = payload.get("device_health")
+        if not isinstance(section, dict):
+            return
+        started = perf_counter()
+        try:
+            async with self._session_factory() as em_db:
+                await self._apply_pushed_emulator_state(em_db, host_id, section)
+                await em_db.commit()
+        except Exception:  # noqa: BLE001 - observation stages must never starve liveness
+            HOST_PUSH_OBSERVATION_FAILURES.labels(stage="emulator_state").inc()
+        self._log_stage("emulator_state", host_id, started)
 
     async def process_observations(
         self, *, host_id: uuid.UUID, host_ip: str, agent_port: int, payload: dict[str, Any]
