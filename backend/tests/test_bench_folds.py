@@ -18,6 +18,7 @@ from __future__ import annotations
 import functools
 import os
 import re
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from datetime import timedelta
@@ -26,13 +27,14 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService, converge_pushed_host
 from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
+from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.health import DeviceHealthService
@@ -40,9 +42,10 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
-from app.hosts.service_status_push import HostStatusPushService, ObservationFold
+from app.hosts.service_status_push import OBSERVATION_REVISION_KEY, HostStatusPushService, ObservationFold
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
+from tests.helpers import build_connectivity_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -76,6 +79,7 @@ class _TupleSpec:
 
 @dataclass(frozen=True)
 class _SeededDevice:
+    device_id: uuid.UUID
     identity: str  # identity_value == connection_target
     port: int
     pid: int
@@ -161,7 +165,15 @@ async def _seed_fleet(
                 last_observed_at=now_utc(),
             )
         )
-        seeded.append(_SeededDevice(identity=ident, port=4723 + i, pid=1000 + i, spec=spec))
+        seeded.append(
+            _SeededDevice(
+                device_id=device.id,
+                identity=ident,
+                port=4723 + i,
+                pid=1000 + i,
+                spec=spec,
+            )
+        )
     await db.commit()
     return host, seeded
 
@@ -174,6 +186,32 @@ def _device_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[st
             d.identity: {"healthy": i >= k}  # first k unhealthy
             for i, d in enumerate(devices)
         },
+    }
+
+
+def _device_health_loop_section(
+    devices: list[_SeededDevice],
+    churn: float,
+    *,
+    revision: int,
+    section_sequence: int,
+) -> dict[str, object]:
+    unhealthy_count = _churn_count(len(devices), churn)
+    return {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": section_sequence,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device.device_id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": index >= unhealthy_count, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+            for index, device in enumerate(devices)
+        ],
     }
 
 
@@ -471,6 +509,35 @@ def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]
         print(f"    {n / ITERS:8.1f}  {sig}")
 
 
+def _report_device_health_loop(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]) -> None:
+    avg_ms = sum(wall_ms) / len(wall_ms)
+    queries_per_fold = tap.total / ITERS
+    candidate_signatures = (
+        "SELECT device_remediation_log",
+        "SELECT sessions",
+        "SELECT device_intents",
+        "SELECT driver_packs",
+        "SELECT driver_pack_releases",
+        "SELECT driver_pack_platforms",
+    )
+    candidate_total = sum(tap.counter.get(signature, 0) for signature in candidate_signatures)
+    candidate_per_fold = candidate_total / ITERS
+    candidate_share = 100.0 * candidate_total / tap.total if tap.total else 0.0
+
+    print(f"\n{'=' * 78}\nfold_host_devices: {DEVICES} devices x {ITERS} iters  churn={CHURN}")
+    print(f"  wall per fold:               avg {avg_ms:.1f} ms   ({', '.join(f'{w:.0f}' for w in wall_ms)})")
+    print(f"  QUERIES per fold:            {queries_per_fold:.0f}   ({queries_per_fold / DEVICES:.2f} per device)")
+    print(f"  COMMITS per fold:            {commits.count / ITERS:.1f}")
+    print(
+        "  candidate batch reads/fold: "
+        f"{candidate_per_fold:.0f}   ({candidate_per_fold / DEVICES:.2f} per device, "
+        f"{candidate_share:.1f}% of queries)"
+    )
+    print("  top statements per fold:")
+    for signature, count in tap.counter.most_common(18):
+        print(f"    {count / ITERS:8.1f}  {signature}")
+
+
 async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]) -> None:
     service = _build_push_service(db_session_maker)
     tap = _QueryTap()
@@ -505,3 +572,67 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
     _report_whole_push(tap, commits, wall_ms)
     # Guard: a stubbing gap would make process_observations silently skip a stage.
     assert _observation_failure_total() == failures_before, "a whole-push stage failed (check dial stubs / wiring)"
+
+
+async def test_bench_device_health_loop_fold(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    service = build_connectivity_service(db_session_maker)
+    tap = _QueryTap()
+    commits = _CommitTap()
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", tap)
+    event.listen(engine, "commit", commits)
+    tap.armed = False
+    commits.armed = False
+    wall_ms: list[float] = []
+
+    try:
+        host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
+        for iteration in range(ITERS):
+            if CHURN > 0 and iteration > 0:
+                host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+
+            revision = await next_observation_revision(db_session)
+            section = _device_health_loop_section(
+                devices,
+                CHURN,
+                revision=revision,
+                section_sequence=iteration + 1,
+            )
+
+            tap.armed = True
+            commits.armed = True
+            t0 = perf_counter()
+            try:
+                settled = await service.fold_host_devices(
+                    db_session,
+                    host.id,
+                    section,
+                    boot_id=uuid.uuid4(),
+                )
+            finally:
+                wall_ms.append((perf_counter() - t0) * 1000)
+                tap.armed = False
+                commits.armed = False
+
+            assert settled is True
+            receipt_rows = (
+                (
+                    await db_session.execute(
+                        select(Device.device_checks_fold_applied_revision).where(
+                            Device.id.in_([device.device_id for device in devices])
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(receipt_rows) == len(devices)
+            assert set(receipt_rows) == {revision}
+
+        _report_device_health_loop(tap, commits, wall_ms)
+    finally:
+        event.remove(engine, "before_cursor_execute", tap)
+        event.remove(engine, "commit", commits)
