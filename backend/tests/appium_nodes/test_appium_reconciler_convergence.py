@@ -29,8 +29,9 @@ async def converge_host_rows(
 ) -> None:
     """Test-local re-implementation of the deleted free function, using the same logic."""
     observed_by_target = {entry.connection_target: entry for entry in agent_running}
+    observed_by_port = {entry.port: entry for entry in agent_running}
     for row in sorted(rows, key=lambda r: str(r.device_id)):
-        obs = match_observed_entry(row, observed_by_target)
+        obs = match_observed_entry(row, observed_by_target, observed_by_port)
         action = decide_convergence_action(row, observed=obs, now=now)
         try:
             await _execute_action(
@@ -191,6 +192,55 @@ def test_match_observed_entry_prefers_active_target_then_registered() -> None:
     real = _row(connection_target="192.168.1.254:5555", active_connection_target=None)
     entry = ObservedEntry(port=4723, pid=3, connection_target="192.168.1.254:5555")
     assert match_observed_entry(real, {"192.168.1.254:5555": entry}) is entry
+
+
+def test_match_observed_entry_falls_back_to_port_when_target_unmatched() -> None:
+    """An emulator reports its node under the live ADB serial, not the registered
+    AVD name, so target matching misses when ``active_connection_target`` is unset
+    (e.g. cleared during recovery backoff). The node's port is its stable identity —
+    match on it so the observed pid/target fold instead of stranding the node with
+    ``observed_running`` False forever."""
+    by_serial = ObservedEntry(port=4728, pid=13247, connection_target="emulator-5554")
+    observed_by_port = {by_serial.port: by_serial}
+
+    emulator = _row(connection_target="Pixel_6", active_connection_target=None, port=4728)
+    # Target maps (keyed by AVD name) miss; the port fallback catches it.
+    assert match_observed_entry(emulator, {}, observed_by_port) is by_serial
+    # Without the port index (legacy 2-arg call), behaviour is unchanged: no match.
+    assert match_observed_entry(emulator, {}) is None
+    # A registered-target match still wins over the port fallback.
+    by_registered = ObservedEntry(port=4728, pid=1, connection_target="Pixel_6")
+    assert match_observed_entry(emulator, {"Pixel_6": by_registered}, observed_by_port) is by_registered
+
+
+def test_desired_running_emulator_folds_pid_via_port_match() -> None:
+    """End-to-end of the fold: a desired-running emulator row whose observation is
+    keyed by the ADB serial folds pid + active_connection_target via the port match."""
+    row = _row(desired_state="running", desired_port=4728, port=4728, connection_target="Pixel_6")
+    obs = ObservedEntry(port=4728, pid=13247, connection_target="emulator-5554")
+    matched = match_observed_entry(row, {"emulator-5554": obs}, {4728: obs})
+    action = decide_convergence_action(row, observed=matched, now=datetime.now(UTC))
+    assert action.kind == "db_mark_running"
+    assert action.pid == 13247
+    assert action.active_connection_target == "emulator-5554"
+
+
+def test_rows_needing_stale_clear_skips_node_observed_only_by_port() -> None:
+    """A backed-off emulator whose node the agent still reports (matched by port,
+    not target) must NOT be stale-cleared — clearing its pid/active_connection_target
+    is what re-strands the node. Leave it to recovery."""
+    from app.appium_nodes.services.reconciler_convergence import rows_needing_stale_clear
+
+    now = datetime.now(UTC)
+    row = _row(
+        connection_target="Pixel_6",
+        desired_state="stopped",
+        port=4728,
+        pid=999,
+        active_connection_target=None,
+    )
+    observed = [ObservedEntry(port=4728, pid=13247, connection_target="emulator-5554")]
+    assert rows_needing_stale_clear([row], observed, now=now) == []
 
 
 def test_rows_needing_stale_clear_matches_node_by_active_connection_target() -> None:

@@ -139,19 +139,35 @@ def orphaned_node_ports(observed: list[ObservedEntry], *, known_targets: set[str
     return orphans
 
 
-def match_observed_entry(row: DesiredRow, observed_by_target: dict[str, ObservedEntry]) -> ObservedEntry | None:
+def match_observed_entry(
+    row: DesiredRow,
+    observed_by_target: dict[str, ObservedEntry],
+    observed_by_port: dict[int, ObservedEntry] | None = None,
+) -> ObservedEntry | None:
     """Return the agent-reported node for ``row``, if any.
 
     A running node may report either the device's registered connection_target
     (real devices) or a live target resolved at start time (virtual emulators
     report their ADB serial, not the AVD name). Prefer the row's recorded live
-    target, then fall back to the registered one.
+    target, then fall back to the registered one, then to the node's port.
+
+    The port fallback bridges the emulator case when ``active_connection_target``
+    is unset (e.g. cleared by the recovery-backoff stale-clear): the observation
+    is keyed by the ADB serial while the row holds only the AVD name, so neither
+    target lookup hits. The node's port is its stable identity — matching on it
+    lets the observed pid/target fold instead of stranding the node with
+    ``observed_running`` False forever (the recovery deadlock).
     """
     if row.active_connection_target is not None:
         entry = observed_by_target.get(row.active_connection_target)
         if entry is not None:
             return entry
-    return observed_by_target.get(row.connection_target)
+    entry = observed_by_target.get(row.connection_target)
+    if entry is not None:
+        return entry
+    if observed_by_port is not None and row.port is not None:
+        return observed_by_port.get(row.port)
+    return None
 
 
 def rows_needing_stale_clear(
@@ -166,10 +182,13 @@ def rows_needing_stale_clear(
     recovery.
     """
     observed_by_target = {entry.connection_target: entry for entry in observed}
+    observed_by_port = {entry.port: entry for entry in observed}
     return [
         row
         for row in rows
-        if decide_convergence_action(row, observed=match_observed_entry(row, observed_by_target), now=now).kind
+        if decide_convergence_action(
+            row, observed=match_observed_entry(row, observed_by_target, observed_by_port), now=now
+        ).kind
         == "db_clear_stale_running"
     ]
 

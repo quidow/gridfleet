@@ -16,6 +16,7 @@ from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
     _PROBE_ALWAYS_MATCH_KEYS,
+    SessionViabilityProbeNotPermittedError,
     SessionViabilityService,
     _filter_probe_always_match,
     _parse_timestamp,
@@ -823,6 +824,58 @@ async def test_run_session_viability_probe_rejects_missing_running_node(
 
     assert result["status"] == "failed"
     assert result["error"] == "Appium node is not running"
+
+
+async def test_recovery_probe_skips_unobserved_node_instead_of_failing(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A recovery probe races the node coming up: the agent has been told to start
+    it but the observed pid may not have folded yet. An unobserved node must be a
+    benign skip (retry next tick), NOT a failure — a hard fail here commissions an
+    auto-stop that kills the node recovery just started, spiraling into exponential
+    backoff. (A genuinely un-startable node still trips backoff via the agent's
+    start_failure report.)"""
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-recovery-unobserved",
+        connection_target="Pixel_6",
+        name="Recovery Unobserved Node",
+        os_version="17",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.emulator,
+        connection_type=ConnectionType.virtual,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4728,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4728,
+        pid=None,
+        active_connection_target=None,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    loaded_device = await db_session.get(Device, device.id)
+    assert loaded_device is not None
+    loaded_node = await db_session.get(AppiumNode, node.id)
+    assert loaded_node is not None
+    assert not loaded_node.observed_running
+    loaded_device.appium_node = loaded_node
+
+    with pytest.raises(SessionViabilityProbeNotPermittedError):
+        await run_session_viability_probe(db_session, loaded_device, checked_by="recovery")
+
+    # No failed viability state was written, so nothing escalates to an auto-stop.
+    assert await get_session_viability(db_session, loaded_device) is None
 
 
 async def test_run_session_viability_probe_rejects_duplicate_and_not_ready(

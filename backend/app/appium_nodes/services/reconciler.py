@@ -438,8 +438,9 @@ class ReconcilerService:
         write_observed = self._write_observed_factory(session_scope=session_scope)
         reset_start_failure = self._make_reset_start_failure(session_scope=session_scope)
         observed_by_target = {entry.connection_target: entry for entry in observed}
+        observed_by_port = {entry.port: entry for entry in observed}
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
-            obs = match_observed_entry(row, observed_by_target)
+            obs = match_observed_entry(row, observed_by_target, observed_by_port)
             action = decide_convergence_action(row, observed=obs, now=now_utc())
             translated = translate_action_for_pull(action)
             if translated is None:

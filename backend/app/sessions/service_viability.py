@@ -267,6 +267,16 @@ class SessionViabilityService:
         )
         node = device.appium_node
         if not node or not node.observed_running:
+            if node is not None and checked_by == SessionViabilityCheckedBy.recovery:
+                # A recovery probe races the node coming up: recovery has set the
+                # node desired=running but the observed pid may not have folded yet.
+                # Treat an unobserved node as a benign skip (retry next tick) rather
+                # than a failure — a hard fail commissions an auto-stop that kills
+                # the node recovery just started, spiraling into exponential backoff
+                # (the recovery deadlock). A genuinely un-startable node still trips
+                # backoff via the agent's start_failure report, so this cannot mask
+                # a real failure.
+                raise SessionViabilityProbeNotPermittedError("Appium node is not observed running yet")
             state = await _write_session_viability(
                 db,
                 device,
