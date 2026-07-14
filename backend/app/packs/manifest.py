@@ -9,6 +9,8 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.devices.services.link_repair import REPEAT_SAFE_REMEDIATION_ACTIONS
+
 ALLOWED_TEMPLATE_VARS: frozenset[str] = frozenset(
     {
         "device.ip_address",
@@ -159,6 +161,7 @@ class LifecycleAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: Literal["state", "reconnect", "boot", "shutdown", "release_forwarded_ports"]
+    remediation: bool = False
 
 
 class HealthCheckAppliesWhen(BaseModel):
@@ -320,6 +323,29 @@ class Manifest(BaseModel):
     insecure_features: list[str] = Field(default_factory=list)
     appium_env: list[AppiumEnvRule] = Field(default_factory=list)
     runtime_packages: list[RuntimePackage] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _reject_non_repeat_safe_remediation_actions(self) -> Manifest:
+        allowed = ", ".join(sorted(REPEAT_SAFE_REMEDIATION_ACTIONS))
+        for platform in self.platforms:
+            action_groups: list[tuple[str, list[LifecycleAction]]] = [
+                (f"platform {platform.id!r}", platform.lifecycle_actions)
+            ]
+            action_groups.extend(
+                (
+                    f"platform {platform.id!r} device-type override {device_type!r}",
+                    override.lifecycle_actions or [],
+                )
+                for device_type, override in platform.device_type_overrides.items()
+            )
+            for location, actions in action_groups:
+                for action in actions:
+                    if action.remediation and action.id not in REPEAT_SAFE_REMEDIATION_ACTIONS:
+                        raise ValueError(
+                            f"{location}: remediation action {action.id!r} is not repeat-safe; "
+                            f"allowed repeat-safe actions: {allowed}"
+                        )
+        return self
 
     @model_validator(mode="after")
     def _gate_keys_reference_known_fields(self) -> Manifest:
