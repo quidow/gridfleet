@@ -380,6 +380,7 @@ def compose_app(
                 stereotype_provider=device_match_surface,
                 settings=settings_svc,
             ),
+            health=device_health_svc,
         ),
         packs=PackServices(
             catalog=pack_catalog,

@@ -10,16 +10,18 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 
+from app.devices.services.health import DeviceHealthService
 from app.grid import router_internal, session_create
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import seed_host_and_running_node
+from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.devices.models import Device
     from app.grid.allocation import AllocationResult, AllocationService
@@ -43,6 +45,29 @@ async def seeded_available_device(db_session: AsyncSession) -> Device:
     _, device, _ = await seed_host_and_running_node(db_session, identity=f"grid-api-{uuid.uuid4().hex[:8]}")
     await db_session.commit()
     return device
+
+
+@pytest.mark.db
+async def test_mark_target_node_down_marks_error_and_advances_revision(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    _, device, node = await seed_host_and_running_node(
+        db_session,
+        identity=f"grid-node-down-{uuid.uuid4().hex[:8]}",
+    )
+    previous_revision = node.health_observation_revision
+
+    await session_create.mark_target_node_down(
+        db_session_maker,
+        DeviceHealthService(publisher=event_bus),
+        device_id=device.id,
+    )
+
+    await db_session.refresh(node)
+    assert node.health_running is False
+    assert node.health_state == "error"
+    assert node.health_observation_revision > previous_revision
 
 
 def _created_outcome(

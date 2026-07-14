@@ -10,11 +10,14 @@ from typing import TYPE_CHECKING, Any, Literal
 from prometheus_client import Counter
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
+from app.devices.models import Device
 from app.grid import appium_direct
 from app.grid.allocation import AllocationNotPendingError, AllocationResult, AllocationService
 
 if TYPE_CHECKING:
     import uuid
+
+    from app.devices.services.health import DeviceHealthService
 
 CREATE_TIMEOUT_CAP_SEC = 240
 CREATE_TIMEOUT_MARGIN_SEC = 5
@@ -55,6 +58,26 @@ async def _fail(
 ) -> None:
     async with db_factory() as db:
         await allocation_service.fail(db, allocation_id=allocation_id, message=message)
+        await db.commit()
+
+
+async def mark_target_node_down(
+    db_factory: DbFactory,
+    health: DeviceHealthService,
+    *,
+    device_id: uuid.UUID,
+) -> None:
+    async with db_factory() as db:
+        device = await db.get(Device, device_id)
+        if device is None:
+            return
+        await health.apply_node_state_transition(
+            db,
+            device,
+            health_running=False,
+            health_state="error",
+            mark_offline=True,
+        )
         await db.commit()
 
 
