@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.36.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.2...gridfleet-agent-v0.36.3) (2026-07-14)
+
+
+### Bug Fixes
+
+* **agent:** keep boot-resolved emulator nodes running so recovery converges ([ea2c2fc](https://github.com/quidow/gridfleet/commit/ea2c2fc8059d01af6db973205bc768f86e66ec89))
+
 ## [0.36.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.1...gridfleet-agent-v0.36.2) (2026-07-14)
 
 
