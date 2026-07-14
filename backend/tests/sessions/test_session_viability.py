@@ -794,6 +794,65 @@ async def test_probe_session_direct_cleanup_failure_is_indeterminate(monkeypatch
     assert error == "Session created but cleanup failed"
 
 
+async def test_probe_session_direct_terminates_created_session_when_on_created_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raised ``on_created`` must NOT leak the created Appium session.
+
+    Regression: the probe creates a session (which sets up the driver's
+    forwarded ports, e.g. Android systemPort). If ``on_created`` raises before
+    the terminate, the session used to be left alive — its forwarded ports
+    orphaned on the host — and the leaked port then fails the *next* session
+    create (uia2/WDA busy-check), so the device can never recover. Cleanup must
+    be guaranteed even on the raising path.
+    """
+    create_mock = AsyncMock(return_value=("session-1", None, False))
+    terminate_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(session_viability.appium_direct, "create_session", create_mock)
+    monkeypatch.setattr(session_viability.appium_direct, "terminate_session", terminate_mock)
+
+    async def _on_created(_session_id: str) -> None:
+        raise RuntimeError("promotion-commit-failed")
+
+    svc = SessionViabilityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    with pytest.raises(RuntimeError, match="promotion-commit-failed"):
+        await svc.probe_session_direct(
+            {"platformName": "Android"},
+            timeout_sec=3,
+            target="http://node:4723",
+            on_created=_on_created,
+        )
+
+    terminate_mock.assert_awaited_once_with("http://node:4723", "session-1", timeout=3)
+
+
+async def test_probe_session_direct_retries_terminate_on_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single transient terminate failure must not leak the session.
+
+    Regression: cleanup was a one-shot DELETE — one transient blip left the
+    session (and its forwarded ports) alive and the probe reported "cleanup
+    failed", stopping the device. Retry the terminate before giving up.
+    """
+    create_mock = AsyncMock(return_value=("session-1", None, False))
+    terminate_mock = AsyncMock(side_effect=[False, True])
+    monkeypatch.setattr(session_viability.appium_direct, "create_session", create_mock)
+    monkeypatch.setattr(session_viability.appium_direct, "terminate_session", terminate_mock)
+
+    ok, error = await probe_session_direct({"platformName": "Android"}, timeout_sec=3, target="http://node:4723")
+
+    assert ok is True
+    assert error is None
+    assert terminate_mock.await_count == 2
+
+
 async def test_run_session_viability_probe_rejects_missing_running_node(
     db_session: AsyncSession,
     db_host: Host,

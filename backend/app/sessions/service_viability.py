@@ -137,9 +137,12 @@ class SessionViabilityService:
         - cleanup (terminate) failure → ``"Session created but cleanup failed…"`` → indeterminate
 
         ``on_created`` runs with the real Appium session id between create and
-        terminate — the probe row's promotion point (WS-16.1). If it raises, the
-        created session is not terminated here; it converges as an unknown id
-        through the orphan sweep once the probe row leaves the pending state.
+        terminate — the probe row's promotion point (WS-16.1). Terminate is
+        guaranteed via ``finally``: even if ``on_created`` raises, the created
+        session is torn down here (best-effort, while its Appium node is still
+        alive) so its driver-forwarded ports — e.g. the Android systemPort — do
+        not orphan on the host and fail the next session create's busy-check.
+        The orphan sweep remains the backstop for a terminate that fails.
         """
         if target is None:
             return False, "Session create request failed: no Appium node target"
@@ -152,10 +155,14 @@ class SessionViabilityService:
                 return False, f"Session create request failed: {error}"
             return False, error or "Session create failed"
 
-        if on_created is not None:
-            await on_created(session_id)
+        cleanup_ok = False
+        try:
+            if on_created is not None:
+                await on_created(session_id)
+        finally:
+            cleanup_ok = await _terminate_probe_session(base, session_id, timeout_sec=timeout_sec)
 
-        if not await appium_direct.terminate_session(base, session_id, timeout=timeout_sec):
+        if not cleanup_ok:
             return False, "Session created but cleanup failed"
 
         return True, None
@@ -511,6 +518,18 @@ def _build_session_payload(capabilities: dict[str, Any]) -> dict[str, Any]:
             "firstMatch": [{}],
         }
     }
+
+
+_PROBE_TERMINATE_ATTEMPTS = 2
+
+
+async def _terminate_probe_session(base: str, session_id: str, *, timeout_sec: int) -> bool:
+    """Terminate a probe session, retrying once so a single transient failure
+    (timeout/blip) does not leak the session and its driver-forwarded ports."""
+    for _ in range(_PROBE_TERMINATE_ATTEMPTS):
+        if await appium_direct.terminate_session(base, session_id, timeout=timeout_sec):
+            return True
+    return False
 
 
 def build_probe_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
