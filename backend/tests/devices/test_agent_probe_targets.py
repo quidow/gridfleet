@@ -127,6 +127,39 @@ async def test_probe_targets_includes_parallel_resource_claims(
 
 
 @pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_probe_targets_reports_lifecycle_state_capable(
+    client: AsyncClient, db_session: AsyncSession, db_host: Host
+) -> None:
+    # appium-uiautomator2/android_mobile declares a "state" lifecycle action; the
+    # roku pack's platform declares none.
+    capable = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="lifecycle-capable-device",
+        connection_target="lifecycle-capable-device",
+        name="Lifecycle capable device",
+        device_type="emulator",
+    )
+    incapable = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="lifecycle-incapable-device",
+        connection_target="10.0.0.90:8060",
+        name="Lifecycle incapable device",
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+    )
+
+    response = await client.get("/agent/devices/probe-targets", params={"host_id": str(db_host.id)})
+
+    assert response.status_code == 200
+    entries = {entry["device_id"]: entry for entry in response.json()["devices"]}
+    assert entries[str(capable.id)]["lifecycle_state_capable"] is True
+    assert entries[str(incapable.id)]["lifecycle_state_capable"] is False
+
+
+@pytest.mark.db
 async def test_probe_targets_returns_404_for_unknown_host(client: AsyncClient) -> None:
     response = await client.get("/agent/devices/probe-targets", params={"host_id": str(uuid.uuid4())})
 
