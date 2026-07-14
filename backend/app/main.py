@@ -15,7 +15,7 @@ from app.analytics import router as analytics
 from app.appium_nodes import routers as appium_node_routers
 from app.appium_nodes.services.host_sweep import HostSweepLoop
 from app.appium_nodes.services.node_viability import device_node_is_viable
-from app.appium_nodes.services.status_fold_loop import StatusFoldLoop
+from app.appium_nodes.services.status_fold_loop import FOLD_SECTION, FoldSection, StatusFoldLoop
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -188,7 +188,7 @@ def _build_leader_loop_tasks(app_services: AppServices) -> list[asyncio.Task[Non
     job_worker = app_services.jobs
     janitor = _build_janitor(app_services)
     status_fold = StatusFoldLoop(
-        node_health=app_services.appium_nodes.node_health,
+        sections=(FoldSection(FOLD_SECTION, app_services.appium_nodes.node_health.fold_host_nodes),),
         session_factory=app_services.appium_nodes.session_factory,
     )
 

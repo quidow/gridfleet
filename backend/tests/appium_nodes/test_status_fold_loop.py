@@ -12,7 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health as node_health_module
 from app.appium_nodes.services import status_fold_loop as status_fold_module
 from app.appium_nodes.services.node_health import NodeFoldOutcome, NodeHealthService, _NodeObservation
-from app.appium_nodes.services.status_fold_loop import FOLD_SECTION, StatusFoldLoop
+from app.appium_nodes.services.status_fold_loop import FOLD_SECTION, FoldSection, StatusFoldLoop
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
@@ -42,7 +42,9 @@ def _service() -> NodeHealthService:
 
 
 def _loop(node_health: NodeHealthService, session_factory: async_sessionmaker[AsyncSession]) -> StatusFoldLoop:
-    return StatusFoldLoop(node_health=node_health, session_factory=session_factory)
+    return StatusFoldLoop(
+        sections=(FoldSection(FOLD_SECTION, node_health.fold_host_nodes),), session_factory=session_factory
+    )
 
 
 async def _store_node_health_snapshot(
@@ -358,3 +360,91 @@ async def test_node_fold_defers_remaining_devices_at_cycle_deadline(
 
     assert settled is False
     assert process.await_count == 1
+
+
+async def test_loop_folds_multiple_sections_with_independent_watermarks(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    from app.appium_nodes.services.status_fold_loop import DEVICE_FOLD_SECTION
+    from app.hosts.models import HostStatus, OSType
+
+    host_id = uuid.uuid4()
+    node_rev, device_rev = 41, 42
+    await control_plane_state_store.set_value(
+        db_session,
+        HOST_STATUS_NAMESPACE,
+        str(host_id),
+        {
+            "received_at": now_utc().isoformat(),
+            "payload": {
+                FOLD_SECTION: {"reported_at": now_utc().isoformat(), "nodes": [], "observation_revision": node_rev},
+                DEVICE_FOLD_SECTION: {"reported_at": now_utc().isoformat(), "observation_revision": device_rev},
+            },
+        },
+    )
+    db_session.add(
+        Host(
+            id=host_id,
+            hostname="multi",
+            ip="10.0.0.9",
+            agent_port=5100,
+            os_type=OSType.linux,
+            status=HostStatus.online,
+        )
+    )
+    await db_session.commit()
+
+    node_fold = AsyncMock(return_value=True)
+    device_fold = AsyncMock(return_value=True)
+    loop = StatusFoldLoop(
+        sections=(FoldSection(FOLD_SECTION, node_fold), FoldSection(DEVICE_FOLD_SECTION, device_fold)),
+        session_factory=db_session_maker,
+    )
+    await loop._run_cycle(db_session)
+
+    node_fold.assert_awaited_once()
+    device_fold.assert_awaited_once()
+    db_session.expire_all()
+    host = await db_session.get(Host, host_id)
+    assert host is not None
+    assert host.observation_applied.get(FOLD_SECTION) == node_rev
+    assert host.observation_applied.get(DEVICE_FOLD_SECTION) == device_rev
+
+
+async def test_loop_records_oldest_unapplied_section_age(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import timedelta
+
+    from app.appium_nodes.services.status_fold_loop import DEVICE_FOLD_SECTION
+
+    older = now_utc() - timedelta(seconds=20)
+    newer = now_utc() - timedelta(seconds=5)
+    snapshots = {
+        str(uuid.uuid4()): {
+            "received_at": older.isoformat(),
+            "payload": {FOLD_SECTION: {"reported_at": older.isoformat(), "nodes": [], "observation_revision": 3}},
+        },
+        str(uuid.uuid4()): {
+            "received_at": newer.isoformat(),
+            "payload": {DEVICE_FOLD_SECTION: {"reported_at": newer.isoformat(), "observation_revision": 4}},
+        },
+    }
+    monkeypatch.setattr(control_plane_state_store, "get_values", AsyncMock(return_value=snapshots))
+    recorded: list[float] = []
+    monkeypatch.setattr(status_fold_module, "record_status_fold_oldest_unapplied", recorded.append)
+    loop = StatusFoldLoop(
+        sections=(
+            FoldSection(FOLD_SECTION, AsyncMock(return_value=True)),
+            FoldSection(DEVICE_FOLD_SECTION, AsyncMock(return_value=True)),
+        ),
+        session_factory=db_session_maker,
+    )
+    loop._load_applied = AsyncMock(return_value={})  # type: ignore[method-assign]
+    loop._fold_host = AsyncMock()  # type: ignore[method-assign]
+    await loop._run_cycle(db_session)
+
+    assert recorded, "oldest-unapplied gauge was not recorded"
+    assert recorded[0] >= 20.0  # the 20s-old pending section dominates
