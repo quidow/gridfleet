@@ -159,11 +159,13 @@ async def test_status_push_processes_observations_after_liveness_commit(
     process.assert_awaited_once()
     assert process.await_args.kwargs["host_id"] == online_host.id
     folded_device_health = process.await_args.kwargs["payload"]["device_health"]
-    # device_health still performs synchronous dials/actions in this partial
-    # phase. Keep it outside ingest dedup until its facts-only async move, so a
-    # contained inline-fold failure retries on an exact status redelivery.
-    assert "observation_revision" not in folded_device_health
-    assert folded_device_health == device_health
+    # Phase 4: device_health is guarded and folds facts-only on the StatusFoldLoop,
+    # so the backend now stamps its own observation_revision (the agent-forged value
+    # is rejected). This section carries no ingest token, so it is not deduped —
+    # it stays out of observation_cursors and re-folds at-least-once each push.
+    assert folded_device_health["observation_revision"] != 999999
+    assert folded_device_health["reported_at"] == device_health["reported_at"]
+    assert folded_device_health["devices"] == device_health["devices"]
     await client.post("/agent/hosts/status", json=body)
     assert process.await_count == 2
     await db_session.refresh(online_host)

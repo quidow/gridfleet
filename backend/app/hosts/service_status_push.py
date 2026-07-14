@@ -57,12 +57,10 @@ class SectionHashMismatchError(Exception):
 # telemetry stage — the single snapshot source (no second fetch path).
 HOST_STATUS_NAMESPACE = "status_push.host_status"
 
-# Only node_health has moved to the async facts-only reconciler in this partial
-# phase. device_health still performs synchronous dials/actions, so stamping and
-# deduplicating it would make a contained inline-fold failure non-retryable and
-# could run action side effects after a stale fact write was rejected. It joins
-# this tuple only when its facts-only move lands.
-GUARDED_SECTIONS = ("node_health",)
+# Both health axes now move to the async facts-only reconciler (StatusFoldLoop).
+# They are stamped in Txn B and folded off the request path; the synchronous
+# ObservationFold tuple keeps only the cheap, lock-free folds.
+GUARDED_SECTIONS = ("node_health", "device_health")
 HEALTH_SECTIONS = ("node_health", "device_health")
 
 # Key under which Txn B publishes the Txn-A-reserved revision on each guarded

@@ -347,10 +347,11 @@ def compose_app(
                 # node_health is folded off the request path by the StatusFoldLoop
                 # (level-triggered), so it is no longer an inline ObservationFold.
                 observation_folds=(
-                    ObservationFold("device_health", connectivity_svc.fold_host_device_health),
                     ObservationFold("device_telemetry", hardware_telemetry_svc.fold_host_device_telemetry),
                     ObservationFold("device_properties", property_refresh_svc.fold_host_device_properties),
                     ObservationFold("host_telemetry", resource_telemetry_svc.fold_host_telemetry),
+                    # device_health moved to StatusFoldLoop (Phase 4); the cheap
+                    # emulator_state application (A4/A5.5a) stays synchronous below.
                 ),
                 apply_pushed_emulator_state=connectivity_svc.apply_pushed_emulator_state,
                 converge_host=functools.partial(
