@@ -1,23 +1,20 @@
 """In-process load benchmark for the status-push folds.
 
-Reproduces the per-push CPU cost of the two dominant folds
-(``fold_host_device_health`` and ``fold_host_nodes``) against a synthetic
-fleet, so fold optimizations can be measured deterministically with cProfile
-instead of prod py-spy sampling.
+Reproduces the per-push CPU cost of the synchronous status-push folds and the
+node-health fold against a synthetic fleet, so fold optimizations can be
+measured deterministically with cProfile instead of prod py-spy sampling.
 
 Skipped in the normal suite. Run explicitly:
 
     FOLD_BENCH=1 FOLD_BENCH_DEVICES=50 FOLD_BENCH_ITERS=3 \
         uv run pytest -s -p no:randomly tests/test_bench_folds.py -o addopts=""
 
-Only the agent *network* dial is stubbed; ``_lifecycle_state_capable`` /
-``resolve_pack_platform`` run for real (that per-device pack-manifest resolve is
-part of what we are measuring).
+The benchmark exercises only facts-backed folds; the asynchronous device-health
+fold is measured separately by the StatusFoldLoop benchmark.
 """
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import os
 import re
@@ -26,7 +23,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import event
@@ -38,7 +35,6 @@ from app.appium_nodes.services.reconciler import ReconcilerService, converge_pus
 from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
 from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus
@@ -269,36 +265,6 @@ def _report(label: str, tap: _QueryTap, wall_ms: list[float]) -> None:
         print(f"    {n / ITERS:8.1f}  {sig}")
 
 
-def _dial_stubs() -> contextlib.ExitStack:
-    """Stub every agent-network dial the unhealthy connectivity path can reach so
-    the decision logic runs but no packet leaves. Only fold_host_device_health dials.
-    _get_agent_devices MUST return a set (not None) or the device short-circuits and
-    the write path is never measured.
-    """
-    stack = contextlib.ExitStack()
-    stack.enter_context(
-        patch("app.devices.services.connectivity._fetch_lifecycle_state", new_callable=AsyncMock, return_value=None)
-    )
-    stack.enter_context(
-        # Empty set -> churned devices take the disconnect write path; returning device
-        # aliases would instead exercise the escalate path.
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set())
-    )
-    # Unreachable with the current churn payload (no recommended_action -> no repair
-    # dispatch); kept as defensive coverage if a future churn payload adds one.
-    stack.enter_context(
-        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None)
-    )
-    stack.enter_context(
-        patch(
-            "app.devices.services.link_repair.dispatch_recommended_action",
-            new_callable=AsyncMock,
-            return_value={"success": False},
-        )
-    )
-    return stack
-
-
 async def _measure(
     label: str,
     *,
@@ -323,28 +289,6 @@ async def _measure(
         wall_ms.append((perf_counter() - t0) * 1000)
         tap.armed = False
     _report(label, tap, wall_ms)
-
-
-async def test_bench_device_health_fold(db_session: AsyncSession) -> None:
-    service = ConnectivityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=Mock()),
-    )
-    tap = _QueryTap()
-    event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
-
-    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
-        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
-
-    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
-        await service.fold_host_device_health(db_session, host.id, _device_section(devices, CHURN))
-
-    with _dial_stubs():
-        await _measure("fold_host_device_health", seed=_seed, run=_run, tap=tap)
-    event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
 
 async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
@@ -473,13 +417,6 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
-    connectivity = ConnectivityService(
-        publisher=event_bus,
-        settings=settings,
-        circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
-        health=DeviceHealthService(publisher=event_bus),
-    )
     hardware_telemetry = HardwareTelemetryService(publisher=event_bus, settings=settings)
     discovery = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(), circuit_breaker=Mock(), serializer=Mock(), identity_guard=AsyncMock()
@@ -497,7 +434,6 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
         session_factory=session_factory,
         observation_folds=(
             ObservationFold("node_health", node_health.fold_host_nodes),
-            ObservationFold("device_health", connectivity.fold_host_device_health),
             ObservationFold("device_telemetry", hardware_telemetry.fold_host_device_telemetry),
             ObservationFold("device_properties", property_refresh.fold_host_device_properties),
             ObservationFold("host_telemetry", resource_telemetry.fold_host_telemetry),
@@ -549,21 +485,20 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
     host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
     await db_session.commit()  # ensure the seed is visible to factory-opened sessions
     wall_ms: list[float] = []
-    with _dial_stubs():
-        for iteration in range(ITERS):
-            if CHURN > 0 and iteration > 0:
-                host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
-                await db_session.commit()
-            payload = _consolidated_payload(devices, CHURN, iteration)
-            tap.armed = True
-            commits.armed = True
-            t0 = perf_counter()
-            await service.process_observations(
-                host_id=host.id, host_ip=host.ip, agent_port=host.agent_port, payload=payload
-            )
-            wall_ms.append((perf_counter() - t0) * 1000)
-            tap.armed = False
-            commits.armed = False
+    for iteration in range(ITERS):
+        if CHURN > 0 and iteration > 0:
+            host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+            await db_session.commit()
+        payload = _consolidated_payload(devices, CHURN, iteration)
+        tap.armed = True
+        commits.armed = True
+        t0 = perf_counter()
+        await service.process_observations(
+            host_id=host.id, host_ip=host.ip, agent_port=host.agent_port, payload=payload
+        )
+        wall_ms.append((perf_counter() - t0) * 1000)
+        tap.armed = False
+        commits.armed = False
 
     event.remove(engine, "before_cursor_execute", tap)
     event.remove(engine, "commit", commits)

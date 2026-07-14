@@ -1,25 +1,90 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
-from app.devices.models import Device
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services.connectivity import ConnectivityService
+from app.devices.services.health import DeviceHealthService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
-from tests.helpers import build_connectivity_service, seed_host_with_devices
+from app.jobs.models import Job
+from app.packs.models import DriverPack, PackState
+from tests.fakes import FakeSettingsReader
+from tests.helpers import build_connectivity_service, seed_host_and_device, seed_host_with_devices
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.protocols import HealthFailureHandler
     from app.devices.schemas.device_health_push import DeviceHealthItem
     from app.devices.services.connectivity import DeviceFoldOutcome
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+def _loop_service(
+    *,
+    settings: dict[str, int] | None = None,
+    lifecycle_policy: HealthFailureHandler | None = None,
+) -> ConnectivityService:
+    policy = lifecycle_policy if lifecycle_policy is not None else AsyncMock()
+    return ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader(settings or {}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=policy,
+        health=DeviceHealthService(publisher=Mock()),
+    )
+
+
+def _health_section(
+    device_id: uuid.UUID,
+    *,
+    revision: int,
+    reported_at: str,
+    health: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "reported_at": reported_at,
+        "section_sequence": revision,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device_id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": health,
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+
+
+async def _fold_health_once(
+    db_session: AsyncSession,
+    service: ConnectivityService,
+    *,
+    host_id: uuid.UUID,
+    device_id: uuid.UUID,
+    reported_at: datetime,
+    health: dict[str, Any],
+) -> None:
+    revision = await next_observation_revision(db_session)
+    section = _health_section(
+        device_id,
+        revision=revision,
+        reported_at=reported_at.isoformat(),
+        health=health,
+    )
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4()) is True
 
 
 async def test_device_has_device_health_fold_receipt_columns(db_session: AsyncSession) -> None:
@@ -62,6 +127,182 @@ async def test_fold_applies_healthy_and_advances_receipt(
     assert device.device_checks_healthy is True
     assert device.device_checks_fold_applied_revision == revision
     assert device.device_checks_fold_section_sequence == 3
+
+
+async def test_fold_ip_ping_hysteresis_runs_through_loop_path(
+    db_session: AsyncSession,
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-ip-ping")
+    device = devices[0]
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
+    lifecycle_policy.restore_run_after_self_heal = AsyncMock()
+    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
+    service = _loop_service(
+        settings={
+            "device_checks.ip_ping.fail_window_sec": 120,
+            "device_checks.probe_failed.fail_window_sec": 120,
+        },
+        lifecycle_policy=lifecycle_policy,
+    )
+    start = now_utc()
+    health = {"healthy": False, "checks": [{"check_id": "ip_ping", "ok": False}]}
+
+    for offset in (0, 60):
+        await _fold_health_once(
+            db_session,
+            service,
+            host_id=host.id,
+            device_id=device.id,
+            reported_at=start + timedelta(seconds=offset),
+            health=health,
+        )
+    await db_session.refresh(device)
+    assert device.device_checks_healthy is True
+
+    await _fold_health_once(
+        db_session,
+        service,
+        host_id=host.id,
+        device_id=device.id,
+        reported_at=start + timedelta(seconds=120),
+        health=health,
+    )
+    await db_session.refresh(device)
+    assert device.device_checks_healthy is False
+    lifecycle_policy.handle_health_failure.assert_awaited_once()
+
+
+async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
+    db_session: AsyncSession,
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-probe-failed")
+    device = devices[0]
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
+    lifecycle_policy.restore_run_after_self_heal = AsyncMock()
+    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
+    service = _loop_service(
+        settings={
+            "device_checks.ip_ping.fail_window_sec": 120,
+            "device_checks.probe_failed.fail_window_sec": 120,
+        },
+        lifecycle_policy=lifecycle_policy,
+    )
+    start = now_utc()
+    health = {
+        "healthy": False,
+        "checks": [
+            {"check_id": "ping", "ok": False, "debounce": True},
+            {"check_id": "ecp", "ok": False, "debounce": True},
+        ],
+    }
+
+    for offset in (0, 60):
+        await _fold_health_once(
+            db_session,
+            service,
+            host_id=host.id,
+            device_id=device.id,
+            reported_at=start + timedelta(seconds=offset),
+            health=health,
+        )
+    await db_session.refresh(device)
+    assert device.device_checks_healthy is True
+
+    await _fold_health_once(
+        db_session,
+        service,
+        host_id=host.id,
+        device_id=device.id,
+        reported_at=start + timedelta(seconds=120),
+        health=health,
+    )
+    await db_session.refresh(device)
+    assert device.device_checks_healthy is False
+    lifecycle_policy.handle_health_failure.assert_awaited_once()
+
+
+async def test_fold_healthy_device_runs_self_heal_cleanup(
+    db_session: AsyncSession,
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-self-heal")
+    device = devices[0]
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
+    lifecycle_policy.restore_run_after_self_heal = AsyncMock()
+    service = _loop_service(lifecycle_policy=lifecycle_policy)
+
+    await _fold_health_once(
+        db_session,
+        service,
+        host_id=host.id,
+        device_id=device.id,
+        reported_at=now_utc(),
+        health={"healthy": True, "checks": []},
+    )
+
+    lifecycle_policy.clear_escalation_residue_on_self_heal.assert_awaited_once()
+    lifecycle_policy.restore_run_after_self_heal.assert_awaited_once()
+
+
+async def test_fold_healthy_offline_device_attempts_auto_recovery(
+    db_session: AsyncSession,
+) -> None:
+    host, device = await seed_host_and_device(
+        db_session,
+        identity="fold-offline-recovery",
+        operational_state=DeviceOperationalState.offline,
+    )
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=True)
+    service = _loop_service(lifecycle_policy=lifecycle_policy)
+
+    await _fold_health_once(
+        db_session,
+        service,
+        host_id=host.id,
+        device_id=device.id,
+        reported_at=now_utc(),
+        health={"healthy": True, "checks": []},
+    )
+
+    lifecycle_policy.attempt_auto_recovery.assert_awaited_once()
+    assert lifecycle_policy.attempt_auto_recovery.await_args.kwargs["reason"] == (
+        "Startup recovery after healthy reconnect"
+    )
+
+
+async def test_fold_does_not_enqueue_remediation_for_draining_pack(
+    db_session: AsyncSession,
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-draining")
+    device = devices[0]
+    pack = await db_session.get(DriverPack, device.pack_id)
+    assert pack is not None
+    pack.state = PackState.draining
+    await db_session.commit()
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.handle_health_failure = AsyncMock()
+    service = _loop_service(lifecycle_policy=lifecycle_policy)
+
+    await _fold_health_once(
+        db_session,
+        service,
+        host_id=host.id,
+        device_id=device.id,
+        reported_at=now_utc(),
+        health={
+            "healthy": False,
+            "checks": [{"check_id": "adb_connected", "ok": False}],
+            "recommended_action": "reconnect",
+        },
+    )
+
+    jobs = (await db_session.execute(select(Job).where(Job.remediation_device_id == device.id))).scalars().all()
+    assert jobs == []
 
 
 async def test_fold_terminal_noop_on_unknown_presence_advances_receipt(

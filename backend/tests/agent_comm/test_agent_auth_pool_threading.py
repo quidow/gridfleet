@@ -18,7 +18,6 @@ import httpx2 as httpx
 
 from app.agent_comm.http_pool import AgentHttpPool
 from app.devices.models import ConnectionType, DeviceType
-from app.devices.services import connectivity as device_connectivity
 from app.packs.services import discovery as pack_discovery
 from app.packs.services.discovery import PackDiscoveryService
 from app.verification.services import execution as verification_execution
@@ -32,57 +31,6 @@ if TYPE_CHECKING:
 
 def _auth_pool() -> AgentHttpPool:
     return AgentHttpPool(agent_auth=httpx.BasicAuth("ops", "secret"))
-
-
-def _conn_device() -> SimpleNamespace:
-    host = SimpleNamespace(ip="10.0.0.10", agent_port=5100)
-    return SimpleNamespace(
-        id=uuid4(),
-        host=host,
-        host_id=uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        ip_address=None,
-        connection_target="demo",
-        identity_value="demo",
-    )
-
-
-async def test_connectivity_get_device_health_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    pool = _auth_pool()
-    fetch = AsyncMock(return_value={"healthy": True})
-    monkeypatch.setattr(device_connectivity, "fetch_pack_device_health", fetch)
-
-    await device_connectivity._get_device_health(
-        _conn_device(), settings=FakeSettingsReader(), circuit_breaker=Mock(), pool=pool
-    )
-
-    assert fetch.await_args.kwargs["pool"] is pool
-
-
-async def test_connectivity_get_agent_devices_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    pool = _auth_pool()
-    fetch = AsyncMock(return_value={"candidates": []})
-    monkeypatch.setattr(device_connectivity, "get_pack_devices", fetch)
-
-    host = SimpleNamespace(ip="10.0.0.10", agent_port=5100)
-    await device_connectivity._get_agent_devices(host, settings=FakeSettingsReader(), circuit_breaker=Mock(), pool=pool)
-
-    assert fetch.await_args.kwargs["pool"] is pool
-
-
-async def test_connectivity_fetch_lifecycle_state_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    pool = _auth_pool()
-    action = AsyncMock(return_value={"state": "ready"})
-    monkeypatch.setattr(device_connectivity, "pack_device_lifecycle_action", action)
-
-    await device_connectivity._fetch_lifecycle_state(
-        _conn_device(), settings=FakeSettingsReader(), circuit_breaker=Mock(), pool=pool
-    )
-
-    assert action.await_args.kwargs["pool"] is pool
 
 
 async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
