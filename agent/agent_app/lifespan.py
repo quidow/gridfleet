@@ -23,7 +23,7 @@ from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.pack.adapter_loader import prepare_adapter_site
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
+from agent_app.pack.discovery import pack_device_properties
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.manifest import resolve_desired_platform
 from agent_app.pack.router import (
@@ -361,12 +361,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 identity_value=probe_kwargs.get("identity_value"),
             )
 
-        async def _enumerate_probe() -> dict[str, Any] | None:
-            desired = app.state.pack_state_loop.latest_desired_packs if app.state.pack_state_loop else None
-            return await enumerate_pack_candidates(
-                desired, adapter_registry=adapter_registry, host_id=host_identity.get() or ""
-            )
-
         async def _lifecycle_probe(**kwargs: object) -> dict[str, Any] | None:
             probe_kwargs = cast("dict[str, Any]", kwargs)
             context = await _resolve_probe_context(probe_kwargs["pack_id"], probe_kwargs["platform_id"])
@@ -389,7 +383,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             telemetry_probe=_telemetry_probe,
             properties_probe=_properties_probe,
             on_results=status_loop.wake,
-            enumerate_probe=_enumerate_probe,
             lifecycle_probe=_lifecycle_probe,
         )
         app.state.probe_loop = probe_loop

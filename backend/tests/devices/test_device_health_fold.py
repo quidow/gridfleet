@@ -125,9 +125,12 @@ async def test_fold_applies_observed_health_when_presence_gather_is_incomplete(
     assert device.device_checks_fold_applied_revision == revision
 
 
-async def test_fold_applies_complete_gather_absence_even_when_health_probe_errored(
+async def test_fold_ignores_presence_absent_when_health_probe_errored(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
+    """An absent discovery verdict with no health evidence (the direct probe
+    errored) produces no verdict — presence never drives a disconnect. The
+    receipt still advances so the generation is consumed."""
     host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-absent")
     device = devices[0]
     revision = await next_observation_revision(db_session)
@@ -138,9 +141,8 @@ async def test_fold_applies_complete_gather_absence_even_when_health_probe_error
         "complete_gather": True,
         "devices": [
             {
-                # This is the agent's normal absent-device shape: the direct
-                # health probe cannot answer, while the complete discovery pass
-                # independently proves the roster device is absent.
+                # Absent from the discovery pass and the direct health probe could
+                # not answer: no positive health evidence, so no verdict is applied.
                 "device_id": str(device.id),
                 "probe_status": "error",
                 "presence": "absent",
@@ -154,8 +156,44 @@ async def test_fold_applies_complete_gather_absence_even_when_health_probe_error
     assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
     await db_session.refresh(device)
 
-    assert device.device_checks_healthy is False
-    assert device.device_checks_summary == "Disconnected"
+    assert device.device_checks_healthy is None  # no health axis write from an absent, unprobed device
+    assert device.device_checks_summary != "Disconnected"
+    assert device.device_checks_fold_applied_revision == revision
+
+
+async def test_fold_keeps_registered_device_healthy_when_discovery_reports_absent(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A registered device whose health check passes stays healthy even when the
+    discovery pass reports it absent. Presence is a discovery signal — it must not
+    gate the liveness of an already-registered device. Regression: a cross-subnet
+    Roku fails SSDP (multicast) presence while its unicast health check passes, and
+    the fold must not mark it Disconnected."""
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-absent-healthy")
+    device = devices[0]
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 2,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device.id),
+                "probe_status": "observed",
+                "presence": "absent",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    service = build_connectivity_service(db_session_maker)
+
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    await db_session.refresh(device)
+
+    assert device.device_checks_healthy is True
+    assert device.device_checks_summary != "Disconnected"
     assert device.device_checks_fold_applied_revision == revision
 
 
