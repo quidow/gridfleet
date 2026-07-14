@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.36.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.0...gridfleet-agent-v0.36.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **agent:** stop running device discovery on the health probe cadence ([1491f0e](https://github.com/quidow/gridfleet/commit/1491f0e25f9cabeb889be61eb1da1c67ec419522))
+* presence discovery must not disconnect healthy registered devices ([0bc7ac2](https://github.com/quidow/gridfleet/commit/0bc7ac2d4962e88591292a837d861892aa17c216))
+
 ## [0.36.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.35.0...gridfleet-agent-v0.36.0) (2026-07-14)
 
 
