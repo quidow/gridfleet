@@ -39,6 +39,10 @@ class HealthCheckLabelOut(HealthCheckLabel):
 
 class LifecycleActionOut(LifecycleAction):
     model_config = ConfigDict(extra="ignore")
+    # Manifest-only policy metadata must not silently expand the public catalog
+    # contract; operators consume the action id here, while manifest validation
+    # owns the remediation safety marker.
+    remediation: bool = Field(default=False, exclude=True)
 
 
 class PlatformDeviceTypeOverrideOut(PlatformDeviceTypeOverride):

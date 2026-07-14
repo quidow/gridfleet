@@ -77,7 +77,9 @@ async def test_create_session_handler_claims_then_creates(
         allocation: AllocationResult,
         raw_body: bytes,
         claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
     ) -> session_create.CreateOutcome:
+        _ = max_create_timeout_sec
         return session_create.CreateOutcome(
             kind="created",
             session_id="unit-session",
@@ -139,7 +141,9 @@ async def test_cancel_and_lifecycle_handlers(
         allocation: AllocationResult,
         raw_body: bytes,
         claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
     ) -> session_create.CreateOutcome:
+        _ = max_create_timeout_sec
         async with db_factory() as db:
             await allocation_service.promote_to_running(
                 db, allocation_id=allocation.allocation_id, appium_session_id="unit-route"
