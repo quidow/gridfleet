@@ -24,9 +24,10 @@ function createMemoryStorage(): Storage {
   };
 }
 
-if (typeof globalThis.localStorage?.clear !== 'function') {
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: createMemoryStorage(),
-  });
-}
+// Node 24 exposes an experimental native localStorage getter that warns unless
+// --localstorage-file is configured. Tests need isolated in-memory storage, so
+// install it without reading that getter first.
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: createMemoryStorage(),
+});

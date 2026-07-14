@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.events.protocols import EventPublisher
 from app.packs.models import DriverPack, PackState
 from app.packs.services.lifecycle import complete_drain_if_draining
 from app.sessions.models import Session, SessionStatus
@@ -75,7 +76,12 @@ async def test_closing_last_session_disables_draining_pack(db_session: AsyncSess
             .where(Session.session_id == "drain-hook-last-session")
         )
     ).scalar_one()
-    await close_running_session(db_session, session, attached_run=None, publisher=AsyncMock())
+    await close_running_session(
+        db_session,
+        session,
+        attached_run=None,
+        publisher=AsyncMock(spec=EventPublisher),
+    )
     await db_session.commit()
 
     pack = await db_session.get(DriverPack, PACK_ID)
