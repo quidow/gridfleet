@@ -6,6 +6,8 @@ import copy
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import NoResultFound
+
 from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger
@@ -73,7 +75,11 @@ class RemediationJobService:
         failure_episode_id: uuid.UUID,
         action: str,
     ) -> None:
-        device = await device_locking.lock_device(db, device_id)
+        try:
+            device = await device_locking.lock_device(db, device_id)
+        except NoResultFound:
+            await self._finalize(db, job_id, note="device no longer exists", error=None)
+            return
         if (
             device.device_checks_healthy is not False
             or device.failure_episode_id != failure_episode_id

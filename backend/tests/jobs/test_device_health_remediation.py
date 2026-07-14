@@ -78,3 +78,41 @@ async def test_worker_self_cancels_when_device_healthy(db_session: AsyncSession,
     assert job is not None
     assert job.status == JOB_STATUS_COMPLETED
     assert any(word in str(job.snapshot.get("note", "")).lower() for word in ("recovered", "superseded"))
+
+
+async def test_worker_completes_when_device_no_longer_exists(db_session: AsyncSession) -> None:
+    missing_device_id = uuid.uuid4()
+    failure_episode_id = uuid.uuid4()
+    job_id = await enqueue_device_health_remediation(
+        db_session,
+        device_id=missing_device_id,
+        failure_episode_id=failure_episode_id,
+        action_id="reconnect",
+        commit=True,
+    )
+    assert job_id is not None
+
+    dispatch = AsyncMock()
+    with patch(
+        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
+        new=dispatch,
+    ):
+        await RemediationJobService(
+            session_factory=_session_factory(db_session),
+            circuit_breaker=AsyncMock(),
+            health=AsyncMock(),
+        ).run_device_health_remediation_job(
+            str(job_id),
+            {
+                "device_id": str(missing_device_id),
+                "failure_episode_id": str(failure_episode_id),
+                "action_id": "reconnect",
+            },
+        )
+
+    dispatch.assert_not_awaited()
+    db_session.expire_all()
+    job = await db_session.get(Job, job_id)
+    assert job is not None
+    assert job.status == JOB_STATUS_COMPLETED
+    assert job.snapshot.get("note") == "device no longer exists"
