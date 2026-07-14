@@ -129,6 +129,51 @@ async def test_fold_applies_healthy_and_advances_receipt(
     assert device.device_checks_fold_section_sequence == 3
 
 
+async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.devices.services.connectivity as conn_mod
+    import app.devices.services.readiness as readiness_mod
+
+    host, devices = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-pack-catalog")
+    device_ids = [device.id for device in devices]
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 4,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device_id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+            for device_id in device_ids
+        ],
+    }
+    real_load = readiness_mod.load_packs_by_ids
+    load_packs = AsyncMock(wraps=real_load)
+    monkeypatch.setattr(readiness_mod, "load_packs_by_ids", load_packs)
+    monkeypatch.setattr(conn_mod, "load_packs_by_ids", load_packs, raising=False)
+
+    service = build_connectivity_service(db_session_maker)
+    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+
+    assert settled is True
+    receipt_rows = (
+        (await db_session.execute(select(Device.device_checks_fold_applied_revision).where(Device.id.in_(device_ids))))
+        .scalars()
+        .all()
+    )
+    assert set(receipt_rows) == {revision}
+    load_packs.assert_awaited_once()
+
+
 async def test_fold_ip_ping_hysteresis_runs_through_loop_path(
     db_session: AsyncSession,
 ) -> None:
@@ -485,8 +530,10 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
     host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-partial")
-    good, bad = devices
-    good_id, bad_id, host_id = good.id, bad.id, host.id  # capture before per-device commits expire the rows
+    # The fold orders by id. Force the retryable device to run first so its
+    # rollback cannot hide catalog-lifecycle bugs behind random UUID ordering.
+    bad_id, good_id = sorted(device.id for device in devices)
+    host_id = host.id
     revision = await next_observation_revision(db_session)
 
     def _present(dev_id: uuid.UUID) -> dict[str, Any]:

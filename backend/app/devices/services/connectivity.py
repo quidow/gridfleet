@@ -22,7 +22,7 @@ from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids, preloaded_pack_catalog
 from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.state import derive_operational_state
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -548,6 +548,7 @@ class ConnectivityService:
         # so an attribute read on an un-processed device afterward would trigger a
         # sync lazy-load (MissingGreenlet). Mirrors node_health.fold_host_nodes.
         work: list[uuid.UUID] = []
+        work_pack_ids: set[str] = set()
         for device in devices:
             if device.id not in observations.by_device_id:
                 continue  # not in this gather — never absence
@@ -555,9 +556,17 @@ class ConnectivityService:
                 metrics.record_device_health_fold_result("skipped")
                 continue
             work.append(device.id)
+            if device.pack_id:
+                work_pack_ids.add(device.pack_id)
 
+        fold_packs = await load_packs_by_ids(db, work_pack_ids)
+        # A per-device rollback expires every persistent ORM object in this
+        # session. Detach the fully eager-loaded catalog graph so it remains the
+        # same read-only snapshot for later devices after a peer fails.
+        for pack in fold_packs.values():
+            db.expunge(pack)
         retryable = 0
-        with pack_platform_resolution_cache():
+        with pack_platform_resolution_cache(), preloaded_pack_catalog(fold_packs):
             for index, device_id in enumerate(work):
                 if index > 0 and deadline is not None and perf_counter() >= deadline:
                     retryable += 1
