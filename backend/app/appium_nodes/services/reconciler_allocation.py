@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as resource_claims
 from app.devices.models import Device
 
@@ -29,18 +29,17 @@ async def candidate_ports(
     exclude_ports: set[int] | None = None,
     settings: SettingsReader,
 ) -> list[int]:
-    """Return free main Appium ports for one host, sorted ascending."""
-    stmt = (
-        select(AppiumNode.port)
-        .join(Device, Device.id == AppiumNode.device_id)
-        .where(
-            Device.host_id == host_id,
-            (
-                (AppiumNode.pid.is_not(None) & AppiumNode.active_connection_target.is_not(None))
-                | (AppiumNode.desired_state == AppiumDesiredState.running)
-            ),
-        )
-    )
+    """Return free main Appium ports for one host, sorted ascending.
+
+    A node row exists iff its device is enrolled (CASCADE-deleted with it), and
+    the node OWNS its ``port`` for life: the intent reconciler re-pins
+    ``node.port`` on restart even from a stopped state. So every existing node on
+    the host reserves its port here, regardless of desired_state — handing a
+    stopped node's port to another device would collide when the stopped node
+    restarts. (This assumes the port range is at least as large as the number of
+    devices per host; if not, allocation raises ``NodeManagerError`` loudly.)
+    """
+    stmt = select(AppiumNode.port).join(Device, Device.id == AppiumNode.device_id).where(Device.host_id == host_id)
     result = await db.execute(stmt)
     used_ports = {row[0] for row in result.all()}
     excluded = exclude_ports or set()

@@ -58,6 +58,37 @@ async def test_reserve_skips_taken_port(db_session: AsyncSession) -> None:
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_reserve_skips_port_taken_by_different_capability(db_session: AsyncSession) -> None:
+    """Defect B: capabilities share the host's real TCP port space, so a port
+    claimed by ONE capability must not be handed to another. Overlapping
+    per-capability windows (iOS ``wdaLocalPort`` 8100+ vs Android ``systemPort``
+    8200+) would otherwise assign the same physical port to two nodes and
+    collide during session creation."""
+    host_id = uuidlib.uuid4()
+    other_node = await _make_node(db_session, host_id)
+    db_session.add(
+        AppiumNodeResourceClaim(
+            host_id=host_id,
+            capability_key="appium:wdaLocalPort",
+            port=8200,
+            node_id=other_node,
+        )
+    )
+    await db_session.commit()
+
+    target_node = await _make_node(db_session, host_id)
+    port = await svc.reserve(
+        db_session,
+        host_id=host_id,
+        capability_key="appium:systemPort",
+        start_port=8200,
+        node_id=target_node,
+    )
+    assert port == 8201, "systemPort must skip 8200 already held by wdaLocalPort on this host"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_reserve_returns_pool_exhausted_error(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
     host_id = uuidlib.uuid4()
     monkeypatch.setattr(svc, "POOL_SIZE", 8)

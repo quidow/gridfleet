@@ -17,9 +17,12 @@ if TYPE_CHECKING:
 class AppiumNodeResourceClaim(Base):
     __tablename__ = "appium_node_resource_claims"
     __table_args__ = (
+        # Host-wide port uniqueness: a physical TCP port on a host can back at
+        # most one capability claim. Capabilities share the port space and their
+        # start windows overlap, so uniqueness must span capabilities, not be
+        # scoped per capability (Defect B).
         UniqueConstraint(
             "host_id",
-            "capability_key",
             "port",
             name="uq_appium_node_resource_claims_port",
         ),

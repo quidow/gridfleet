@@ -33,10 +33,19 @@ async def reserve(
     start_port: int,
     node_id: uuid.UUID,
 ) -> int:
-    """Reserve the first free port in [start_port, start_port + POOL_SIZE)."""
+    """Reserve the first free port in [start_port, start_port + POOL_SIZE).
+
+    A port is "free" only if NO capability on the host already claims it — all
+    parallel-resource capabilities share the host's real TCP port space, and
+    their start windows overlap (iOS ``wdaLocalPort`` 8100+ vs Android
+    ``systemPort`` 8200+), so scoping freedom per capability would hand the same
+    physical port to two nodes. The advisory lock is host-wide (not per
+    capability) so concurrent reservations for different capabilities on one
+    host serialize against each other.
+    """
     await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:host_id AS text) || ':' || :capability_key, 0))"),
-        {"host_id": str(host_id), "capability_key": capability_key},
+        text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:host_id AS text), 0))"),
+        {"host_id": str(host_id)},
     )
 
     stmt = text(
@@ -50,7 +59,6 @@ async def reserve(
         WHERE NOT EXISTS (
             SELECT 1 FROM appium_node_resource_claims existing
             WHERE existing.host_id = CAST(:host_id AS uuid)
-              AND existing.capability_key = CAST(:capability_key AS varchar)
               AND existing.port = candidate.port
         )
         ORDER BY candidate.port

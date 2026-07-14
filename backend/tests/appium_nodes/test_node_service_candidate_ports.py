@@ -106,12 +106,17 @@ async def test_candidate_ports_ignores_other_host_running(db_session: AsyncSessi
     assert ports[0] == start
 
 
-async def test_candidate_ports_ignores_stopped_nodes_on_same_host(db_session: AsyncSession) -> None:
+async def test_candidate_ports_excludes_stopped_nodes_on_same_host(db_session: AsyncSession) -> None:
+    """A stopped node still OWNS its pinned port: the reconciler re-pins
+    ``node.port`` when the node restarts (persistent-port model). Handing that
+    port to another device would collide on restart, so an existing node's port
+    is reserved regardless of desired_state."""
     host = await _make_host(db_session, ip="10.0.0.30")
     start = settings_service.get("appium.port_range_start")
     await _add_stopped_node(db_session, host=host, port=start)
     ports = await candidate_ports(db_session, host_id=host.id, settings=FakeSettingsReader({}))
-    assert ports[0] == start
+    assert start not in ports
+    assert ports[0] == start + 1
 
 
 async def test_candidate_ports_excludes_desired_running_rows(db_session: AsyncSession) -> None:

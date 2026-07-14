@@ -37,7 +37,10 @@ async def test_appium_node_resource_claims_table_exists(db_session: AsyncSession
         unique_cols = {
             tuple(sorted(c["column_names"])) for c in insp.get_unique_constraints("appium_node_resource_claims")
         }
-        assert ("capability_key", "host_id", "port") in unique_cols
+        # Host-wide port uniqueness spans capabilities (Defect B), so the
+        # constraint is (host_id, port) — NOT scoped per capability.
+        assert ("host_id", "port") in unique_cols
+        assert ("capability_key", "host_id", "port") not in unique_cols
 
         fks = insp.get_foreign_keys("appium_node_resource_claims")
         node_fk = next((f for f in fks if "node_id" in f["constrained_columns"]), None)
