@@ -24,6 +24,7 @@ from agent_app.appium.exceptions import (
     PortOccupiedError,
     RuntimeMissingError,
     RuntimeNotInstalledError,
+    StartDeferredError,
     StartupTimeoutError,
 )
 from agent_app.appium.log_files import (
@@ -586,6 +587,18 @@ class AppiumProcessManager:
                 )
                 await self._drop_failed_managed_port(port)
                 return
+            except StartDeferredError as exc:
+                # boot has not resolved a device serial yet (emulator still
+                # booting / adb transiently unresponsive). This is transient, not a
+                # restart failure: do not advance the auto-restart backoff or drop
+                # the port. The node-state convergence loop retries start() next
+                # tick and defers again until boot resolves the serial.
+                logger.info(
+                    "Appium auto-restart deferred for port %d: %s; convergence loop will retry",
+                    port,
+                    exc,
+                )
+                return
             except Exception:
                 self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
                 logger.exception("Appium auto-restart failed for port %d on attempt %d", port, attempt_number)
@@ -761,6 +774,15 @@ class AppiumProcessManager:
                 resolved_connection_target = str(result["resolved_connection_target"])
             elif result and result.get("success") is False:
                 raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be started"))
+            elif result and result.get("success") is True:
+                # boot succeeded but did not resolve a device serial (emulator still
+                # booting, or adb transiently unresponsive). Proceeding would bake the
+                # unresolved connection target — an AVD name — into
+                # --default-capabilities as ``appium:udid``, and every session create
+                # would 500 with "Device <udid> was not in the list of connected
+                # devices". Defer instead: the node-state loop retries next tick, and
+                # once boot resolves the serial the start proceeds with a usable udid.
+                raise StartDeferredError(f"boot for {connection_target!r} has not resolved a device serial yet")
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
         if self._adapter_registry is not None:
             handle = self._adapter_registry.get_current(pack_id)

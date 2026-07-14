@@ -10,13 +10,19 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from agent_app.appium.exceptions import PortOccupiedError
+from agent_app.appium.exceptions import PortOccupiedError, StartDeferredError
 from agent_app.appium.schemas import AppiumStartRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _action_id(action: dict[str, Any]) -> str:
+    """Best-effort ``id`` of a lifecycle action dict (``{"id": "boot"}`` -> ``"boot"``)."""
+    value = action.get("id")
+    return str(value) if isinstance(value, str) else ""
 
 
 class NodeStateClient(Protocol):
@@ -94,10 +100,23 @@ class NodeStateLoop:
         if watermark is not None and watermark.tzinfo is None:
             watermark = watermark.replace(tzinfo=UTC)
         force_restart = local is not None and watermark is not None and local.started_at < watermark
+        # An emulator launch carries a "boot" action: launch.connection_target is the
+        # AVD name, which boot resolves to the live adb serial (e.g. "Pixel_6" ->
+        # "emulator-5554") before Appium starts. The running node therefore carries the
+        # resolved serial, which never string-equals the AVD name — so a naive
+        # target_changed comparison bounces Appium every convergence tick, dropping
+        # every session create into a restart gap ("Server disconnected without sending
+        # a response"). A boot-resolved running node is the intended steady state; a
+        # real serial change (e.g. emulator console port 5554->5556) is handled by
+        # node-health/recovery. An explicit operator restart still goes through
+        # force_restart (the watermark) below, which is not gated on boot. Real devices
+        # (no "boot" action) keep the direct target_changed match.
+        boot_resolves_target = any(_action_id(a) == "boot" for a in launch.lifecycle_actions)
         target_changed = local is not None and (
             local.connection_target != launch.connection_target or local.platform_id != launch.platform_id
         )
-        if local is not None and (force_restart or target_changed):
+        needs_restart = force_restart or (target_changed and not boot_resolves_target)
+        if local is not None and needs_restart:
             await self.manager.stop(spec.port)
             running_by_port.pop(spec.port, None)
             local = None
@@ -105,6 +124,18 @@ class NodeStateLoop:
         if local is None:
             try:
                 started = await self.manager.start(**self._launch_kwargs(launch))
+            except StartDeferredError as exc:
+                # boot succeeded but has not resolved a device serial yet (emulator
+                # still booting / adb transiently unresponsive). Retry next tick
+                # without recording a start_failure: a recorded failure feeds the
+                # backend's recovery/review escalation, recreating the spiral this
+                # deferral exists to break. No Appium process was spawned.
+                logger.info(
+                    "node %s start deferred: %s; retrying next tick",
+                    spec.device_id,
+                    exc,
+                )
+                return
             except Exception as exc:
                 kind = "port_conflict" if isinstance(exc, PortOccupiedError) else "spawn_failed"
                 self.manager.record_start_failure(

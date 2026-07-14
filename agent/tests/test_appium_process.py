@@ -20,6 +20,7 @@ from agent_app.appium.exceptions import (
     PortOccupiedError,
     RuntimeMissingError,
     RuntimeNotInstalledError,
+    StartDeferredError,
     StartupTimeoutError,
 )
 from agent_app.appium.log_files import appium_log_path
@@ -915,6 +916,57 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     assert snapshot["recent_restart_events"][-1]["process"] == "appium"
 
 
+async def test_auto_restart_defers_when_boot_has_not_resolved_serial() -> None:
+    """A crash auto-restart whose boot has not resolved a device serial must
+    abort cleanly instead of churning retries.
+
+    ``start()`` raises ``StartDeferredError`` when boot succeeded but no serial
+    is available yet (emulator still booting / adb transiently unresponsive).
+    Treating that as a generic restart failure would advance the auto-restart
+    backoff and ERROR-log a transient condition, then exhaust and drop the port.
+    The convergence loop owns the steady-state retry; auto-restart just aborts.
+    """
+    manager = AppiumProcessManager()
+    old_appium_proc = FakeProcess(pid=1111, returncode=1)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", old_appium_proc)
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="device-boot",
+        port=4723,
+        extra_caps=None,
+        session_override=True,
+        device_type="emulator",
+        ip_address=None,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=1111,
+        connection_target="device-boot",
+        platform_id="android_mobile",
+    )
+
+    async def _defer_start(**_kwargs: object) -> AppiumProcessInfo:
+        raise StartDeferredError("boot for 'device-boot' has not resolved a device serial yet")
+
+    with (
+        patch.object(manager, "start", side_effect=_defer_start) as start_mock,
+        patch("agent_app.appium.process.asyncio.sleep"),
+    ):
+        await manager._auto_restart_appium(4723, exit_code=1)
+
+    start_mock.assert_awaited()
+    # The port is NOT dropped — the convergence loop still owns its desired state.
+    assert 4723 in manager._launch_specs
+    # No restart event recorded: a deferral is not a restart attempt/failure.
+    snapshot = await manager.process_snapshot()
+    assert [event["kind"] for event in snapshot["recent_restart_events"] if event["process"] == "appium"] == [
+        "crash_detected"
+    ]
+    # Auto-restart backoff is not advanced for a transient deferral.
+    assert 4723 not in manager._appium_restart_backoff_steps
+
+
 async def test_auto_restart_aborts_when_target_already_served_by_another_node() -> None:
     """Auto-restart must abort (not churn retries) when another node already
     serves the crashed node's target on a different port.
@@ -1308,6 +1360,40 @@ async def test_start_raises_when_adapter_boot_fails() -> None:
             platform_id="android_mobile",
             lifecycle_actions=lifecycle_actions,
         )
+
+
+async def test_start_defers_when_boot_succeeds_without_resolved_target() -> None:
+    """Boot that succeeds but has not resolved a device serial must not strand Appium
+    with an AVD-name udid baked into --default-capabilities (every session create would
+    then 500 with "Device <AVD> was not in the list of connected devices"). Defer the
+    start instead so the node-state loop retries next tick once the serial resolves."""
+    manager = AppiumProcessManager()
+    lifecycle_actions = [{"id": "boot"}]
+    adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="booting"))
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
+    manager.set_adapter_registry(adapter_registry)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="Pixel_6"),
+    ):
+        await manager.start(
+            connection_target="Pixel_6",
+            port=4753,
+            device_type="emulator",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            lifecycle_actions=lifecycle_actions,
+        )
+
+    # No Appium process is spawned for a deferred start.
+    assert not create_proc.await_args_list
+    await manager.shutdown()
 
 
 @pytest.mark.asyncio
