@@ -157,14 +157,6 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
             return None
         return {"healthy": True, "detail": None, "checks": [], "recommended_action": None}
 
-    async def _enumerate() -> dict[str, Any]:
-        return {
-            "complete_gather": True,
-            "candidates": [
-                {"identity_value": "emulator-5554", "detected_properties": {"connection_target": "emulator-5554"}}
-            ],
-        }
-
     async def _lifecycle(**kwargs: object) -> dict[str, Any]:
         return {"success": True, "state": "device", "detail": None}
 
@@ -175,43 +167,38 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
         health_probe=_health,
         telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
-        enumerate_probe=_enumerate,
         lifecycle_probe=_lifecycle,
     )
     await loop._refresh_roster()
     section = await loop._probe_device_health_section()
-    assert section["complete_gather"] is True
     items = {item["device_id"]: item for item in section["devices"]}
     assert set(items) == {"d1", "d2"}
-    assert items["d1"]["presence"] == "present"
+    # Presence is never derived from discovery on the health cadence.
+    assert {item["presence"] for item in section["devices"]} == {"unknown"}
     assert items["d1"]["probe_status"] == "observed"
     assert items["d1"]["lifecycle_state"]["status"] == "observed"
     assert items["d1"]["lifecycle_state"]["value"] == "device"
     assert isinstance(items["d1"]["lifecycle_state"]["observed_at"], str)
-    assert items["d2"]["presence"] == "absent"
     assert items["d2"]["probe_status"] == "error"
     assert items["d2"]["health"] is None
     assert items["d2"]["lifecycle_state"] == {"status": "unsupported", "value": None}
 
 
+async def test_probe_loop_has_no_discovery_hook() -> None:
+    """Presence is a discovery signal; the probe loop must not carry a discovery
+    hook at all, so the health cadence can never run an SSDP / ``adb devices`` /
+    usbmux sweep. A registered device's liveness is its health check."""
+    import inspect
+
+    assert "enumerate_probe" not in inspect.signature(ProbeLoop).parameters
+
+
 @pytest.mark.asyncio
-async def test_incomplete_presence_enumeration_never_asserts_absence() -> None:
+async def test_device_health_section_never_derives_presence_from_discovery() -> None:
+    """Every device_health item reports presence ``"unknown"`` — the health
+    cadence does not consult discovery to classify a registered device."""
     roster = _Roster()
-
-    async def _enumerate() -> dict[str, Any]:
-        # Discovery returned a partial/failed gather. An empty candidate list is
-        # not evidence that every roster device is absent.
-        return {"complete_gather": False, "candidates": []}
-
-    loop = ProbeLoop(
-        roster_client=roster,
-        manager=_Manager(),
-        host_identity=_identity(),
-        health_probe=_health_probe,
-        telemetry_probe=_telemetry_probe,
-        properties_probe=_properties_probe,
-        enumerate_probe=_enumerate,
-    )
+    loop = _loop(roster)
     await loop._refresh_roster()
 
     section = await loop._probe_device_health_section()
