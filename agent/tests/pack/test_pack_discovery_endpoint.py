@@ -24,6 +24,7 @@ async def test_pack_devices_endpoint_returns_empty_without_desired_packs() -> No
     assert resp.status_code == 200
     body = resp.json()
     assert body["candidates"] == []
+    assert body["complete_gather"] is False
 
 
 # ── enumerate_pack_candidates unit tests ────────────────────────────
@@ -65,7 +66,14 @@ async def test_enumerate_skips_duplicate_pack_releases() -> None:
     registry = AdapterRegistry()
     pack = _pack()
     result = await enumerate_pack_candidates([pack, pack], adapter_registry=registry, host_id="h1")
-    assert result == {"candidates": []}
+    assert result == {"candidates": [], "complete_gather": False}
+
+
+@pytest.mark.asyncio
+async def test_enumerate_without_desired_packs_is_incomplete() -> None:
+    result = await enumerate_pack_candidates([], adapter_registry=AdapterRegistry(), host_id="h1")
+
+    assert result == {"candidates": [], "complete_gather": False}
 
 
 class _PackScopeAdapter:
@@ -94,6 +102,7 @@ async def test_enumerate_pack_scope_adapter() -> None:
     registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
+    assert result["complete_gather"] is True
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["pack_id"] == "appium-uiautomator2"
     assert result["candidates"][0]["identity_value"] == "serial1"
@@ -115,7 +124,7 @@ async def test_enumerate_handles_adapter_exception_pack_scope() -> None:
     pack = _pack(platforms=[_platform()])
     adapter.discovery_scope = "pack"
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
-    assert result == {"candidates": []}
+    assert result == {"candidates": [], "complete_gather": False}
 
 
 @pytest.mark.asyncio
@@ -125,7 +134,7 @@ async def test_enumerate_handles_adapter_exception_per_platform() -> None:
     registry.set("appium-uiautomator2", "1.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     pack = _pack(platforms=[_platform()])
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
-    assert result == {"candidates": []}
+    assert result == {"candidates": [], "complete_gather": False}
 
 
 # ── _candidate_matches_platform tests ──────────────────────────────

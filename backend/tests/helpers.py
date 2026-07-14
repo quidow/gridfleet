@@ -13,12 +13,15 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.models import ControlPlaneStateEntry
 from app.core.observability import BACKGROUND_LOOP_NAMES, LOOP_HEARTBEAT_NAMESPACE
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services.connectivity import ConnectivityService
+from app.devices.services.health import DeviceHealthService
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
@@ -318,6 +321,20 @@ async def seed_host_and_running_node(
     await db_session.commit()
     await db_session.refresh(node)
     return host, device, node
+
+
+def build_connectivity_service(session_factory: SessionFactory) -> ConnectivityService:
+    """Construct a ConnectivityService for the device_health fold tests. The
+    ``session_factory`` argument mirrors the StatusFoldLoop wiring call site; the
+    service itself folds against the ``db`` handle passed to ``fold_host_devices``."""
+    _ = session_factory
+    return ConnectivityService(
+        publisher=test_event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
+        health=DeviceHealthService(publisher=test_event_bus),
+    )
 
 
 async def seed_host_with_devices(

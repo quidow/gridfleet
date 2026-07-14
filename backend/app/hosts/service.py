@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from app.hosts.schemas import HostCreate, HostHardwareInfo, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
-MIN_ORCHESTRATION_CONTRACT_VERSION = 6
+MIN_ORCHESTRATION_CONTRACT_VERSION = 7
 # Fallback for hosts created without a port; enrollment overwrites it with the
 # agent's real AGENT_AGENT_PORT on the first registration refresh.
 DEFAULT_AGENT_PORT = 5100

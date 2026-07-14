@@ -4403,6 +4403,11 @@ export interface components {
             ip_ping_count?: number | null;
             /** Ip Ping Timeout Sec */
             ip_ping_timeout_sec?: number | null;
+            /**
+             * Lifecycle State Capable
+             * @default false
+             */
+            lifecycle_state_capable: boolean;
             /** Pack Id */
             pack_id: string;
             /** Platform Id */

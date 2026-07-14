@@ -7,7 +7,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import APIRouter, Body, Query, status
+from fastapi import APIRouter, Body, Query, Request, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import (
@@ -128,6 +128,32 @@ async def run_device_health_probe(
     }
 
 
+async def run_device_lifecycle_state_probe(
+    *,
+    adapter_registry: AdapterRegistry | None,
+    platform: DesiredPlatform,
+    release: str,
+    pack_id: str,
+    platform_id: str,
+    connection_target: str,
+    host_id: str,
+    identity_value: str | None = None,
+) -> dict[str, Any] | None:
+    """Run the pack ``state`` lifecycle action with the same dispatch as the HTTP
+    route. Returns None when no adapter/action is available (caller reports error)."""
+    del platform, platform_id, identity_value
+    handle = worker_or_none(adapter_registry, pack_id, release)
+    if handle is None or not adapter_supports(handle, "lifecycle_action"):
+        return None
+    result = await dispatch_lifecycle_action(
+        handle,
+        "state",
+        {},
+        LifecycleCtx(host_id=host_id, device_identity_value=connection_target),
+    )
+    return _adapter_lifecycle_payload(result)
+
+
 async def run_device_telemetry_probe(
     *,
     adapter_registry: AdapterRegistry | None,
@@ -246,6 +272,7 @@ async def pack_device_health_route(
     },
 )
 async def pack_device_lifecycle_route(
+    request: Request,
     connection_target: str,
     action: str,
     platform: DesiredPlatformDep,
@@ -264,6 +291,14 @@ async def pack_device_lifecycle_route(
             args,
             LifecycleCtx(host_id=host_id, device_identity_value=connection_target),
         )
+        # A successful state-changing action (e.g. the backend's reconnect /
+        # release_forwarded_ports link repair) should be re-observed promptly
+        # rather than at the next fixed probe cadence. "state" is a read-only
+        # poll, so it never wakes the loop.
+        if result.ok and action != "state":
+            probe_loop = getattr(request.app.state, "probe_loop", None)
+            if probe_loop is not None:
+                probe_loop.request_immediate("device_health")
         return _adapter_lifecycle_payload(result)
     return {
         "success": False,

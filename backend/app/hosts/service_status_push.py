@@ -57,12 +57,10 @@ class SectionHashMismatchError(Exception):
 # telemetry stage — the single snapshot source (no second fetch path).
 HOST_STATUS_NAMESPACE = "status_push.host_status"
 
-# Only node_health has moved to the async facts-only reconciler in this partial
-# phase. device_health still performs synchronous dials/actions, so stamping and
-# deduplicating it would make a contained inline-fold failure non-retryable and
-# could run action side effects after a stale fact write was rejected. It joins
-# this tuple only when its facts-only move lands.
-GUARDED_SECTIONS = ("node_health",)
+# Both health axes now move to the async facts-only reconciler (StatusFoldLoop).
+# They are stamped in Txn B and folded off the request path; the synchronous
+# ObservationFold tuple keeps only the cheap, lock-free folds.
+GUARDED_SECTIONS = ("node_health", "device_health")
 HEALTH_SECTIONS = ("node_health", "device_health")
 
 # Key under which Txn B publishes the Txn-A-reserved revision on each guarded
@@ -134,6 +132,9 @@ class HostStatusPushService:
         observation_folds: tuple[ObservationFold, ...] = (),
         converge_host: Callable[..., Awaitable[None]] | None = None,
         ingest_restart_events: Callable[[AsyncSession, Host, dict[str, Any]], Awaitable[None]] | None = None,
+        apply_pushed_emulator_state: (
+            Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]] | None
+        ) = None,
         publication_concurrency: int | None = None,
     ) -> None:
         self._publisher = publisher
@@ -141,6 +142,7 @@ class HostStatusPushService:
         self._observation_folds = observation_folds
         self._converge_host = converge_host
         self._ingest_restart_events = ingest_restart_events
+        self._apply_pushed_emulator_state = apply_pushed_emulator_state
         if (
             publication_concurrency is None
             and CONFIGURED_DB_POOL_CAPACITY is not None
@@ -182,8 +184,7 @@ class HostStatusPushService:
 
         sections = copy.deepcopy(push_sections(push))
         # observation_revision is backend-owned on both health axes. Strip an
-        # agent-supplied value even for device_health, which is intentionally
-        # unguarded until its facts-only async move.
+        # agent-supplied value before reserving the backend ordering point.
         for name in HEALTH_SECTIONS:
             section = sections.get(name)
             if isinstance(section, dict):
@@ -441,6 +442,25 @@ class HostStatusPushService:
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
             self._log_stage(f"fold:{entry.section}", host_id, started)
+        # device_health folds async on the StatusFoldLoop (Phase 4), but its cheap
+        # lifecycle-state (emulator_state) application stays synchronous per spec:
+        # read the guarded section's lifecycle items here and apply write-on-diff (M2).
+        await self._apply_emulator_state(host_id=host_id, payload=payload)
+
+    async def _apply_emulator_state(self, *, host_id: uuid.UUID, payload: dict[str, Any]) -> None:
+        if self._apply_pushed_emulator_state is None or self._session_factory is None:
+            return
+        section = payload.get("device_health")
+        if not isinstance(section, dict):
+            return
+        started = perf_counter()
+        try:
+            async with self._session_factory() as em_db:
+                await self._apply_pushed_emulator_state(em_db, host_id, section)
+                await em_db.commit()
+        except Exception:  # noqa: BLE001 - observation stages must never starve liveness
+            HOST_PUSH_OBSERVATION_FAILURES.labels(stage="emulator_state").inc()
+        self._log_stage("emulator_state", host_id, started)
 
     async def process_observations(
         self, *, host_id: uuid.UUID, host_ip: str, agent_port: int, payload: dict[str, Any]

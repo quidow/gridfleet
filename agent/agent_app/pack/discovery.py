@@ -31,10 +31,11 @@ async def enumerate_pack_candidates(
     adapter_registry: AdapterRegistry | None = None,
     host_id: str = "",
 ) -> dict[str, Any]:
-    if desired_packs is None or adapter_registry is None:
-        return {"candidates": []}
+    if not desired_packs or adapter_registry is None:
+        return {"candidates": [], "complete_gather": False}
 
     all_candidates: list[dict[str, Any]] = []
+    complete_gather = True
     seen: set[tuple[str, str]] = set()
     for pack in desired_packs:
         if (pack.id, pack.release) in seen:
@@ -42,6 +43,7 @@ async def enumerate_pack_candidates(
         seen.add((pack.id, pack.release))
         adapter = adapter_registry.get_current(pack.id) or adapter_registry.get(pack.id, pack.release)
         if adapter is None:
+            complete_gather = False
             continue
 
         if getattr(adapter, "discovery_scope", "") == "pack" and pack.platforms:
@@ -50,6 +52,7 @@ async def enumerate_pack_candidates(
             try:
                 results = await dispatch_discover(adapter, ctx)
             except Exception:
+                complete_gather = False
                 logger.exception("Adapter discover failed: pack=%s platform=%s", pack.id, platform_def.id)
                 continue
             for raw in results:
@@ -62,13 +65,14 @@ async def enumerate_pack_candidates(
             try:
                 results = await dispatch_discover(adapter, ctx)
             except Exception:
+                complete_gather = False
                 logger.exception("Adapter discover failed: pack=%s platform=%s", pack.id, platform_def.id)
                 continue
             for raw in results:
                 if _candidate_matches_platform(raw, platform_def):
                     all_candidates.append(_candidate_payload(raw, pack_id=pack.id, platform_def=platform_def))
 
-    return {"candidates": all_candidates}
+    return {"candidates": all_candidates, "complete_gather": complete_gather}
 
 
 def _candidate_payload(raw: DiscoveryCandidate, *, pack_id: str, platform_def: DesiredPlatform) -> dict[str, Any]:

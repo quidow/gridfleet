@@ -18,12 +18,12 @@ from app.hosts.service import HostCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
-CAPS_V6 = {"orchestration_contract_version": 6}
+CAPS_V7 = {"orchestration_contract_version": 7}
 
 
 def test_validate_orchestration_contract_ignores_unknown_capability_keys() -> None:
     host_service.validate_orchestration_contract(
-        {"orchestration_contract_version": 6, "future_agent_capability": True},
+        {"orchestration_contract_version": 7, "future_agent_capability": True},
         host_label="newer-agent",
     )
 
@@ -103,7 +103,7 @@ async def test_register_host_does_not_resurrect_offline_host(db_session: AsyncSe
             ip="10.0.0.99",
             os_type=OSType.macos,
             agent_port=None,
-            capabilities={**CAPS_V6, "missing_prerequisites": ["adb", 5]},
+            capabilities={**CAPS_V7, "missing_prerequisites": ["adb", 5]},
         ),
     )
 
@@ -120,7 +120,7 @@ async def test_register_host_does_not_write_push_owned_facts(db_session: AsyncSe
     svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({"agent.auto_accept_hosts": True}))
     host, is_new = await svc.register_host(
         db_session,
-        HostRegister(hostname="enroll-only", ip="10.0.0.70", os_type=OSType.linux, capabilities=CAPS_V6),
+        HostRegister(hostname="enroll-only", ip="10.0.0.70", os_type=OSType.linux, capabilities=CAPS_V7),
     )
     assert is_new is True
     assert host.agent_version is None
@@ -135,7 +135,7 @@ async def test_reregister_does_not_clobber_push_written_facts(db_session: AsyncS
         agent_port=5100,
         status=HostStatus.online,
         agent_version="7.7.7",
-        capabilities={**CAPS_V6, "tools": {"adb": "1.0.41"}},
+        capabilities={**CAPS_V7, "tools": {"adb": "1.0.41"}},
     )
     db_session.add(seeded)
     await db_session.commit()
@@ -148,7 +148,7 @@ async def test_reregister_does_not_clobber_push_written_facts(db_session: AsyncS
             ip="10.0.0.72",
             os_type=OSType.macos,
             agent_port=5200,
-            capabilities={**CAPS_V6, "tools": {"adb": "9.9.9"}},
+            capabilities={**CAPS_V7, "tools": {"adb": "9.9.9"}},
         ),
     )
 
@@ -158,7 +158,7 @@ async def test_reregister_does_not_clobber_push_written_facts(db_session: AsyncS
     assert updated.agent_port == 5200
     # push-owned columns are untouched by re-registration
     assert updated.agent_version == "7.7.7"
-    assert updated.capabilities == {**CAPS_V6, "tools": {"adb": "1.0.41"}}
+    assert updated.capabilities == {**CAPS_V7, "tools": {"adb": "1.0.41"}}
 
 
 async def test_register_host_creates_pending_or_online_host_based_on_setting(
@@ -175,7 +175,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             ip="10.0.0.20",
             os_type=OSType.linux,
             agent_port=None,
-            capabilities=CAPS_V6,
+            capabilities=CAPS_V7,
         ),
     )
 
@@ -194,7 +194,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             ip="10.0.0.21",
             os_type=OSType.linux,
             agent_port=None,
-            capabilities=CAPS_V6,
+            capabilities=CAPS_V7,
         ),
     )
     assert online_host.status == HostStatus.online
@@ -266,7 +266,7 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
             ip="10.0.0.51",
             os_type=OSType.linux,
             agent_port=5200,
-            capabilities=CAPS_V6,
+            capabilities=CAPS_V7,
         ),
     )
 
@@ -280,7 +280,8 @@ async def test_register_host_rejects_unsupported_agent_contract(db_session: Asyn
         None,
         {},
         {"orchestration_contract_version": 1},
-        {"orchestration_contract_version": 5},  # pre-6 (pre-probe-push) agents are now rejected
+        {"orchestration_contract_version": 5},
+        {"orchestration_contract_version": 6},  # pre-7 (pre-pushed-device-facts) agents are now rejected
         {"orchestration_contract_version": "bad"},
     )
     for capabilities in unsupported_values:

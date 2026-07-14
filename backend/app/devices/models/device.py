@@ -184,6 +184,16 @@ class Device(Base):
     device_checks_observation_revision: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
+    # Durable receipt for the level-triggered device_health fold (Phase 4).
+    # Distinct from device_checks_observation_revision (the guarded axis): a
+    # terminal no-op consumes a generation without writing the axis, and a
+    # retryable failure leaves this below the section revision so only that
+    # device replays. Mirrors AppiumNode.health_fold_* (node.py:79-81).
+    device_checks_fold_applied_revision: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    device_checks_fold_boot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    device_checks_fold_section_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     failure_episode_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     session_viability_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     session_viability_error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -197,6 +207,7 @@ class Device(Base):
     review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     emulator_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    emulator_state_source_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

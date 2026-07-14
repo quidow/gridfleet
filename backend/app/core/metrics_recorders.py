@@ -339,6 +339,10 @@ STATUS_FOLD_LAG_SECONDS = Histogram(
     "Snapshot-received-to-fold-complete lag for a folded host section.",
     buckets=(0.5, 1, 2, 3, 5, 8, 13, 21, 34),
 )
+STATUS_FOLD_OLDEST_UNAPPLIED_SECONDS = Gauge(
+    "gridfleet_status_fold_oldest_unapplied_seconds",
+    "Age of the oldest pushed section still awaiting a fold (slow-burn stall signal).",
+)
 
 
 def record_node_health_fold_result(outcome: str) -> None:
@@ -351,6 +355,22 @@ def record_status_fold_host(disposition: str) -> None:
 
 def record_status_fold_lag(seconds: float) -> None:
     STATUS_FOLD_LAG_SECONDS.observe(seconds)
+
+
+def record_status_fold_oldest_unapplied(seconds: float) -> None:
+    STATUS_FOLD_OLDEST_UNAPPLIED_SECONDS.set(seconds)
+
+
+STATUS_FOLD_DEVICE_RESULTS = Counter(
+    "gridfleet_status_fold_device_results_total",
+    "Device-health fold per-device outcomes on the StatusFoldLoop.",
+    # outcome: applied | terminal_noop | skipped | retryable
+    labelnames=("outcome",),
+)
+
+
+def record_device_health_fold_result(outcome: str) -> None:
+    STATUS_FOLD_DEVICE_RESULTS.labels(outcome=outcome).inc()
 
 
 DB_SERIALIZATION_RETRY_TOTAL = Counter(

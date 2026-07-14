@@ -43,6 +43,7 @@ class PackDevicesResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     candidates: list[PackDeviceCandidate] = Field(default_factory=list)
+    complete_gather: bool = False
 
 
 class HealthCheckResult(BaseModel):
