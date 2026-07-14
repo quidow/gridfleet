@@ -198,6 +198,39 @@ async def test_same_sequence_different_payload_is_processed(client: AsyncClient,
     assert second["nodes"] == [{"port": 9999}]
 
 
+async def test_new_boot_id_reprocesses_reset_sequence(client: AsyncClient, db_session: AsyncSession) -> None:
+    """Monotonic token (Phase 1): a rebooted agent resets its per-(boot, section)
+    sequence, so a LOWER sequence under a NEW boot_id must reprocess (draw a fresh
+    revision and reset the cursor), not be dropped as a stale out-of-order delivery.
+    A new boot only reaches the cursor after re-registration rotates current_boot_id
+    (otherwise the fence rejects it 409)."""
+    boot_a = uuid.uuid4()
+    host = await _make_host(db_session, hostname="new-boot-reprocess", boot_id=boot_a)
+
+    await _post(client, host.id, boot_id=boot_a, node_health=_node_section(sequence=5))
+    first = await _snapshot_section(db_session, host.id, "node_health")
+    assert first is not None
+    first_rev = first["observation_revision"]
+    assert isinstance(first_rev, int)
+
+    host_id = host.id
+    db_session.expire_all()
+    reloaded = await db_session.get(Host, host_id)
+    assert reloaded is not None
+    boot_b = uuid.uuid4()
+    reloaded.current_boot_id = boot_b
+    await db_session.commit()
+
+    await _post(client, host_id, boot_id=boot_b, node_health=_node_section(sequence=1))
+    second = await _snapshot_section(db_session, host_id, "node_health")
+    assert second is not None
+    assert second["observation_revision"] > first_rev
+    await db_session.refresh(reloaded)
+    cursor = reloaded.observation_cursors["node_health"]
+    assert cursor["boot_id"] == str(boot_b)
+    assert cursor["section_sequence"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # apply_status_push fold-payload contract (unit)
 # --------------------------------------------------------------------------- #

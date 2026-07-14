@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
@@ -103,10 +104,15 @@ class DeviceHealthService:
         ladder = await remediation_log.load_ladder(db, locked.id)
         policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
         previous = build_public_summary(locked, policy_view=policy_view)
+        was_failing = locked.device_checks_healthy is False
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
         locked.device_checks_checked_at = observed_at or now_utc()
         locked.device_checks_observation_revision = rev
+        if healthy:
+            locked.failure_episode_id = None
+        elif not was_failing:
+            locked.failure_episode_id = uuid.uuid4()
         if not healthy:
             await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
         # On success, defer to apply_node_state_transition (which reconciles on

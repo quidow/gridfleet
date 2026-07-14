@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.grid import router_internal, session_create
 from app.grid.allocation import AllocationResult, AllocationService
@@ -53,6 +54,7 @@ def services(db_session: AsyncSession) -> GridServices:
         settings=settings_service,
         session_factory=async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False),
         allocation=allocation,
+        health=DeviceHealthService(publisher=event_bus),
     )
 
 
@@ -75,7 +77,9 @@ async def test_create_session_handler_claims_then_creates(
         allocation: AllocationResult,
         raw_body: bytes,
         claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
     ) -> session_create.CreateOutcome:
+        _ = max_create_timeout_sec
         return session_create.CreateOutcome(
             kind="created",
             session_id="unit-session",
@@ -137,7 +141,9 @@ async def test_cancel_and_lifecycle_handlers(
         allocation: AllocationResult,
         raw_body: bytes,
         claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
     ) -> session_create.CreateOutcome:
+        _ = max_create_timeout_sec
         async with db_factory() as db:
             await allocation_service.promote_to_running(
                 db, allocation_id=allocation.allocation_id, appium_session_id="unit-route"

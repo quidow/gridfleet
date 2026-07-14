@@ -37,6 +37,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.remediation_job import RemediationJobService
 from app.devices.services.review import ReviewService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
@@ -186,13 +187,21 @@ def compose_app(
     )
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
     crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc, publisher=bus)
-    connectivity_svc = ConnectivityService(
-        publisher=bus,
-        settings=settings_svc,
-        circuit_breaker=circuit_breaker,
-        lifecycle_policy=lifecycle_policy_svc,
-        health=device_health_svc,
-        pool=http_pool,
+    connectivity_svc, remediation_runner_svc = (
+        ConnectivityService(
+            publisher=bus,
+            settings=settings_svc,
+            circuit_breaker=circuit_breaker,
+            lifecycle_policy=lifecycle_policy_svc,
+            health=device_health_svc,
+            pool=http_pool,
+        ),
+        RemediationJobService(
+            session_factory=session_factory,
+            circuit_breaker=circuit_breaker,
+            health=device_health_svc,
+            pool=http_pool,
+        ),
     )
     groups_svc = DeviceGroupsService(publisher=bus, crud=crud_svc)
     bulk_svc = BulkOperationsService(
@@ -380,6 +389,7 @@ def compose_app(
                 stereotype_provider=device_match_surface,
                 settings=settings_svc,
             ),
+            health=device_health_svc,
         ),
         packs=PackServices(
             catalog=pack_catalog,
@@ -406,6 +416,7 @@ def compose_app(
                 circuit_breaker=circuit_breaker,
                 verification_runner=verification_runner_svc,
                 recovery_runner=recovery_runner_svc,
+                remediation_runner=remediation_runner_svc,
             ),
             session_factory=session_factory,
         ),

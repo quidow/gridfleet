@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::thread;
+use std::time::Duration;
 
 fn stub_backend() -> (tiny_http::Server, String) {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
@@ -11,6 +12,43 @@ fn json_response(body: &str) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
     tiny_http::Response::from_string(body).with_header(
         tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
     )
+}
+
+#[tokio::test]
+async fn create_session_sends_budget_header() {
+    let (server, addr) = stub_backend();
+    thread::spawn(move || {
+        let req = server.recv().unwrap();
+        let budget = req
+            .headers()
+            .iter()
+            .find(|header| {
+                header
+                    .field
+                    .to_string()
+                    .eq_ignore_ascii_case("x-gridfleet-create-budget-ms")
+            })
+            .expect("create budget header");
+        assert_eq!(budget.value.as_str(), "30000");
+        req.respond(json_response(r#"{"status":"queued","ticket":"ticket-1"}"#))
+            .unwrap();
+    });
+    let client = gridfleet_router::backend::BackendClient::new(&addr, None);
+
+    let outcome = client
+        .create_session(
+            br#"{"capabilities":{}}"#,
+            None,
+            None,
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        gridfleet_router::backend::CreateOutcome::Queued { .. }
+    ));
 }
 
 #[tokio::test]
@@ -31,7 +69,11 @@ async fn create_session_created_roundtrip() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.create_session(raw, None, None).await.unwrap() {
+    match client
+        .create_session(raw, None, None, Duration::from_secs(30))
+        .await
+        .unwrap()
+    {
         gridfleet_router::backend::CreateOutcome::Created {
             session_id,
             target,
@@ -61,7 +103,12 @@ async fn create_session_queued_roundtrip() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     match client
-        .create_session(br#"{"capabilities":{}}"#, Some("ticket-1"), Some("run-1"))
+        .create_session(
+            br#"{"capabilities":{}}"#,
+            Some("ticket-1"),
+            Some("run-1"),
+            Duration::from_secs(30),
+        )
         .await
         .unwrap()
     {
@@ -83,7 +130,11 @@ async fn create_session_failed_and_error_roundtrip() {
         .unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
-    match client.create_session(br#"{}"#, None, None).await.unwrap() {
+    match client
+        .create_session(br#"{}"#, None, None, Duration::from_secs(30))
+        .await
+        .unwrap()
+    {
         gridfleet_router::backend::CreateOutcome::CreateFailed { appium_status, .. } => {
             assert_eq!(appium_status, 500);
         }
@@ -99,7 +150,11 @@ async fn create_session_failed_and_error_roundtrip() {
         .unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
-    match client.create_session(br#"{}"#, None, None).await.unwrap() {
+    match client
+        .create_session(br#"{}"#, None, None, Duration::from_secs(30))
+        .await
+        .unwrap()
+    {
         gridfleet_router::backend::CreateOutcome::CreateError { message } => {
             assert!(message.contains("unreachable"));
         }
@@ -119,7 +174,11 @@ async fn create_session_rejections_fail_fast() {
         .unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
-    match client.create_session(br#"{}"#, None, None).await.unwrap() {
+    match client
+        .create_session(br#"{}"#, None, None, Duration::from_secs(30))
+        .await
+        .unwrap()
+    {
         gridfleet_router::backend::CreateOutcome::Invalid { message } => {
             assert_eq!(message, "bad caps")
         }
@@ -128,7 +187,7 @@ async fn create_session_rejections_fail_fast() {
 
     let client = gridfleet_router::backend::BackendClient::new("http://127.0.0.1:1", None);
     match client
-        .create_session(b"not json", None, None)
+        .create_session(b"not json", None, None, Duration::from_secs(30))
         .await
         .unwrap()
     {
@@ -146,7 +205,10 @@ async fn create_session_rejections_fail_fast() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     assert!(matches!(
-        client.create_session(br#"{}"#, None, None).await.unwrap(),
+        client
+            .create_session(br#"{}"#, None, None, Duration::from_secs(30))
+            .await
+            .unwrap(),
         gridfleet_router::backend::CreateOutcome::QueueTimeout
     ));
 }

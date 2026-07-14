@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 
+from app.devices.services.health import DeviceHealthService
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +63,7 @@ def reaper(db_session: AsyncSession, allocation_service: AllocationService) -> G
         settings=settings_service,
         session_factory=async_sessionmaker(db_session.bind),
         allocation=allocation_service,
+        health=DeviceHealthService(publisher=event_bus),
     )
     return GridAllocationReaperLoop(services=services)
 

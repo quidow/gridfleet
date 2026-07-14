@@ -14,3 +14,7 @@ class VerificationJobRunner(Protocol):
 
 class RecoveryJobRunner(Protocol):
     async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None: ...
+
+
+class RemediationJobRunner(Protocol):
+    async def run_device_health_remediation_job(self, job_id: str, payload: dict[str, Any]) -> None: ...

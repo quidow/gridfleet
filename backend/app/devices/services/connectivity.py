@@ -12,7 +12,6 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
@@ -27,13 +26,12 @@ from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids, preloaded_pack_catalog
+from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.state import derive_operational_state, maintenance_sql
 from app.hosts.models import Host
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.sessions.live_session_predicate import device_has_live_session, live_session_predicate
-from app.sessions.models import Session
-from app.sessions.service import device_has_running_session
+from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
     import uuid
@@ -55,9 +53,11 @@ pack_platform_resolution_cache = pack_platform_resolver.pack_platform_resolution
 
 
 def _validated_remediation_action(health_result: dict[str, Any], device: Device) -> str | None:
-    """The adapter-recommended action to auto-dispatch, or None. B6: an action
-    that is not repeat-safe is refused (a crash-after-dispatch retry could
-    double-execute it) — a loud rejection, never a silent unsafe dispatch."""
+    """The adapter-recommended repeat-safe action to enqueue, or ``None``.
+
+    B6: an action that is not repeat-safe is refused because a durable worker
+    retry after a crash could double-execute it.
+    """
     action = health_result.get("recommended_action")
     if not isinstance(action, str) or not action:
         return None
@@ -236,19 +236,6 @@ async def _get_device_health(
         return None
 
 
-async def _host_has_live_sessions(db: AsyncSession, device: Device) -> bool:
-    """True when any device on this host has a live/pending session row — probe
-    rows included (WS-16.1) — the adapter's disruptive cure rung (adb bounce)
-    must not run then, it would sever every transport on the host."""
-    row = await db.execute(
-        select(Session.id)
-        .join(Device, Session.device_id == Device.id)
-        .where(Device.host_id == device.host_id, live_session_predicate())
-        .limit(1)
-    )
-    return row.first() is not None
-
-
 async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
     """True when the device's platform manifest declares a ``state`` lifecycle
     action. DB-only — runs in the sequential pre-pass so the concurrent probe
@@ -398,11 +385,6 @@ class ConnectivityService:
         Must run exactly once per device per cycle — the hysteresis counter and
         metrics side effects must not be applied twice.
 
-        NOTE: the post-repair re-probe in ``_maybe_dispatch_repair`` deliberately
-        does NOT go through this method — it needs positive evidence (missing
-        ``healthy`` defaults False, see BUG-2) and must not double-apply the
-        hysteresis side effects. If you change check filtering or aggregation
-        semantics here, review that path too.
         """
         raw_checks = health_result.get("checks") or []
         raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
@@ -492,113 +474,6 @@ class ConnectivityService:
         await link_repair.reset_repair_attempts(db, device.identity_value)
         await self._maybe_auto_recover(db, device)
 
-    async def _maybe_dispatch_repair(
-        self,
-        db: AsyncSession,
-        device: Device,
-        health_result: dict[str, Any],
-        *,
-        claimed_ports: dict[str, int] | None = None,
-    ) -> bool:
-        """If the probe recommends a manifest-declared action and the pack is not
-        draining, dispatch it (bounded). Returns True if a re-probe then showed the
-        device healthy (caller should take the healthy path).
-
-        Driver-agnostic: the adapter decided whether and which action remediates;
-        this only validates the action exists, bounds retries, and dispatches.
-        """
-        action = _validated_remediation_action(health_result, device)
-        if action is None:
-            return False
-        resolved = await _resolve_platform_or_none(db, device)
-        if resolved is None:
-            return False
-        if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
-            return False
-        # No separate draining check: resolve_pack_platform above only resolves
-        # enabled packs, so a draining/disabled pack already returned False via
-        # the LookupError path (pinned by test_repair_not_dispatched_when_pack_draining).
-
-        attempt = await link_repair.next_repair_attempt(db, device.identity_value)
-        if attempt is None:
-            await record_event(
-                db, device.id, DeviceEventType.repair_failed, {"action": action, "reason": "attempt budget exhausted"}
-            )
-            metrics.record_device_repair_attempt(action=action, outcome="budget_exhausted")
-            return False
-
-        # Fresh facts at dispatch time (the probe-phase snapshot is stale by the
-        # agent round-trips): a session/probe that appeared since the probe makes
-        # the adapter refuse port cures; host-wide liveness gates its bounce rung.
-        fresh_live = await device_has_running_session(db, device.id)
-        host_live = await _host_has_live_sessions(db, device)
-        extra_args: dict[str, Any] = {"has_live_session": fresh_live, "host_has_live_sessions": host_live}
-        if claimed_ports:
-            extra_args["claimed_ports"] = claimed_ports
-
-        try:
-            result = await link_repair.dispatch_recommended_action(
-                device,
-                action,
-                circuit_breaker=self._circuit_breaker,
-                pool=self._pool,
-                extra_args=extra_args,
-            )
-        except AgentCallError:
-            result = {"success": False}
-        success = bool(result.get("success"))
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.repair_attempted,
-            {
-                "action": action,
-                "attempt": attempt,
-                "success": success,
-                "detail": str(result.get("detail") or "")[:200],
-            },
-        )
-        metrics.record_device_repair_attempt(action=action, outcome="success" if success else "failed")
-        if not success:
-            return False
-
-        return await self._reprobe_after_repair(db, device, claimed_ports=claimed_ports, has_live_session=fresh_live)
-
-    async def _reprobe_after_repair(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        claimed_ports: dict[str, int] | None,
-        has_live_session: bool,
-    ) -> bool:
-        """Re-probe a device after a successful repair dispatch and report whether
-        it now shows healthy (caller should then take the healthy path)."""
-        reprobe = await _get_device_health(
-            device,
-            ip_ping_timeout_sec=None,
-            ip_ping_count=None,
-            claimed_ports=claimed_ports,
-            has_live_session=has_live_session,
-            settings=self._settings,
-            circuit_breaker=self._circuit_breaker,
-            pool=self._pool,
-        )
-        if reprobe is None:
-            return False
-        # Evaluate the re-probe WITHOUT _evaluate_health_result so the once-per-cycle
-        # ip_ping hysteresis counter/metrics are not applied twice; the repair verdict
-        # never hinges on ip_ping.
-        checks = reprobe.get("checks") or []
-        _, others = _split_ip_ping([c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else [])
-        # Default False (BUG-2): post-repair recovery requires POSITIVE evidence. A
-        # malformed/empty re-probe (missing ``healthy``, no non-ip_ping checks) must
-        # not reset the repair budget and declare a dead-link device recovered.
-        healthy = bool(reprobe.get("healthy", False)) if not others else all(bool(c.get("ok")) for c in others)
-        if healthy:
-            await link_repair.reset_repair_attempts(db, device.identity_value)
-        return healthy
-
     async def _escalate_health_failure(
         self,
         db: AsyncSession,
@@ -606,6 +481,7 @@ class ConnectivityService:
         *,
         summary: str,
         observed_at: datetime | None = None,
+        remediation_result: dict[str, Any] | None = None,
     ) -> bool:
         """Shared unhealthy escalation: record the failed check, then hand the
         device to lifecycle policy unless it is already offline (re-escalating
@@ -617,9 +493,34 @@ class ConnectivityService:
         )
         if not applied:
             return False
+        if remediation_result is not None:
+            # Keep the episode-bearing fact, connectivity marker, and durable
+            # enqueue atomic even when lifecycle policy commits internally.
+            await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+            await self._maybe_enqueue_remediation(db, device, remediation_result)
         if not was_offline:
             await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
         return True
+
+    async def _maybe_enqueue_remediation(
+        self,
+        db: AsyncSession,
+        device: Device,
+        health_result: dict[str, Any],
+    ) -> None:
+        action = _validated_remediation_action(health_result, device)
+        if action is None or device.failure_episode_id is None:
+            return
+        resolved = await _resolve_platform_or_none(db, device)
+        if resolved is None or not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
+            return
+        await enqueue_device_health_remediation(
+            db,
+            device_id=device.id,
+            failure_episode_id=device.failure_episode_id,
+            action_id=action,
+            commit=False,
+        )
 
     async def _note_unanswered_probe(
         self,
@@ -776,15 +677,14 @@ class ConnectivityService:
 
     async def _collect_prepass_devices(
         self, db: AsyncSession, hosts: Sequence[Host]
-    ) -> tuple[list[Device], set[uuid.UUID], dict[uuid.UUID, dict[str, int]]]:
+    ) -> tuple[list[Device], set[uuid.UUID]]:
         # Phase 1 — sequential DB pre-pass over ALL online hosts (on the shared
         # session, before the lifecycle-state dial). Collects the devices to
-        # fold plus the driver-agnostic facts the adapters need. Device.host and
-        # Device.appium_node are eager-loaded so the gather below never lazy-loads
-        # on the shared session (an AsyncSession is not safe for concurrent use).
+        # fold. Device.host and Device.appium_node are eager-loaded so the gather
+        # below never lazy-loads on the shared session (an AsyncSession is not safe
+        # for concurrent use).
         all_devices: list[Device] = []
         lifecycle_capable: set[uuid.UUID] = set()
-        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]] = {}
         for host in hosts:
             device_stmt = (
                 select(Device)
@@ -804,20 +704,12 @@ class ConnectivityService:
             for device in devices:
                 if await _lifecycle_state_capable(db, device):
                     lifecycle_capable.add(device.id)
-            # Facts the adapters need for claimed-port checks. Driver-agnostic.
-            node_device_pairs = [(d.appium_node.id, d.id) for d in devices if d.appium_node is not None]
-            claims_by_node = await appium_node_resource_service.get_port_claims_for_nodes(
-                db, node_ids=[node_id for node_id, _ in node_device_pairs]
-            )
-            for node_id, device_id in node_device_pairs:
-                if node_id in claims_by_node:
-                    claimed_ports_by_id[device_id] = claims_by_node[node_id]
             all_devices.extend(devices)
         # Release any pre-pass read transaction before the slow lifecycle dial: no
         # row lock may be held across an agent HTTP round-trip (measured holds
         # reached seconds and starved the allocator's SKIP LOCKED matching).
         await db.commit()
-        return all_devices, lifecycle_capable, claimed_ports_by_id
+        return all_devices, lifecycle_capable
 
     async def _resolve_device_verdict(
         self,
@@ -826,14 +718,13 @@ class ConnectivityService:
         host: Host,
         *,
         health_by_device_id: dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]],
-        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
         debounce_windows: _DebounceWindows,
         observed_at: datetime,
     ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None] | None:
-        """Derive this device's health verdict, applying emulator-state, unanswered-probe
-        and repair side effects. Returns ``None`` when the unanswered-probe note flipped
-        (the caller skips the device this cycle); otherwise ``(healthy, ip_ping_entry,
-        health_result)``.
+        """Derive this device's health verdict, applying emulator-state and
+        unanswered-probe side effects. Returns ``None`` when the unanswered-probe
+        note flipped (the caller skips the device this cycle); otherwise
+        ``(healthy, ip_ping_entry, health_result)``.
         """
         health_result, lifecycle_state = health_by_device_id[device.id]
         if lifecycle_state is not None:
@@ -865,13 +756,6 @@ class ConnectivityService:
                 observed_at=observed_at,
             )
 
-        if not healthy and health_result is not None:
-            repaired = await self._maybe_dispatch_repair(
-                db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
-            )
-            if repaired:
-                healthy = True
-                ip_ping_entry = None
         return healthy, ip_ping_entry, health_result
 
     async def _handle_unhealthy_device(
@@ -910,14 +794,13 @@ class ConnectivityService:
                 # recovery-only behavior of the old presence gate.
                 await self._maybe_auto_recover(db, device)
                 return
-            applied = await self._escalate_health_failure(
+            await self._escalate_health_failure(
                 db,
                 device,
                 summary=_summarize_unhealthy_result(health_result),
                 observed_at=observed_at,
+                remediation_result=health_result,
             )
-            if applied:
-                await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
         else:
             # Device disconnected.
             # Maintenance devices are placed there by operators; transient
@@ -955,9 +838,8 @@ class ConnectivityService:
 
     async def fold_host_device_health(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         """Fold one host's pushed device_health section through the dial-era
-        verdict engine. Still dials (WS-2.1 boundary — actions/enumerations,
-        not observations): the pack lifecycle-state poll, repair dispatch and
-        its re-probe, and the presence sweep on probe-miss.
+        verdict engine. Still dials at the WS-2.1 boundary for the pack
+        lifecycle-state poll and the presence sweep on probe-miss.
         """
         host = await db.get(Host, host_id)
         if host is None:
@@ -971,10 +853,10 @@ class ConnectivityService:
 
         # Memoize pack-platform resolution for the whole fold: a host's devices
         # share a (pack_id, platform_id, device_type) tuple, so the per-device
-        # capability check and repair path would otherwise re-run the same 3-query
+        # capability and remediation checks would otherwise re-run the same 3-query
         # manifest resolve + JSONB decode once per device.
         with pack_platform_resolution_cache():
-            all_devices, lifecycle_capable, claimed_ports_by_id = await self._collect_prepass_devices(db, [host])
+            all_devices, lifecycle_capable = await self._collect_prepass_devices(db, [host])
             raw = section.get("devices")
             observations: dict[str, Any] = raw if isinstance(raw, dict) else {}
 
@@ -996,7 +878,7 @@ class ConnectivityService:
             fold_packs = await load_packs_by_ids(db, {d.pack_id for d in all_devices if d.pack_id})
 
             # Snapshot which control-plane state keys actually exist for these devices
-            # (one query) so the per-device probe/connectivity/repair bookkeeping skips
+            # (one query) so the per-device connectivity/remediation bookkeeping skips
             # blind deletes and reads of absent keys — the common case for a healthy
             # fleet. Safe because connectivity is the sole leader-owned writer of these
             # namespaces, so the snapshot cannot go stale under us within the fold.
@@ -1029,7 +911,6 @@ class ConnectivityService:
                         device,
                         host_ref,
                         health_by_device_id=health_by_device_id,
-                        claimed_ports_by_id=claimed_ports_by_id,
                         debounce_windows=debounce_windows,
                         observed_at=observed_at,
                     )

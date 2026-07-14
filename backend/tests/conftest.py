@@ -586,6 +586,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 stereotype_provider=device_match_surface,
                 settings=settings_service,
             ),
+            health=DeviceHealthService(publisher=test_event_bus),
         )
 
     def override_get_pack_services() -> PackServices:

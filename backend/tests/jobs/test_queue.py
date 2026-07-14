@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
+from app.jobs import JOB_KIND_DEVICE_HEALTH_REMEDIATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
@@ -42,6 +43,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=AsyncMock(),
+        remediation_runner=AsyncMock(),
         verification_runner=VerificationRunnerService(
             session_factory=sf,
             publisher=AsyncMock(),
@@ -187,12 +189,44 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
         circuit_breaker=AsyncMock(),
         verification_runner=mock_verification_runner,
         recovery_runner=mock_recovery_runner,
+        remediation_runner=AsyncMock(),
     )
     assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
     mock_verification_runner.run_persisted_verification_job.assert_awaited_once()
 
     assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_RECOVERY) is True
     mock_recovery_runner.run_device_recovery_job.assert_awaited_once()
+
+
+async def test_run_pending_jobs_once_dispatches_remediation_kind(db_session: AsyncSession) -> None:
+    remediation = Job(
+        id=uuid4(),
+        kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION,
+        status=job_queue.JOB_STATUS_PENDING,
+        payload={"device_id": "1", "failure_episode_id": "2", "action_id": "reconnect"},
+        snapshot={},
+        scheduled_at=datetime.now(UTC),
+    )
+    db_session.add(remediation)
+    await db_session.commit()
+
+    remediation_runner = AsyncMock()
+    remediation_runner.run_device_health_remediation_job = AsyncMock()
+    service = DurableJobService(
+        session_factory=_session_factory(db_session),
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
+        verification_runner=AsyncMock(),
+        recovery_runner=AsyncMock(),
+        remediation_runner=remediation_runner,
+    )
+
+    assert await service.run_pending_once(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION) is True
+    remediation_runner.run_device_health_remediation_job.assert_awaited_once_with(
+        str(remediation.id),
+        remediation.payload,
+    )
 
 
 async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: AsyncSession) -> None:
@@ -228,7 +262,8 @@ async def test_durable_job_worker_loop_wait_and_error_semantics() -> None:
     loop = job_queue.DurableJobWorkerLoop(service=mock_service, session_factory=_fake_session_factory())
 
     await loop._on_start()
-    assert mock_service.reset_stale_running_jobs.await_count == 2
+    assert mock_service.reset_stale_running_jobs.await_count == 3
+    mock_service.reset_stale_running_jobs.assert_any_await(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION)
 
     # worked=True → no sleep between cycles
     await loop._run_cycle(AsyncMock())

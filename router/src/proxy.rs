@@ -318,7 +318,12 @@ impl GridRouter {
         let created = loop {
             match self
                 .backend
-                .create_session(&raw, ticket.as_deref(), run_id.as_deref())
+                .create_session(
+                    &raw,
+                    ticket.as_deref(),
+                    run_id.as_deref(),
+                    deadline.saturating_duration_since(Instant::now()),
+                )
                 .await
             {
                 Ok(CreateOutcome::Created {

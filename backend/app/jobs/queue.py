@@ -13,7 +13,11 @@ from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
 from app.core.timeutil import now_utc
-from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
+from app.jobs.kinds import (
+    JOB_KIND_DEVICE_HEALTH_REMEDIATION,
+    JOB_KIND_DEVICE_RECOVERY,
+    JOB_KIND_DEVICE_VERIFICATION,
+)
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
 from app.verification.services.job_state import reset_snapshot_for_retry
@@ -25,7 +29,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
-    from app.jobs.protocols import RecoveryJobRunner, VerificationJobRunner
+    from app.jobs.protocols import RecoveryJobRunner, RemediationJobRunner, VerificationJobRunner
 
 logger = get_logger(__name__)
 JOB_POLL_INTERVAL_SEC = 1
@@ -82,6 +86,7 @@ class DurableJobService:
         circuit_breaker: CircuitBreakerProtocol,
         verification_runner: VerificationJobRunner,
         recovery_runner: RecoveryJobRunner,
+        remediation_runner: RemediationJobRunner,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -89,6 +94,7 @@ class DurableJobService:
         self._circuit_breaker = circuit_breaker
         self._verification_runner = verification_runner
         self._recovery_runner = recovery_runner
+        self._remediation_runner = remediation_runner
 
     async def reset_stale_running_jobs(
         self,
@@ -165,6 +171,10 @@ class DurableJobService:
             await self._recovery_runner.run_device_recovery_job(str(row.id), row.payload)
             return True
 
+        if row.kind == JOB_KIND_DEVICE_HEALTH_REMEDIATION:
+            await self._remediation_runner.run_device_health_remediation_job(str(row.id), row.payload)
+            return True
+
         async with self._session_factory() as db:
             job = await db.get(Job, row.id)
             if job is None:
@@ -207,6 +217,7 @@ class DurableJobWorkerLoop(BackgroundLoop):
         async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
             await self._service.reset_stale_running_jobs()
             await self._service.reset_stale_running_jobs(kind=JOB_KIND_DEVICE_RECOVERY)
+            await self._service.reset_stale_running_jobs(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION)
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         del db  # DurableJobService opens its own session per claim/run

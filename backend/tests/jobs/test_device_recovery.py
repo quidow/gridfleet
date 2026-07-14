@@ -94,6 +94,7 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
         publisher=AsyncMock(),
         settings=settings_service,
         circuit_breaker=AsyncMock(),
+        remediation_runner=AsyncMock(),
         verification_runner=VerificationRunnerService(
             session_factory=_sf,
             publisher=AsyncMock(),
@@ -224,6 +225,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=AsyncMock(),
+            remediation_runner=AsyncMock(),
             verification_runner=VerificationRunnerService(
                 session_factory=_sf,
                 publisher=AsyncMock(),
@@ -317,6 +319,7 @@ async def test_device_recovery_job_completed_when_device_missing(
         publisher=AsyncMock(),
         settings=settings_service,
         circuit_breaker=AsyncMock(),
+        remediation_runner=AsyncMock(),
         verification_runner=VerificationRunnerService(
             session_factory=_sf,
             publisher=AsyncMock(),

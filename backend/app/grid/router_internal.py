@@ -18,9 +18,9 @@ import asyncio
 import json
 import time
 import uuid
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
@@ -51,12 +51,41 @@ from app.grid.schemas_internal import (
     RouteEntry,
     RoutesResponse,
 )
+from app.grid.session_create import CREATE_TIMEOUT_CAP_SEC, CREATE_TIMEOUT_MARGIN_SEC
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
+
+MAX_TARGET_ATTEMPTS = 3
+PER_ATTEMPT_MIN_BUDGET_SEC = 20.0
+DEFAULT_CREATE_BUDGET_SEC = float(CREATE_TIMEOUT_CAP_SEC + int(LONG_POLL_SEC))
+
+
+def _response_for_outcome(
+    outcome: session_create.CreateOutcome,
+    result: AllocationResult,
+) -> CreateSessionResponse:
+    if outcome.kind == "created":
+        return CreateSessionResponse(
+            status="created",
+            session_id=outcome.session_id or None,
+            target=result.target,
+            device_id=result.device_id,
+            appium_status=outcome.appium_status or None,
+            appium_body=outcome.appium_body,
+            message=outcome.message or None,
+        )
+    if outcome.kind == "w3c_rejected":
+        return CreateSessionResponse(
+            status="create_failed",
+            appium_status=outcome.appium_status or None,
+            appium_body=outcome.appium_body,
+            message=outcome.message or None,
+        )
+    return CreateSessionResponse(status="create_error", message=outcome.message or None)
 
 
 async def _get_or_create_ticket(
@@ -74,13 +103,24 @@ async def _get_or_create_ticket(
 
 @router.post("/create-session", response_model=CreateSessionResponse)
 async def create_session(
-    payload: CreateSessionRequest, services: GridServicesDep
+    payload: CreateSessionRequest,
+    services: GridServicesDep,
+    create_budget_ms: Annotated[
+        int | None,
+        Header(alias="X-Gridfleet-Create-Budget-Ms"),
+    ] = None,
 ) -> CreateSessionResponse | JSONResponse:
     allocation = services.allocation
     raw_body = json.dumps(payload.body, separators=(",", ":")).encode("utf-8")
     started = time.monotonic()
-    deadline = started + LONG_POLL_SEC
+    create_deadline = started + (
+        create_budget_ms / 1000.0 if create_budget_ms is not None else DEFAULT_CREATE_BUDGET_SEC
+    )
+    poll_deadline = min(started + LONG_POLL_SEC, create_deadline)
     ticket_id = payload.ticket
+    excluded: set[uuid.UUID] = set()
+    attempts = 0
+    last_target_failure_message: str | None = None
 
     if ticket_id is not None:
         async with services.session_factory() as db:
@@ -88,19 +128,22 @@ async def create_session(
             await db.commit()
 
     while True:
+        if attempts > 0 and create_deadline - time.monotonic() < PER_ATTEMPT_MIN_BUDGET_SEC:
+            return CreateSessionResponse(status="create_error", message=last_target_failure_message)
         result: AllocationResult | None
         async with services.session_factory() as db:
             ticket = await _get_or_create_ticket(db, payload, ticket_id)
             ticket_id = ticket.id
-            if ticket.status == GridQueueStatus.cancelled:
+            if ticket.status in {GridQueueStatus.cancelled, GridQueueStatus.expired}:
                 await db.commit()
-                return JSONResponse(status_code=400, content={"status": "invalid", "message": "invalid capabilities"})
-            if ticket.status == GridQueueStatus.expired:
-                await db.commit()
-                return JSONResponse(status_code=410, content={"status": "expired", "message": "queue timeout"})
+                if ticket.status == GridQueueStatus.cancelled:
+                    status_code, content = 400, {"status": "invalid", "message": "invalid capabilities"}
+                else:
+                    status_code, content = 410, {"status": "expired", "message": "queue timeout"}
+                return JSONResponse(status_code=status_code, content=content)
             attempt_started = time.monotonic()
             try:
-                result = await allocation.try_allocate(db, ticket=ticket)
+                result = await allocation.try_allocate(db, ticket=ticket, exclude_device_ids=excluded)
             except (CapabilityMergeError, RunNotActiveError) as e:
                 # try_allocate already cancelled the ticket; persist that and put
                 # the descriptive message (merge error or inactive run) in the 400
@@ -114,28 +157,38 @@ async def create_session(
         if result is not None:
             GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="allocated").observe(time.monotonic() - started)
             claim_window = int(cast("int", services.settings.get("grid.claim_window_sec")))
+            attempts += 1
+            remaining = create_deadline - time.monotonic()
             outcome = await session_create.create_and_promote(
                 services.session_factory,
                 allocation,
                 allocation=result,
                 raw_body=raw_body,
                 claim_window_sec=claim_window,
+                max_create_timeout_sec=max(
+                    0.0,
+                    remaining - CREATE_TIMEOUT_MARGIN_SEC,
+                ),
             )
-            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome=outcome.kind).inc()
-            return CreateSessionResponse(
-                status=outcome.kind,
-                session_id=outcome.session_id or None,
-                target=result.target if outcome.kind == "created" else None,
-                device_id=result.device_id if outcome.kind == "created" else None,
-                appium_status=outcome.appium_status or None,
-                appium_body=outcome.appium_body,
-                message=outcome.message or None,
-            )
-        if time.monotonic() >= deadline:
+            if outcome.kind in {"target_unreachable", "target_protocol_error"}:
+                last_target_failure_message = outcome.message or None
+                await session_create.mark_target_node_down(
+                    services.session_factory,
+                    services.health,
+                    device_id=result.device_id,
+                )
+                excluded.add(result.device_id)
+                remaining = create_deadline - time.monotonic()
+                if attempts >= MAX_TARGET_ATTEMPTS or remaining < PER_ATTEMPT_MIN_BUDGET_SEC:
+                    return CreateSessionResponse(status="create_error", message=outcome.message or None)
+                continue
+            return _response_for_outcome(outcome, result)
+        now = time.monotonic()
+        if now >= poll_deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
             GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="queued").observe(time.monotonic() - started)
             return CreateSessionResponse(status="queued", ticket=ticket_id)
-        await asyncio.sleep(RETRY_INTERVAL_SEC)
+        await asyncio.sleep(min(RETRY_INTERVAL_SEC, poll_deadline - now))
 
 
 @router.delete("/tickets/{ticket_id}", status_code=204)

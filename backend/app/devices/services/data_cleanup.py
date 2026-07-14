@@ -12,10 +12,11 @@ from sqlalchemy import delete, or_, select
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
-from app.devices.models import DeviceEvent, DeviceRemediationLogEntry, DeviceTestDataAuditLog
+from app.devices.models import Device, DeviceEvent, DeviceRemediationLogEntry, DeviceTestDataAuditLog
 from app.events.models import SystemEvent
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import HostResourceSample
+from app.jobs.kinds import JOB_KIND_DEVICE_HEALTH_REMEDIATION
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.runs.models import TERMINAL_STATES, TestRun
@@ -239,12 +240,24 @@ class DataCleanupService:
         jobs_days: int = self._settings.get("retention.jobs_days")
         if jobs_days > 0:
             cutoff = now - timedelta(days=jobs_days)
+            open_episode = (
+                select(Device.id)
+                .where(
+                    Device.id == Job.remediation_device_id,
+                    Device.failure_episode_id.is_not(None),
+                    Device.failure_episode_id == Job.failure_episode_id,
+                )
+                .exists()
+            )
             counts.jobs_deleted = await _delete_in_batches(
                 db,
                 model=Job,
                 timestamp_column=Job.created_at,
                 cutoff=cutoff,
-                extra_predicates=(Job.status.in_((JOB_STATUS_COMPLETED, JOB_STATUS_FAILED)),),
+                extra_predicates=(
+                    Job.status.in_((JOB_STATUS_COMPLETED, JOB_STATUS_FAILED)),
+                    or_(Job.kind != JOB_KIND_DEVICE_HEALTH_REMEDIATION, ~open_episode),
+                ),
             )
 
     async def cleanup_old_data(self, db: AsyncSession) -> None:

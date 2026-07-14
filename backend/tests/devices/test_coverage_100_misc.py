@@ -627,6 +627,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        remediation_runner=AsyncMock(),
         verification_runner=VerificationRunnerService(
             session_factory=QueueCtx,
             publisher=AsyncMock(),

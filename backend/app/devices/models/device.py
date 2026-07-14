@@ -184,6 +184,7 @@ class Device(Base):
     device_checks_observation_revision: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
+    failure_episode_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     session_viability_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     session_viability_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_viability_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
