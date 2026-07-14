@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health
-from app.appium_nodes.services.node_health import NodeHealthService
+from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
 from app.core.timeutil import now_utc
 from app.devices.models import (
     ConnectionType,
@@ -289,7 +289,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
     svc = _service(settings=FakeSettingsReader({"general.node_fail_window_sec": 60}))
     monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))
     await svc._process_node_health(
-        db, AppiumNode(device_id=device.id, port=4723), device, result=ProbeResult(status="ack")
+        db, AppiumNode(device_id=device.id, port=4723), device, observation=_NodeObservation(ProbeResult(status="ack"))
     )
 
     node = AppiumNode(device_id=device.id, port=4723, pid=1, active_connection_target="old")
@@ -298,12 +298,9 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         db,
         node,
         device,
-        result=ProbeResult(status="ack"),
-        observed_port=4724,
-        observed_pid=1,
-        observed_active_connection_target="old",
+        observation=_NodeObservation(ProbeResult(status="ack"), port=4724, pid=1, active_connection_target="old"),
     )
     node.pid = None
-    await svc._process_node_health(db, node, device, result=ProbeResult(status="ack"))
+    await svc._process_node_health(db, node, device, observation=_NodeObservation(ProbeResult(status="ack")))
     node.pid = 1
-    await svc._process_node_health(db, node, device, result=ProbeResult(status="indeterminate"))
+    await svc._process_node_health(db, node, device, observation=_NodeObservation(ProbeResult(status="indeterminate")))

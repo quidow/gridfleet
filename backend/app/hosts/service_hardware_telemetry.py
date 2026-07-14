@@ -149,13 +149,29 @@ async def _resolve_effective_hardware_health_status(
     state = await control_plane_state_store.get_value(db, HARDWARE_TELEMETRY_STATE_NAMESPACE, str(device.id))
     current_count = 0
     current_candidate = None
+    last_counted_observed_at = None
     if isinstance(state, dict):
         current_count = _coerce_int(state.get("consecutive_samples")) or 0
         candidate_value = state.get("candidate_status")
         if isinstance(candidate_value, str):
             current_candidate = candidate_value
+        observed_value = state.get("last_observed_at")
+        if isinstance(observed_value, str):
+            last_counted_observed_at = observed_value
 
-    next_count = current_count + 1 if current_candidate == candidate_status.value else 1
+    # Count distinct observations, not applications: a 60s-gathered sample is
+    # re-folded on every 10s push, so advancing per application crosses the
+    # hysteresis threshold in ~2 re-pushes. ``hardware_telemetry_reported_at``
+    # is the sample's observation stamp (set by apply_telemetry_sample above);
+    # a re-push carrying the same stamp holds the streak instead of advancing it.
+    reported_at = device.hardware_telemetry_reported_at
+    observed_at_key = reported_at.isoformat() if reported_at is not None else None
+    if current_candidate != candidate_status.value:
+        next_count = 1
+    elif observed_at_key is not None and observed_at_key == last_counted_observed_at:
+        next_count = current_count
+    else:
+        next_count = current_count + 1
     if next_count >= required_samples:
         await control_plane_state_store.delete_value(db, HARDWARE_TELEMETRY_STATE_NAMESPACE, str(device.id))
         return candidate_status
@@ -167,6 +183,7 @@ async def _resolve_effective_hardware_health_status(
         {
             "candidate_status": candidate_status.value,
             "consecutive_samples": next_count,
+            "last_observed_at": observed_at_key,
         },
     )
     return previous_status

@@ -144,10 +144,13 @@ async def test_status_push_processes_observations_after_liveness_commit(
 ) -> None:
     online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-observations")
     process = AsyncMock()
-    monkeypatch.setattr(HostStatusPushService, "process_observations", process)
+    monkeypatch.setattr(HostStatusPushService, "process_observation_folds", process)
+    device_health = {"reported_at": "2026-07-11T00:00:00+00:00", "devices": {}}
     body = {
         "host_id": str(online_host.id),
-        "device_health": {"reported_at": "2026-07-11T00:00:00+00:00", "devices": {}},
+        # observation_revision is backend-owned and must never be accepted from
+        # an agent, even while this section remains outside guarded dedup.
+        "device_health": {**device_health, "observation_revision": 999999},
     }
 
     resp = await client.post("/agent/hosts/status", json=body)
@@ -155,8 +158,16 @@ async def test_status_push_processes_observations_after_liveness_commit(
     assert resp.status_code == 204
     process.assert_awaited_once()
     assert process.await_args.kwargs["host_id"] == online_host.id
-    assert process.await_args.kwargs["payload"]["device_health"] == body["device_health"]
+    folded_device_health = process.await_args.kwargs["payload"]["device_health"]
+    # device_health still performs synchronous dials/actions in this partial
+    # phase. Keep it outside ingest dedup until its facts-only async move, so a
+    # contained inline-fold failure retries on an exact status redelivery.
+    assert "observation_revision" not in folded_device_health
+    assert folded_device_health == device_health
+    await client.post("/agent/hosts/status", json=body)
+    assert process.await_count == 2
     await db_session.refresh(online_host)
+    assert "device_health" not in online_host.observation_cursors
     assert online_host.last_heartbeat is not None
 
 
@@ -168,7 +179,7 @@ async def test_status_push_returns_204_when_observation_processing_fails(
     async def boom(self: HostStatusPushService, **kwargs: object) -> None:
         raise RuntimeError("observation boom")
 
-    monkeypatch.setattr(HostStatusPushService, "process_observations", boom)
+    monkeypatch.setattr(HostStatusPushService, "process_observation_folds", boom)
     resp = await client.post("/agent/hosts/status", json={"host_id": str(online_host.id)})
 
     assert resp.status_code == 204

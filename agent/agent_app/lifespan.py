@@ -267,6 +267,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         capabilities_cache=capabilities_cache,
         version_guidance=version_guidance,
         host_identity=host_identity,
+        boot_id=str(boot_id),
     )
 
     reg_task: asyncio.Task[None]
@@ -300,6 +301,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             pack_status=lambda: app.state.pack_state_loop.latest_status() if app.state.pack_state_loop else None,
             probe_results=lambda: probe_loop.latest_results() if probe_loop else None,
             push_interval=agent_settings.core.status_push_interval_sec,
+            boot_id=str(boot_id),
         )
         app.state.status_push_loop = status_loop
         status_task = asyncio.create_task(_start_status_loop_when_ready(host_identity, status_loop))

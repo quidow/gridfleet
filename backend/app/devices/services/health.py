@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import locking as appium_node_locking
+from app.core.observation_revision import next_observation_revision
 from app.core.sentinels import UNSET, UnsetType
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -19,6 +20,8 @@ from app.devices.services.intent import IntentService
 from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
@@ -76,16 +79,34 @@ class DeviceHealthService:
     def __init__(self, *, publisher: EventPublisher) -> None:
         self._publisher = publisher
 
-    async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None:
+    async def update_device_checks(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None = None,
+        observed_at: datetime | None = None,
+    ) -> bool:
         locked = await _lock(db, device)
         if locked is None:
-            return
+            return False
+        # Two-axis guard: a synchronous higher-authority writer passes no revision
+        # and draws a fresh one at write time, so it always out-ranks a stale fold
+        # observation whose (lower) revision was drawn earlier at ingest. A moved
+        # fold passes its ingest-time revision and loses the strictly-greater
+        # comparison when a fresher write landed first.
+        rev = revision if revision is not None else await next_observation_revision(db)
+        if rev <= locked.device_checks_observation_revision:
+            return False
         ladder = await remediation_log.load_ladder(db, locked.id)
         policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
         previous = build_public_summary(locked, policy_view=policy_view)
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
-        locked.device_checks_checked_at = now_utc()
+        locked.device_checks_checked_at = observed_at or now_utc()
+        locked.device_checks_observation_revision = rev
         if not healthy:
             await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
         # On success, defer to apply_node_state_transition (which reconciles on
@@ -93,6 +114,7 @@ class DeviceHealthService:
         # intent_reconcile_interval): a healthy device_checks signal alone does
         # not restore an offline device — the node must also be observed running.
         _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
+        return True
 
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
@@ -119,6 +141,8 @@ class DeviceHealthService:
         health_running: bool | None | UnsetType = UNSET,
         health_state: str | None | UnsetType = UNSET,
         mark_offline: bool = True,
+        revision: int | None = None,
+        observed_at: datetime | None = None,
     ) -> None:
         locked = await _lock(db, device)
         if locked is None:
@@ -127,22 +151,32 @@ class DeviceHealthService:
         if locked_node is None:
             return
 
+        # UNSET = caller is not making a health statement: leave the columns
+        # (and the checked-at stamp) untouched. Explicit None = clear. Only a
+        # health-providing call is subject to the two-axis revision guard; a
+        # reconcile-only call (both UNSET, e.g. mark_node_started) neither draws
+        # nor advances a revision.
+        prev_running = locked_node.health_running
+        prev_state = locked_node.health_state
+        health_provided = not isinstance(health_running, UnsetType) or not isinstance(health_state, UnsetType)
+        if health_provided:
+            rev = revision if revision is not None else await next_observation_revision(db)
+            if rev <= locked_node.health_observation_revision:
+                # Stale or already-applied health observation: skip the regressing
+                # write (and its reconcile/event) entirely.
+                return
+            locked_node.last_health_checked_at = observed_at or now_utc()
+            locked_node.health_observation_revision = rev
+
         locked.appium_node = locked_node
         ladder = await remediation_log.load_ladder(db, locked.id)
         policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
         previous = build_public_summary(locked, policy_view=policy_view)
 
-        # UNSET = caller is not making a health statement: leave the columns
-        # (and the checked-at stamp) untouched. Explicit None = clear.
-        prev_running = locked_node.health_running
-        prev_state = locked_node.health_state
-        health_provided = not isinstance(health_running, UnsetType) or not isinstance(health_state, UnsetType)
         if not isinstance(health_running, UnsetType):
             locked_node.health_running = health_running
         if not isinstance(health_state, UnsetType):
             locked_node.health_state = health_state
-        if health_provided:
-            locked_node.last_health_checked_at = now_utc()
 
         # Transition gate: an explicit health observation that does not change the
         # node's health columns is the steady-state node-health churn (node_health
@@ -168,7 +202,16 @@ class DeviceHealthService:
         _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:
+        # Write-on-diff (M2): emulator_state is presentation-only and re-observed
+        # on every push, so take no row lock and issue no write when the value is
+        # unchanged — otherwise the per-push lifecycle fold would reacquire the
+        # device row lock every 10 s, the exact contention this work removes. The
+        # pre-lock read is a fast filter; the post-lock re-check closes the TOCTOU.
+        if device.emulator_state == state:
+            return
         locked = await _lock(db, device)
         if locked is None:
+            return
+        if locked.emulator_state == state:
             return
         locked.emulator_state = state

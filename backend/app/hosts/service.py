@@ -140,6 +140,11 @@ class HostCrudService:
         host.os_type = data.os_type
         if data.agent_port is not None:
             host.agent_port = data.agent_port
+        # Boot fence: a re-registering agent that carries a boot_id supersedes the
+        # previous boot, so an in-flight push from the old boot is fenced. A legacy
+        # agent (no boot_id) leaves the fence untouched (mixed-version safe).
+        if data.boot_id is not None:
+            host.current_boot_id = data.boot_id
         # agent_version / capabilities are push-owned runtime facts; registration
         # never writes them (capabilities is only the 426 gate input above).
         _apply_host_info(host, data.host_info)
@@ -150,7 +155,10 @@ class HostCrudService:
     async def register_host(self, db: AsyncSession, data: HostRegister) -> tuple[Host, bool]:
         """Register or re-register a host. Returns (host, is_new)."""
         validate_orchestration_contract(data.capabilities, host_label=data.hostname)
-        stmt = select(Host).where(Host.hostname == data.hostname)
+        # FOR UPDATE: the boot-fence write below must serialize against a
+        # concurrent status push for the same host (which also locks the row),
+        # so the fence check and its update cannot interleave.
+        stmt = select(Host).where(Host.hostname == data.hostname).with_for_update()
         result = await db.execute(stmt)
         host = result.scalar_one_or_none()
 
@@ -166,6 +174,7 @@ class HostCrudService:
             os_type=data.os_type,
             agent_port=agent_port,
             status=status,
+            current_boot_id=data.boot_id,
         )
         _apply_host_info(host, data.host_info)
         db.add(host)
@@ -178,7 +187,7 @@ class HostCrudService:
             # half-written transient row, refetch the existing host, and
             # degrade to the re-register branch.
             await db.rollback()
-            result = await db.execute(select(Host).where(Host.hostname == data.hostname))
+            result = await db.execute(select(Host).where(Host.hostname == data.hostname).with_for_update())
             existing = result.scalar_one_or_none()
             if existing is None:
                 raise

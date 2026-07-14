@@ -125,7 +125,10 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
 
-    await svc_bus.apply_telemetry_sample(db_session, device, warning_sample)
+    # A second, distinct observation crosses the two-sample threshold. (The
+    # counter counts distinct observations, so this second sample carries a
+    # later observed_at than the first.)
+    await svc_bus.apply_telemetry_sample(db_session, device, {**warning_sample, "reported_at": "2026-04-16T10:06:00Z"})
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 
@@ -134,6 +137,67 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
     assert total == 1
     assert events[0]["type"] == "device.hardware_health_changed"
     assert events[0]["data"]["new_status"] == "warning"
+
+
+async def test_repushed_identical_sample_does_not_advance_consecutive_streak(
+    db_session: AsyncSession,
+) -> None:
+    """A 60s-gathered sample re-folded across many 10s pushes carries the same
+    ``observed_at``; the consecutive-sample counter must count distinct
+    observations, not applications. Re-pushing the identical sample must not
+    cross the hysteresis threshold on its own."""
+    host = await seed_host_named(db_session, "pixel-host-repush")
+    device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="pixel-repush",
+        connection_target="pixel-repush",
+        name="Pixel Repush",
+    )
+    _hw_settings = FakeSettingsReader(
+        {
+            "general.hardware_telemetry_consecutive_samples": 2,
+            "general.hardware_temperature_warning_c": 38,
+            "general.hardware_temperature_critical_c": 42,
+        }
+    )
+    svc = HardwareTelemetryService(publisher=Mock(), settings=_hw_settings)
+
+    await svc.apply_telemetry_sample(
+        db_session,
+        device,
+        {
+            "battery_level_percent": 88,
+            "battery_temperature_c": 34.0,
+            "charging_state": "charging",
+            "support_status": "supported",
+            "reported_at": "2026-04-16T10:00:00Z",
+        },
+    )
+    await db_session.commit()
+    assert device.hardware_health_status == HardwareHealthStatus.healthy
+
+    warning_sample = {
+        "battery_level_percent": 87,
+        "battery_temperature_c": 39.2,
+        "charging_state": "charging",
+        "support_status": "supported",
+        "reported_at": "2026-04-16T10:05:00Z",
+    }
+    # Same sample folded three times (three 10s pushes of one 60s gather).
+    for _ in range(3):
+        await svc.apply_telemetry_sample(db_session, device, warning_sample)
+        await db_session.commit()
+        assert device.hardware_health_status == HardwareHealthStatus.healthy
+
+    # A genuinely new observation (different observed_at) advances the streak.
+    await svc.apply_telemetry_sample(
+        db_session,
+        device,
+        {**warning_sample, "reported_at": "2026-04-16T10:06:00Z"},
+    )
+    await db_session.commit()
+    assert device.hardware_health_status == HardwareHealthStatus.warning
 
 
 async def test_hardware_telemetry_state_distinguishes_unknown_fresh_stale_and_unsupported(

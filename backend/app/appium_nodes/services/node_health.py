@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
@@ -11,7 +12,7 @@ from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
-from app.core.metrics_recorders import record_background_loop_phase
+from app.core.metrics_recorders import record_background_loop_phase, record_node_health_fold_result
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
@@ -35,10 +36,38 @@ if TYPE_CHECKING:
     from app.lifecycle.services.incidents import LifecycleIncidentService
 
 logger = get_logger(__name__)
-# Phase-metric label only: node health is now a host_sweep stage, not its own
-# background loop, but its probe/apply timings still report under this name so
-# existing dashboards survive the fold.
+# Phase-metric label retained for the status-fold node-health stage so existing
+# dashboards survive the move off the request path.
 LOOP_NAME = "node_health"
+type NodeFoldOutcome = Literal["applied", "terminal_noop", "skipped"]
+
+
+@dataclass(frozen=True)
+class _NodeObservation:
+    """One pushed node-health observation, folded under the two-axis guard.
+
+    ``port``/``pid``/``active_connection_target`` are the identity the fold saw
+    for the node; a mismatch against the locked row means the observation
+    predates a node change and is skipped. ``revision`` is the ingest-stamped
+    guard revision (``None`` for a tokenless/legacy section)."""
+
+    result: ProbeResult
+    port: int | None = None
+    pid: int | None = None
+    active_connection_target: str | None = None
+    observed_at: datetime = field(default_factory=now_utc)
+    revision: int | None = None
+    boot_id: uuid.UUID | None = None
+    section_sequence: int | None = None
+
+
+def _mark_fold_applied(node: AppiumNode, observation: _NodeObservation) -> None:
+    """Persist this node's terminal receipt for the section generation."""
+    if observation.revision is None:
+        return
+    node.health_fold_applied_revision = observation.revision
+    node.health_fold_boot_id = observation.boot_id
+    node.health_fold_section_sequence = observation.section_sequence
 
 
 class NodeHealthService:
@@ -57,7 +86,15 @@ class NodeHealthService:
         self._health = health
         self._incidents = incidents
 
-    async def fold_host_nodes(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold_host_nodes(
+        self,
+        db: AsyncSession,
+        host_id: uuid.UUID,
+        section: dict[str, Any],
+        *,
+        boot_id: uuid.UUID | None = None,
+        deadline: float | None = None,
+    ) -> bool:
         """Fold pushed node_health facts into the durable node-health state.
 
         Entries match DB nodes by port; the entry's observed (pid,
@@ -66,11 +103,25 @@ class NodeHealthService:
         is convergence's problem (appium_processes drives stop), not a health
         failure — it has no positive evidence, the push-era counterpart of the
         dial-era indeterminate-probe veto.
+
+        Returns True when every node settled (applied or a deliberate no-op) and
+        False when at least one node was retryable (raised mid-write). The
+        StatusFoldLoop advances its per-host section-skip watermark only on True,
+        so a retryable node is retried next cycle without replaying the peers
+        that already committed (their revision guard skips them).
         """
         raw_nodes = section.get("nodes")
         if not isinstance(raw_nodes, list):
-            return
+            return True
         observed_at = parse_iso(section.get("reported_at")) or now_utc()
+        # Ingest-time revision stamped by the push endpoint (two-axis guard). A
+        # tokenless/legacy section carries none; fall back to a fresh draw so the
+        # write still lands (it simply cannot lose the guard to a later racer).
+        revision = section.get("observation_revision")
+        if not isinstance(revision, int):
+            revision = None
+        raw_sequence = section.get("section_sequence")
+        section_sequence = raw_sequence if type(raw_sequence) is int and raw_sequence >= 0 else None
         by_port: dict[int, dict[str, Any]] = {
             entry["port"]: entry
             for entry in raw_nodes
@@ -99,36 +150,71 @@ class NodeHealthService:
             .order_by(AppiumNode.device_id)
         )
         nodes = (await db.execute(stmt)).scalars().all()
-        apply_started = perf_counter()
+        # Snapshot the per-node work up front: a rollback below expires every
+        # loaded ORM row, so an attribute read on an un-processed node afterward
+        # would trigger a sync lazy-load (MissingGreenlet). device_id + the
+        # observation carry everything the loop needs.
+        work: list[tuple[AppiumNode, uuid.UUID, _NodeObservation]] = []
         for node in nodes:
             entry = by_port.get(node.port)
             if entry is None:
                 continue
-            result = from_status_response(entry)
+            if revision is not None and revision <= node.health_fold_applied_revision:
+                record_node_health_fold_result("skipped")
+                continue
+            # _process_node_health never reads the passed node's attributes before
+            # re-locking it, so carrying the (possibly later-expired) row here is
+            # safe; device_id is captured now while the row is live.
+            work.append(
+                (
+                    node,
+                    node.device_id,
+                    _NodeObservation(
+                        result=from_status_response(entry),
+                        port=node.port,
+                        pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
+                        active_connection_target=(
+                            entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
+                        ),
+                        observed_at=observed_at,
+                        revision=revision,
+                        boot_id=boot_id,
+                        section_sequence=section_sequence,
+                    ),
+                )
+            )
+
+        apply_started = perf_counter()
+        retryable = 0
+        for index, (node, device_id, observation) in enumerate(work):
+            if index > 0 and deadline is not None and perf_counter() >= deadline:
+                # Receipts committed for earlier peers keep them settled. Leave
+                # the host watermark behind so the remaining nodes resume next
+                # cycle without one large host monopolizing the scheduler.
+                retryable += 1
+                record_node_health_fold_result("retryable")
+                break
             try:
                 # No load_sessions: the node-health path never reads device.sessions
                 # off this row — apply_node_state_transition and the recovery-control
                 # methods each re-lock the device and load what they need.
-                locked_device = await device_locking.lock_device(db, node.device_id)
+                locked_device = await device_locking.lock_device(db, device_id)
             except NoResultFound:
-                logger.warning("Node health fold skipped: device %s no longer exists", node.device_id)
+                logger.warning("Node health fold skipped: device %s no longer exists", device_id)
+                record_node_health_fold_result("terminal_noop")
                 await db.commit()
                 continue
-
-            await self._process_node_health(
-                db,
-                node,
-                locked_device,
-                result=result,
-                observed_port=node.port,
-                observed_pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
-                observed_active_connection_target=(
-                    entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
-                ),
-                observed_at=observed_at,
-            )
-            await db.commit()
+            try:
+                outcome = await self._process_node_health(db, node, locked_device, observation=observation)
+                await db.commit()
+                record_node_health_fold_result(outcome)
+            except Exception:
+                await db.rollback()
+                retryable += 1
+                record_node_health_fold_result("retryable")
+                logger.exception("node_health_fold_node_failed", extra={"device_id": str(device_id)})
         record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
+        return retryable == 0
 
     async def _attempt_node_restart(self, db: AsyncSession, *, device: Device) -> None:
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()
@@ -146,39 +232,52 @@ class NodeHealthService:
         await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
         await db.commit()
 
-    async def _process_node_health(
+    async def _process_node_health(  # noqa: PLR0911 - explicit terminal-noop state machine
         self,
         db: AsyncSession,
         node: AppiumNode,
         device: Device,
         *,
-        result: ProbeResult,
-        observed_port: int | None = None,
-        observed_pid: int | None = None,
-        observed_active_connection_target: str | None = None,
-        observed_at: datetime | None = None,
-    ) -> None:
+        observation: _NodeObservation,
+    ) -> NodeFoldOutcome:
+        result = observation.result
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if locked_node is None:
             # Node was deleted between the caller's lock_device and here. Bail out
             # quietly; lower layers will reconcile on the next sweep.
-            return
+            return "terminal_noop"
 
-        if observed_port is not None and (
-            locked_node.port != observed_port
-            or locked_node.pid != observed_pid
-            or locked_node.active_connection_target != observed_active_connection_target
+        # Separate fold receipt: a terminal no-op consumes this generation even
+        # when another node in the host section is retryable. Re-check under the
+        # node lock to close the prefilter TOCTOU.
+        if observation.revision is not None and observation.revision <= locked_node.health_fold_applied_revision:
+            return "skipped"
+
+        # Two-axis guard, checked before any event/write work: a stale or
+        # already-applied observation (revision not strictly greater than the
+        # node's stored revision) skips the whole node so it emits no spurious
+        # health event and reruns no remediation.
+        if observation.revision is not None and observation.revision <= locked_node.health_observation_revision:
+            _mark_fold_applied(locked_node, observation)
+            return "terminal_noop"
+
+        if observation.port is not None and (
+            locked_node.port != observation.port
+            or locked_node.pid != observation.pid
+            or locked_node.active_connection_target != observation.active_connection_target
         ):
             logger.info(
                 "Node health check for device %s skipped stale probe result after node changed",
                 device.name,
             )
-            return
+            _mark_fold_applied(locked_node, observation)
+            return "terminal_noop"
 
         node = locked_node
 
         if locked_node.pid is None or locked_node.active_connection_target is None:
-            return
+            _mark_fold_applied(locked_node, observation)
+            return "terminal_noop"
 
         if locked_node.desired_state == AppiumDesiredState.stopped:
             # Intentional-stop veto (I1): the node is being torn down on purpose
@@ -189,18 +288,18 @@ class NodeHealthService:
             # driving it to stopped. Re-checked here under the row lock because
             # desired_state can flip to stopped during the async probe gather,
             # after the fold's unlocked SELECT filtered on it.
-            return
+            _mark_fold_applied(locked_node, observation)
+            return "terminal_noop"
 
         if result.status == "indeterminate":
             # Indeterminate-probe veto: a network error against the agent is
             # inconclusive evidence. Never count it as a failure and never
             # drive recovery from it — only positive probe evidence
             # (``ack``/``refused``) moves the node's health state.
-            return
+            _mark_fold_applied(locked_node, observation)
+            return "terminal_noop"
 
-        healthy = result.status == "ack"
-
-        if healthy:
+        if result.status == "ack":
             if locked_node.health_failing_since is not None:
                 logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
                 await self._recovery_control.record_control_action(
@@ -263,10 +362,15 @@ class NodeHealthService:
                 health_running=True,
                 health_state=None,
                 mark_offline=False,
+                revision=observation.revision,
+                observed_at=observation.observed_at,
             )
-            return
-
-        await self._record_health_failure(db, node, locked_node, device, observed_at=observed_at or now_utc())
+        else:
+            await self._record_health_failure(
+                db, node, locked_node, device, observed_at=observation.observed_at, revision=observation.revision
+            )
+        _mark_fold_applied(locked_node, observation)
+        return "applied"
 
     async def _record_health_failure(
         self,
@@ -276,6 +380,7 @@ class NodeHealthService:
         device: Device,
         *,
         observed_at: datetime,
+        revision: int | None = None,
     ) -> None:
         if locked_node.health_failing_since is None:
             locked_node.health_failing_since = observed_at
@@ -293,6 +398,8 @@ class NodeHealthService:
             health_running=False,
             health_state="error",
             mark_offline=verdict,
+            revision=revision,
+            observed_at=observed_at,
         )
         logger.warning(
             "Node health check failed for device %s (port %d): %.0fs/%.0fs",

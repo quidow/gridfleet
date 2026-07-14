@@ -23,14 +23,17 @@ One `BackgroundLoop` per independent lifecycle. Cadences, read sets, and write s
 
 | Loop | Owns |
 | --- | --- |
-| `host_sweep_loop` | Host liveness from push recency (`evaluate_host` in `app/hosts/liveness.py` is the single `Host.status` edge detector), the offline cascade, node convergence from the latest pushed snapshot, the watermark-gated observation folds (node health, device health, host/device telemetry, device properties), and the cadence-gated `/agent/health` partition diagnostic |
+| `host_sweep_loop` | Host liveness from push recency (`evaluate_host` in `app/hosts/liveness.py` is the single `Host.status` edge detector), the offline cascade, node convergence from the latest pushed snapshot, the inline observation folds (device health, host/device telemetry, device properties), and the cadence-gated `/agent/health` partition diagnostic |
 | `appium_sweep_loop` | The direct-to-Appium session observation pass (liveness probes + orphan-session kill) and the scheduled session-viability pass behind a 60 s scan throttle |
 | `durable_job_worker_loop` | Durable `jobs` table execution |
 | `grid_allocation_reaper_loop` | Queue-ticket expiry and crash-orphaned pending `Session` rows |
 | `device_intent_reconciler_loop` | Expired deny-intent GC, reservation cooldown clears, and the operational-state edge detector: it compares the read-time projection with `Device.operational_state_last_emitted`, queues `device.operational_state_changed`, and advances the ledger — it does not write current state (Doc 1) |
 | `janitor_loop` | Housekeeping stages `run_reaper`, `fleet_capacity`, `pack_drain` (backstop only — release paths complete drains inline), `data_cleanup`, `flush`; stage roster in `_build_janitor` (`backend/app/main.py`), stage cadences are plumbing constants, never registry settings |
+| `status_fold_loop` | The level-triggered `node_health` observation-application, folded off the request path: reads each host's latest pushed snapshot and applies the `node_health` section whose ingest-stamped revision exceeds the host's `observation_applied` watermark, under the two-axis guard, with per-host and per-node containment |
 
 Scheduling doctrine for new work: a `BackgroundLoop` per independent lifecycle; stage-due stages only as sub-cadences of an owning sweep. Observation arrives via the agent's consolidated status push (`POST /agent/hosts/status`); the backend dials an agent only to act, never to observe. `docs/reference/architecture.md` documents the push/dial split.
+
+During the partial status-fold rollout, `device_health` remains synchronous and intentionally stays outside ingest dedup/revision stamping. Its current path still performs dials and actions, so exact pushes must remain retryable after a contained inline-fold failure. It joins the guarded cursor only when the later facts-only reconciler and durable-remediation phase lands.
 
 ## The tri-state probe pattern
 
@@ -61,7 +64,7 @@ Every public health fact has exactly one durable home:
 - `Device.emulator_state`: the `host_sweep` device-health fold
 - `AppiumNode.desired_state`: `write_desired_state` (Doc 2)
 - `AppiumNode.health_running` / `AppiumNode.health_state`: `apply_node_state_transition`
-- `AppiumNode.health_failing_since`: the `host_sweep` node-health fold
+- `AppiumNode.health_failing_since`: the `status_fold_loop` node-health fold
 
 `build_public_summary(device)` (`app.devices.services.health_view`, re-exported via `app.devices.services.health`) is the only consumer projection; readers call it on demand. There is no eventually consistent health layer to drift.
 
@@ -69,7 +72,7 @@ Every public health fact has exactly one durable home:
 
 | Namespace | Owner | Purpose |
 | --- | --- | --- |
-| `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `host_sweep_loop` / host diagnostics | latest consolidated agent status push per host (Appium processes, host telemetry) — the single snapshot source |
+| `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `status_fold_loop`, `host_sweep_loop`, and host diagnostics | latest consolidated agent status push per host (Appium processes, health sections, host telemetry) — the single snapshot source; guarded health sections become eligible only after post-convergence stamping |
 | `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
 | `connectivity.previously_offline` | `host_sweep` connectivity fold | remembers why a reconnect is treated as recovery rather than first startup |
 | `hardware_telemetry.state` | `host_sweep` hardware-telemetry fold | stale/fresh telemetry bookkeeping |

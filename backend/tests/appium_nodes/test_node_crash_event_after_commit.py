@@ -122,7 +122,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
     _, device, node = await seed_host_and_running_node(db_session, identity="probe-fail-1")
     event_bus_capture.clear()
 
-    from app.appium_nodes.services.node_health import NodeHealthService
+    from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
     from app.devices.services.health import DeviceHealthService
 
     await NodeHealthService(
@@ -141,10 +141,12 @@ async def test_probe_failure_threshold_writes_restart_intent(
         db_session,
         node,
         device,
-        result=ProbeResult(status="refused"),
-        observed_port=node.port,
-        observed_pid=node.pid,
-        observed_active_connection_target=node.active_connection_target,
+        observation=_NodeObservation(
+            ProbeResult(status="refused"),
+            port=node.port,
+            pid=node.pid,
+            active_connection_target=node.active_connection_target,
+        ),
     )
     await db_session.commit()
     await settle_after_commit_tasks()

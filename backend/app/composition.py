@@ -335,8 +335,9 @@ def compose_app(
             status_push=HostStatusPushService(
                 publisher=bus,
                 session_factory=session_factory,
+                # node_health is folded off the request path by the StatusFoldLoop
+                # (level-triggered), so it is no longer an inline ObservationFold.
                 observation_folds=(
-                    ObservationFold("node_health", node_health_svc.fold_host_nodes),
                     ObservationFold("device_health", connectivity_svc.fold_host_device_health),
                     ObservationFold("device_telemetry", hardware_telemetry_svc.fold_host_device_telemetry),
                     ObservationFold("device_properties", property_refresh_svc.fold_host_device_properties),

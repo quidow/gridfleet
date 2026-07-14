@@ -296,10 +296,61 @@ HOST_PUSH_OBSERVATION_FAILURES = Counter(
     "Push-time observation stages that raised and were contained.",
     labelnames=("stage",),
 )
+# Boot-fence and dedup-token diagnostics on the status-push ingest path.
+HOST_PUSH_BOOT_FENCE_REJECTIONS = Counter(
+    "gridfleet_host_push_boot_fence_rejections_total",
+    "Status pushes rejected because boot_id did not match the host's registered boot.",
+)
+HOST_PUSH_TOKEN_ANOMALIES = Counter(
+    "gridfleet_host_push_token_anomalies_total",
+    "Dedup-token anomalies on the two moved health sections.",
+    # kind: same_sequence_different_hash | hash_mismatch | tokenless_after_boot
+    labelnames=("kind",),
+)
 
 
 def record_host_status_push(*, host_id: str) -> None:
     HOST_STATUS_PUSHES.labels(host_id=host_id).inc()
+
+
+def record_host_push_boot_fence_rejection() -> None:
+    HOST_PUSH_BOOT_FENCE_REJECTIONS.inc()
+
+
+def record_host_push_token_anomaly(kind: str) -> None:
+    HOST_PUSH_TOKEN_ANOMALIES.labels(kind=kind).inc()
+
+
+# StatusFoldLoop diagnostics: per-node fold outcomes and per-cycle bookkeeping.
+STATUS_FOLD_NODE_RESULTS = Counter(
+    "gridfleet_status_fold_node_results_total",
+    "Per-node results of the async node_health fold.",
+    # outcome: applied | terminal_noop | skipped | retryable
+    labelnames=("outcome",),
+)
+STATUS_FOLD_HOSTS = Counter(
+    "gridfleet_status_fold_hosts_total",
+    "Host sections the StatusFoldLoop acted on, by disposition.",
+    # disposition: folded | skipped | contained_error | budget_deferred
+    labelnames=("disposition",),
+)
+STATUS_FOLD_LAG_SECONDS = Histogram(
+    "gridfleet_status_fold_lag_seconds",
+    "Snapshot-received-to-fold-complete lag for a folded host section.",
+    buckets=(0.5, 1, 2, 3, 5, 8, 13, 21, 34),
+)
+
+
+def record_node_health_fold_result(outcome: str) -> None:
+    STATUS_FOLD_NODE_RESULTS.labels(outcome=outcome).inc()
+
+
+def record_status_fold_host(disposition: str) -> None:
+    STATUS_FOLD_HOSTS.labels(disposition=disposition).inc()
+
+
+def record_status_fold_lag(seconds: float) -> None:
+    STATUS_FOLD_LAG_SECONDS.observe(seconds)
 
 
 DB_SERIALIZATION_RETRY_TOTAL = Counter(

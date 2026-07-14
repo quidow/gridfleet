@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Awaitable, Callable
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -164,7 +165,16 @@ class HealthFailureHandler(Protocol):
 
 
 class DeviceHealthProtocol(Protocol):
-    async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None: ...
+    async def update_device_checks(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None = ...,
+        observed_at: datetime | None = ...,
+    ) -> bool: ...
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
     ) -> None: ...
@@ -176,5 +186,7 @@ class DeviceHealthProtocol(Protocol):
         health_running: bool | None | UnsetType = ...,
         health_state: str | None | UnsetType = ...,
         mark_offline: bool = ...,
+        revision: int | None = ...,
+        observed_at: datetime | None = ...,
     ) -> None: ...
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None: ...

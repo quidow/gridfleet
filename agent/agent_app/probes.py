@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from agent_app.observation_token import PAYLOAD_SHA256_KEY, SECTION_SEQUENCE_KEY, canonical_section_hash
+
 logger = logging.getLogger(__name__)
 
 NODE_HEALTH_INTERVAL_SEC = 30.0
@@ -41,6 +43,9 @@ class ProbeLoop:
     _results: dict[str, Any] = field(default_factory=dict, init=False)
     _roster: list[dict[str, Any]] = field(default_factory=list, init=False)
     _due: dict[str, float] = field(default_factory=dict, init=False)
+    # Per-(boot, section) gather counter: bumped once per gather so a re-push of
+    # the same gather carries the same token and the backend dedups it.
+    _section_seq: dict[str, int] = field(default_factory=dict, init=False)
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     def latest_results(self) -> dict[str, Any] | None:
@@ -55,6 +60,15 @@ class ProbeLoop:
             return True
         return False
 
+    def _stamp_token(self, name: str, section: dict[str, Any]) -> dict[str, Any]:
+        """Stamp the per-gather dedup token onto a moved section. The sequence is
+        bumped once per gather, so a re-push of the same gather carries the same
+        token and the backend reuses its stamped revision instead of re-folding."""
+        self._section_seq[name] = self._section_seq.get(name, 0) + 1
+        section[SECTION_SEQUENCE_KEY] = self._section_seq[name]
+        section[PAYLOAD_SHA256_KEY] = canonical_section_hash(section)
+        return section
+
     async def run_once(self) -> None:
         now = time.monotonic()
         changed = False
@@ -62,10 +76,12 @@ class ProbeLoop:
         if self._stage_due("roster", ROSTER_REFRESH_INTERVAL_SEC, now):
             roster_ok = await self._refresh_roster()
         if self._stage_due("node_health", NODE_HEALTH_INTERVAL_SEC, now):
-            self._results["node_health"] = await self._probe_nodes()
+            self._results["node_health"] = self._stamp_token("node_health", await self._probe_nodes())
             changed = True
         if roster_ok and self._roster and self._stage_due("device_health", DEVICE_HEALTH_INTERVAL_SEC, now):
-            self._results["device_health"] = await self._probe_devices(self._run_health)
+            self._results["device_health"] = self._stamp_token(
+                "device_health", await self._probe_devices(self._run_health)
+            )
             changed = True
         if roster_ok and self._roster and self._stage_due("device_telemetry", TELEMETRY_INTERVAL_SEC, now):
             self._results["device_telemetry"] = await self._probe_devices(

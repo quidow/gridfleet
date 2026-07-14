@@ -25,6 +25,10 @@ class HostStatusPush(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     host_id: uuid.UUID
+    # Registration-bound boot fence credential: the agent's current boot id. A
+    # push whose boot_id differs from the host's registered boot is rejected.
+    # Optional for mixed-version safety (a legacy agent omits it).
+    boot_id: uuid.UUID | None = None
     agent_version: str | None = None
     capabilities: dict[str, Any] | None = None
     missing_prerequisites: list[str] | None = None
@@ -57,6 +61,10 @@ class HostRegister(BaseModel):
     # capabilities column). agent_version is push-owned and no longer accepted.
     capabilities: dict[str, Any] | None = None
     host_info: HostHardwareInfo | None = None
+    # Establishes the boot fence: registration writes current_boot_id so a
+    # restarted agent's new boot supersedes the previous one before its pushes
+    # arrive. Optional for mixed-version safety.
+    boot_id: uuid.UUID | None = None
 
 
 class HostRead(BaseModel):

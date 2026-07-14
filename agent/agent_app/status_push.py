@@ -40,6 +40,9 @@ class StatusPushLoop:
     pack_status: Callable[[], dict[str, Any] | None]
     probe_results: Callable[[], dict[str, Any] | None] = lambda: None
     push_interval: float = 10.0
+    # Boot fence credential: the agent's current boot id (same value registration
+    # sends). Optional so a caller without one still functions (tokenless).
+    boot_id: str | None = None
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     async def build_payload(self) -> dict[str, Any]:
@@ -49,6 +52,7 @@ class StatusPushLoop:
         capabilities = await self.capabilities_cache.get_or_refresh()
         payload = {
             "host_id": host_id,
+            "boot_id": self.boot_id,
             "agent_version": __version__,
             "capabilities": capabilities,  # same snapshot registration sends
             "missing_prerequisites": missing_prerequisites_from(capabilities),

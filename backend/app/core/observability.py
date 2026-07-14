@@ -50,6 +50,7 @@ BACKGROUND_LOOP_NAMES = (
     "grid_allocation_reaper",
     "device_intent_reconciler",
     "janitor",
+    "status_fold",
 )
 # Janitor flush-stage cadence; also the readiness grace for heartbeat staleness.
 BACKGROUND_LOOP_FLUSH_INTERVAL_SEC = 15.0

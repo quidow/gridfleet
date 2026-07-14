@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +68,17 @@ class AppiumNode(Base):
     last_health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     health_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     health_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Two-axis write-ordering guard: the highest observation revision applied to
+    # this node's health axis (health_running/health_state/health_failing_since).
+    # A writer applies only when its revision is strictly greater. See
+    # app.core.observation_revision.
+    health_observation_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    # Durable receipt for the level-triggered node-health fold. This is distinct
+    # from ``health_observation_revision``: terminal no-ops consume a generation
+    # without writing the health axis, while retryable failures leave it pending.
+    health_fold_applied_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    health_fold_boot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    health_fold_section_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     @property
     def observed_running(self) -> bool:

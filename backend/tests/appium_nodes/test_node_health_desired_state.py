@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services.node_health import _NodeObservation
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
@@ -55,7 +56,7 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
         db_session,
         node,
         device,
-        result=ProbeResult(status="refused", detail="test"),
+        observation=_NodeObservation(ProbeResult(status="refused", detail="test")),
     )
     await db_session.commit()
 
@@ -118,7 +119,7 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
         db_session,
         node,
         device,
-        result=ProbeResult(status="refused", detail="teardown"),
+        observation=_NodeObservation(ProbeResult(status="refused", detail="teardown")),
     )
     await db_session.commit()
 
