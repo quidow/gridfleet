@@ -3762,6 +3762,8 @@ export interface components {
         HostRegister: {
             /** Agent Port */
             agent_port?: number | null;
+            /** Boot Id */
+            boot_id?: string | null;
             /** Capabilities */
             capabilities?: {
                 [key: string]: unknown;
@@ -3851,6 +3853,8 @@ export interface components {
             appium_processes?: {
                 [key: string]: unknown;
             };
+            /** Boot Id */
+            boot_id?: string | null;
             /** Capabilities */
             capabilities?: {
                 [key: string]: unknown;
