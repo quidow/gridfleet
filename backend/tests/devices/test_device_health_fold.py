@@ -165,3 +165,44 @@ async def test_fold_ignores_device_absent_from_gather(
     await db_session.refresh(omitted)
     assert omitted.device_checks_fold_applied_revision == 0  # never touched — "not gathered", not absent
     assert omitted.device_checks_healthy is None
+
+
+async def test_stale_device_fold_does_not_override_fresh_synchronous_write(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    from app.devices.services.health import DeviceHealthService
+    from tests.helpers import test_event_bus as bus
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-guard")
+    device = devices[0]
+    # The fold's generation is stamped FIRST (older revision) ...
+    stale_revision = await next_observation_revision(db_session)
+    # ... then a synchronous higher-authority writer (e.g. host-offline cascade,
+    # lifecycle crash, restart ingest, create-failure) draws a fresh revision and
+    # marks the device unhealthy.
+    await DeviceHealthService(publisher=bus).update_device_checks(
+        db_session, device, healthy=False, summary="host offline cascade", revision=None
+    )
+    await db_session.commit()
+
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 9,
+        OBSERVATION_REVISION_KEY: stale_revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device.id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    service = build_connectivity_service(db_session_maker)
+    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    assert settled is True  # the device settles (marker advances) ...
+    await db_session.refresh(device)
+    assert device.device_checks_healthy is False  # ... but the stale healthy verdict LOST the guard
+    assert device.device_checks_fold_applied_revision == stale_revision  # not retried forever
