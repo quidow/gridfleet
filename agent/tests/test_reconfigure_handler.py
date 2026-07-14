@@ -31,4 +31,4 @@ def test_health_capabilities_advertise_orchestration_contract() -> None:
     cache._snapshot = {"platforms": ["android_mobile"], "tools": {}, "missing_prerequisites": []}
 
     payload: dict[str, Any] = cache.get()
-    assert payload["orchestration_contract_version"] == 6
+    assert payload["orchestration_contract_version"] == 7

@@ -40,6 +40,8 @@ class ProbeLoop:
     telemetry_probe: ProbeCallable
     properties_probe: ProbeCallable
     on_results: Callable[[], None] | None = None
+    enumerate_probe: Callable[[], Awaitable[dict[str, Any] | None]] | None = None
+    lifecycle_probe: ProbeCallable | None = None
     _results: dict[str, Any] = field(default_factory=dict, init=False)
     _roster: list[dict[str, Any]] = field(default_factory=list, init=False)
     _due: dict[str, float] = field(default_factory=dict, init=False)
@@ -80,7 +82,7 @@ class ProbeLoop:
             changed = True
         if roster_ok and self._roster and self._stage_due("device_health", DEVICE_HEALTH_INTERVAL_SEC, now):
             self._results["device_health"] = self._stamp_token(
-                "device_health", await self._probe_devices(self._run_health)
+                "device_health", await self._probe_device_health_section()
             )
             changed = True
         if roster_ok and self._roster and self._stage_due("device_telemetry", TELEMETRY_INTERVAL_SEC, now):
@@ -161,6 +163,89 @@ class ProbeLoop:
                 connection_target: observation for pair in results if pair for connection_target, observation in [pair]
             },
         }
+
+    async def _present_aliases(self) -> tuple[set[str] | None, bool]:
+        """Enumerate the host's present device aliases for a v7 presence verdict.
+        Returns ``(None, False)`` when enumeration is unavailable or failed — the
+        section then reports ``complete_gather=False`` and every presence is
+        ``"unknown"`` (an incomplete gather can never assert absent)."""
+        if self.enumerate_probe is None:
+            return None, False
+        try:
+            enumerated = await self.enumerate_probe()
+        except Exception:
+            logger.warning("device_presence_enumeration_failed", exc_info=True)
+            return None, False
+        if not isinstance(enumerated, dict):
+            return None, False
+        present: set[str] = set()
+        for cand in enumerated.get("candidates", []):
+            if not isinstance(cand, dict):
+                continue
+            iv = cand.get("identity_value")
+            if isinstance(iv, str) and iv:
+                present.add(iv)
+            detected = cand.get("detected_properties")
+            if isinstance(detected, dict):
+                ct = detected.get("connection_target")
+                if isinstance(ct, str) and ct:
+                    present.add(ct)
+        return present, True
+
+    async def _lifecycle_item(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """The pushed lifecycle_state for one device: ``unsupported`` when the
+        platform declares no ``state`` action, ``observed`` with the value, or
+        ``error`` when the probe raised or returned nothing usable."""
+        if not entry.get("lifecycle_state_capable") or self.lifecycle_probe is None:
+            return {"status": "unsupported", "value": None}
+        try:
+            result = await self.lifecycle_probe(
+                pack_id=entry["pack_id"],
+                platform_id=entry["platform_id"],
+                connection_target=entry["connection_target"],
+                identity_value=entry.get("identity_value"),
+            )
+        except Exception:
+            logger.warning("device_lifecycle_state_probe_failed", exc_info=True)
+            return {"status": "error", "value": None}
+        state = result.get("state") if isinstance(result, dict) else None
+        if isinstance(state, str) and state:
+            return {"status": "observed", "value": state}
+        return {"status": "error", "value": None}
+
+    async def _probe_device_health_section(self) -> dict[str, Any]:
+        """The v7 device_health section: one typed item per roster entry (even for
+        probe failures), keyed by stable device_id, carrying presence, health, and
+        lifecycle_state, plus a section-level ``complete_gather`` flag."""
+        semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
+        present, complete_gather = await self._present_aliases()
+        snapshot = await self.manager.process_snapshot()
+        live = {
+            node.get("connection_target"): bool(node.get("has_active_session"))
+            for node in snapshot.get("running_nodes", [])
+        }
+
+        def _presence(entry: dict[str, Any]) -> str:
+            if not complete_gather or present is None:
+                return "unknown"
+            target = entry.get("connection_target")
+            identity = entry.get("identity_value")
+            return "present" if (target in present or identity in present) else "absent"
+
+        async def one(entry: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                health = await self._run_health(entry, live.get(entry.get("connection_target"), False))
+            lifecycle = await self._lifecycle_item(entry)
+            return {
+                "device_id": entry["device_id"],
+                "probe_status": "observed" if health is not None else "error",
+                "presence": _presence(entry),
+                "health": health,
+                "lifecycle_state": lifecycle,
+            }
+
+        items = await asyncio.gather(*(one(entry) for entry in self._roster))
+        return {"reported_at": _now_iso(), "complete_gather": complete_gather, "devices": list(items)}
 
     async def _run_health(self, entry: dict[str, Any], has_live_session: bool) -> dict[str, Any] | None:
         payload = await self.health_probe(

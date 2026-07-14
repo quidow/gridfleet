@@ -123,9 +123,57 @@ async def test_latest_results_shape() -> None:
     assert results is not None
     assert set(results) == {"node_health", "device_health", "device_telemetry", "device_properties"}
     assert results["node_health"]["nodes"][0]["running"] is True
-    assert "emulator-5554" in results["device_health"]["devices"]
+    # device_health is now a v7 list of typed items keyed by device_id.
+    device_ids = {item["device_id"] for item in results["device_health"]["devices"]}
+    assert device_ids == {"d1", "d2"}
     assert "serial-1" in results["device_telemetry"]["devices"]
     assert results["device_properties"]["devices"]["serial-1"]["detected_properties"]["os_version"] == "14"
+
+
+@pytest.mark.asyncio
+async def test_device_health_section_emits_typed_items_including_failures() -> None:
+    roster = _Roster()
+    roster.devices[0]["lifecycle_state_capable"] = True
+    roster.devices[1]["lifecycle_state_capable"] = False
+
+    async def _health(**kwargs: object) -> dict[str, Any] | None:
+        # d2 (serial-1) fails to answer; every roster entry must still get an item.
+        if kwargs["connection_target"] == "serial-1":
+            return None
+        return {"healthy": True, "detail": None, "checks": [], "recommended_action": None}
+
+    async def _enumerate() -> dict[str, Any]:
+        return {
+            "candidates": [
+                {"identity_value": "emulator-5554", "detected_properties": {"connection_target": "emulator-5554"}}
+            ]
+        }
+
+    async def _lifecycle(**kwargs: object) -> dict[str, Any]:
+        return {"success": True, "state": "device", "detail": None}
+
+    loop = ProbeLoop(
+        roster_client=roster,
+        manager=_Manager(),
+        host_identity=_identity(),
+        health_probe=_health,
+        telemetry_probe=_telemetry_probe,
+        properties_probe=_properties_probe,
+        enumerate_probe=_enumerate,
+        lifecycle_probe=_lifecycle,
+    )
+    await loop._refresh_roster()
+    section = await loop._probe_device_health_section()
+    assert section["complete_gather"] is True
+    items = {item["device_id"]: item for item in section["devices"]}
+    assert set(items) == {"d1", "d2"}
+    assert items["d1"]["presence"] == "present"
+    assert items["d1"]["probe_status"] == "observed"
+    assert items["d1"]["lifecycle_state"] == {"status": "observed", "value": "device"}
+    assert items["d2"]["presence"] == "absent"
+    assert items["d2"]["probe_status"] == "error"
+    assert items["d2"]["health"] is None
+    assert items["d2"]["lifecycle_state"] == {"status": "unsupported", "value": None}
 
 
 @pytest.mark.asyncio
