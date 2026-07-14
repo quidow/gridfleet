@@ -159,6 +159,14 @@ async def test_probe_targets_reports_lifecycle_state_capable(
     assert entries[str(incapable.id)]["lifecycle_state_capable"] is False
 
 
+def test_probe_target_lifecycle_capability_is_owned_by_the_surviving_route() -> None:
+    from app.devices.routers.agent_probe_targets import _lifecycle_state_capable
+
+    # A5.9 removes the dead inline connectivity fold and its private helpers.
+    # The probe-target route must not depend on one of those scheduled deletions.
+    assert _lifecycle_state_capable.__module__ == "app.devices.routers.agent_probe_targets"
+
+
 @pytest.mark.db
 async def test_probe_targets_returns_404_for_unknown_host(client: AsyncClient) -> None:
     response = await client.get("/agent/devices/probe-targets", params={"host_id": str(uuid.uuid4())})

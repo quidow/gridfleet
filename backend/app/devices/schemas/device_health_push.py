@@ -44,11 +44,19 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
             continue
         health = item.get("health")
         lifecycle = item.get("lifecycle_state")
+        raw_probe_status = item.get("probe_status")
+        probe_status = raw_probe_status if raw_probe_status in {"observed", "error"} else "error"
+        raw_presence = item.get("presence")
+        presence = raw_presence if raw_presence in {"present", "absent", "unknown"} else "unknown"
         by_id[device_id] = DeviceHealthItem(
             device_id=device_id,
-            probe_status=str(item.get("probe_status") or "error"),
-            presence=str(item.get("presence") or "unknown"),
+            probe_status=probe_status,
+            presence=presence,
             health=health if isinstance(health, dict) else None,
             lifecycle_state=lifecycle if isinstance(lifecycle, dict) else {},
         )
-    return PushedDeviceHealth(is_v7=True, complete_gather=bool(section.get("complete_gather")), by_device_id=by_id)
+    return PushedDeviceHealth(
+        is_v7=True,
+        complete_gather=section.get("complete_gather") is True,
+        by_device_id=by_id,
+    )

@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
+from app.core.timeutil import now_utc
 from app.devices.services import health as health_module
 from app.devices.services import link_repair
 from app.devices.services.connectivity import _validated_remediation_action
@@ -38,22 +39,23 @@ async def test_update_emulator_state_write_on_diff_skips_unchanged(
         return await real_lock(db, dev)  # type: ignore[arg-type]
 
     monkeypatch.setattr(health_module, "_lock", counting_lock)
+    pushed_at = now_utc()
 
     # First write (None -> "booted") changes the value: takes the lock, writes.
-    await svc.update_emulator_state(db_session, device, "booted")
+    await svc.update_emulator_state(db_session, device, "booted", source_time=pushed_at)
     await db_session.commit()
     await db_session.refresh(device)
     assert device.emulator_state == "booted"
     assert lock_calls == 1
 
     # Re-applying the same value is lock-free and writes nothing.
-    await svc.update_emulator_state(db_session, device, "booted")
+    await svc.update_emulator_state(db_session, device, "booted", source_time=pushed_at)
     assert lock_calls == 1  # no additional lock taken
     await db_session.refresh(device)
     assert device.emulator_state == "booted"
 
     # A genuine change takes the lock again.
-    await svc.update_emulator_state(db_session, device, "shutdown")
+    await svc.update_emulator_state(db_session, device, "shutdown", source_time=now_utc())
     await db_session.commit()
     await db_session.refresh(device)
     assert device.emulator_state == "shutdown"

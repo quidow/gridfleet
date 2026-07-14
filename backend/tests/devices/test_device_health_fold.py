@@ -93,6 +93,115 @@ async def test_fold_terminal_noop_on_unknown_presence_advances_receipt(
     assert device.device_checks_healthy is None  # no health axis write from an indeterminate observation
 
 
+async def test_fold_applies_observed_health_when_presence_gather_is_incomplete(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-health-only")
+    device = devices[0]
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 2,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": False,
+        "devices": [
+            {
+                "device_id": str(device.id),
+                "probe_status": "observed",
+                "presence": "unknown",
+                "health": {"healthy": True, "checks": []},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    service = build_connectivity_service(db_session_maker)
+
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    await db_session.refresh(device)
+
+    # Discovery completeness gates only absence. A successful direct health
+    # observation remains valid and must not freeze whenever discovery fails.
+    assert device.device_checks_healthy is True
+    assert device.device_checks_fold_applied_revision == revision
+
+
+async def test_fold_applies_complete_gather_absence_even_when_health_probe_errored(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-absent")
+    device = devices[0]
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 2,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                # This is the agent's normal absent-device shape: the direct
+                # health probe cannot answer, while the complete discovery pass
+                # independently proves the roster device is absent.
+                "device_id": str(device.id),
+                "probe_status": "error",
+                "presence": "absent",
+                "health": None,
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    service = build_connectivity_service(db_session_maker)
+
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    await db_session.refresh(device)
+
+    assert device.device_checks_healthy is False
+    assert device.device_checks_summary == "Disconnected"
+    assert device.device_checks_fold_applied_revision == revision
+
+
+async def test_fold_consumes_pre_maintenance_observation_without_health_or_remediation(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.devices.services.connectivity as conn_mod
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-maintenance")
+    device = devices[0]
+    device.lifecycle_policy_state = {"maintenance_reason": "operator hold"}
+    await db_session.commit()
+    revision = await next_observation_revision(db_session)
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 3,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device.id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {
+                    "healthy": False,
+                    "checks": [{"check_id": "reconnect_probe", "ok": False}],
+                    "recommended_action": "reconnect",
+                },
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+        ],
+    }
+    enqueue = AsyncMock(return_value=uuid.uuid4())
+    monkeypatch.setattr(conn_mod, "enqueue_device_health_remediation", enqueue)
+    service = build_connectivity_service(db_session_maker)
+
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    await db_session.refresh(device)
+
+    assert device.device_checks_healthy is None
+    assert device.device_checks_fold_applied_revision == revision
+    enqueue.assert_not_awaited()
+
+
 async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
@@ -230,6 +339,54 @@ def _emulator_section(device_id: uuid.UUID, value: str) -> dict[str, Any]:
             }
         ],
     }
+
+
+async def test_pushed_emulator_state_uses_per_item_observation_time(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    from datetime import timedelta
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="em-item-time")
+    device = devices[0]
+    operator_time = now_utc()
+    device.emulator_state = "device"
+    device.emulator_state_source_time = operator_time
+    await db_session.commit()
+
+    section = _emulator_section(device.id, "booting")
+    # The lifecycle result was gathered before the operator refresh, but a slow
+    # peer made the overall section finish afterward.
+    section["reported_at"] = (operator_time + timedelta(minutes=1)).isoformat()
+    section["devices"][0]["lifecycle_state"]["observed_at"] = (operator_time - timedelta(minutes=1)).isoformat()
+
+    service = build_connectivity_service(db_session_maker)
+    await service.apply_pushed_emulator_state(db_session, host.id, section)
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    assert device.emulator_state == "device"
+
+
+async def test_pushed_emulator_state_without_source_time_fails_safe(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="em-no-source-time")
+    device = devices[0]
+    device.emulator_state = "device"
+    device.emulator_state_source_time = now_utc()
+    await db_session.commit()
+
+    section = _emulator_section(device.id, "booting")
+    section.pop("reported_at")
+    service = build_connectivity_service(db_session_maker)
+
+    await service.apply_pushed_emulator_state(db_session, host.id, section)
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    # Without an observation time M2 cannot compare authority safely. Treat the
+    # lifecycle item as unusable instead of manufacturing a fresh backend time.
+    assert device.emulator_state == "device"
 
 
 async def test_pushed_emulator_state_applied_synchronously(

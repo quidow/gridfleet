@@ -934,7 +934,7 @@ class ConnectivityService:
         pushed = parse_device_health_items(section)
         if not pushed.is_v7 or not pushed.by_device_id:
             return
-        observed_at = parse_iso(section.get("reported_at")) or now_utc()
+        section_observed_at = parse_iso(section.get("reported_at"))
         rows = (
             (
                 await db.execute(
@@ -950,7 +950,10 @@ class ConnectivityService:
                 continue
             value = item.lifecycle_state.get("value")
             if isinstance(value, str) and value:
-                await self._health.update_emulator_state(db, device, value, source_time=observed_at)
+                item_observed_at = parse_iso(item.lifecycle_state.get("observed_at")) or section_observed_at
+                if item_observed_at is None:
+                    continue
+                await self._health.update_emulator_state(db, device, value, source_time=item_observed_at)
 
     async def fold_host_devices(
         self,
@@ -1048,30 +1051,41 @@ class ConnectivityService:
         # Re-check the receipt under the lock (prefilter TOCTOU).
         if receipt.revision is not None and receipt.revision <= device.device_checks_fold_applied_revision:
             return "skipped"
-        host = cast("Host", device.host)
-
-        # Indeterminate evidence (probe error / unknown presence): never a verdict.
-        # The push-era counterpart of the dial-era indeterminate-probe veto.
-        if item.probe_status == "error" or item.presence == "unknown":
+        # The snapshot may have been gathered just before an operator placed the
+        # device into maintenance. Consume that generation without changing
+        # health or enqueueing remediation; the old synchronous fold excluded
+        # maintenance devices at its pre-pass for the same reason.
+        if in_maintenance(device):
             _mark_device_fold_applied(device, receipt)
             return "terminal_noop"
-        # Absence can only be asserted on a complete gather (B3).
+        host = cast("Host", device.host)
+
+        # Presence completeness gates only absence. A successful direct health
+        # observation remains usable when discovery failed and presence is
+        # unknown; otherwise one failed sweep would freeze health for the host.
+        # A complete gather's explicit absence is independent, stronger evidence
+        # than the direct health-probe error an absent device normally produces.
         if item.presence == "absent":
             if not complete_gather:
                 _mark_device_fold_applied(device, receipt)
                 return "terminal_noop"
-            if not in_maintenance(device):
-                # _record_disconnect_if_stable -> update_device_checks(healthy=False) mints
-                # the failure episode under the row lock (A3.2); no separate transition call.
-                await self._record_disconnect_if_stable(
-                    db,
-                    device,
-                    held=await _is_held_or_reserved(db, device),
-                    observed_at=observed_at,
-                    revision=receipt.revision,
-                )
+            # _record_disconnect_if_stable -> update_device_checks(healthy=False) mints
+            # the failure episode under the row lock (A3.2); no separate transition call.
+            await self._record_disconnect_if_stable(
+                db,
+                device,
+                held=await _is_held_or_reserved(db, device),
+                observed_at=observed_at,
+                revision=receipt.revision,
+            )
             _mark_device_fold_applied(device, receipt)
             return "applied"
+
+        # Present but the direct probe errored: no positive health evidence to
+        # apply for this generation.
+        if item.probe_status == "error":
+            _mark_device_fold_applied(device, receipt)
+            return "terminal_noop"
 
         # Present: derive the verdict from the pushed health dict (facts-only).
         health_result = item.health if isinstance(item.health, dict) else None

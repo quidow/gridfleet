@@ -19,6 +19,7 @@ from app.devices.models import Device
 from app.devices.models.event import DeviceEventType
 from app.devices.services import link_repair
 from app.devices.services.event import record_event
+from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.jobs import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.jobs.models import Job
 from app.sessions.live_session_predicate import live_session_predicate
@@ -95,6 +96,9 @@ class RemediationJobService:
             device = await device_locking.lock_device(db, device_id)
         except NoResultFound:
             await self._finalize(db, job_id, note="device no longer exists", error=None)
+            return
+        if in_maintenance(device):
+            await self._finalize(db, job_id, note="device is in maintenance", error=None)
             return
         if (
             device.device_checks_healthy is not False

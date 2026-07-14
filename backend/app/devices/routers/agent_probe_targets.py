@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
@@ -11,13 +11,34 @@ from app.appium_nodes.services import resource_service
 from app.core.dependencies import DbDep
 from app.devices.models import Device
 from app.devices.schemas.probe_targets import ProbeTargetOut, ProbeTargetsOut
-from app.devices.services.connectivity import _lifecycle_state_capable
 from app.devices.services.state import maintenance_sql
 from app.hosts.models import Host
-from app.packs.services.platform_resolver import pack_platform_resolution_cache
+from app.packs.services.platform_catalog import platform_has_lifecycle_action
+from app.packs.services.platform_resolver import pack_platform_resolution_cache, resolve_pack_platform
 from app.settings.dependencies import SettingsServicesDep
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 router = APIRouter(prefix="/agent/devices", tags=["agent-devices"])
+
+
+async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
+    """Whether this probe target's pack platform declares a ``state`` action.
+
+    This route owns the capability because it survives the deferred deletion of
+    the dial-era connectivity fold and its private helpers (A5.9).
+    """
+    try:
+        resolved = await resolve_pack_platform(
+            db,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            device_type=device.device_type.value if device.device_type else None,
+        )
+    except LookupError:
+        return False
+    return platform_has_lifecycle_action(resolved.lifecycle_actions, "state")
 
 
 @router.get("/probe-targets", response_model=ProbeTargetsOut)

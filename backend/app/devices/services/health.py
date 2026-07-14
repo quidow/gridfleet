@@ -210,17 +210,18 @@ class DeviceHealthService:
     async def update_emulator_state(
         self, db: AsyncSession, device: Device, state: str | None, *, source_time: datetime | None = None
     ) -> None:
-        # Write-on-diff (M2): emulator_state is presentation-only and re-observed
-        # on every push, so take no row lock and issue no write when the value is
+        # Write-on-diff (M2): pushed emulator_state is presentation-only and
+        # re-observed on every push, so take no row lock when that value is
         # unchanged — otherwise the per-push lifecycle fold would reacquire the
-        # device row lock every 10 s, the exact contention this work removes. The
-        # pre-lock read is a fast filter; the post-lock re-check closes the TOCTOU.
-        if device.emulator_state == state:
+        # device row every 10 s. A live operator refresh is deliberately different:
+        # even when it confirms the value, it advances the authority timestamp.
+        # The pre-lock read is a fast pushed-observation filter; the post-lock
+        # re-check closes the TOCTOU.
+        operator_refresh = source_time is None
+        if not operator_refresh and device.emulator_state == state:
             return
         locked = await _lock(db, device)
         if locked is None:
-            return
-        if locked.emulator_state == state:
             return
         # M2: an older pushed observation must not overwrite a newer write. Operator
         # refresh passes source_time=None (now-authority) and always wins.
@@ -230,5 +231,19 @@ class DeviceHealthService:
             and source_time <= locked.emulator_state_source_time
         ):
             return
+        authority_time = source_time or now_utc()
+        if operator_refresh and locked.emulator_state_source_time is not None:
+            # Agent and manager clocks are independent. Preserve monotonicity if
+            # the current agent watermark is ahead of manager time; lowering it
+            # would make an older delayed pushed state eligible again.
+            authority_time = max(authority_time, locked.emulator_state_source_time)
+        if locked.emulator_state == state:
+            # Pushed steady-state observations stay lock/write-free via the fast
+            # filter above. A live operator refresh is rare and higher-authority:
+            # even when it confirms the same value, advance the watermark so an
+            # older delayed different observation cannot overwrite it later.
+            if operator_refresh:
+                locked.emulator_state_source_time = authority_time
+            return
         locked.emulator_state = state
-        locked.emulator_state_source_time = source_time or now_utc()
+        locked.emulator_state_source_time = authority_time

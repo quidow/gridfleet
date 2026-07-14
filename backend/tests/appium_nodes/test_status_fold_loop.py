@@ -411,6 +411,60 @@ async def test_loop_folds_multiple_sections_with_independent_watermarks(
     assert host.observation_applied.get(DEVICE_FOLD_SECTION) == device_rev
 
 
+async def test_loop_contains_failure_per_section(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    from app.appium_nodes.services.status_fold_loop import DEVICE_FOLD_SECTION
+    from app.hosts.models import HostStatus, OSType
+
+    host_id = uuid.uuid4()
+    node_rev, device_rev = 51, 52
+    await control_plane_state_store.set_value(
+        db_session,
+        HOST_STATUS_NAMESPACE,
+        str(host_id),
+        {
+            "received_at": now_utc().isoformat(),
+            "payload": {
+                FOLD_SECTION: {"reported_at": now_utc().isoformat(), "nodes": [], "observation_revision": node_rev},
+                DEVICE_FOLD_SECTION: {
+                    "reported_at": now_utc().isoformat(),
+                    "devices": [],
+                    "observation_revision": device_rev,
+                },
+            },
+        },
+    )
+    db_session.add(
+        Host(
+            id=host_id,
+            hostname="section-containment",
+            ip="10.0.0.10",
+            agent_port=5100,
+            os_type=OSType.linux,
+            status=HostStatus.online,
+        )
+    )
+    await db_session.commit()
+
+    node_fold = AsyncMock(side_effect=RuntimeError("node fold failed"))
+    device_fold = AsyncMock(return_value=True)
+    loop = StatusFoldLoop(
+        sections=(FoldSection(FOLD_SECTION, node_fold), FoldSection(DEVICE_FOLD_SECTION, device_fold)),
+        session_factory=db_session_maker,
+    )
+
+    await loop._run_cycle(db_session)
+
+    node_fold.assert_awaited_once()
+    device_fold.assert_awaited_once()
+    db_session.expire_all()
+    host = await db_session.get(Host, host_id)
+    assert host is not None
+    assert host.observation_applied.get(FOLD_SECTION) is None
+    assert host.observation_applied.get(DEVICE_FOLD_SECTION) == device_rev
+
+
 async def test_loop_records_oldest_unapplied_section_age(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

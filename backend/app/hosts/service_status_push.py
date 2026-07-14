@@ -184,8 +184,7 @@ class HostStatusPushService:
 
         sections = copy.deepcopy(push_sections(push))
         # observation_revision is backend-owned on both health axes. Strip an
-        # agent-supplied value even for device_health, which is intentionally
-        # unguarded until its facts-only async move.
+        # agent-supplied value before reserving the backend ordering point.
         for name in HEALTH_SECTIONS:
             section = sections.get(name)
             if isinstance(section, dict):

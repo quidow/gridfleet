@@ -134,14 +134,83 @@ async def test_emulator_state_m2_ordering(db_with_device: tuple[AsyncSession, De
 async def test_emulator_state_unchanged_takes_no_write(
     db_with_device: tuple[AsyncSession, Device], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from app.core.timeutil import now_utc
+
     db, device = db_with_device
     service = DeviceHealthService(publisher=event_bus)
-    await service.update_emulator_state(db, device, None)  # already None
+    pushed_at = now_utc()
+    await service.update_emulator_state(db, device, None, source_time=pushed_at)  # already None
     # value unchanged -> early return before lock; assert no lock acquired
     spy = AsyncMock(wraps=svc.device_locking.lock_device)
     monkeypatch.setattr(svc.device_locking, "lock_device", spy)
-    await service.update_emulator_state(db, device, None)
+    await service.update_emulator_state(db, device, None, source_time=pushed_at)
     spy.assert_not_called()
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_unchanged_operator_refresh_advances_emulator_state_authority(
+    db_with_device: tuple[AsyncSession, Device],
+) -> None:
+    from app.core.timeutil import now_utc
+
+    db, device = db_with_device
+    service = DeviceHealthService(publisher=event_bus)
+    old_observation = now_utc() - timedelta(minutes=5)
+    await service.update_emulator_state(db, device, "device", source_time=old_observation)
+    await db.commit()
+    await db.refresh(device)
+
+    # A live operator refresh confirms the same value. It still needs to advance
+    # the source watermark so a delayed, older different observation cannot win.
+    await service.update_emulator_state(db, device, "device")
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state_source_time is not None
+    assert device.emulator_state_source_time > old_observation
+
+    await service.update_emulator_state(
+        db,
+        device,
+        "booting",
+        source_time=old_observation + timedelta(minutes=1),
+    )
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state == "device"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_operator_refresh_never_moves_emulator_state_authority_backward(
+    db_with_device: tuple[AsyncSession, Device],
+) -> None:
+    from app.core.timeutil import now_utc
+
+    db, device = db_with_device
+    service = DeviceHealthService(publisher=event_bus)
+    future_observation = now_utc() + timedelta(minutes=5)
+    await service.update_emulator_state(db, device, "device", source_time=future_observation)
+    await db.commit()
+    await db.refresh(device)
+
+    # A skewed agent clock may put the current watermark ahead of manager time.
+    # A live refresh is authoritative, but must keep the ordering watermark
+    # monotonic so an older delayed pushed state cannot become eligible again.
+    await service.update_emulator_state(db, device, "device")
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state_source_time == future_observation
+
+    await service.update_emulator_state(
+        db,
+        device,
+        "booting",
+        source_time=future_observation - timedelta(minutes=1),
+    )
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state == "device"
 
 
 @pytest.mark.db

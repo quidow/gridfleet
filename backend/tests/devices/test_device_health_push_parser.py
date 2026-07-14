@@ -47,3 +47,26 @@ def test_legacy_dict_section_is_not_v7() -> None:
 
 def test_missing_devices_key_is_legacy_empty() -> None:
     assert parse_device_health_items({"reported_at": "x"}).is_v7 is False
+
+
+def test_malformed_v7_evidence_fails_safe() -> None:
+    did = uuid.uuid4()
+    parsed = parse_device_health_items(
+        {
+            # Truthy non-booleans must not authorize absence assertions.
+            "complete_gather": "false",
+            "devices": [
+                {
+                    "device_id": str(did),
+                    "probe_status": "unexpected",
+                    "presence": "unexpected",
+                    "health": {"healthy": False, "checks": []},
+                    "lifecycle_state": {},
+                }
+            ],
+        }
+    )
+
+    assert parsed.complete_gather is False
+    assert parsed.by_device_id[did].probe_status == "error"
+    assert parsed.by_device_id[did].presence == "unknown"

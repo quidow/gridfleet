@@ -186,26 +186,33 @@ class StatusFoldLoop(BackgroundLoop):
                 record_status_fold_host("skipped")
                 continue
             started = perf_counter()
-            async with self._session_factory() as host_db:
-                settled = await entry.fold(host_db, host_id, section, boot_id=boot_id, deadline=deadline)
-            record_status_fold_host("folded")
-            logger.debug(
-                "status_fold_host_complete",
-                extra={
-                    "host_id": host_key,
-                    "section": entry.name,
-                    "revision": revision,
-                    "settled": settled,
-                    "ms": round((perf_counter() - started) * 1000, 1),
-                },
-            )
-            if settled and await self._advance_applied(host_id, entry.name, revision):
-                raw_received = section.get(OBSERVATION_RECEIVED_AT_KEY)
-                if not isinstance(raw_received, str) and isinstance(snapshot, dict):
-                    raw_received = snapshot.get("received_at")
-                received = parse_iso(raw_received)
-                if received is not None:
-                    record_status_fold_lag(max(0.0, (now_utc() - received).total_seconds()))
+            try:
+                async with self._session_factory() as host_db:
+                    settled = await entry.fold(host_db, host_id, section, boot_id=boot_id, deadline=deadline)
+                record_status_fold_host("folded")
+                logger.debug(
+                    "status_fold_host_complete",
+                    extra={
+                        "host_id": host_key,
+                        "section": entry.name,
+                        "revision": revision,
+                        "settled": settled,
+                        "ms": round((perf_counter() - started) * 1000, 1),
+                    },
+                )
+                if settled and await self._advance_applied(host_id, entry.name, revision):
+                    raw_received = section.get(OBSERVATION_RECEIVED_AT_KEY)
+                    if not isinstance(raw_received, str) and isinstance(snapshot, dict):
+                        raw_received = snapshot.get("received_at")
+                    received = parse_iso(raw_received)
+                    if received is not None:
+                        record_status_fold_lag(max(0.0, (now_utc() - received).total_seconds()))
+            except Exception:
+                record_status_fold_host("contained_error")
+                logger.exception(
+                    "status_fold_section_failed",
+                    extra={"host_id": host_key, "section": entry.name, "revision": revision},
+                )
 
     async def _advance_applied(self, host_id: uuid.UUID, section_name: str, revision: int) -> bool:
         # Serializes on the same host-row lock the push endpoint takes, so the
