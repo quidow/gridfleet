@@ -105,6 +105,47 @@ async def test_update_device_checks_persists_columns(db_with_device: tuple[Async
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_emulator_state_m2_ordering(db_with_device: tuple[AsyncSession, Device]) -> None:
+    from app.core.timeutil import now_utc
+
+    db, device = db_with_device
+    service = DeviceHealthService(publisher=event_bus)
+    t0 = now_utc()
+    await service.update_emulator_state(db, device, "device", source_time=t0)
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state == "device"
+
+    # Older pushed observation must NOT overwrite.
+    await service.update_emulator_state(db, device, "booting", source_time=t0 - timedelta(seconds=5))
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state == "device"
+
+    # Operator refresh (source_time=None -> now-authority) always wins.
+    await service.update_emulator_state(db, device, "offline")
+    await db.commit()
+    await db.refresh(device)
+    assert device.emulator_state == "offline"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_emulator_state_unchanged_takes_no_write(
+    db_with_device: tuple[AsyncSession, Device], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, device = db_with_device
+    service = DeviceHealthService(publisher=event_bus)
+    await service.update_emulator_state(db, device, None)  # already None
+    # value unchanged -> early return before lock; assert no lock acquired
+    spy = AsyncMock(wraps=svc.device_locking.lock_device)
+    monkeypatch.setattr(svc.device_locking, "lock_device", spy)
+    await service.update_emulator_state(db, device, None)
+    spy.assert_not_called()
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_update_session_viability_persists_columns(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
     await DeviceHealthService(publisher=event_bus).update_session_viability(

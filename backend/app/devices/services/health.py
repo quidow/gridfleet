@@ -207,7 +207,9 @@ class DeviceHealthService:
             await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
         _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
 
-    async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:
+    async def update_emulator_state(
+        self, db: AsyncSession, device: Device, state: str | None, *, source_time: datetime | None = None
+    ) -> None:
         # Write-on-diff (M2): emulator_state is presentation-only and re-observed
         # on every push, so take no row lock and issue no write when the value is
         # unchanged — otherwise the per-push lifecycle fold would reacquire the
@@ -220,4 +222,13 @@ class DeviceHealthService:
             return
         if locked.emulator_state == state:
             return
+        # M2: an older pushed observation must not overwrite a newer write. Operator
+        # refresh passes source_time=None (now-authority) and always wins.
+        if (
+            source_time is not None
+            and locked.emulator_state_source_time is not None
+            and source_time <= locked.emulator_state_source_time
+        ):
+            return
         locked.emulator_state = state
+        locked.emulator_state_source_time = source_time or now_utc()

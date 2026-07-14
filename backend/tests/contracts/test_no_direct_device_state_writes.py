@@ -57,6 +57,9 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
     # device row lock and a strictly-greater observation revision (two-axis guard).
     "device_checks_healthy": frozenset({"app/devices/services/health.py"}),
     "failure_episode_id": frozenset({"app/devices/services/health.py"}),
+    # M2 ordering watermark for pushed emulator_state writes: written under the
+    # device row lock alongside emulator_state (the migration is out-of-band).
+    "emulator_state_source_time": frozenset({"app/devices/services/health.py"}),
     "started_at": frozenset(
         {
             "app/appium_nodes/services/reconciler_agent.py",
