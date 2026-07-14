@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -285,6 +286,79 @@ async def test_budget_exhaustion_fails_before_unfinishable_attempt(
     assert resp.json()["status"] == "create_error"
     assert len(create_budgets) == 1
     assert create_budgets == [0.0]
+
+
+@pytest.mark.db
+async def test_delayed_replacement_does_not_start_below_retry_budget(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, first_device, _ = await seed_host_and_running_node(
+        db_session,
+        identity=f"grid-delayed-retry-a-{uuid.uuid4().hex[:8]}",
+        port=4732,
+    )
+    await db_session.commit()
+    attempted_device_ids: list[uuid.UUID] = []
+    replacement_device_id: uuid.UUID | None = None
+    clock = SimpleNamespace(now=100.0)
+
+    def monotonic() -> float:
+        return clock.now
+
+    async def fake_sleep(delay: float) -> None:
+        nonlocal replacement_device_id
+        _ = delay
+        _, replacement, _ = await seed_host_and_running_node(
+            db_session,
+            identity=f"grid-delayed-retry-b-{uuid.uuid4().hex[:8]}",
+            port=4733,
+        )
+        await db_session.commit()
+        replacement_device_id = replacement.id
+        clock.now += 0.1
+
+    async def fake_create(
+        db_factory: session_create.DbFactory,
+        allocation_service: AllocationService,
+        *,
+        allocation: AllocationResult,
+        raw_body: bytes,
+        claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
+    ) -> session_create.CreateOutcome:
+        _ = raw_body, claim_window_sec, max_create_timeout_sec
+        attempted_device_ids.append(allocation.device_id)
+        if len(attempted_device_ids) == 1:
+            async with db_factory() as db:
+                await allocation_service.fail(
+                    db,
+                    allocation_id=allocation.allocation_id,
+                    message="simulated unreachable target",
+                )
+                await db.commit()
+            return session_create.CreateOutcome(
+                kind="target_unreachable",
+                message="upstream unreachable",
+                allocation=allocation,
+            )
+        return _created_outcome(allocation=allocation, session_id="late-replacement-session")
+
+    monkeypatch.setattr(router_internal, "time", SimpleNamespace(monotonic=monotonic))
+    monkeypatch.setattr(router_internal, "asyncio", SimpleNamespace(sleep=fake_sleep))
+    monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
+
+    resp = await client.post(
+        "/internal/grid/create-session",
+        headers={"X-Gridfleet-Create-Budget-Ms": "20050"},
+        json={"body": _body(platformName="Android"), "ticket": None, "run_id": None},
+    )
+
+    assert replacement_device_id is not None
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "create_error"
+    assert attempted_device_ids == [first_device.id]
 
 
 @pytest.mark.db

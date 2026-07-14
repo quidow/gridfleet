@@ -120,6 +120,7 @@ async def create_session(
     ticket_id = payload.ticket
     excluded: set[uuid.UUID] = set()
     attempts = 0
+    last_target_failure_message: str | None = None
 
     if ticket_id is not None:
         async with services.session_factory() as db:
@@ -127,16 +128,19 @@ async def create_session(
             await db.commit()
 
     while True:
+        if attempts > 0 and create_deadline - time.monotonic() < PER_ATTEMPT_MIN_BUDGET_SEC:
+            return CreateSessionResponse(status="create_error", message=last_target_failure_message)
         result: AllocationResult | None
         async with services.session_factory() as db:
             ticket = await _get_or_create_ticket(db, payload, ticket_id)
             ticket_id = ticket.id
-            if ticket.status == GridQueueStatus.cancelled:
+            if ticket.status in {GridQueueStatus.cancelled, GridQueueStatus.expired}:
                 await db.commit()
-                return JSONResponse(status_code=400, content={"status": "invalid", "message": "invalid capabilities"})
-            if ticket.status == GridQueueStatus.expired:
-                await db.commit()
-                return JSONResponse(status_code=410, content={"status": "expired", "message": "queue timeout"})
+                if ticket.status == GridQueueStatus.cancelled:
+                    status_code, content = 400, {"status": "invalid", "message": "invalid capabilities"}
+                else:
+                    status_code, content = 410, {"status": "expired", "message": "queue timeout"}
+                return JSONResponse(status_code=status_code, content=content)
             attempt_started = time.monotonic()
             try:
                 result = await allocation.try_allocate(db, ticket=ticket, exclude_device_ids=excluded)
@@ -167,6 +171,7 @@ async def create_session(
                 ),
             )
             if outcome.kind in {"target_unreachable", "target_protocol_error"}:
+                last_target_failure_message = outcome.message or None
                 await session_create.mark_target_node_down(
                     services.session_factory,
                     services.health,
