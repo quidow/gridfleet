@@ -205,6 +205,28 @@ async def test_non_json_error_body_becomes_target_protocol_error(
 
 
 @pytest.mark.db
+async def test_non_w3c_json_error_body_becomes_target_protocol_error(
+    db_factory: async_sessionmaker[AsyncSession],
+    allocation_service: AllocationService,
+    claimed_allocation: AllocationResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_create.appium_direct,
+        "create_session_raw",
+        _raw_result(502, json.dumps({"message": "bad gateway"}).encode()),
+    )
+
+    outcome = await session_create.create_and_promote(
+        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+    )
+
+    assert outcome.kind == "target_protocol_error"
+    assert "502" in outcome.message
+    assert "bad gateway" in outcome.message
+
+
+@pytest.mark.db
 @pytest.mark.parametrize(
     ("status", "body", "transport_error", "expected_kind"),
     [

@@ -99,6 +99,11 @@ def _bounded_protocol_message(body: bytes) -> str:
     return body.decode("utf-8", errors="replace")[:_PROTOCOL_ERROR_MESSAGE_LIMIT]
 
 
+def _is_w3c_error(parsed: dict[str, Any]) -> bool:
+    value = parsed.get("value")
+    return isinstance(value, dict) and isinstance(value.get("error"), str) and bool(value["error"])
+
+
 def _record(outcome: CreateOutcome) -> CreateOutcome:
     GRID_CREATE_ATTEMPT_TOTAL.labels(outcome=outcome.kind).inc()
     return outcome
@@ -131,7 +136,7 @@ async def create_and_promote(
 
     if not (HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES):
         await _fail(db_factory, allocation_service, allocation.allocation_id, f"appium returned {status}")
-        if parsed is None:
+        if parsed is None or not _is_w3c_error(parsed):
             return _record(
                 CreateOutcome(
                     kind="target_protocol_error",

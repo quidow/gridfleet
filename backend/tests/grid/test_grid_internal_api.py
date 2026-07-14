@@ -242,6 +242,60 @@ async def test_retry_excludes_dead_target_then_creates(
 
 
 @pytest.mark.db
+async def test_retry_stops_after_three_failed_targets(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_ids: set[uuid.UUID] = set()
+    for index in range(4):
+        _, device, _ = await seed_host_and_running_node(
+            db_session,
+            identity=f"grid-retry-cap-{index}-{uuid.uuid4().hex[:8]}",
+            port=4740 + index,
+        )
+        device_ids.add(device.id)
+    await db_session.commit()
+    attempted_device_ids: list[uuid.UUID] = []
+
+    async def fake_create(
+        db_factory: session_create.DbFactory,
+        allocation_service: AllocationService,
+        *,
+        allocation: AllocationResult,
+        raw_body: bytes,
+        claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
+    ) -> session_create.CreateOutcome:
+        _ = raw_body, claim_window_sec, max_create_timeout_sec
+        attempted_device_ids.append(allocation.device_id)
+        async with db_factory() as db:
+            await allocation_service.fail(
+                db,
+                allocation_id=allocation.allocation_id,
+                message="simulated unreachable target",
+            )
+            await db.commit()
+        return session_create.CreateOutcome(
+            kind="target_unreachable",
+            message="upstream unreachable",
+            allocation=allocation,
+        )
+
+    monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
+
+    response = await client.post(
+        "/internal/grid/create-session",
+        json={"body": _body(platformName="Android"), "ticket": None, "run_id": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "create_error"
+    assert len(attempted_device_ids) == router_internal.MAX_TARGET_ATTEMPTS == 3
+    assert set(attempted_device_ids) < device_ids
+
+
+@pytest.mark.db
 async def test_budget_exhaustion_fails_before_unfinishable_attempt(
     client: AsyncClient,
     seeded_available_device: Device,
@@ -433,6 +487,38 @@ async def test_create_session_no_match_queues_and_reuses_ticket(
         "ticket": ticket,
         "message": None,
     }
+
+
+@pytest.mark.db
+async def test_create_session_no_match_respects_short_router_budget(
+    client: AsyncClient,
+    seeded_available_device: Device,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ = seeded_available_device
+    clock = SimpleNamespace(now=100.0)
+    sleeps: list[float] = []
+
+    def monotonic() -> float:
+        return clock.now
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        clock.now += delay
+
+    monkeypatch.setattr(router_internal, "time", SimpleNamespace(monotonic=monotonic))
+    monkeypatch.setattr(router_internal, "asyncio", SimpleNamespace(sleep=fake_sleep))
+
+    response = await client.post(
+        "/internal/grid/create-session",
+        headers={"X-Gridfleet-Create-Budget-Ms": "100"},
+        json={"body": _body(platformName="iOS"), "ticket": None, "run_id": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert sleeps
+    assert clock.now == pytest.approx(100.1)
 
 
 @pytest.mark.db

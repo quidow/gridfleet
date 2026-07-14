@@ -113,10 +113,10 @@ async def create_session(
     allocation = services.allocation
     raw_body = json.dumps(payload.body, separators=(",", ":")).encode("utf-8")
     started = time.monotonic()
-    deadline = started + LONG_POLL_SEC
     create_deadline = started + (
         create_budget_ms / 1000.0 if create_budget_ms is not None else DEFAULT_CREATE_BUDGET_SEC
     )
+    poll_deadline = min(started + LONG_POLL_SEC, create_deadline)
     ticket_id = payload.ticket
     excluded: set[uuid.UUID] = set()
     attempts = 0
@@ -183,11 +183,12 @@ async def create_session(
                     return CreateSessionResponse(status="create_error", message=outcome.message or None)
                 continue
             return _response_for_outcome(outcome, result)
-        if time.monotonic() >= deadline:
+        now = time.monotonic()
+        if now >= poll_deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
             GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="queued").observe(time.monotonic() - started)
             return CreateSessionResponse(status="queued", ticket=ticket_id)
-        await asyncio.sleep(RETRY_INTERVAL_SEC)
+        await asyncio.sleep(min(RETRY_INTERVAL_SEC, poll_deadline - now))
 
 
 @router.delete("/tickets/{ticket_id}", status_code=204)
