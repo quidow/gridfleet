@@ -167,14 +167,14 @@ async def test_fold_acquires_one_fold_owned_health_lock_per_processed_device(
     host, devices = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-one-lock")
     device_ids = [device.id for device in devices]
     revision = await next_observation_revision(db_session)
-    real_lock = device_locking.lock_device
+    real_lock = device_locking.lock_device_handle
     lock_calls: list[uuid.UUID] = []
 
-    async def counting_lock(db: AsyncSession, device_id: uuid.UUID, **kwargs: object) -> Device:
+    async def counting_lock(db: AsyncSession, device_id: uuid.UUID, **kwargs: object) -> device_locking.LockedDevice:
         lock_calls.append(device_id)
         return await real_lock(db, device_id, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(device_locking, "lock_device", counting_lock)
+    monkeypatch.setattr(device_locking, "lock_device_handle", counting_lock)
     service = build_connectivity_service(db_session_maker)
 
     settled = await service.fold_host_devices(
@@ -382,6 +382,7 @@ async def test_fold_ip_ping_hysteresis_runs_through_loop_path(
     device = devices[0]
     lifecycle_policy = MagicMock()
     lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
     lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
     lifecycle_policy.restore_run_after_self_heal = AsyncMock()
     lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
@@ -427,6 +428,7 @@ async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
     device = devices[0]
     lifecycle_policy = MagicMock()
     lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
     lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
     lifecycle_policy.restore_run_after_self_heal = AsyncMock()
     lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
@@ -471,12 +473,13 @@ async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
     lifecycle_policy.handle_health_failure.assert_awaited_once()
 
 
-async def test_fold_healthy_device_runs_self_heal_cleanup(
+async def test_fold_healthy_device_reuses_lock_for_self_heal(
     db_session: AsyncSession,
 ) -> None:
     host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-self-heal")
     device = devices[0]
     lifecycle_policy = MagicMock()
+    lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
     lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
     lifecycle_policy.restore_run_after_self_heal = AsyncMock()
     service = _loop_service(lifecycle_policy=lifecycle_policy)
@@ -490,8 +493,14 @@ async def test_fold_healthy_device_runs_self_heal_cleanup(
         health={"healthy": True, "checks": []},
     )
 
-    lifecycle_policy.clear_escalation_residue_on_self_heal.assert_awaited_once()
-    lifecycle_policy.restore_run_after_self_heal.assert_awaited_once()
+    lifecycle_policy.reconcile_self_heal_locked.assert_awaited_once()
+    _, locked = lifecycle_policy.reconcile_self_heal_locked.await_args.args
+    assert locked.device.id == device.id
+    assert lifecycle_policy.reconcile_self_heal_locked.await_args.kwargs["operational_state"] is (
+        DeviceOperationalState.available
+    )
+    lifecycle_policy.clear_escalation_residue_on_self_heal.assert_not_awaited()
+    lifecycle_policy.restore_run_after_self_heal.assert_not_awaited()
 
 
 async def test_fold_healthy_offline_device_attempts_auto_recovery(

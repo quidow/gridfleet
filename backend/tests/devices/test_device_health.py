@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -151,6 +152,65 @@ def test_locked_device_fold_requires_scope_factory() -> None:
     device = MagicMock(spec=Device)
     with pytest.raises(TypeError, match="DeviceHealthFoldScope"):
         LockedDeviceFold(device)  # type: ignore[call-arg]
+
+
+def test_locked_device_requires_locking_factory() -> None:
+    from app.devices import locking as device_locking
+
+    device = MagicMock(spec=Device)
+    with pytest.raises(TypeError, match="lock_device_handle"):
+        device_locking.LockedDevice(device)  # type: ignore[attr-defined,call-arg]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_locked_device_handle_expires_with_owning_transaction(
+    db_with_device: tuple[AsyncSession, Device],
+) -> None:
+    from app.devices import locking as device_locking
+
+    db, device = db_with_device
+    locked = await device_locking.lock_device_handle(db, device.id)
+
+    locked.assert_active(db)
+    assert locked.device.id == device.id
+
+    await db.commit()
+
+    with pytest.raises(RuntimeError, match="active transaction"):
+        locked.assert_active(db)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_locked_device_handle_loads_scalar_graph_in_one_statement(
+    db_with_device: tuple[AsyncSession, Device],
+) -> None:
+    from app.devices import locking as device_locking
+
+    db, device = db_with_device
+    statements: list[str] = []
+
+    def capture_selects(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(db.bind.sync_engine, "before_cursor_execute", capture_selects)
+    try:
+        locked = await device_locking.lock_device_handle(db, device.id)
+    finally:
+        event.remove(db.bind.sync_engine, "before_cursor_execute", capture_selects)
+
+    assert len(statements) == 1
+    assert locked.device.host is not None
+    assert locked.device.appium_node is None
 
 
 @pytest.mark.db

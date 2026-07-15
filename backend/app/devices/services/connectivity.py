@@ -316,7 +316,7 @@ class ConnectivityService:
             return
         # A healthy probe re-arms link repair only after its fact write lands.
         await link_repair.reset_repair_attempts(db, device.identity_value)
-        await self._maybe_auto_recover(db, device)
+        await self._maybe_auto_recover(db, locked)
 
     async def _escalate_health_failure(
         self,
@@ -368,7 +368,8 @@ class ConnectivityService:
             commit=False,
         )
 
-    async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
+    async def _maybe_auto_recover(self, db: AsyncSession, locked: LockedDeviceFold) -> None:
+        device = locked.device
         operational_state = await derive_operational_state(db, device, now=now_utc())
         if operational_state != DeviceOperationalState.offline:
             # Healthy without being offline: clear any stale previously-offline
@@ -382,15 +383,15 @@ class ConnectivityService:
             # node's effective-state ``blocked`` forever. Reset the escalation residue
             # now that the device is provably healthy. Gated on ``operator_stop_active``
             # inside the helper so an operator-stop hold stays sticky.
-            await self._lifecycle_policy.clear_escalation_residue_on_self_heal(
-                db, device, reason="Device self-healed after healthy reconnect"
-            )
-            # Clear a stale health-failure run exclusion left by a recovery route that
-            # never ran restore (e.g. operator node restart): the device is provably
-            # available but still excluded because the no-TTL health_failure:reservation
-            # intent was never revoked. Cooldown exclusions are left intact.
-            await self._lifecycle_policy.restore_run_after_self_heal(
-                db, device, reason="Device healthy after self-heal"
+            # Clear stale lifecycle residue through the fold-owned lock. This keeps
+            # the operator-stop and state-claim facts coherent with the health write
+            # while avoiding two same-transaction graph reloads.
+            await self._lifecycle_policy.reconcile_self_heal_locked(
+                db,
+                locked.locked_device,
+                operational_state=operational_state,
+                residue_reason="Device self-healed after healthy reconnect",
+                run_reason="Device healthy after self-heal",
             )
             return
         if not await is_ready_for_use_async(db, device):

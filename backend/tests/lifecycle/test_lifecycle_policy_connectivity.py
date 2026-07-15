@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType, ExclusionKind
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.lifecycle.services import remediation_log
@@ -19,6 +19,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import build_review_service
 from tests.fakes.settings import FakeSettingsReader
+from tests.helpers import create_reserved_run
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,11 +140,11 @@ async def test_self_heal_clear_does_not_commit_callers_transaction(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Wave-5 #6: the connectivity loop is single-batch-commit — one commit at cycle
-    end owns the transaction boundary. clear_escalation_residue_on_self_heal must not
-    commit the caller's session mid-cycle: a later exception in the same cycle could no
-    longer roll back the already-committed partial state. A rollback after the call
-    must restore the escalation residue."""
+    """The connectivity fold owns one transaction per settled device.
+
+    ``clear_escalation_residue_on_self_heal`` must not commit that transaction:
+    a later exception for the same device must still roll back the partial state.
+    """
     device = await _make_available_device(db_session, db_host, identity="self-heal-no-commit")
     device_id = device.id
     locked = await device_locking.lock_device(db_session, device_id)
@@ -206,6 +207,50 @@ async def test_self_heal_clears_in_flight_residue_immediately(
     state_after = await remediation_log.load_ladder(db_session, locked.id)
     assert state_after.last_failure_reason is None
     assert state_after.last_action == "self_healed"
+
+
+async def test_reconcile_self_heal_locked_clears_residue_and_restores_run(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await _make_available_device(db_session, db_host, identity="self-heal-locked")
+    device_id = device.id
+    await _seed_escalation_residue(db_session, device)
+    await create_reserved_run(
+        db_session,
+        name="self-heal-locked-run",
+        devices=[device],
+        excluded_device_ids={str(device_id)},
+        exclusion_reason="Failed checks: ping",
+    )
+    _run, entry = await run_reservation_service.get_device_reservation_with_entry(db_session, device_id)
+    assert entry is not None
+    entry.exclusion_kind = ExclusionKind.exclusion
+    await db_session.commit()
+
+    locked = await device_locking.lock_device_handle(db_session, device_id)
+    result = await _build_lifecycle_policy_service().reconcile_self_heal_locked(
+        db_session,
+        locked,
+        operational_state=DeviceOperationalState.available,
+        residue_reason="Device self-healed after healthy reconnect",
+        run_reason="Device healthy after self-heal",
+    )
+
+    assert result == (True, True)
+    ladder = await remediation_log.load_ladder(db_session, device_id)
+    assert ladder.last_action == "self_healed"
+    _run, entry = await run_reservation_service.get_device_reservation_with_entry(db_session, device_id)
+    assert entry is not None
+    assert entry.excluded is False
+
+    await db_session.rollback()
+
+    ladder = await remediation_log.load_ladder(db_session, device_id)
+    assert ladder.last_failure_reason == "Recovery viability probe failed"
+    _run, entry = await run_reservation_service.get_device_reservation_with_entry(db_session, device_id)
+    assert entry is not None
+    assert entry.excluded is True
 
 
 async def test_connectivity_loss_keeps_device_in_run(

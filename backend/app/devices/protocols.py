@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.sentinels import UnsetType
+    from app.devices.locking import LockedDevice
     from app.devices.models import (
         Device,
         DeviceOperationalState,
@@ -161,6 +162,17 @@ class HealthFailureHandler(Protocol):
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str: ...
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool: ...
     async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None: ...
+
+    async def reconcile_self_heal_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        operational_state: DeviceOperationalState,
+        residue_reason: str,
+        run_reason: str,
+    ) -> tuple[bool, bool]: ...
+
     async def clear_escalation_residue_on_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool: ...
     async def restore_run_after_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool: ...
 

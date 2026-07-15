@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
     from app.devices.models import DeviceReservation
     from app.devices.protocols import RemoteNodeManager, ReviewProtocol, SessionViabilityProbe
     from app.events.protocols import EventPublisher
@@ -533,8 +534,24 @@ class LifecyclePolicyService:
         True when a reset was appended so the incident fires exactly once;
         subsequent cycles no-op.
         """
-        device = await _reload_device(db, device)
-        if await operator_stop_active(db, device.id):
+        locked = await device_locking.lock_device_handle(db, device.id)
+        operator_stopped = await operator_stop_active(db, locked.device.id)
+        return await self._clear_escalation_residue_locked(
+            db,
+            locked.device,
+            operator_stopped=operator_stopped,
+            reason=reason,
+        )
+
+    async def _clear_escalation_residue_locked(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        operator_stopped: bool,
+        reason: str,
+    ) -> bool:
+        if operator_stopped:
             return False
         ladder = await remediation_log.load_ladder(db, device.id)
         if not ladder.episode_active:
@@ -551,12 +568,39 @@ class LifecyclePolicyService:
                 source="device_checks",
             ),
         )
-        # No commit here: the connectivity loop is single-batch-commit and owns the
-        # transaction boundary (wave-5 #6) — a mid-cycle commit would make partial
-        # cycle state durable past a later rollback. Flush so the incident row is
-        # visible to same-transaction reads.
+        # No commit here: the connectivity fold owns the per-device transaction
+        # boundary. A nested commit would make partial device work durable past a
+        # later failure. Flush so the incident row is visible to same-transaction reads.
         await db.flush()
         return True
+
+    async def reconcile_self_heal_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        operational_state: DeviceOperationalState,
+        residue_reason: str,
+        run_reason: str,
+    ) -> tuple[bool, bool]:
+        """Clear healthy-path lifecycle residue through an already-held device lock."""
+        locked.assert_active(db)
+        device = locked.device
+        operator_stopped = await operator_stop_active(db, device.id)
+        cleared = await self._clear_escalation_residue_locked(
+            db,
+            device,
+            operator_stopped=operator_stopped,
+            reason=residue_reason,
+        )
+        restored = await self._restore_run_after_self_heal_locked(
+            db,
+            device,
+            operational_state=operational_state,
+            operator_stopped=operator_stopped,
+            reason=run_reason,
+        )
+        return cleared, restored
 
     async def restore_run_after_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
         """Clear a stale permanent (health-failure) run exclusion once the device is
@@ -576,10 +620,28 @@ class LifecyclePolicyService:
         exclusions (``excluded_until`` in the future) are intentional backoff and are
         left untouched. Returns True only when an exclusion was actually cleared.
         """
-        device = await _reload_device(db, device)
-        if await operator_stop_active(db, device.id):
+        locked = await device_locking.lock_device_handle(db, device.id)
+        operator_stopped = await operator_stop_active(db, locked.device.id)
+        operational_state = await derive_operational_state(db, locked.device, now=now_utc())
+        return await self._restore_run_after_self_heal_locked(
+            db,
+            locked.device,
+            operational_state=operational_state,
+            operator_stopped=operator_stopped,
+            reason=reason,
+        )
+
+    async def _restore_run_after_self_heal_locked(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        operational_state: DeviceOperationalState,
+        operator_stopped: bool,
+        reason: str,
+    ) -> bool:
+        if operator_stopped:
             return False
-        operational_state = await derive_operational_state(db, device, now=now_utc())
         if operational_state != DeviceOperationalState.available:
             return False
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)

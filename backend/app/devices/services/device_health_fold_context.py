@@ -34,12 +34,12 @@ class DeviceHealthFoldReceipt:
 
 @dataclass(frozen=True, slots=True, init=False)
 class LockedDeviceFold:
-    device: Device
+    locked_device: device_locking.LockedDevice
     _presence: PresenceSnapshot
 
     def __init__(
         self,
-        device: Device,
+        locked_device: device_locking.LockedDevice,
         presence: PresenceSnapshot | None = None,
         *,
         _token: object | None = None,
@@ -48,12 +48,20 @@ class LockedDeviceFold:
             raise TypeError("LockedDeviceFold must be created by DeviceHealthFoldScope")
         if presence is None:
             raise TypeError("LockedDeviceFold requires DeviceHealthFoldScope presence state")
-        object.__setattr__(self, "device", device)
+        object.__setattr__(self, "locked_device", locked_device)
         object.__setattr__(self, "_presence", presence)
 
     @classmethod
-    def _from_locked_device(cls, device: Device, presence: PresenceSnapshot) -> LockedDeviceFold:
-        return cls(device, presence, _token=_LOCKED_DEVICE_TOKEN)
+    def _from_locked_device(
+        cls,
+        locked_device: device_locking.LockedDevice,
+        presence: PresenceSnapshot,
+    ) -> LockedDeviceFold:
+        return cls(locked_device, presence, _token=_LOCKED_DEVICE_TOKEN)
+
+    @property
+    def device(self) -> Device:
+        return self.locked_device.device
 
     def mark_applied(self, receipt: DeviceHealthFoldReceipt) -> None:
         if receipt.revision is None:
@@ -103,7 +111,7 @@ class DeviceHealthFoldScope:
 
     async def lock_device(self, db: AsyncSession, device_id: uuid.UUID) -> LockedDeviceFold | None:
         try:
-            device = await device_locking.lock_device(db, device_id)
+            locked_device = await device_locking.lock_device_handle(db, device_id)
         except NoResultFound:
             return None
-        return LockedDeviceFold._from_locked_device(device, self._presence)
+        return LockedDeviceFold._from_locked_device(locked_device, self._presence)

@@ -892,7 +892,7 @@ async def test_bench_device_health_loop_fold(
         _report_device_health_loop(tap, commits, fold_wall_ms, settled_wall_ms)
         attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
         assert "unattributed" not in attributed_callsites
-        assert "app.devices.locking.lock_device" in attributed_callsites
+        assert "app.devices.locking.lock_device_handle" in attributed_callsites
         if CHURN > 0:
             assert tap.deferred_total > 0
             assert commits.deferred_count > 0
