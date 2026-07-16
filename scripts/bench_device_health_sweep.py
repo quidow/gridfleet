@@ -57,6 +57,11 @@ PYTEST_CMD = [
 ]
 
 
+def resolve_output_dir(value: str) -> Path:
+    """Return an absolute path so backend subprocesses share the caller's destination."""
+    return Path(value).resolve()
+
+
 def run_cell(name: str, overrides: dict[str, str], out_dir: Path, iters: str | None, explain: bool) -> bool:
     json_path = out_dir / f"{name}.json"
     # Strip ambient FOLD_BENCH_* knobs: a stray exported var must not silently
@@ -123,7 +128,7 @@ def main() -> int:
     parser.add_argument("--explain", action="store_true", help="set FOLD_BENCH_EXPLAIN=1 for every cell")
     args = parser.parse_args()
 
-    out_dir = Path(args.out)
+    out_dir = resolve_output_dir(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     selected = {name: env for name, env in CELLS.items() if fnmatch.fnmatch(name, args.only)}
     if not selected:

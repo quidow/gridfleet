@@ -93,6 +93,7 @@ from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.review import ReviewService
+from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
@@ -112,7 +113,9 @@ from tests.bench_instrumentation import (
     explain_statement_sql,
     install_async_session_callsite_profiler,
     percentile,
+    scenario_observation_shape,
     select_explain_targets,
+    validate_benchmark_knobs,
 )
 from tests.fakes import FakeSettingsReader
 from tests.helpers import build_connectivity_service, settle_after_commit_tasks
@@ -133,6 +136,7 @@ DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
 ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
 WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
 CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
+validate_benchmark_knobs(devices=DEVICES, iters=ITERS, warmup=WARMUP, churn=CHURN)
 _raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
 if _raw_lifecycle_mode not in ("real", "isolated"):
     raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
@@ -140,8 +144,6 @@ LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
 JSON_PATH = os.getenv("FOLD_BENCH_JSON")
 EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
 SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
-# repeat-unhealthy needs a nonzero unhealthy fraction even when CHURN is unset.
-_REPEAT_CHURN = CHURN if CHURN > 0 else 0.3
 
 
 @dataclass(frozen=True)
@@ -154,9 +156,7 @@ class _HealthScenario:
     intended code path did not run.
     """
 
-    unhealthy_count: Callable[[int], int]
     reseed_per_iteration: bool
-    omit_second_half: bool = False
     seed_extra: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
     rearm: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
     verify: Callable[[AsyncSession, QueryTap, list[_SeededDevice]], Awaitable[None]] | None = None
@@ -167,13 +167,27 @@ async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: lis
     assert all(d.identity.startswith("bench-g0-") for d in devices), (
         "repeat-unhealthy must observe the generation-0 fleet across all iterations; a re-seed occurred"
     )
-    k = _churn_count(len(devices), _REPEAT_CHURN)
+    shape = scenario_observation_shape(scenario="repeat-unhealthy", devices=len(devices), churn=CHURN)
     unhealthy = await db.scalar(
         select(func.count())
         .select_from(Device)
         .where(Device.id.in_([d.device_id for d in devices]), Device.device_checks_healthy.is_(False))
     )
-    assert unhealthy == k, f"expected {k} devices to stay unhealthy across repeats, found {unhealthy}"
+    assert unhealthy == shape.unhealthy_count, (
+        f"expected {shape.unhealthy_count} devices to stay unhealthy across repeats, found {unhealthy}"
+    )
+
+
+async def _verify_unhealthy_cardinality(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    shape = scenario_observation_shape(scenario=SCENARIO, devices=len(devices), churn=CHURN)
+    unhealthy = await db.scalar(
+        select(func.count())
+        .select_from(Device)
+        .where(Device.id.in_([d.device_id for d in devices]), Device.device_checks_healthy.is_(False))
+    )
+    assert unhealthy == shape.unhealthy_count, (
+        f"{SCENARIO} expected exactly {shape.unhealthy_count} unhealthy devices, found {unhealthy}"
+    )
 
 
 _DEEP_HISTORY_ROWS = 200
@@ -241,6 +255,14 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
         .where(DeviceRemediationLogEntry.device_id == devices[0].device_id)
     )
     assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
+    # Every healthy observation loads the existing ladder before readiness can
+    # affect the later self-heal branch, so mixed-fleet setup-required devices
+    # still contribute one full history read per armed iteration.
+    ladder_key = ("app.lifecycle.services.remediation_log.load_ladder", "SELECT device_remediation_log")
+    expected_rows = len(devices) * _DEEP_HISTORY_ROWS * ITERS
+    assert tap.rows[ladder_key] >= expected_rows, (
+        f"deep-history expected at least {expected_rows} timed remediation rows, observed {tap.rows[ladder_key]}"
+    )
 
 
 async def _seed_active_claims(db: AsyncSession, devices: list[_SeededDevice]) -> None:
@@ -275,6 +297,23 @@ async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[_
     )
     assert sessions == (len(claimed) + 1) // 2, "live session claims disappeared mid-benchmark"
     assert leases == len(claimed) // 2, "verification leases disappeared mid-benchmark"
+    session_key = (
+        "app.sessions.live_session_predicate.device_has_masking_live_session",
+        "SELECT sessions",
+    )
+    lease_key = ("app.devices.services.claims.device_has_verification_lease", "SELECT device_intents")
+    assert tap.callsite_counter[session_key] >= len(devices) * ITERS, "live-session masking predicate did not run"
+    assert tap.rows[lease_key] >= (len(claimed) // 2) * ITERS, "verification-lease predicate missed seeded claims"
+    session_parameters = tap.captured_parameter_values(session_key)
+    lease_parameters = tap.captured_parameter_values(lease_key)
+    for index, seeded in enumerate(claimed):
+        timed_parameters = session_parameters if index % 2 == 0 else lease_parameters
+        assert str(seeded.device_id) in timed_parameters, f"timed claim predicate did not inspect {seeded.identity}"
+        device = await db.get(Device, seeded.device_id)
+        assert device is not None
+        state = await derive_operational_state(db, device, now=now_utc())
+        expected = DeviceOperationalState.busy if index % 2 == 0 else DeviceOperationalState.verifying
+        assert state == expected, f"claim for {seeded.identity} projected {state}, expected {expected}"
 
 
 async def _seed_maintenance_half(db: AsyncSession, devices: list[_SeededDevice]) -> None:
@@ -369,44 +408,36 @@ async def _verify_run_exclusion_restored(db: AsyncSession, tap: QueryTap, device
 
 _SCENARIOS: dict[str, _HealthScenario] = {
     "steady": _HealthScenario(
-        unhealthy_count=lambda n: _churn_count(n, CHURN),
         reseed_per_iteration=CHURN > 0,
     ),
-    "sparse-unhealthy": _HealthScenario(unhealthy_count=lambda n: 1, reseed_per_iteration=True),
-    "all-unhealthy": _HealthScenario(unhealthy_count=lambda n: n, reseed_per_iteration=True),
+    "sparse-unhealthy": _HealthScenario(reseed_per_iteration=True, verify=_verify_unhealthy_cardinality),
+    "all-unhealthy": _HealthScenario(reseed_per_iteration=True, verify=_verify_unhealthy_cardinality),
     "repeat-unhealthy": _HealthScenario(
-        unhealthy_count=lambda n: _churn_count(n, _REPEAT_CHURN),
         reseed_per_iteration=False,
         verify=_verify_repeat_unhealthy,
     ),
     "stale-ladder": _HealthScenario(
-        unhealthy_count=lambda n: 0,
         reseed_per_iteration=False,
         rearm=_arm_stale_ladders,
         verify=_verify_stale_ladder_cleared,
     ),
     "deep-history": _HealthScenario(
-        unhealthy_count=lambda n: 0,
         reseed_per_iteration=False,
         seed_extra=_seed_deep_history,
         verify=_verify_deep_history_untouched,
     ),
     "active-claims": _HealthScenario(
-        unhealthy_count=lambda n: 0,
         reseed_per_iteration=False,
         seed_extra=_seed_active_claims,
         verify=_verify_claims_intact,
     ),
     "terminal-noop": _HealthScenario(
-        unhealthy_count=lambda n: n,
         reseed_per_iteration=False,
-        omit_second_half=True,
         seed_extra=_seed_maintenance_half,
         verify=_verify_terminal_noop,
         expect_receipts="present-only",
     ),
     "stale-run-exclusion": _HealthScenario(
-        unhealthy_count=lambda n: 0,
         reseed_per_iteration=False,
         seed_extra=_seed_stale_run_exclusions,
         rearm=_rearm_run_exclusions,
@@ -1015,11 +1046,12 @@ async def test_bench_device_health_loop_fold(
             if scenario.rearm is not None:
                 await scenario.rearm(db_session, devices)
 
-            present = devices[: len(devices) // 2] if scenario.omit_second_half else devices
+            shape = scenario_observation_shape(scenario=SCENARIO, devices=len(devices), churn=CHURN)
+            present = devices[: shape.present_count]
             revision = await next_observation_revision(db_session)
             section = _device_health_loop_section(
                 present,
-                unhealthy_count=scenario.unhealthy_count(len(present)),
+                unhealthy_count=shape.unhealthy_count,
                 revision=revision,
                 section_sequence=iteration + 1,
             )
@@ -1058,7 +1090,7 @@ async def test_bench_device_health_loop_fold(
             assert len(receipt_rows) == len(present_ids)
             assert set(receipt_rows) == {revision}
             if scenario.expect_receipts == "present-only":
-                omitted_ids = [device.device_id for device in devices[len(devices) // 2 :]]
+                omitted_ids = [device.device_id for device in devices[shape.present_count :]]
                 stale_rows = (
                     (
                         await db_session.execute(
@@ -1109,7 +1141,11 @@ async def test_bench_device_health_loop_fold(
         # the unarmed warm-up iteration and legitimately shows zero deferred queries
         # in the armed window -- that non-reseeding no-op is exactly what such a
         # scenario measures. scenario.verify is the honesty guard for that case.
-        effective_unhealthy = scenario.unhealthy_count(len(devices) // 2 if scenario.omit_second_half else len(devices))
+        effective_unhealthy = scenario_observation_shape(
+            scenario=SCENARIO,
+            devices=len(devices),
+            churn=CHURN,
+        ).unhealthy_count
         if effective_unhealthy > 0 and scenario.reseed_per_iteration:
             assert tap.deferred_total > 0
             assert commits.deferred_count > 0

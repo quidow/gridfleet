@@ -14,6 +14,7 @@ import re
 import sys
 from collections import Counter, defaultdict
 from contextvars import ContextVar
+from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,44 @@ _WS = re.compile(r"\s+")
 ACTIVE_DB_CALLSITE: ContextVar[str] = ContextVar("fold_bench_db_callsite", default="unattributed")
 _ACTIVE_DB_TASK: ContextVar[asyncio.Task[object] | None] = ContextVar("fold_bench_db_task", default=None)
 DEFERRED_EVENT_CALLSITE = "app.events.event_bus._persist_system_event"
+
+
+def validate_benchmark_knobs(*, devices: int, iters: int, warmup: int, churn: float) -> None:
+    """Reject benchmark sizes and fractions that make fold counts invalid."""
+    if devices <= 0:
+        raise ValueError(f"FOLD_BENCH_DEVICES must be > 0, got {devices}")
+    if iters <= 0:
+        raise ValueError(f"FOLD_BENCH_ITERS must be > 0, got {iters}")
+    if warmup < 0:
+        raise ValueError(f"FOLD_BENCH_WARMUP must be >= 0, got {warmup}")
+    if not 0 <= churn <= 1:
+        raise ValueError(f"FOLD_BENCH_CHURN must be between 0 and 1, got {churn}")
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioObservationShape:
+    """Pure pushed-section shape for one device-health benchmark scenario."""
+
+    present_count: int
+    unhealthy_count: int
+
+
+def scenario_observation_shape(*, scenario: str, devices: int, churn: float) -> ScenarioObservationShape:
+    """Return the pushed-device and unhealthy cardinalities for ``scenario``."""
+    present_count = devices // 2 if scenario == "terminal-noop" else devices
+    if scenario == "steady":
+        unhealthy_count = round(present_count * churn)
+    elif scenario == "sparse-unhealthy":
+        unhealthy_count = min(1, present_count)
+    elif scenario in {"all-unhealthy", "terminal-noop"}:
+        unhealthy_count = present_count
+    elif scenario == "repeat-unhealthy":
+        unhealthy_count = round(present_count * (churn if churn > 0 else 0.3))
+    elif scenario in {"stale-ladder", "stale-run-exclusion", "active-claims", "deep-history"}:
+        unhealthy_count = 0
+    else:
+        raise ValueError(f"unknown device-health benchmark scenario {scenario!r}")
+    return ScenarioObservationShape(present_count=present_count, unhealthy_count=unhealthy_count)
 
 
 def callsite_label(frame: FrameType) -> str:
@@ -125,6 +164,7 @@ class QueryTap:
         self.durations: dict[tuple[str, str], list[float]] = defaultdict(list)
         self.rows: Counter[tuple[str, str]] = Counter()
         self.last_statement: dict[tuple[str, str], tuple[str, object]] = {}
+        self.statement_parameters: dict[tuple[str, str], list[object]] = defaultdict(list)
 
     def __call__(
         self,
@@ -168,6 +208,19 @@ class QueryTap:
         if isinstance(rowcount, int) and rowcount > 0:
             self.rows[key] += rowcount
         self.last_statement[key] = (statement, parameters)
+        self.statement_parameters[key].append(parameters)
+
+    def captured_parameter_values(self, key: tuple[str, str]) -> set[str]:
+        """Flatten captured parameter collections to comparable string values."""
+
+        def flattened(value: object) -> list[object]:
+            if isinstance(value, dict):
+                return [item for nested in value.values() for item in flattened(nested)]
+            if isinstance(value, (list, tuple, set)):
+                return [item for nested in value for item in flattened(nested)]
+            return [value]
+
+        return {str(value) for parameters in self.statement_parameters[key] for value in flattened(parameters)}
 
     @property
     def deferred_total(self) -> int:

@@ -10,6 +10,9 @@ import asyncio
 import sys
 from collections import Counter
 
+import pytest
+
+from tests import bench_instrumentation
 from tests.bench_instrumentation import (
     ACTIVE_DB_CALLSITE,
     CommitTap,
@@ -17,6 +20,57 @@ from tests.bench_instrumentation import (
     callsite_label,
     profiled_async_session_method,
 )
+
+
+@pytest.mark.parametrize(
+    ("devices", "iters", "warmup", "churn"),
+    [
+        (1, 1, 0, 0.0),
+        (50, 3, 1, 1.0),
+    ],
+)
+def test_bench_validate_benchmark_knobs_accepts_valid_boundaries(
+    devices: int,
+    iters: int,
+    warmup: int,
+    churn: float,
+) -> None:
+    assert (
+        bench_instrumentation.validate_benchmark_knobs(
+            devices=devices,
+            iters=iters,
+            warmup=warmup,
+            churn=churn,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("devices", "iters", "warmup", "churn", "message"),
+    [
+        (0, 3, 1, 0.0, "FOLD_BENCH_DEVICES must be > 0, got 0"),
+        (50, 0, 1, 0.0, "FOLD_BENCH_ITERS must be > 0, got 0"),
+        (50, 3, -1, 0.0, "FOLD_BENCH_WARMUP must be >= 0, got -1"),
+        (50, 3, 1, -0.1, "FOLD_BENCH_CHURN must be between 0 and 1, got -0.1"),
+        (50, 3, 1, 1.1, "FOLD_BENCH_CHURN must be between 0 and 1, got 1.1"),
+        (50, 3, 1, float("nan"), "FOLD_BENCH_CHURN must be between 0 and 1, got nan"),
+    ],
+)
+def test_bench_validate_benchmark_knobs_rejects_invalid_values(
+    devices: int,
+    iters: int,
+    warmup: int,
+    churn: float,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        bench_instrumentation.validate_benchmark_knobs(
+            devices=devices,
+            iters=iters,
+            warmup=warmup,
+            churn=churn,
+        )
 
 
 def test_bench_callsite_label_is_repository_relative() -> None:
@@ -132,6 +186,7 @@ def test_bench_query_tap_records_duration_rows_and_last_statement() -> None:
     assert tap.durations[key][0] >= 0.0
     assert tap.rows[key] == 3
     assert tap.last_statement[key] == ("SELECT devices.id FROM devices", ("p1",))
+    assert tap.captured_parameter_values(key) == {"p1"}
 
 
 def test_bench_query_tap_after_without_before_is_ignored() -> None:
@@ -219,3 +274,35 @@ def test_bench_explain_targets_are_top_by_total_time() -> None:
 
     assert [key for key, _stmt, _params in targets] == [slow, fast]
     assert targets[0][1] == "SELECT * FROM device_remediation_log WHERE device_id = $1"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "devices", "churn", "present", "unhealthy"),
+    [
+        ("steady", 10, 0.3, 10, 3),
+        ("steady", 5, 0.3, 5, 2),
+        ("sparse-unhealthy", 0, 0.0, 0, 0),
+        ("sparse-unhealthy", 10, 0.0, 10, 1),
+        ("all-unhealthy", 10, 0.0, 10, 10),
+        ("repeat-unhealthy", 10, 0.0, 10, 3),
+        ("repeat-unhealthy", 10, 0.2, 10, 2),
+        ("stale-ladder", 10, 0.0, 10, 0),
+        ("stale-run-exclusion", 10, 0.0, 10, 0),
+        ("active-claims", 10, 0.0, 10, 0),
+        ("deep-history", 10, 0.0, 10, 0),
+        ("terminal-noop", 10, 0.0, 5, 5),
+    ],
+)
+def test_bench_scenario_observation_shape(
+    scenario: str,
+    devices: int,
+    churn: float,
+    present: int,
+    unhealthy: int,
+) -> None:
+    from tests.bench_instrumentation import scenario_observation_shape
+
+    shape = scenario_observation_shape(scenario=scenario, devices=devices, churn=churn)
+
+    assert shape.present_count == present
+    assert shape.unhealthy_count == unhealthy
