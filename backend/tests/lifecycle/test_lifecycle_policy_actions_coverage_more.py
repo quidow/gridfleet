@@ -5,9 +5,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import event
 
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEventType
+from app.devices.models import Device, DeviceEventType, DeviceOperationalState
+from app.devices.services.intent import IntentService
 from app.lifecycle.services import actions, remediation_log
 from app.lifecycle.services.actions import (
     LifecyclePolicyActionsService,
@@ -18,7 +21,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device
+from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +45,115 @@ async def test_restore_run_if_needed_early_return_branches() -> None:
         run,
         None,
     )
+
+
+@pytest.mark.db
+async def test_exclude_run_if_needed_locked_reuses_proof_without_commit(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="locked-run-exclusion",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reserved_run(db_session, name="locked-run", devices=[device])
+    await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    lock_spy = AsyncMock(wraps=device_locking.lock_device)
+    reconcile_locked = AsyncMock()
+    reconcile_now = AsyncMock()
+    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    monkeypatch.setattr(IntentService, "reconcile_locked", reconcile_locked)
+    monkeypatch.setattr(IntentService, "reconcile_now", reconcile_now)
+    commits = 0
+
+    def count_commit(_session: object) -> None:
+        nonlocal commits
+        commits += 1
+
+    event.listen(db_session.sync_session, "after_commit", count_commit)
+    try:
+        run, entry = await LifecyclePolicyActionsService(
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ).exclude_run_if_needed_locked(
+            db_session,
+            locked,
+            reason="health failed",
+            source="device_checks",
+        )
+
+        assert run is not None
+        assert entry is not None and entry.excluded is True
+        locked.assert_active(db_session)
+        lock_spy.assert_not_awaited()
+        reconcile_locked.assert_awaited_once()
+        reconcile_now.assert_not_awaited()
+        assert commits == 0
+    finally:
+        event.remove(db_session.sync_session, "after_commit", count_commit)
+
+
+@pytest.mark.db
+async def test_handle_node_crash_locked_reuses_proof_without_commit(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="locked-node-crash",
+        operational_state=DeviceOperationalState.available,
+        device_checks_healthy=False,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        port=4723,
+        pid=123,
+        active_connection_target=device.identity_value,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    lock_spy = AsyncMock(wraps=device_locking.lock_device)
+    reconcile_locked = AsyncMock()
+    reconcile_now = AsyncMock()
+    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    monkeypatch.setattr(IntentService, "reconcile_locked", reconcile_locked)
+    monkeypatch.setattr(IntentService, "reconcile_now", reconcile_now)
+    commits = 0
+
+    def count_commit(_session: object) -> None:
+        nonlocal commits
+        commits += 1
+
+    event.listen(db_session.sync_session, "after_commit", count_commit)
+    try:
+        await LifecyclePolicyActionsService(
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ).handle_node_crash_locked(
+            db_session,
+            locked,
+            source="device_checks",
+            reason="health failed",
+        )
+
+        locked.assert_active(db_session)
+        lock_spy.assert_not_awaited()
+        reconcile_locked.assert_awaited_once()
+        reconcile_now.assert_not_awaited()
+        assert commits == 0
+    finally:
+        event.remove(db_session.sync_session, "after_commit", count_commit)
 
 
 @pytest.mark.db

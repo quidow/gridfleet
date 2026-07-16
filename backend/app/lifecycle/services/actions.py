@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
     from app.devices.models import Device, DeviceReservation
     from app.devices.protocols import RunReservationWriter
     from app.events.protocols import EventPublisher
@@ -75,6 +76,38 @@ class LifecyclePolicyActionsService:
         await db.commit()
         return run, entry
 
+    async def complete_auto_stop_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        source: str,
+        reason: str,
+        detail: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        locked.assert_active(db)
+        run, entry = await self.exclude_run_if_needed_locked(
+            db,
+            locked,
+            source=source,
+            reason=reason,
+        )
+        await self.handle_node_crash_locked(
+            db,
+            locked,
+            source=source,
+            reason=reason,
+        )
+        await self.record_auto_stopped_incident(
+            db,
+            locked.device,
+            run=run,
+            source=source,
+            reason=reason,
+            detail=detail,
+        )
+        return run, entry
+
     async def handle_node_crash(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> None:
         """Record a node crash and stop the underlying Appium node.
 
@@ -92,6 +125,29 @@ class LifecyclePolicyActionsService:
         The ``failure_event_type`` event always fires for observability.
         """
         device = await _lock_for_state_write(db, device)
+        await self._handle_node_crash_loaded(db, device, locked=None, source=source, reason=reason)
+        await db.commit()
+
+    async def handle_node_crash_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        source: str,
+        reason: str,
+    ) -> None:
+        locked.assert_active(db)
+        await self._handle_node_crash_loaded(db, locked.device, locked=locked, source=source, reason=reason)
+
+    async def _handle_node_crash_loaded(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        locked: LockedDevice | None,
+        source: str,
+        reason: str,
+    ) -> None:
         node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         await record_event(
             db,
@@ -125,13 +181,14 @@ class LifecyclePolicyActionsService:
             # device-health writer so the write takes the device row lock, draws a
             # fresh observation revision, and reconciles the connectivity defer-stop
             # (session-safe, priority 50). Mirrors the no-node fact-write path below.
-            await DeviceHealthService(publisher=self._publisher).update_device_checks(
-                db, device, healthy=False, summary=reason
-            )
-            await db.commit()
+            health = DeviceHealthService(publisher=self._publisher)
+            if locked is None:
+                await health.update_device_checks(db, device, healthy=False, summary=reason)
+            else:
+                await health._update_device_checks_locked(db, locked, healthy=False, summary=reason)
             return
 
-        if node is not None and node.observed_running:
+        if node is not None:
             await remediation_log.append_action(
                 db,
                 device.id,
@@ -139,26 +196,22 @@ class LifecyclePolicyActionsService:
                 action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
                 reason=reason,
             )
-            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
-            await db.commit()
+            await self._reconcile(db, device, locked=locked)
         else:
-            if node is not None:
-                await remediation_log.append_action(
-                    db,
-                    device.id,
-                    source=source,
-                    action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
-                    reason=reason,
-                )
-                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+            # No node row — route through the guarded device-health writer so
+            # the reconciler derives offline (device_allows_allocation=False →
+            # ready=False), taking the row lock and a fresh observation revision.
+            health = DeviceHealthService(publisher=self._publisher)
+            if locked is None:
+                await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
-                # No node row — route through the guarded device-health writer so
-                # the reconciler derives offline (device_allows_allocation=False →
-                # ready=False), taking the row lock and a fresh observation revision.
-                await DeviceHealthService(publisher=self._publisher).update_device_checks(
-                    db, device, healthy=False, summary=reason
-                )
-            await db.commit()
+                await health._update_device_checks_locked(db, locked, healthy=False, summary=reason)
+
+    async def _reconcile(self, db: AsyncSession, device: Device, *, locked: LockedDevice | None) -> None:
+        if locked is None:
+            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+        else:
+            await IntentService(db).reconcile_locked(locked, publisher=self._publisher)
 
     async def exclude_run_if_needed(
         self, db: AsyncSession, device: Device, *, reason: str, source: str
@@ -179,6 +232,40 @@ class LifecyclePolicyActionsService:
         ``maintenance_service.enter_maintenance`` explicitly. Callers here that
         need the device parked in maintenance must do the same.
         """
+        return await self._exclude_run_if_needed_loaded(
+            db,
+            device,
+            locked=None,
+            reason=reason,
+            source=source,
+        )
+
+    async def exclude_run_if_needed_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        reason: str,
+        source: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        locked.assert_active(db)
+        return await self._exclude_run_if_needed_loaded(
+            db,
+            locked.device,
+            locked=locked,
+            reason=reason,
+            source=source,
+        )
+
+    async def _exclude_run_if_needed_loaded(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        locked: LockedDevice | None,
+        reason: str,
+        source: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
         run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         if run is None:
             return None, entry
@@ -190,7 +277,7 @@ class LifecyclePolicyActionsService:
             # exclude_device_from_run wrote the indefinite exclusion on the reservation
             # row; the run: grid-routing intent derives from that row, so reconcile here
             # to drop it (the health-failure exclusion has no stored intent twin anymore).
-            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+            await self._reconcile(db, device, locked=locked)
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
                 db,

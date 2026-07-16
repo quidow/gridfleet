@@ -341,11 +341,16 @@ class ConnectivityService:
             return False
         if remediation_result is not None:
             # Keep the episode-bearing fact, connectivity marker, and durable
-            # enqueue atomic even when lifecycle policy commits internally.
+            # enqueue atomic; the fold owns the commit for lifecycle policy too.
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
             await self._maybe_enqueue_remediation(db, device, remediation_result)
         if not was_offline:
-            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
+            await self._lifecycle_policy.handle_health_failure_locked(
+                db,
+                locked.locked_device,
+                source="device_checks",
+                reason=summary,
+            )
         return True
 
     async def _maybe_enqueue_remediation(

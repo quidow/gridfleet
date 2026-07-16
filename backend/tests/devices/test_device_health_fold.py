@@ -381,7 +381,7 @@ async def test_fold_ip_ping_hysteresis_runs_through_loop_path(
     host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-ip-ping")
     device = devices[0]
     lifecycle_policy = MagicMock()
-    lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.handle_health_failure_locked = AsyncMock()
     lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
     lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
     lifecycle_policy.restore_run_after_self_heal = AsyncMock()
@@ -418,7 +418,7 @@ async def test_fold_ip_ping_hysteresis_runs_through_loop_path(
     )
     await db_session.refresh(device)
     assert device.device_checks_healthy is False
-    lifecycle_policy.handle_health_failure.assert_awaited_once()
+    lifecycle_policy.handle_health_failure_locked.assert_awaited_once()
 
 
 async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
@@ -427,7 +427,7 @@ async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
     host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-probe-failed")
     device = devices[0]
     lifecycle_policy = MagicMock()
-    lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.handle_health_failure_locked = AsyncMock()
     lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
     lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
     lifecycle_policy.restore_run_after_self_heal = AsyncMock()
@@ -470,7 +470,7 @@ async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
     )
     await db_session.refresh(device)
     assert device.device_checks_healthy is False
-    lifecycle_policy.handle_health_failure.assert_awaited_once()
+    lifecycle_policy.handle_health_failure_locked.assert_awaited_once()
 
 
 async def test_fold_healthy_device_reuses_lock_for_self_heal(
@@ -540,7 +540,7 @@ async def test_fold_does_not_enqueue_remediation_for_draining_pack(
     pack.state = PackState.draining
     await db_session.commit()
     lifecycle_policy = MagicMock()
-    lifecycle_policy.handle_health_failure = AsyncMock()
+    lifecycle_policy.handle_health_failure_locked = AsyncMock()
     service = _loop_service(lifecycle_policy=lifecycle_policy)
 
     await _fold_health_once(

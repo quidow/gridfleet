@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -22,6 +22,7 @@ from app.devices.models import (
     DeviceType,
     ExclusionKind,
 )
+from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.claims import device_is_reserved
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
@@ -30,6 +31,7 @@ from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
 )
+from app.events.models import SystemEvent
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -39,7 +41,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device, create_reserved_run
+from tests.helpers import create_device, create_reserved_run, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -55,6 +57,8 @@ def _make_svc(
     settings: object = None,
     viability: object = None,
     node_manager: object = None,
+    *,
+    publish_incidents: bool = False,
 ) -> LifecyclePolicyService:
     from unittest.mock import AsyncMock, Mock
 
@@ -62,6 +66,7 @@ def _make_svc(
     svc_settings = settings if settings is not None else FakeSettingsReader({})
     via = viability if viability is not None else AsyncMock()
     nm = node_manager if node_manager is not None else AsyncMock()
+    incidents = LifecycleIncidentService(publisher=pub) if publish_incidents else LifecycleIncidentService()
     return LifecyclePolicyService(
         review=build_review_service(),
         publisher=pub,  # type: ignore[arg-type]
@@ -69,9 +74,9 @@ def _make_svc(
         actions=LifecyclePolicyActionsService(
             publisher=pub,
             reservation=RunReservationService(review=build_review_service()),
-            incidents=LifecycleIncidentService(),
+            incidents=incidents,
         ),  # type: ignore[arg-type]
-        incidents=LifecycleIncidentService(),
+        incidents=incidents,
         viability=via,  # type: ignore[arg-type]
         node_manager=nm,  # type: ignore[arg-type]
     )
@@ -197,6 +202,209 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
     assert policy["deferred_stop"] is True
     assert policy["recovery_state"] == "waiting_for_session_end"
     assert await _event_types_for_device(db_session, device.id) == [DeviceEventType.lifecycle_deferred_stop]
+
+
+async def test_handle_health_failure_locked_reuses_lock_and_does_not_commit(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="locked-health-failure",
+        operational_state=DeviceOperationalState.available,
+        device_checks_healthy=True,
+        device_checks_summary="Healthy",
+    )
+    await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    lock_spy = AsyncMock(wraps=device_locking.lock_device)
+    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    commits = 0
+
+    def count_commit(_session: object) -> None:
+        nonlocal commits
+        commits += 1
+
+    event.listen(db_session.sync_session, "after_commit", count_commit)
+    try:
+        outcome = await _make_svc(publisher=event_bus, publish_incidents=True).handle_health_failure_locked(
+            db_session,
+            locked,
+            source="device_checks",
+            reason="ADB not responsive",
+        )
+
+        assert outcome == "stopped"
+        lock_spy.assert_not_awaited()
+        assert commits == 0
+        history = (
+            (
+                await db_session.execute(
+                    select(DeviceRemediationLogEntry)
+                    .where(DeviceRemediationLogEntry.device_id == device.id)
+                    .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [(row.kind, row.action) for row in history] == [
+            ("failure", "failure_observed"),
+            ("action", "auto_stopped"),
+        ]
+        assert await _event_types_for_device(db_session, device.id) == [
+            DeviceEventType.health_check_fail,
+            DeviceEventType.node_crash,
+            DeviceEventType.lifecycle_auto_stopped,
+        ]
+
+        await db_session.commit()
+        await settle_after_commit_tasks()
+        system_event_types = list(
+            (
+                await db_session.execute(
+                    select(SystemEvent.type)
+                    .where(SystemEvent.data.contains({"device_id": str(device.id)}))
+                    .order_by(SystemEvent.id)
+                )
+            ).scalars()
+        )
+        assert system_event_types == [
+            "device.crashed",
+            "device.operational_state_changed",
+            "device.health_changed",
+            "device.lifecycle_incident",
+        ]
+    finally:
+        event.remove(db_session.sync_session, "after_commit", count_commit)
+
+
+async def test_handle_health_failure_locked_defers_without_commit(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="locked-health-failure-deferred",
+        operational_state=DeviceOperationalState.busy,
+    )
+    db_session.add(Session(session_id="locked-deferred", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    lock_spy = AsyncMock(wraps=device_locking.lock_device)
+    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    commits = 0
+
+    def count_commit(_session: object) -> None:
+        nonlocal commits
+        commits += 1
+
+    event.listen(db_session.sync_session, "after_commit", count_commit)
+    try:
+        outcome = await _make_svc(publisher=event_bus, publish_incidents=True).handle_health_failure_locked(
+            db_session,
+            locked,
+            source="device_checks",
+            reason="ADB not responsive",
+        )
+
+        assert outcome == "deferred"
+        lock_spy.assert_not_awaited()
+        assert commits == 0
+        history = (
+            (
+                await db_session.execute(
+                    select(DeviceRemediationLogEntry)
+                    .where(DeviceRemediationLogEntry.device_id == device.id)
+                    .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [(row.kind, row.action) for row in history] == [
+            ("failure", "failure_observed"),
+            ("action", "auto_stop_deferred"),
+        ]
+        assert await _event_types_for_device(db_session, device.id) == [DeviceEventType.lifecycle_deferred_stop]
+
+        await db_session.commit()
+        await settle_after_commit_tasks()
+        system_event_types = list(
+            (
+                await db_session.execute(
+                    select(SystemEvent.type)
+                    .where(SystemEvent.data.contains({"device_id": str(device.id)}))
+                    .order_by(SystemEvent.id)
+                )
+            ).scalars()
+        )
+        assert system_event_types == ["device.lifecycle_incident"]
+    finally:
+        event.remove(db_session.sync_session, "after_commit", count_commit)
+
+
+async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_both_branches(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stopped = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="compat-health-failure-stopped",
+        operational_state=DeviceOperationalState.available,
+        device_checks_healthy=True,
+    )
+    deferred = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="compat-health-failure-deferred",
+        operational_state=DeviceOperationalState.busy,
+    )
+    db_session.add(Session(session_id="compat-deferred", device_id=deferred.id, status=SessionStatus.running))
+    await db_session.commit()
+    lock_spy = AsyncMock(wraps=device_locking.lock_device)
+    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    commits = 0
+
+    def count_commit(_session: object) -> None:
+        nonlocal commits
+        commits += 1
+
+    event.listen(db_session.sync_session, "after_commit", count_commit)
+    try:
+        service = _make_svc(publisher=Mock())
+        assert (
+            await service.handle_health_failure(
+                db_session,
+                stopped,
+                source="device_checks",
+                reason="stopped failure",
+            )
+            == "stopped"
+        )
+        assert commits == 2
+        assert any(call.args[1] == stopped.id for call in lock_spy.await_args_list)
+
+        lock_spy.reset_mock()
+        assert (
+            await service.handle_health_failure(
+                db_session,
+                deferred,
+                source="device_checks",
+                reason="deferred failure",
+            )
+            == "deferred"
+        )
+        assert commits == 3
+        lock_spy.assert_awaited_once_with(db_session, deferred.id, load_sessions=True)
+    finally:
+        event.remove(db_session.sync_session, "after_commit", count_commit)
 
 
 async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_host: Host) -> None:

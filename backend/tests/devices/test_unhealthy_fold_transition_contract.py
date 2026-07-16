@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEvent
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.connectivity import ConnectivityService
@@ -21,6 +22,7 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
+from tests.bench_instrumentation import CommitTap, install_async_session_callsite_profiler
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -313,3 +315,84 @@ async def test_unhealthy_fold_preserves_transition_artifacts_and_order(
         ),
     )
     assert redelivery_counts == first_delivery_counts
+
+
+async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
+    db_session: AsyncSession,
+    unhealthy_fold: tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, device, node, section = unhealthy_fold
+    install_async_session_callsite_profiler(monkeypatch)
+    commit_tap = CommitTap()
+    lock_device_spy = AsyncMock(wraps=device_locking.lock_device)
+    monkeypatch.setattr(device_locking, "lock_device", lock_device_spy)
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "commit", commit_tap)
+    try:
+        assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
+        await settle_after_commit_tasks()
+    finally:
+        event.remove(engine, "commit", commit_tap)
+
+    assert commit_tap.source_count == 1
+    lock_device_spy.assert_not_awaited()
+    device_events = list(
+        (
+            await db_session.execute(
+                select(DeviceEvent.event_type)
+                .where(DeviceEvent.device_id == device.id)
+                .order_by(DeviceEvent.created_at, DeviceEvent.id)
+            )
+        ).scalars()
+    )
+    system_event_types = list(
+        (
+            await db_session.execute(
+                select(SystemEvent.type)
+                .where(SystemEvent.data.contains({"device_id": str(device.id)}))
+                .order_by(SystemEvent.id)
+            )
+        ).scalars()
+    )
+    history = list(
+        (
+            await db_session.execute(
+                select(DeviceRemediationLogEntry.action)
+                .where(DeviceRemediationLogEntry.device_id == device.id)
+                .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+            )
+        ).scalars()
+    )
+    await db_session.refresh(device)
+    await db_session.refresh(node)
+
+    assert [event_type.value for event_type in device_events] == [
+        "desired_state_changed",
+        "desired_state_changed",
+        "health_check_fail",
+        "desired_state_changed",
+        "lifecycle_auto_stopped",
+    ]
+    assert system_event_types == [
+        "device.operational_state_changed",
+        "device.health_changed",
+        "device.lifecycle_incident",
+    ]
+    assert history == ["failure_observed", "auto_stop_commissioned", "auto_stopped"]
+    assert (
+        device.device_checks_healthy,
+        device.device_checks_summary,
+        device.device_checks_checked_at,
+        device.device_checks_observation_revision,
+        device.device_checks_fold_applied_revision,
+        device.device_checks_fold_boot_id,
+        device.device_checks_fold_section_sequence,
+    ) == (False, "Device health checks failed", _OBSERVED_AT, _REVISION, _REVISION, _BOOT_ID, _SECTION_SEQUENCE)
+    assert (
+        node.desired_state,
+        node.desired_port,
+        node.accepting_new_sessions,
+        node.stop_pending,
+        node.restart_requested_at,
+    ) == (AppiumDesiredState.stopped, None, False, True, None)

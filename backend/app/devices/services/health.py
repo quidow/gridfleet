@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.locking import LockedDevice
     from app.devices.models import Device
     from app.devices.services.device_health_fold_context import LockedDeviceFold
     from app.events.protocols import EventPublisher
@@ -120,7 +121,26 @@ class DeviceHealthService:
         revision: int | None = None,
         observed_at: datetime | None = None,
     ) -> bool:
-        locked.locked_device.assert_active(db)
+        return await self._update_device_checks_locked(
+            db,
+            locked.locked_device,
+            healthy=healthy,
+            summary=summary,
+            revision=revision,
+            observed_at=observed_at,
+        )
+
+    async def _update_device_checks_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        healthy: bool,
+        summary: str,
+        revision: int | None = None,
+        observed_at: datetime | None = None,
+    ) -> bool:
+        locked.assert_active(db)
         changed = await self._update_locked_device_checks_row(
             db,
             locked.device,
@@ -133,7 +153,7 @@ class DeviceHealthService:
             return False
         previous, policy_view = changed
         if not healthy:
-            await IntentService(db).reconcile_locked(locked.locked_device, publisher=self._publisher)
+            await IntentService(db).reconcile_locked(locked, publisher=self._publisher)
         _maybe_emit_health_changed(db, locked.device, previous, policy_view=policy_view, publisher=self._publisher)
         return True
 

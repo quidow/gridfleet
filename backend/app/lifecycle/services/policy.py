@@ -397,12 +397,55 @@ class LifecyclePolicyService:
 
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
         device = await _reload_device(db, device)
+        outcome = await self._prepare_health_failure(db, device, source=source, reason=reason)
+        if outcome == "deferred":
+            await db.commit()
+        elif outcome == "stopped":
+            await self._actions.complete_auto_stop(
+                db,
+                device,
+                reason=reason,
+                source=source,
+                detail="Manager stopped the device automatically after a lifecycle failure",
+            )
+        return outcome
+
+    async def handle_health_failure_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        source: str,
+        reason: str,
+    ) -> str:
+        locked.assert_active(db)
+        outcome = await self._prepare_health_failure(
+            db,
+            locked.device,
+            source=source,
+            reason=reason,
+        )
+        if outcome == "stopped":
+            await self._actions.complete_auto_stop_locked(
+                db,
+                locked,
+                source=source,
+                reason=reason,
+                detail="Manager stopped the device automatically after a lifecycle failure",
+            )
+        return outcome
+
+    async def _prepare_health_failure(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        source: str,
+        reason: str,
+    ) -> str:
         await remediation_log.append_failure(db, device.id, source=source, reason=reason)
 
         if policy_state(device).get("maintenance_reason") is not None:
-            # The maintenance hold already drives the projected "Recovery Paused"
-            # badge and was already evented by maintenance_entered — nothing to
-            # record here. Keep the failure trail written above and stand down.
             logger.info("health failure on maintenance-held device %s suppressed: %s", device.id, reason)
             return "suppressed"
 
@@ -425,16 +468,7 @@ class LifecyclePolicyService:
                     source=source,
                 ),
             )
-            await db.commit()
             return "deferred"
-
-        await self._actions.complete_auto_stop(
-            db,
-            device,
-            reason=reason,
-            source=source,
-            detail="Manager stopped the device automatically after a lifecycle failure",
-        )
         return "stopped"
 
     async def handle_session_finished(self, db: AsyncSession, device: Device) -> DeferredStopOutcome:
