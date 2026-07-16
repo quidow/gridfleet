@@ -49,7 +49,8 @@ benchmark drives (default ``steady``):
   mask is exercised while still consuming the pushed generation.
 - ``terminal-noop`` -- the first half of the fleet is in maintenance and the
   second half is omitted from the pushed section entirely, so both terminal-noop
-  paths (maintenance consume, missing-device skip) are measured together.
+  paths (maintenance consume, missing-device skip) are measured together
+  (maintenance devices are pushed unhealthy so the short-circuit is provable).
 
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
@@ -281,6 +282,9 @@ async def _seed_maintenance_half(db: AsyncSession, devices: list[_SeededDevice])
 
 
 async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    # Maintenance devices are pushed UNHEALTHY on purpose: the in_maintenance
+    # short-circuit precedes health evaluation, so surviving health facts prove
+    # the short-circuit fired; the normal path would flip them to False.
     still_healthy = await db.scalar(
         select(func.count())
         .select_from(Device)
@@ -289,7 +293,7 @@ async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_
             Device.device_checks_healthy.is_(True),
         )
     )
-    assert still_healthy == len(devices) // 2, "maintenance consume must not rewrite health facts"
+    assert still_healthy == len(devices) // 2, "maintenance short-circuit must ignore the pushed unhealthy signal"
 
 
 _SCENARIOS: dict[str, _HealthScenario] = {
@@ -323,7 +327,7 @@ _SCENARIOS: dict[str, _HealthScenario] = {
         verify=_verify_claims_intact,
     ),
     "terminal-noop": _HealthScenario(
-        unhealthy_count=lambda n: 0,
+        unhealthy_count=lambda n: n,
         reseed_per_iteration=False,
         omit_second_half=True,
         seed_extra=_seed_maintenance_half,
