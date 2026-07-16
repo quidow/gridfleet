@@ -38,6 +38,12 @@ benchmark drives (default ``steady``):
 - ``repeat-unhealthy`` -- the same devices stay unhealthy across every
   iteration (no re-seed), so repeated observation of an already-escalated
   device can be measured as the cheap no-op it is expected to be.
+- ``stale-ladder`` -- every device carries an active escalation episode (a
+  bare failure row) re-armed before every iteration, so the healthy fold's
+  self-heal hook takes its residue-clear mutation path every time.
+- ``deep-history`` -- every device carries ~200 remediation-log rows ending in
+  a reset (episode inactive), so the healthy fold only reads the deep ladder
+  without appending to it.
 
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
@@ -67,6 +73,7 @@ from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -75,6 +82,7 @@ from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY, HostStatusPushService, ObservationFold
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -151,6 +159,73 @@ async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: lis
     assert unhealthy == k, f"expected {k} devices to stay unhealthy across repeats, found {unhealthy}"
 
 
+_DEEP_HISTORY_ROWS = 200
+
+
+async def _arm_stale_ladders(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """Give every device an active escalation episode (a bare failure row) so the
+    healthy fold's self-heal hook takes its residue-clear mutation path. Used as
+    ``rearm`` so the path re-fires every iteration, warm-up included."""
+    for d in devices:
+        await remediation_log.append_failure(db, d.device_id, source="bench", reason="bench stale residue")
+    await db.commit()
+
+
+async def _verify_stale_ladder_cleared(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    ladder = await remediation_log.load_ladder(db, devices[0].device_id)
+    assert ladder.episode_active is False, "self-heal residue clear did not run"
+    # The appium-xcuitest test-fixture manifest (tests/packs/fixtures/manifests/appium-xcuitest.yaml)
+    # marks "bundle_id" required_for_session for real devices; _seed_fleet never sets it, so those
+    # devices are permanently setup_required -> offline and never reach the connectivity healthy
+    # path's self-heal branch. Only the appium-uiautomator2 share of the fleet is ready (all of it,
+    # under FOLD_BENCH_FLEET=homogeneous), so the reset-append floor is scoped to those devices.
+    ready = [d for d in devices if d.spec.pack_id != "appium-xcuitest"]
+    assert tap.counter["INSERT device_remediation_log"] >= len(ready) * ITERS, (
+        "expected one reset append per ready device per armed iteration"
+    )
+
+
+async def _seed_deep_history(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """~200 remediation rows per device ending in a reset: episode inactive, so the
+    healthy path only READS the deep ladder without appending."""
+    base = now_utc() - timedelta(hours=1)
+    rows: list[DeviceRemediationLogEntry] = []
+    for d in devices:
+        for i in range(_DEEP_HISTORY_ROWS - 1):
+            failure = i % 2 == 0
+            rows.append(
+                DeviceRemediationLogEntry(
+                    device_id=d.device_id,
+                    kind="failure" if failure else "reset",
+                    source="bench",
+                    action="failure_observed" if failure else "bench_reset",
+                    reason="bench deep history",
+                    at=base + timedelta(seconds=i),
+                )
+            )
+        rows.append(
+            DeviceRemediationLogEntry(
+                device_id=d.device_id,
+                kind="reset",
+                source="bench",
+                action="bench_reset",
+                reason="bench deep history terminal reset",
+                at=base + timedelta(seconds=_DEEP_HISTORY_ROWS),
+            )
+        )
+    db.add_all(rows)
+    await db.commit()
+
+
+async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    count = await db.scalar(
+        select(func.count())
+        .select_from(DeviceRemediationLogEntry)
+        .where(DeviceRemediationLogEntry.device_id == devices[0].device_id)
+    )
+    assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
+
+
 _SCENARIOS: dict[str, _HealthScenario] = {
     "steady": _HealthScenario(
         unhealthy_count=lambda n: _churn_count(n, CHURN),
@@ -162,6 +237,18 @@ _SCENARIOS: dict[str, _HealthScenario] = {
         unhealthy_count=lambda n: _churn_count(n, _REPEAT_CHURN),
         reseed_per_iteration=False,
         verify=_verify_repeat_unhealthy,
+    ),
+    "stale-ladder": _HealthScenario(
+        unhealthy_count=lambda n: 0,
+        reseed_per_iteration=False,
+        rearm=_arm_stale_ladders,
+        verify=_verify_stale_ladder_cleared,
+    ),
+    "deep-history": _HealthScenario(
+        unhealthy_count=lambda n: 0,
+        reseed_per_iteration=False,
+        seed_extra=_seed_deep_history,
+        verify=_verify_deep_history_untouched,
     ),
 }
 if SCENARIO not in _SCENARIOS:
