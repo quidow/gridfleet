@@ -44,6 +44,12 @@ benchmark drives (default ``steady``):
 - ``deep-history`` -- every device carries ~200 remediation-log rows ending in
   a reset (episode inactive), so the healthy fold only reads the deep ladder
   without appending to it.
+- ``active-claims`` -- the first half of the fleet is claimed (a live session or
+  an unexpired verification lease per device), so the fold's busy/verifying
+  mask is exercised while still consuming the pushed generation.
+- ``terminal-noop`` -- the first half of the fleet is in maintenance and the
+  second half is omitted from the pushed section entirely, so both terminal-noop
+  paths (maintenance consume, missing-device skip) are measured together.
 
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
@@ -72,10 +78,14 @@ from app.appium_nodes.services.reconciler import ReconcilerService, converge_pus
 from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models.intent import DeviceIntent
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
+from app.devices.services import lifecycle_policy_state
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.review import ReviewService
 from app.hosts.models import Host, HostStatus
@@ -88,6 +98,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
 from app.runs.service_reservation import RunReservationService
+from app.sessions.models import Session, SessionStatus
 from tests.bench_instrumentation import (
     CommitTap,
     QueryTap,
@@ -226,6 +237,61 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
     assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
 
 
+async def _seed_active_claims(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """Claim the first half of the fleet: even claimed indexes get a live session
+    (busy mask), odd get an unexpired verification lease (verifying mask)."""
+    lease_until = now_utc() + timedelta(hours=1)
+    for i, d in enumerate(devices[: len(devices) // 2]):
+        if i % 2 == 0:
+            db.add(Session(session_id=f"bench-claim-{d.identity}", device_id=d.device_id, status=SessionStatus.running))
+        else:
+            db.add(
+                DeviceIntent(
+                    device_id=d.device_id,
+                    source=verification_intent_source(d.device_id),
+                    kind=CommandKind.verification_start,
+                    payload={},
+                    expires_at=lease_until,
+                )
+            )
+    await db.commit()
+
+
+async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    claimed = devices[: len(devices) // 2]
+    sessions = await db.scalar(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.device_id.in_([d.device_id for d in claimed]), Session.ended_at.is_(None))
+    )
+    leases = await db.scalar(
+        select(func.count()).select_from(DeviceIntent).where(DeviceIntent.device_id.in_([d.device_id for d in claimed]))
+    )
+    assert sessions == (len(claimed) + 1) // 2, "live session claims disappeared mid-benchmark"
+    assert leases == len(claimed) // 2, "verification leases disappeared mid-benchmark"
+
+
+async def _seed_maintenance_half(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """First half (the section-present half) goes into maintenance; the second half
+    stays out of the pushed section entirely (the missing-device skip)."""
+    for d in devices[: len(devices) // 2]:
+        device = await device_locking.lock_device(db, d.device_id)
+        lifecycle_policy_state.write_state(device, {"maintenance_reason": "bench maintenance"})
+        await db.commit()
+
+
+async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    still_healthy = await db.scalar(
+        select(func.count())
+        .select_from(Device)
+        .where(
+            Device.id.in_([d.device_id for d in devices[: len(devices) // 2]]),
+            Device.device_checks_healthy.is_(True),
+        )
+    )
+    assert still_healthy == len(devices) // 2, "maintenance consume must not rewrite health facts"
+
+
 _SCENARIOS: dict[str, _HealthScenario] = {
     "steady": _HealthScenario(
         unhealthy_count=lambda n: _churn_count(n, CHURN),
@@ -249,6 +315,20 @@ _SCENARIOS: dict[str, _HealthScenario] = {
         reseed_per_iteration=False,
         seed_extra=_seed_deep_history,
         verify=_verify_deep_history_untouched,
+    ),
+    "active-claims": _HealthScenario(
+        unhealthy_count=lambda n: 0,
+        reseed_per_iteration=False,
+        seed_extra=_seed_active_claims,
+        verify=_verify_claims_intact,
+    ),
+    "terminal-noop": _HealthScenario(
+        unhealthy_count=lambda n: 0,
+        reseed_per_iteration=False,
+        omit_second_half=True,
+        seed_extra=_seed_maintenance_half,
+        verify=_verify_terminal_noop,
+        expect_receipts="present-only",
     ),
 }
 if SCENARIO not in _SCENARIOS:
