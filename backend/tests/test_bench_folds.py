@@ -17,6 +17,10 @@ Set ``FOLD_BENCH_WARMUP`` (default 1) to control how many untimed/unarmed
 iterations the device-health loop benchmark runs before the timed ``ITERS``
 iterations begin.
 
+Set ``FOLD_BENCH_JSON`` to a file path to also write a machine-readable JSON
+report of the device-health loop benchmark (see ``build_json_report`` in
+tests/bench_instrumentation.py) to that path.
+
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
 """
@@ -24,10 +28,12 @@ fold is measured separately by the StatusFoldLoop benchmark.
 from __future__ import annotations
 
 import functools
+import json
 import os
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import AsyncMock, Mock
@@ -59,6 +65,7 @@ from app.runs.service_reservation import RunReservationService
 from tests.bench_instrumentation import (
     CommitTap,
     QueryTap,
+    build_json_report,
     install_async_session_callsite_profiler,
     percentile,
 )
@@ -85,6 +92,7 @@ _raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
 if _raw_lifecycle_mode not in ("real", "isolated"):
     raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
 LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
+JSON_PATH = os.getenv("FOLD_BENCH_JSON")
 
 
 def _build_real_lifecycle_connectivity_service() -> ConnectivityService:
@@ -703,6 +711,24 @@ async def test_bench_device_health_loop_fold(
             assert set(receipt_rows) == {revision}
 
         _report_device_health_loop(tap, commits, fold_wall_ms, settled_wall_ms)
+        if JSON_PATH:
+            report = build_json_report(
+                config={
+                    "scenario": SCENARIO if "SCENARIO" in globals() else "steady",  # noqa: F821 -- lands in Task 5
+                    "devices": DEVICES,
+                    "iters": ITERS,
+                    "warmup": WARMUP,
+                    "churn": CHURN,
+                    "fleet": os.getenv("FOLD_BENCH_FLEET", "mixed"),
+                    "lifecycle": LIFECYCLE_MODE,
+                },
+                tap=tap,
+                commits=commits,
+                iters=ITERS,
+                fold_wall_ms=fold_wall_ms,
+                settled_wall_ms=settled_wall_ms,
+            )
+            Path(JSON_PATH).write_text(json.dumps(report, indent=2))
         attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
         assert "unattributed" not in attributed_callsites
         assert "app.devices.locking.lock_device_handle" in attributed_callsites

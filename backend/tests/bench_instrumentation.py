@@ -182,6 +182,53 @@ class QueryTap:
         return self.total - self.deferred_total
 
 
+def build_json_report(
+    *,
+    config: dict[str, object],
+    tap: QueryTap,
+    commits: CommitTap,
+    iters: int,
+    fold_wall_ms: list[float],
+    settled_wall_ms: list[float],
+    explain_plans: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    """Machine-readable single-cell result for the sweep script. Per-fold values
+    divide by *iters* (armed iterations only)."""
+
+    def wall(values: list[float]) -> dict[str, object]:
+        return {"median": percentile(values, 0.5), "p95": percentile(values, 0.95), "all": values}
+
+    callsites = [
+        {
+            "callsite": callsite,
+            "signature": signature,
+            "calls_per_fold": tap.callsite_counter[(callsite, signature)] / iters,
+            "total_ms_per_fold": sum(durations) / iters,
+            "median_ms": percentile(durations, 0.5),
+            "p95_ms": percentile(durations, 0.95),
+            "rows_per_fold": tap.rows[(callsite, signature)] / iters,
+        }
+        for (callsite, signature), durations in sorted(tap.durations.items(), key=lambda kv: sum(kv[1]), reverse=True)
+    ]
+    return {
+        "config": config,
+        "wall_ms": {"fold_return": wall(fold_wall_ms), "event_settled": wall(settled_wall_ms)},
+        "queries": {
+            "source_per_fold": tap.source_total / iters,
+            "deferred_per_fold": tap.deferred_total / iters,
+            "complete_per_fold": tap.total / iters,
+        },
+        "commits": {
+            "source_per_fold": commits.source_count / iters,
+            "deferred_per_fold": commits.deferred_count / iters,
+            "complete_per_fold": commits.count / iters,
+        },
+        "signatures": {signature: count / iters for signature, count in tap.counter.most_common()},
+        "callsites": callsites,
+        "explain": explain_plans or [],
+    }
+
+
 class CommitTap:
     def __init__(self) -> None:
         self.callsite_counter: Counter[str] = Counter()
