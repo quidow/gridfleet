@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import text
 
 from app.core.leader.advisory import ControlPlaneLeader
 
@@ -64,6 +65,28 @@ async def test_release_swallows_unlock_failure_and_closes_connection() -> None:
 
     connection.close.assert_awaited_once()
     assert leader._connection is None
+
+
+@pytest.mark.db
+async def test_leader_connection_holds_no_open_transaction(setup_database: AsyncEngine) -> None:
+    # A transaction left open on the lifetime leader connection pins the vacuum
+    # xmin horizon for the whole scheduler process: autovacuum can never reclaim
+    # dead tuples younger than scheduler boot and hot tables bloat without bound.
+    leader = ControlPlaneLeader()
+    assert await leader.try_acquire(setup_database) is True
+    try:
+        assert leader._connection is not None
+        leader_pid = (await leader._connection.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+        async with setup_database.connect() as probe:
+            xact_start = (
+                await probe.execute(
+                    text("SELECT xact_start FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": leader_pid},
+                )
+            ).scalar_one()
+        assert xact_start is None
+    finally:
+        await leader.release()
 
 
 @pytest.mark.db

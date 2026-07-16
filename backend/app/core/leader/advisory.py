@@ -39,6 +39,10 @@ class ControlPlaneLeader:
             return True
 
         connection = await engine.connect()
+        # Driver-level autocommit: the session-scoped advisory lock needs no
+        # transaction, and an open transaction on this lifetime connection
+        # would pin the vacuum xmin horizon for the whole scheduler process.
+        await connection.execution_options(isolation_level="AUTOCOMMIT")
         adopted = False
         try:
             result = await connection.execute(
