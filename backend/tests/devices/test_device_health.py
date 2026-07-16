@@ -146,6 +146,33 @@ async def test_update_locked_device_checks_reuses_scope_lock(
     spy.assert_not_awaited()
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_locked_device_checks_rejects_inactive_lock_proof(
+    db_with_device: tuple[AsyncSession, Device],
+) -> None:
+    from app.devices.services.device_health_fold_context import DeviceHealthFoldScope
+
+    db, device = db_with_device
+    scope = await DeviceHealthFoldScope.create(
+        db,
+        pack_ids=(),
+        presence_namespaces=(),
+        presence_keys=(),
+    )
+    locked = await scope.lock_device(db, device.id)
+    assert locked is not None
+    await db.commit()
+
+    with pytest.raises(RuntimeError, match="active transaction"):
+        await DeviceHealthService(publisher=event_bus).update_locked_device_checks(
+            db,
+            locked,
+            healthy=True,
+            summary="Healthy",
+        )
+
+
 def test_locked_device_fold_requires_scope_factory() -> None:
     from app.devices.services.device_health_fold_context import LockedDeviceFold
 

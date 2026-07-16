@@ -120,6 +120,7 @@ class DeviceHealthService:
         revision: int | None = None,
         observed_at: datetime | None = None,
     ) -> bool:
+        locked.locked_device.assert_active(db)
         changed = await self._update_locked_device_checks_row(
             db,
             locked.device,
