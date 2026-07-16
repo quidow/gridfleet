@@ -1,4 +1,4 @@
-FROM rust:1.96-slim-bookworm AS build
+FROM rust:1.97-slim-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake make gcc g++ \
   && rm -rf /var/lib/apt/lists/*
