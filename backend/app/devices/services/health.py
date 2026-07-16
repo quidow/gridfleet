@@ -94,7 +94,7 @@ class DeviceHealthService:
         locked = await _lock(db, device)
         if locked is None:
             return False
-        return await self._update_locked_device_checks_row(
+        changed = await self._update_locked_device_checks_row(
             db,
             locked,
             healthy=healthy,
@@ -102,6 +102,13 @@ class DeviceHealthService:
             revision=revision,
             observed_at=observed_at,
         )
+        if changed is None:
+            return False
+        previous, policy_view = changed
+        if not healthy:
+            await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
+        return True
 
     async def update_locked_device_checks(
         self,
@@ -113,7 +120,7 @@ class DeviceHealthService:
         revision: int | None = None,
         observed_at: datetime | None = None,
     ) -> bool:
-        return await self._update_locked_device_checks_row(
+        changed = await self._update_locked_device_checks_row(
             db,
             locked.device,
             healthy=healthy,
@@ -121,6 +128,13 @@ class DeviceHealthService:
             revision=revision,
             observed_at=observed_at,
         )
+        if changed is None:
+            return False
+        previous, policy_view = changed
+        if not healthy:
+            await IntentService(db).reconcile_locked(locked.locked_device, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked.device, previous, policy_view=policy_view, publisher=self._publisher)
+        return True
 
     async def _update_locked_device_checks_row(
         self,
@@ -131,7 +145,7 @@ class DeviceHealthService:
         summary: str,
         revision: int | None,
         observed_at: datetime | None,
-    ) -> bool:
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
         # Two-axis guard: a synchronous higher-authority writer passes no revision
         # and draws a fresh one at write time, so it always out-ranks a stale fold
         # observation whose (lower) revision was drawn earlier at ingest. A moved
@@ -139,7 +153,7 @@ class DeviceHealthService:
         # comparison when a fresher write landed first.
         rev = revision if revision is not None else await next_observation_revision(db)
         if rev <= locked.device_checks_observation_revision:
-            return False
+            return None
         ladder = await remediation_log.load_ladder(db, locked.id)
         policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
         previous = build_public_summary(locked, policy_view=policy_view)
@@ -152,14 +166,11 @@ class DeviceHealthService:
             locked.failure_episode_id = None
         elif not was_failing:
             locked.failure_episode_id = uuid.uuid4()
-        if not healthy:
-            await IntentService(db).reconcile_now(locked.id, publisher=self._publisher)
         # On success, defer to apply_node_state_transition (which reconciles on
         # state transitions) or the next reconciler scan tick (≤ one
         # intent_reconcile_interval): a healthy device_checks signal alone does
         # not restore an offline device — the node must also be observed running.
-        _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
-        return True
+        return previous, policy_view
 
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None

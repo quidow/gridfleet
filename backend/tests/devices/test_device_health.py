@@ -140,7 +140,7 @@ async def test_update_locked_device_checks_reuses_scope_lock(
     monkeypatch.setattr(svc.device_locking, "lock_device", spy)
     service = DeviceHealthService(publisher=event_bus)
 
-    applied = await service.update_locked_device_checks(locked=locked, db=db, healthy=True, summary="Healthy")
+    applied = await service.update_locked_device_checks(locked=locked, db=db, healthy=False, summary="Unhealthy")
 
     assert applied is True
     spy.assert_not_awaited()

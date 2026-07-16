@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
+    from app.devices.locking import LockedDevice
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.remediation_log import LadderState
@@ -277,6 +278,34 @@ async def reconcile_device(
         # between the scan select and this lock). Nothing to reconcile —
         # skip without failing the whole reconcile cycle.
         return False
+    return await _reconcile_loaded_device(db, device, publisher=publisher, packs=packs)
+
+
+async def reconcile_locked_device(
+    db: AsyncSession,
+    locked: LockedDevice,
+    *,
+    publisher: EventPublisher,
+    packs: dict[str, DriverPack] | None = None,
+) -> bool:
+    metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
+    locked.assert_active(db)
+    return await _reconcile_loaded_device(
+        db,
+        locked.device,
+        publisher=publisher,
+        packs=packs,
+    )
+
+
+async def _reconcile_loaded_device(
+    db: AsyncSession,
+    device: Device,
+    *,
+    publisher: EventPublisher,
+    packs: dict[str, DriverPack] | None = None,
+) -> bool:
+    device_id = device.id
     node = device.appium_node
     if node is None:
         # No Appium node — skip intent evaluation but still derive device state

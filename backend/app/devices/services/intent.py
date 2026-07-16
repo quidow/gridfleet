@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent
-from app.devices.services.intent_reconciler import reconcile_device
+from app.devices.services.intent_reconciler import reconcile_device, reconcile_locked_device
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.locking import LockedDevice
     from app.devices.services.intent_types import IntentRegistration
     from app.events.protocols import EventPublisher
 
@@ -138,6 +139,20 @@ class IntentService:
             device_id,
             publisher=publisher,
             flush_first=True,
+        )
+
+    async def reconcile_locked(
+        self,
+        locked: LockedDevice,
+        *,
+        publisher: EventPublisher,
+    ) -> None:
+        locked.assert_active(self._db)
+        await self._db.flush()
+        await reconcile_locked_device(
+            self._db,
+            locked,
+            publisher=publisher,
         )
 
     async def register_intents_and_reconcile(

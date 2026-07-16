@@ -5,9 +5,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.appium_nodes.models import AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
@@ -136,6 +137,44 @@ async def test_reconcile_now_derives_state_inline(db_session: AsyncSession, db_h
     refreshed = await db_session.get(Device, device.id)
     assert refreshed is not None
     assert refreshed.operational_state_last_emitted == DeviceOperationalState.offline
+
+
+async def test_reconcile_locked_reuses_active_device_lock_without_commit(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="reconcile-locked")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    lock_spy = AsyncMock(wraps=device_locking.lock_device)
+    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    commits = 0
+
+    def count_commit(_session: object) -> None:
+        nonlocal commits
+        commits += 1
+
+    event.listen(db_session.sync_session, "after_commit", count_commit)
+    try:
+        locked.device.device_checks_healthy = False
+        await IntentService(db_session).reconcile_locked(locked, publisher=event_bus)
+
+        lock_spy.assert_not_awaited()
+        assert commits == 0
+
+        await db_session.commit()
+        refreshed = await db_session.get(Device, device.id)
+        assert refreshed is not None
+        assert refreshed.operational_state_last_emitted == DeviceOperationalState.offline
+    finally:
+        event.remove(db_session.sync_session, "after_commit", count_commit)
+
+
+async def test_reconcile_locked_rejects_inactive_lock_proof(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="reconcile-locked-inactive")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    await db_session.commit()
+
+    with pytest.raises(RuntimeError, match="active transaction"):
+        await IntentService(db_session).reconcile_locked(locked, publisher=event_bus)
 
 
 async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db_host: Host) -> None:
