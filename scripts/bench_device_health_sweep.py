@@ -59,7 +59,9 @@ PYTEST_CMD = [
 
 def run_cell(name: str, overrides: dict[str, str], out_dir: Path, iters: str | None, explain: bool) -> bool:
     json_path = out_dir / f"{name}.json"
-    env = os.environ.copy()
+    # Strip ambient FOLD_BENCH_* knobs: a stray exported var must not silently
+    # skew cells that don't override that key — each cell fully owns its knobs.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FOLD_BENCH")}
     env.update({"FOLD_BENCH": "1", "FOLD_BENCH_JSON": str(json_path)})
     env.update(overrides)
     if iters is not None:
