@@ -19,14 +19,9 @@ fold is measured separately by the StatusFoldLoop benchmark.
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import os
-import re
-import sys
 import uuid
-from collections import Counter
-from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
@@ -35,7 +30,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import HeartbeatService
@@ -58,16 +52,19 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
 from app.runs.service_reservation import RunReservationService
+from tests.bench_instrumentation import (
+    CommitTap,
+    QueryTap,
+    install_async_session_callsite_profiler,
+)
 from tests.fakes import FakeSettingsReader
 from tests.helpers import build_connectivity_service, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-    from types import FrameType
-    from typing import Concatenate
 
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [
     pytest.mark.db,
@@ -318,107 +315,7 @@ def _properties_section(devices: list[_SeededDevice], churn: float = 0.0) -> dic
     }
 
 
-_WS = re.compile(r"\s+")
-_ACTIVE_DB_CALLSITE: ContextVar[str] = ContextVar("fold_bench_db_callsite", default="unattributed")
-_ACTIVE_DB_TASK: ContextVar[asyncio.Task[object] | None] = ContextVar("fold_bench_db_task", default=None)
-_DEFERRED_EVENT_CALLSITE = "app.events.event_bus._persist_system_event"
-
-
-def _callsite_label(frame: FrameType) -> str:
-    normalized = frame.f_code.co_filename.replace("\\", "/")
-    relative = normalized.split("/backend/", maxsplit=1)[-1]
-    module = relative.removesuffix(".py").replace("/", ".")
-    return f"{module}.{frame.f_code.co_name}"
-
-
-def _profiled_async_session_method[**P, R](
-    method: Callable[Concatenate[AsyncSession, P], Awaitable[R]],
-) -> Callable[Concatenate[AsyncSession, P], Awaitable[R]]:
-    """Carry an application call site through SQLAlchemy's async greenlet.
-
-    Nested convenience calls such as ``scalars() -> execute()`` keep the outer
-    application label. A newly-created task gets a fresh label even though
-    ``asyncio.create_task`` copied the parent's ContextVar values.
-    """
-
-    @functools.wraps(method)
-    async def wrapped(
-        session: AsyncSession,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> R:
-        task = asyncio.current_task()
-        current = _ACTIVE_DB_CALLSITE.get()
-        inherited_by_child = _ACTIVE_DB_TASK.get() is not task
-        label_token = (
-            _ACTIVE_DB_CALLSITE.set(_callsite_label(sys._getframe(1)))
-            if current == "unattributed" or inherited_by_child
-            else None
-        )
-        task_token = _ACTIVE_DB_TASK.set(task) if label_token is not None else None
-        try:
-            return await method(session, *args, **kwargs)
-        finally:
-            if task_token is not None:
-                _ACTIVE_DB_TASK.reset(task_token)
-            if label_token is not None:
-                _ACTIVE_DB_CALLSITE.reset(label_token)
-
-    return wrapped
-
-
-def _install_async_session_callsite_profiler(monkeypatch: pytest.MonkeyPatch) -> None:
-    for method_name in ("commit", "execute", "flush", "get", "refresh", "scalar", "scalars"):
-        original = getattr(AsyncSession, method_name)
-        monkeypatch.setattr(AsyncSession, method_name, _profiled_async_session_method(original))
-
-
-def _is_deferred_event_callsite(callsite: str) -> bool:
-    return callsite == _DEFERRED_EVENT_CALLSITE
-
-
-def _signature(sql: str) -> str:
-    """Collapse a statement to verb + first table so round-trips group by kind."""
-    s = _WS.sub(" ", sql.strip())
-    m = re.match(r"(?i)(SELECT|INSERT INTO|UPDATE|DELETE FROM)\s+([^\s(]+)?", s)
-    if not m:
-        return s[:48]
-    verb = m.group(1).upper().split()[0]
-    if verb == "SELECT":
-        tbl = re.search(r"(?i)\bFROM\s+([^\s(]+)", s)
-        return f"SELECT {tbl.group(1) if tbl else '?'}"
-    return f"{verb} {m.group(2) or '?'}"
-
-
-class _QueryTap:
-    def __init__(self) -> None:
-        self.counter: Counter[str] = Counter()
-        self.callsite_counter: Counter[tuple[str, str]] = Counter()
-        self.total = 0
-        self.armed = True
-
-    def __call__(self, conn: object, cursor: object, statement: str, *a: object) -> None:
-        if not self.armed:
-            return
-        self.total += 1
-        signature = _signature(statement)
-        self.counter[signature] += 1
-        self.callsite_counter[(_ACTIVE_DB_CALLSITE.get(), signature)] += 1
-
-    @property
-    def deferred_total(self) -> int:
-        return sum(
-            count
-            for (callsite, _signature_name), count in self.callsite_counter.items()
-            if _is_deferred_event_callsite(callsite)
-        )
-
-    @property
-    def source_total(self) -> int:
-        return self.total - self.deferred_total
-
-
-def _report(label: str, tap: _QueryTap, wall_ms: list[float]) -> None:
+def _report(label: str, tap: QueryTap, wall_ms: list[float]) -> None:
     avg = sum(wall_ms) / len(wall_ms)
     q_per_push = tap.total / ITERS
     print(f"\n{'=' * 78}\n{label}: {DEVICES} devices x {ITERS} iters")
@@ -434,7 +331,7 @@ async def _measure(
     *,
     seed: Callable[[int], Awaitable[tuple[Host, list[_SeededDevice]]]],
     run: Callable[[Host, list[_SeededDevice]], Awaitable[None]],
-    tap: _QueryTap,
+    tap: QueryTap,
 ) -> None:
     """Run ITERS timed iterations. Under churn, re-seed a fresh generation per
     iteration so each iteration measures a real transition (re-observing the same
@@ -463,7 +360,7 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
@@ -478,7 +375,7 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
 
 async def test_bench_device_telemetry_fold(db_session: AsyncSession) -> None:
     service = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
@@ -499,7 +396,7 @@ async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
         identity_guard=AsyncMock(),
     )
     service = PropertyRefreshService(discovery=discovery)
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
@@ -529,7 +426,7 @@ def _host_telemetry_sample(iteration: int) -> dict[str, object]:
 
 async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
     service = HostResourceTelemetryService(settings=FakeSettingsReader({}))
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
     tap.armed = False  # exclude the one-time seed from the per-push query count
     host, _devices = await _seed_fleet(db_session, FLEET, DEVICES)
@@ -542,106 +439,6 @@ async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
         tap.armed = False
     _report("fold_host_telemetry", tap, wall_ms)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-
-
-class _CommitTap:
-    def __init__(self) -> None:
-        self.callsite_counter: Counter[str] = Counter()
-        self.count = 0
-        self.armed = True
-
-    def __call__(self, conn: object) -> None:
-        if self.armed:
-            self.count += 1
-            self.callsite_counter[_ACTIVE_DB_CALLSITE.get()] += 1
-
-    @property
-    def deferred_count(self) -> int:
-        return sum(count for callsite, count in self.callsite_counter.items() if _is_deferred_event_callsite(callsite))
-
-    @property
-    def source_count(self) -> int:
-        return self.count - self.deferred_count
-
-
-def test_bench_callsite_label_is_repository_relative() -> None:
-    label = _callsite_label(sys._getframe())
-
-    assert label == "tests.test_bench_folds.test_bench_callsite_label_is_repository_relative"
-    assert "/Users/" not in label
-    assert ":" not in label
-
-
-def test_bench_query_and_commit_taps_group_by_callsite() -> None:
-    tap = _QueryTap()
-    commits = _CommitTap()
-    token = _ACTIVE_DB_CALLSITE.set("app.devices.locking.lock_device")
-    try:
-        tap(None, None, "SELECT devices.id FROM devices")
-        commits(None)
-    finally:
-        _ACTIVE_DB_CALLSITE.reset(token)
-
-    assert tap.callsite_counter == Counter({("app.devices.locking.lock_device", "SELECT devices"): 1})
-    assert commits.callsite_counter == Counter({"app.devices.locking.lock_device": 1})
-
-
-async def test_bench_nested_session_wrapper_preserves_outer_callsite() -> None:
-    async def read_active_callsite(_session: object) -> str:
-        return _ACTIVE_DB_CALLSITE.get()
-
-    inner = _profiled_async_session_method(read_active_callsite)
-
-    async def call_inner(session: object) -> str:
-        return await inner(session)
-
-    outer = _profiled_async_session_method(call_inner)
-    observed = await outer(object())
-
-    assert observed == "tests.test_bench_folds.test_bench_nested_session_wrapper_preserves_outer_callsite"
-
-
-async def test_bench_session_wrapper_relabels_inherited_child_task_context() -> None:
-    async def read_active_callsite(_session: object) -> str:
-        return _ACTIVE_DB_CALLSITE.get()
-
-    wrapped = _profiled_async_session_method(read_active_callsite)
-
-    async def run_child() -> str:
-        return await wrapped(object())
-
-    token = _ACTIVE_DB_CALLSITE.set("app.devices.services.connectivity.fold_host_devices")
-    try:
-        observed = await asyncio.create_task(run_child())
-    finally:
-        _ACTIVE_DB_CALLSITE.reset(token)
-
-    assert observed == "tests.test_bench_folds.run_child"
-
-
-def test_bench_cost_partition_separates_deferred_event_work() -> None:
-    tap = _QueryTap()
-    tap.total = 3
-    tap.callsite_counter.update(
-        {
-            ("app.devices.locking.lock_device", "SELECT devices"): 1,
-            ("app.events.event_bus._persist_system_event", "INSERT system_events"): 1,
-            ("app.events.event_bus._persist_system_event", "SELECT ?"): 1,
-        }
-    )
-    commits = _CommitTap()
-    commits.count = 3
-    commits.callsite_counter.update(
-        {
-            "app.devices.services.connectivity.fold_host_devices": 1,
-            "app.events.event_bus._persist_system_event": 2,
-        }
-    )
-
-    assert tap.source_total == 1
-    assert tap.deferred_total == 2
-    assert commits.source_count == 1
-    assert commits.deferred_count == 2
 
 
 def test_bench_real_lifecycle_composition() -> None:
@@ -720,7 +517,7 @@ def _consolidated_payload(devices: list[_SeededDevice], churn: float, iteration:
     }
 
 
-def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]) -> None:
+def _report_whole_push(tap: QueryTap, commits: CommitTap, wall_ms: list[float]) -> None:
     avg = sum(wall_ms) / len(wall_ms)
     q_per_push = tap.total / ITERS
     print(f"\n{'=' * 78}\nwhole_push (all stages): {DEVICES} devices x {ITERS} iters  churn={CHURN}")
@@ -733,8 +530,8 @@ def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]
 
 
 def _report_device_health_loop(
-    tap: _QueryTap,
-    commits: _CommitTap,
+    tap: QueryTap,
+    commits: CommitTap,
     fold_wall_ms: list[float],
     settled_wall_ms: list[float],
 ) -> None:
@@ -790,8 +587,8 @@ def _report_device_health_loop(
 
 async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]) -> None:
     service = _build_push_service(db_session_maker)
-    tap = _QueryTap()
-    commits = _CommitTap()
+    tap = QueryTap()
+    commits = CommitTap()
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", tap)
     event.listen(engine, "commit", commits)
@@ -829,10 +626,10 @@ async def test_bench_device_health_loop_fold(
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_async_session_callsite_profiler(monkeypatch)
+    install_async_session_callsite_profiler(monkeypatch)
     service = _build_device_health_benchmark_service(db_session_maker)
-    tap = _QueryTap()
-    commits = _CommitTap()
+    tap = QueryTap()
+    commits = CommitTap()
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", tap)
     event.listen(engine, "commit", commits)
