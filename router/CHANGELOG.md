@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.3.0...gridfleet-router-v0.4.0) (2026-07-16)
+
+
+### Features
+
+* **backend:** add deadline-governed create retry and durable remediation ([d20ae1e](https://github.com/quidow/gridfleet/commit/d20ae1ed50d9b64b99f8323152593b515714f25e))
+* **router:** pass remaining create budget to backend via header ([0ef218c](https://github.com/quidow/gridfleet/commit/0ef218cb795f8751abc86d7e21a2255dcf0f59b6))
+
 ## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.2.0...gridfleet-router-v0.3.0) (2026-07-12)
 
 
