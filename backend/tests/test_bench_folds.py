@@ -25,6 +25,20 @@ Set ``FOLD_BENCH_EXPLAIN=1`` to capture EXPLAIN plans for the hottest statements
 of the device-health loop benchmark (best-effort; a failed plan is reported
 inline rather than failing the benchmark).
 
+Set ``FOLD_BENCH_SCENARIO`` to select the churn shape the device-health loop
+benchmark drives (default ``steady``):
+
+- ``steady`` -- today's behavior: a churn fraction of devices flip unhealthy
+  each iteration, re-seeding a fresh generation only when ``FOLD_BENCH_CHURN``
+  is nonzero (``FOLD_BENCH_CHURN`` still controls the fraction).
+- ``sparse-unhealthy`` -- exactly one device unhealthy per iteration, fresh
+  generation every iteration.
+- ``all-unhealthy`` -- every device unhealthy per iteration, fresh generation
+  every iteration.
+- ``repeat-unhealthy`` -- the same devices stay unhealthy across every
+  iteration (no re-seed), so repeated observation of an already-escalated
+  device can be measured as the cheap no-op it is expected to be.
+
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
 """
@@ -43,7 +57,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import HeartbeatService
@@ -100,6 +114,55 @@ if _raw_lifecycle_mode not in ("real", "isolated"):
 LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
 JSON_PATH = os.getenv("FOLD_BENCH_JSON")
 EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
+SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
+# repeat-unhealthy needs a nonzero unhealthy fraction even when CHURN is unset.
+_REPEAT_CHURN = CHURN if CHURN > 0 else 0.3
+
+
+@dataclass(frozen=True)
+class _HealthScenario:
+    """One FOLD_BENCH_SCENARIO shape for the device-health loop benchmark.
+
+    ``seed_extra`` runs once after the fleet seed; ``rearm`` runs unarmed before
+    every iteration (so warm-up cannot consume a one-shot mutation path);
+    ``verify`` is the fixture-honesty guard -- it must FAIL when the scenario's
+    intended code path did not run.
+    """
+
+    unhealthy_count: Callable[[int], int]
+    reseed_per_iteration: bool
+    omit_second_half: bool = False
+    seed_extra: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
+    rearm: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
+    verify: Callable[[AsyncSession, QueryTap, list[_SeededDevice]], Awaitable[None]] | None = None
+    expect_receipts: str = "all"  # "all" | "present-only"
+
+
+async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    k = _churn_count(len(devices), _REPEAT_CHURN)
+    unhealthy = await db.scalar(
+        select(func.count())
+        .select_from(Device)
+        .where(Device.id.in_([d.device_id for d in devices]), Device.device_checks_healthy.is_(False))
+    )
+    assert unhealthy == k, f"expected {k} devices to stay unhealthy across repeats, found {unhealthy}"
+
+
+_SCENARIOS: dict[str, _HealthScenario] = {
+    "steady": _HealthScenario(
+        unhealthy_count=lambda n: _churn_count(n, CHURN),
+        reseed_per_iteration=CHURN > 0,
+    ),
+    "sparse-unhealthy": _HealthScenario(unhealthy_count=lambda n: 1, reseed_per_iteration=True),
+    "all-unhealthy": _HealthScenario(unhealthy_count=lambda n: n, reseed_per_iteration=True),
+    "repeat-unhealthy": _HealthScenario(
+        unhealthy_count=lambda n: _churn_count(n, _REPEAT_CHURN),
+        reseed_per_iteration=False,
+        verify=_verify_repeat_unhealthy,
+    ),
+}
+if SCENARIO not in _SCENARIOS:
+    raise ValueError(f"unknown FOLD_BENCH_SCENARIO {SCENARIO!r}; known: {sorted(_SCENARIOS)}")
 
 
 def _build_real_lifecycle_connectivity_service() -> ConnectivityService:
@@ -264,12 +327,11 @@ def _device_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[st
 
 def _device_health_loop_section(
     devices: list[_SeededDevice],
-    churn: float,
     *,
+    unhealthy_count: int,
     revision: int,
     section_sequence: int,
 ) -> dict[str, object]:
-    unhealthy_count = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
         "section_sequence": section_sequence,
@@ -675,6 +737,7 @@ async def test_bench_device_health_loop_fold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install_async_session_callsite_profiler(monkeypatch)
+    scenario = _SCENARIOS[SCENARIO]
     service = _build_device_health_benchmark_service(db_session_maker)
     tap = QueryTap()
     commits = CommitTap()
@@ -689,15 +752,22 @@ async def test_bench_device_health_loop_fold(
 
     try:
         host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
+        if scenario.seed_extra is not None:
+            await scenario.seed_extra(db_session, devices)
         for iteration in range(WARMUP + ITERS):
             armed = iteration >= WARMUP
-            if CHURN > 0 and iteration > 0:
+            if scenario.reseed_per_iteration and iteration > 0:
                 host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+                if scenario.seed_extra is not None:
+                    await scenario.seed_extra(db_session, devices)
+            if scenario.rearm is not None:
+                await scenario.rearm(db_session, devices)
 
+            present = devices[: len(devices) // 2] if scenario.omit_second_half else devices
             revision = await next_observation_revision(db_session)
             section = _device_health_loop_section(
-                devices,
-                CHURN,
+                present,
+                unhealthy_count=scenario.unhealthy_count(len(present)),
                 revision=revision,
                 section_sequence=iteration + 1,
             )
@@ -723,19 +793,30 @@ async def test_bench_device_health_loop_fold(
                 commits.armed = False
 
             assert settled is True
+            present_ids = [device.device_id for device in present]
             receipt_rows = (
                 (
                     await db_session.execute(
-                        select(Device.device_checks_fold_applied_revision).where(
-                            Device.id.in_([device.device_id for device in devices])
-                        )
+                        select(Device.device_checks_fold_applied_revision).where(Device.id.in_(present_ids))
                     )
                 )
                 .scalars()
                 .all()
             )
-            assert len(receipt_rows) == len(devices)
+            assert len(receipt_rows) == len(present_ids)
             assert set(receipt_rows) == {revision}
+            if scenario.expect_receipts == "present-only":
+                omitted_ids = [device.device_id for device in devices[len(devices) // 2 :]]
+                stale_rows = (
+                    (
+                        await db_session.execute(
+                            select(Device.device_checks_fold_applied_revision).where(Device.id.in_(omitted_ids))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert all(row < revision for row in stale_rows), "omitted devices must not advance receipts"
 
         explain_plans: list[dict[str, str]] = []
         if EXPLAIN:
@@ -750,7 +831,7 @@ async def test_bench_device_health_loop_fold(
         if JSON_PATH:
             report = build_json_report(
                 config={
-                    "scenario": SCENARIO if "SCENARIO" in globals() else "steady",  # noqa: F821 -- lands in Task 5
+                    "scenario": SCENARIO,
                     "devices": DEVICES,
                     "iters": ITERS,
                     "warmup": WARMUP,
@@ -769,9 +850,19 @@ async def test_bench_device_health_loop_fold(
         attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
         assert "unattributed" not in attributed_callsites
         assert "app.devices.locking.lock_device_handle" in attributed_callsites
-        if CHURN > 0:
+        # Gated on reseed_per_iteration, not just effective_unhealthy > 0: a device
+        # already offline is never re-escalated (connectivity._escalate_health_failure
+        # skips handle_health_failure once was_offline), so a static scenario that
+        # never re-seeds (e.g. repeat-unhealthy) has its one real transition land in
+        # the unarmed warm-up iteration and legitimately shows zero deferred queries
+        # in the armed window -- that non-reseeding no-op is exactly what such a
+        # scenario measures. scenario.verify is the honesty guard for that case.
+        effective_unhealthy = scenario.unhealthy_count(len(devices) // 2 if scenario.omit_second_half else len(devices))
+        if effective_unhealthy > 0 and scenario.reseed_per_iteration:
             assert tap.deferred_total > 0
             assert commits.deferred_count > 0
+        if scenario.verify is not None:
+            await scenario.verify(db_session, tap, devices)
     finally:
         event.remove(engine, "before_cursor_execute", tap)
         event.remove(engine, "after_cursor_execute", tap.after)
