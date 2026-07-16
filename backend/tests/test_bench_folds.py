@@ -13,29 +13,67 @@ The device-health loop benchmark uses the production lifecycle policy by
 default. Set ``FOLD_BENCH_LIFECYCLE=isolated`` to retain the core-only profile
 with lifecycle hooks mocked.
 
+Set ``FOLD_BENCH_WARMUP`` (default 1) to control how many untimed/unarmed
+iterations the device-health loop benchmark runs before the timed ``ITERS``
+iterations begin.
+
+Set ``FOLD_BENCH_JSON`` to a file path to also write a machine-readable JSON
+report of the device-health loop benchmark (see ``build_json_report`` in
+tests/bench_instrumentation.py) to that path.
+
+Set ``FOLD_BENCH_EXPLAIN=1`` to capture EXPLAIN plans for the hottest statements
+of the device-health loop benchmark (best-effort; a failed plan is reported
+inline rather than failing the benchmark).
+
+Set ``FOLD_BENCH_SCENARIO`` to select the churn shape the device-health loop
+benchmark drives (default ``steady``):
+
+- ``steady`` -- today's behavior: a churn fraction of devices flip unhealthy
+  each iteration, re-seeding a fresh generation only when ``FOLD_BENCH_CHURN``
+  is nonzero (``FOLD_BENCH_CHURN`` still controls the fraction).
+- ``sparse-unhealthy`` -- exactly one device unhealthy per iteration, fresh
+  generation every iteration.
+- ``all-unhealthy`` -- every device unhealthy per iteration, fresh generation
+  every iteration.
+- ``repeat-unhealthy`` -- the same devices stay unhealthy across every
+  iteration (no re-seed), so repeated observation of an already-escalated
+  device can be measured as the cheap no-op it is expected to be.
+- ``stale-ladder`` -- every device carries an active escalation episode (a
+  bare failure row) re-armed before every iteration, so the healthy fold's
+  self-heal hook takes its residue-clear mutation path every time.
+- ``deep-history`` -- every device carries ~200 remediation-log rows ending in
+  a reset (episode inactive), so the healthy fold only reads the deep ladder
+  without appending to it.
+- ``active-claims`` -- the first half of the fleet is claimed (a live session or
+  an unexpired verification lease per device), so the fold's busy/verifying
+  mask is exercised while still consuming the pushed generation.
+- ``terminal-noop`` -- the first half of the fleet is in maintenance and the
+  second half is omitted from the pushed section entirely, so both terminal-noop
+  paths (maintenance consume, missing-device skip) are measured together
+  (maintenance devices are pushed unhealthy so the short-circuit is provable).
+- ``stale-run-exclusion`` -- every device is reserved by one non-terminal run
+  with an indefinite health-failure exclusion, re-armed before every iteration,
+  so the healthy fold's self-heal hook takes its run-restore mutation path.
+
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
 """
 
 from __future__ import annotations
 
-import asyncio
 import functools
+import json
 import os
-import re
-import sys
 import uuid
-from collections import Counter
-from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event, func, select, update
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import HeartbeatService
@@ -44,30 +82,49 @@ from app.appium_nodes.services.reconciler import ReconcilerService, converge_pus
 from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models.intent import DeviceIntent
+from app.devices.models.remediation_log import DeviceRemediationLogEntry
+from app.devices.models.reservation import DeviceReservation, ExclusionKind
+from app.devices.services import lifecycle_policy_state
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.review import ReviewService
+from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY, HostStatusPushService, ObservationFold
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
+from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
+from app.sessions.models import Session, SessionStatus
+from tests.bench_instrumentation import (
+    CommitTap,
+    QueryTap,
+    build_json_report,
+    explain_statement_sql,
+    install_async_session_callsite_profiler,
+    percentile,
+    scenario_observation_shape,
+    select_explain_targets,
+    validate_benchmark_knobs,
+)
 from tests.fakes import FakeSettingsReader
 from tests.helpers import build_connectivity_service, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-    from types import FrameType
-    from typing import Concatenate
 
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 pytestmark = [
     pytest.mark.db,
@@ -77,11 +134,318 @@ pytestmark = [
 
 DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
 ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
+WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
 CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
+validate_benchmark_knobs(devices=DEVICES, iters=ITERS, warmup=WARMUP, churn=CHURN)
 _raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
 if _raw_lifecycle_mode not in ("real", "isolated"):
     raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
 LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
+JSON_PATH = os.getenv("FOLD_BENCH_JSON")
+EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
+SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
+
+
+@dataclass(frozen=True)
+class _HealthScenario:
+    """One FOLD_BENCH_SCENARIO shape for the device-health loop benchmark.
+
+    ``seed_extra`` runs once after the fleet seed; ``rearm`` runs unarmed before
+    every iteration (so warm-up cannot consume a one-shot mutation path);
+    ``verify`` is the fixture-honesty guard -- it must FAIL when the scenario's
+    intended code path did not run.
+    """
+
+    reseed_per_iteration: bool
+    seed_extra: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
+    rearm: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
+    verify: Callable[[AsyncSession, QueryTap, list[_SeededDevice]], Awaitable[None]] | None = None
+    expect_receipts: str = "all"  # "all" | "present-only"
+
+
+async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    assert all(d.identity.startswith("bench-g0-") for d in devices), (
+        "repeat-unhealthy must observe the generation-0 fleet across all iterations; a re-seed occurred"
+    )
+    shape = scenario_observation_shape(scenario="repeat-unhealthy", devices=len(devices), churn=CHURN)
+    unhealthy = await db.scalar(
+        select(func.count())
+        .select_from(Device)
+        .where(Device.id.in_([d.device_id for d in devices]), Device.device_checks_healthy.is_(False))
+    )
+    assert unhealthy == shape.unhealthy_count, (
+        f"expected {shape.unhealthy_count} devices to stay unhealthy across repeats, found {unhealthy}"
+    )
+
+
+async def _verify_unhealthy_cardinality(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    shape = scenario_observation_shape(scenario=SCENARIO, devices=len(devices), churn=CHURN)
+    unhealthy = await db.scalar(
+        select(func.count())
+        .select_from(Device)
+        .where(Device.id.in_([d.device_id for d in devices]), Device.device_checks_healthy.is_(False))
+    )
+    assert unhealthy == shape.unhealthy_count, (
+        f"{SCENARIO} expected exactly {shape.unhealthy_count} unhealthy devices, found {unhealthy}"
+    )
+
+
+_DEEP_HISTORY_ROWS = 200
+
+
+async def _arm_stale_ladders(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """Give every device an active escalation episode (a bare failure row) so the
+    healthy fold's self-heal hook takes its residue-clear mutation path. Used as
+    ``rearm`` so the path re-fires every iteration, warm-up included."""
+    for d in devices:
+        await remediation_log.append_failure(db, d.device_id, source="bench", reason="bench stale residue")
+    await db.commit()
+
+
+async def _verify_stale_ladder_cleared(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    ladder = await remediation_log.load_ladder(db, devices[0].device_id)
+    assert ladder.episode_active is False, "self-heal residue clear did not run"
+    # The appium-xcuitest test-fixture manifest (tests/packs/fixtures/manifests/appium-xcuitest.yaml)
+    # marks "bundle_id" required_for_session for real devices; _seed_fleet never sets it, so those
+    # devices are permanently setup_required -> offline and never reach the connectivity healthy
+    # path's self-heal branch. Only the appium-uiautomator2 share of the fleet is ready (all of it,
+    # under FOLD_BENCH_FLEET=homogeneous), so the reset-append floor is scoped to those devices.
+    ready = [d for d in devices if d.spec.pack_id != "appium-xcuitest"]
+    assert tap.counter["INSERT device_remediation_log"] >= len(ready) * ITERS, (
+        "expected one reset append per ready device per armed iteration"
+    )
+
+
+async def _seed_deep_history(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """~200 remediation rows per device ending in a reset: episode inactive, so the
+    healthy path only READS the deep ladder without appending."""
+    base = now_utc() - timedelta(hours=1)
+    rows: list[DeviceRemediationLogEntry] = []
+    for d in devices:
+        for i in range(_DEEP_HISTORY_ROWS - 1):
+            failure = i % 2 == 0
+            rows.append(
+                DeviceRemediationLogEntry(
+                    device_id=d.device_id,
+                    kind="failure" if failure else "reset",
+                    source="bench",
+                    action="failure_observed" if failure else "bench_reset",
+                    reason="bench deep history",
+                    at=base + timedelta(seconds=i),
+                )
+            )
+        rows.append(
+            DeviceRemediationLogEntry(
+                device_id=d.device_id,
+                kind="reset",
+                source="bench",
+                action="bench_reset",
+                reason="bench deep history terminal reset",
+                at=base + timedelta(seconds=_DEEP_HISTORY_ROWS),
+            )
+        )
+    db.add_all(rows)
+    await db.commit()
+
+
+async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    count = await db.scalar(
+        select(func.count())
+        .select_from(DeviceRemediationLogEntry)
+        .where(DeviceRemediationLogEntry.device_id == devices[0].device_id)
+    )
+    assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
+    # Every healthy observation loads the existing ladder before readiness can
+    # affect the later self-heal branch, so mixed-fleet setup-required devices
+    # still contribute one full history read per armed iteration.
+    ladder_key = ("app.lifecycle.services.remediation_log.load_ladder", "SELECT device_remediation_log")
+    expected_rows = len(devices) * _DEEP_HISTORY_ROWS * ITERS
+    assert tap.rows[ladder_key] >= expected_rows, (
+        f"deep-history expected at least {expected_rows} timed remediation rows, observed {tap.rows[ladder_key]}"
+    )
+
+
+async def _seed_active_claims(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """Claim the first half of the fleet: even claimed indexes get a live session
+    (busy mask), odd get an unexpired verification lease (verifying mask)."""
+    lease_until = now_utc() + timedelta(hours=1)
+    for i, d in enumerate(devices[: len(devices) // 2]):
+        if i % 2 == 0:
+            db.add(Session(session_id=f"bench-claim-{d.identity}", device_id=d.device_id, status=SessionStatus.running))
+        else:
+            db.add(
+                DeviceIntent(
+                    device_id=d.device_id,
+                    source=verification_intent_source(d.device_id),
+                    kind=CommandKind.verification_start,
+                    payload={},
+                    expires_at=lease_until,
+                )
+            )
+    await db.commit()
+
+
+async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    claimed = devices[: len(devices) // 2]
+    sessions = await db.scalar(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.device_id.in_([d.device_id for d in claimed]), Session.ended_at.is_(None))
+    )
+    leases = await db.scalar(
+        select(func.count()).select_from(DeviceIntent).where(DeviceIntent.device_id.in_([d.device_id for d in claimed]))
+    )
+    assert sessions == (len(claimed) + 1) // 2, "live session claims disappeared mid-benchmark"
+    assert leases == len(claimed) // 2, "verification leases disappeared mid-benchmark"
+    session_key = (
+        "app.sessions.live_session_predicate.device_has_masking_live_session",
+        "SELECT sessions",
+    )
+    lease_key = ("app.devices.services.claims.device_has_verification_lease", "SELECT device_intents")
+    assert tap.callsite_counter[session_key] >= len(devices) * ITERS, "live-session masking predicate did not run"
+    assert tap.rows[lease_key] >= (len(claimed) // 2) * ITERS, "verification-lease predicate missed seeded claims"
+    session_parameters = tap.captured_parameter_values(session_key)
+    lease_parameters = tap.captured_parameter_values(lease_key)
+    for index, seeded in enumerate(claimed):
+        timed_parameters = session_parameters if index % 2 == 0 else lease_parameters
+        assert str(seeded.device_id) in timed_parameters, f"timed claim predicate did not inspect {seeded.identity}"
+        device = await db.get(Device, seeded.device_id)
+        assert device is not None
+        state = await derive_operational_state(db, device, now=now_utc())
+        expected = DeviceOperationalState.busy if index % 2 == 0 else DeviceOperationalState.verifying
+        assert state == expected, f"claim for {seeded.identity} projected {state}, expected {expected}"
+
+
+async def _seed_maintenance_half(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """First half (the section-present half) goes into maintenance; the second half
+    stays out of the pushed section entirely (the missing-device skip)."""
+    for d in devices[: len(devices) // 2]:
+        device = await device_locking.lock_device(db, d.device_id)
+        lifecycle_policy_state.write_state(device, {"maintenance_reason": "bench maintenance"})
+        await db.commit()
+
+
+async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    # Maintenance devices are pushed UNHEALTHY on purpose: the in_maintenance
+    # short-circuit precedes health evaluation, so surviving health facts prove
+    # the short-circuit fired; the normal path would flip them to False.
+    still_healthy = await db.scalar(
+        select(func.count())
+        .select_from(Device)
+        .where(
+            Device.id.in_([d.device_id for d in devices[: len(devices) // 2]]),
+            Device.device_checks_healthy.is_(True),
+        )
+    )
+    assert still_healthy == len(devices) // 2, "maintenance short-circuit must ignore the pushed unhealthy signal"
+
+
+async def _seed_stale_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """One non-terminal run reserving every device, each reservation carrying an
+    indefinite health exclusion — the state restore_run_after_self_heal clears."""
+    run = TestRun(name="bench-exclusion-run", state=RunState.active, requirements=[])
+    db.add(run)
+    await db.flush()
+    now = now_utc()
+    for d in devices:
+        db.add(
+            DeviceReservation(
+                run_id=run.id,
+                device_id=d.device_id,
+                identity_value=d.identity,
+                connection_target=d.identity,
+                pack_id=d.spec.pack_id,
+                platform_id=d.spec.platform_id,
+                os_version=d.spec.os_version,
+                excluded=True,
+                exclusion_kind=ExclusionKind.exclusion.value,
+                exclusion_reason="bench health-failure exclusion",
+                excluded_at=now,
+                excluded_until=None,
+            )
+        )
+    await db.commit()
+
+
+async def _rearm_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    await db.execute(
+        update(DeviceReservation)
+        .where(
+            DeviceReservation.device_id.in_([d.device_id for d in devices]),
+            DeviceReservation.released_at.is_(None),
+        )
+        .values(
+            excluded=True,
+            exclusion_kind=ExclusionKind.exclusion.value,
+            exclusion_reason="bench health-failure exclusion",
+            excluded_at=now_utc(),
+            excluded_until=None,
+        )
+    )
+    await db.commit()
+
+
+async def _verify_run_exclusion_restored(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    # The appium-xcuitest test-fixture manifest (tests/packs/fixtures/manifests/appium-xcuitest.yaml)
+    # marks "bundle_id" required_for_session for real devices; _seed_fleet never sets it, so those
+    # devices are permanently setup_required -> offline and never reach the connectivity healthy
+    # path's self-heal branch (_maybe_auto_recover only calls reconcile_self_heal_locked when
+    # operational_state != offline). Only the appium-uiautomator2 share of the fleet is ready (all of
+    # it, under FOLD_BENCH_FLEET=homogeneous), so the restored-exclusion floor is scoped to those
+    # devices, mirroring _verify_stale_ladder_cleared.
+    ready = [d for d in devices if d.spec.pack_id != "appium-xcuitest"]
+    still_excluded = await db.scalar(
+        select(func.count())
+        .select_from(DeviceReservation)
+        .where(
+            DeviceReservation.device_id.in_([d.device_id for d in ready]),
+            DeviceReservation.released_at.is_(None),
+            DeviceReservation.excluded.is_(True),
+        )
+    )
+    assert still_excluded == 0, f"restore_run_after_self_heal did not clear {still_excluded} exclusions"
+
+
+_SCENARIOS: dict[str, _HealthScenario] = {
+    "steady": _HealthScenario(
+        reseed_per_iteration=CHURN > 0,
+    ),
+    "sparse-unhealthy": _HealthScenario(reseed_per_iteration=True, verify=_verify_unhealthy_cardinality),
+    "all-unhealthy": _HealthScenario(reseed_per_iteration=True, verify=_verify_unhealthy_cardinality),
+    "repeat-unhealthy": _HealthScenario(
+        reseed_per_iteration=False,
+        verify=_verify_repeat_unhealthy,
+    ),
+    "stale-ladder": _HealthScenario(
+        reseed_per_iteration=False,
+        rearm=_arm_stale_ladders,
+        verify=_verify_stale_ladder_cleared,
+    ),
+    "deep-history": _HealthScenario(
+        reseed_per_iteration=False,
+        seed_extra=_seed_deep_history,
+        verify=_verify_deep_history_untouched,
+    ),
+    "active-claims": _HealthScenario(
+        reseed_per_iteration=False,
+        seed_extra=_seed_active_claims,
+        verify=_verify_claims_intact,
+    ),
+    "terminal-noop": _HealthScenario(
+        reseed_per_iteration=False,
+        seed_extra=_seed_maintenance_half,
+        verify=_verify_terminal_noop,
+        expect_receipts="present-only",
+    ),
+    "stale-run-exclusion": _HealthScenario(
+        reseed_per_iteration=False,
+        seed_extra=_seed_stale_run_exclusions,
+        rearm=_rearm_run_exclusions,
+        verify=_verify_run_exclusion_restored,
+    ),
+}
+if SCENARIO not in _SCENARIOS:
+    raise ValueError(f"unknown FOLD_BENCH_SCENARIO {SCENARIO!r}; known: {sorted(_SCENARIOS)}")
 
 
 def _build_real_lifecycle_connectivity_service() -> ConnectivityService:
@@ -246,12 +610,11 @@ def _device_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[st
 
 def _device_health_loop_section(
     devices: list[_SeededDevice],
-    churn: float,
     *,
+    unhealthy_count: int,
     revision: int,
     section_sequence: int,
 ) -> dict[str, object]:
-    unhealthy_count = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
         "section_sequence": section_sequence,
@@ -318,107 +681,7 @@ def _properties_section(devices: list[_SeededDevice], churn: float = 0.0) -> dic
     }
 
 
-_WS = re.compile(r"\s+")
-_ACTIVE_DB_CALLSITE: ContextVar[str] = ContextVar("fold_bench_db_callsite", default="unattributed")
-_ACTIVE_DB_TASK: ContextVar[asyncio.Task[object] | None] = ContextVar("fold_bench_db_task", default=None)
-_DEFERRED_EVENT_CALLSITE = "app.events.event_bus._persist_system_event"
-
-
-def _callsite_label(frame: FrameType) -> str:
-    normalized = frame.f_code.co_filename.replace("\\", "/")
-    relative = normalized.split("/backend/", maxsplit=1)[-1]
-    module = relative.removesuffix(".py").replace("/", ".")
-    return f"{module}.{frame.f_code.co_name}"
-
-
-def _profiled_async_session_method[**P, R](
-    method: Callable[Concatenate[AsyncSession, P], Awaitable[R]],
-) -> Callable[Concatenate[AsyncSession, P], Awaitable[R]]:
-    """Carry an application call site through SQLAlchemy's async greenlet.
-
-    Nested convenience calls such as ``scalars() -> execute()`` keep the outer
-    application label. A newly-created task gets a fresh label even though
-    ``asyncio.create_task`` copied the parent's ContextVar values.
-    """
-
-    @functools.wraps(method)
-    async def wrapped(
-        session: AsyncSession,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> R:
-        task = asyncio.current_task()
-        current = _ACTIVE_DB_CALLSITE.get()
-        inherited_by_child = _ACTIVE_DB_TASK.get() is not task
-        label_token = (
-            _ACTIVE_DB_CALLSITE.set(_callsite_label(sys._getframe(1)))
-            if current == "unattributed" or inherited_by_child
-            else None
-        )
-        task_token = _ACTIVE_DB_TASK.set(task) if label_token is not None else None
-        try:
-            return await method(session, *args, **kwargs)
-        finally:
-            if task_token is not None:
-                _ACTIVE_DB_TASK.reset(task_token)
-            if label_token is not None:
-                _ACTIVE_DB_CALLSITE.reset(label_token)
-
-    return wrapped
-
-
-def _install_async_session_callsite_profiler(monkeypatch: pytest.MonkeyPatch) -> None:
-    for method_name in ("commit", "execute", "flush", "get", "refresh", "scalar", "scalars"):
-        original = getattr(AsyncSession, method_name)
-        monkeypatch.setattr(AsyncSession, method_name, _profiled_async_session_method(original))
-
-
-def _is_deferred_event_callsite(callsite: str) -> bool:
-    return callsite == _DEFERRED_EVENT_CALLSITE
-
-
-def _signature(sql: str) -> str:
-    """Collapse a statement to verb + first table so round-trips group by kind."""
-    s = _WS.sub(" ", sql.strip())
-    m = re.match(r"(?i)(SELECT|INSERT INTO|UPDATE|DELETE FROM)\s+([^\s(]+)?", s)
-    if not m:
-        return s[:48]
-    verb = m.group(1).upper().split()[0]
-    if verb == "SELECT":
-        tbl = re.search(r"(?i)\bFROM\s+([^\s(]+)", s)
-        return f"SELECT {tbl.group(1) if tbl else '?'}"
-    return f"{verb} {m.group(2) or '?'}"
-
-
-class _QueryTap:
-    def __init__(self) -> None:
-        self.counter: Counter[str] = Counter()
-        self.callsite_counter: Counter[tuple[str, str]] = Counter()
-        self.total = 0
-        self.armed = True
-
-    def __call__(self, conn: object, cursor: object, statement: str, *a: object) -> None:
-        if not self.armed:
-            return
-        self.total += 1
-        signature = _signature(statement)
-        self.counter[signature] += 1
-        self.callsite_counter[(_ACTIVE_DB_CALLSITE.get(), signature)] += 1
-
-    @property
-    def deferred_total(self) -> int:
-        return sum(
-            count
-            for (callsite, _signature_name), count in self.callsite_counter.items()
-            if _is_deferred_event_callsite(callsite)
-        )
-
-    @property
-    def source_total(self) -> int:
-        return self.total - self.deferred_total
-
-
-def _report(label: str, tap: _QueryTap, wall_ms: list[float]) -> None:
+def _report(label: str, tap: QueryTap, wall_ms: list[float]) -> None:
     avg = sum(wall_ms) / len(wall_ms)
     q_per_push = tap.total / ITERS
     print(f"\n{'=' * 78}\n{label}: {DEVICES} devices x {ITERS} iters")
@@ -434,7 +697,7 @@ async def _measure(
     *,
     seed: Callable[[int], Awaitable[tuple[Host, list[_SeededDevice]]]],
     run: Callable[[Host, list[_SeededDevice]], Awaitable[None]],
-    tap: _QueryTap,
+    tap: QueryTap,
 ) -> None:
     """Run ITERS timed iterations. Under churn, re-seed a fresh generation per
     iteration so each iteration measures a real transition (re-observing the same
@@ -463,7 +726,7 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
@@ -478,7 +741,7 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
 
 async def test_bench_device_telemetry_fold(db_session: AsyncSession) -> None:
     service = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
@@ -499,7 +762,7 @@ async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
         identity_guard=AsyncMock(),
     )
     service = PropertyRefreshService(discovery=discovery)
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
@@ -529,7 +792,7 @@ def _host_telemetry_sample(iteration: int) -> dict[str, object]:
 
 async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
     service = HostResourceTelemetryService(settings=FakeSettingsReader({}))
-    tap = _QueryTap()
+    tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
     tap.armed = False  # exclude the one-time seed from the per-push query count
     host, _devices = await _seed_fleet(db_session, FLEET, DEVICES)
@@ -542,106 +805,6 @@ async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
         tap.armed = False
     _report("fold_host_telemetry", tap, wall_ms)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-
-
-class _CommitTap:
-    def __init__(self) -> None:
-        self.callsite_counter: Counter[str] = Counter()
-        self.count = 0
-        self.armed = True
-
-    def __call__(self, conn: object) -> None:
-        if self.armed:
-            self.count += 1
-            self.callsite_counter[_ACTIVE_DB_CALLSITE.get()] += 1
-
-    @property
-    def deferred_count(self) -> int:
-        return sum(count for callsite, count in self.callsite_counter.items() if _is_deferred_event_callsite(callsite))
-
-    @property
-    def source_count(self) -> int:
-        return self.count - self.deferred_count
-
-
-def test_bench_callsite_label_is_repository_relative() -> None:
-    label = _callsite_label(sys._getframe())
-
-    assert label == "tests.test_bench_folds.test_bench_callsite_label_is_repository_relative"
-    assert "/Users/" not in label
-    assert ":" not in label
-
-
-def test_bench_query_and_commit_taps_group_by_callsite() -> None:
-    tap = _QueryTap()
-    commits = _CommitTap()
-    token = _ACTIVE_DB_CALLSITE.set("app.devices.locking.lock_device")
-    try:
-        tap(None, None, "SELECT devices.id FROM devices")
-        commits(None)
-    finally:
-        _ACTIVE_DB_CALLSITE.reset(token)
-
-    assert tap.callsite_counter == Counter({("app.devices.locking.lock_device", "SELECT devices"): 1})
-    assert commits.callsite_counter == Counter({"app.devices.locking.lock_device": 1})
-
-
-async def test_bench_nested_session_wrapper_preserves_outer_callsite() -> None:
-    async def read_active_callsite(_session: object) -> str:
-        return _ACTIVE_DB_CALLSITE.get()
-
-    inner = _profiled_async_session_method(read_active_callsite)
-
-    async def call_inner(session: object) -> str:
-        return await inner(session)
-
-    outer = _profiled_async_session_method(call_inner)
-    observed = await outer(object())
-
-    assert observed == "tests.test_bench_folds.test_bench_nested_session_wrapper_preserves_outer_callsite"
-
-
-async def test_bench_session_wrapper_relabels_inherited_child_task_context() -> None:
-    async def read_active_callsite(_session: object) -> str:
-        return _ACTIVE_DB_CALLSITE.get()
-
-    wrapped = _profiled_async_session_method(read_active_callsite)
-
-    async def run_child() -> str:
-        return await wrapped(object())
-
-    token = _ACTIVE_DB_CALLSITE.set("app.devices.services.connectivity.fold_host_devices")
-    try:
-        observed = await asyncio.create_task(run_child())
-    finally:
-        _ACTIVE_DB_CALLSITE.reset(token)
-
-    assert observed == "tests.test_bench_folds.run_child"
-
-
-def test_bench_cost_partition_separates_deferred_event_work() -> None:
-    tap = _QueryTap()
-    tap.total = 3
-    tap.callsite_counter.update(
-        {
-            ("app.devices.locking.lock_device", "SELECT devices"): 1,
-            ("app.events.event_bus._persist_system_event", "INSERT system_events"): 1,
-            ("app.events.event_bus._persist_system_event", "SELECT ?"): 1,
-        }
-    )
-    commits = _CommitTap()
-    commits.count = 3
-    commits.callsite_counter.update(
-        {
-            "app.devices.services.connectivity.fold_host_devices": 1,
-            "app.events.event_bus._persist_system_event": 2,
-        }
-    )
-
-    assert tap.source_total == 1
-    assert tap.deferred_total == 2
-    assert commits.source_count == 1
-    assert commits.deferred_count == 2
 
 
 def test_bench_real_lifecycle_composition() -> None:
@@ -720,7 +883,7 @@ def _consolidated_payload(devices: list[_SeededDevice], churn: float, iteration:
     }
 
 
-def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]) -> None:
+def _report_whole_push(tap: QueryTap, commits: CommitTap, wall_ms: list[float]) -> None:
     avg = sum(wall_ms) / len(wall_ms)
     q_per_push = tap.total / ITERS
     print(f"\n{'=' * 78}\nwhole_push (all stages): {DEVICES} devices x {ITERS} iters  churn={CHURN}")
@@ -732,14 +895,32 @@ def _report_whole_push(tap: _QueryTap, commits: _CommitTap, wall_ms: list[float]
         print(f"    {n / ITERS:8.1f}  {sig}")
 
 
+async def _explain_top_statements(engine: AsyncEngine, tap: QueryTap) -> list[dict[str, str]]:
+    """Best-effort plans for the hottest statements. Runs unarmed on a fresh
+    connection and rolls back. A failed plan (parameter-shape mismatch, etc.)
+    is reported inline, never raised — this is diagnostics, not correctness."""
+    plans: list[dict[str, str]] = []
+    async with engine.connect() as conn:
+        for (callsite, signature), statement, parameters in select_explain_targets(tap):
+            sql = explain_statement_sql(statement)
+            mode = "analyze" if sql.startswith("EXPLAIN (") else "plain"
+            try:
+                result = await conn.exec_driver_sql(sql, parameters or ())
+                plan = "\n".join(str(row[0]) for row in result)
+            except Exception as exc:  # noqa: BLE001 - diagnostics must not fail the bench
+                plan = f"EXPLAIN failed: {exc!r}"
+                await conn.rollback()
+            plans.append({"callsite": callsite, "signature": signature, "mode": mode, "plan": plan})
+        await conn.rollback()
+    return plans
+
+
 def _report_device_health_loop(
-    tap: _QueryTap,
-    commits: _CommitTap,
+    tap: QueryTap,
+    commits: CommitTap,
     fold_wall_ms: list[float],
     settled_wall_ms: list[float],
 ) -> None:
-    avg_fold_ms = sum(fold_wall_ms) / len(fold_wall_ms)
-    avg_settled_ms = sum(settled_wall_ms) / len(settled_wall_ms)
     source_queries_per_fold = tap.source_total / ITERS
     deferred_queries_per_fold = tap.deferred_total / ITERS
     complete_queries_per_fold = tap.total / ITERS
@@ -759,12 +940,12 @@ def _report_device_health_loop(
         f"\n{'=' * 78}\nfold_host_devices: {DEVICES} devices x {ITERS} iters  churn={CHURN}  lifecycle={LIFECYCLE_MODE}"
     )
     print(
-        f"  fold-return wall time:       avg {avg_fold_ms:.1f} ms   "
-        f"({', '.join(f'{wall:.0f}' for wall in fold_wall_ms)})"
+        f"  fold-return wall time:       median {percentile(fold_wall_ms, 0.5):.1f} ms   "
+        f"p95 {percentile(fold_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in fold_wall_ms)})"
     )
     print(
-        f"  event-settled wall time:     avg {avg_settled_ms:.1f} ms   "
-        f"({', '.join(f'{wall:.0f}' for wall in settled_wall_ms)})"
+        f"  event-settled wall time:     median {percentile(settled_wall_ms, 0.5):.1f} ms   "
+        f"p95 {percentile(settled_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in settled_wall_ms)})"
     )
     print(
         f"  SOURCE queries/fold:         {source_queries_per_fold:.0f}   "
@@ -786,12 +967,21 @@ def _report_device_health_loop(
     print("  top call sites per fold:")
     for (callsite, signature), count in tap.callsite_counter.most_common(24):
         print(f"    {count / ITERS:8.1f}  {callsite}  [{signature}]")
+    print("  top call sites per fold by total time (~rows are driver rowcounts, approximate):")
+    by_time = sorted(tap.durations.items(), key=lambda kv: sum(kv[1]), reverse=True)
+    for (callsite, signature), durations in by_time[:24]:
+        calls = tap.callsite_counter[(callsite, signature)]
+        print(
+            f"    {calls / ITERS:8.1f}  {sum(durations) / ITERS:9.1f}ms  "
+            f"med {percentile(durations, 0.5):7.2f}ms  p95 {percentile(durations, 0.95):7.2f}ms  "
+            f"~rows {tap.rows[(callsite, signature)] / ITERS:8.1f}  {callsite}  [{signature}]"
+        )
 
 
 async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]) -> None:
     service = _build_push_service(db_session_maker)
-    tap = _QueryTap()
-    commits = _CommitTap()
+    tap = QueryTap()
+    commits = CommitTap()
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", tap)
     event.listen(engine, "commit", commits)
@@ -829,12 +1019,14 @@ async def test_bench_device_health_loop_fold(
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_async_session_callsite_profiler(monkeypatch)
+    install_async_session_callsite_profiler(monkeypatch)
+    scenario = _SCENARIOS[SCENARIO]
     service = _build_device_health_benchmark_service(db_session_maker)
-    tap = _QueryTap()
-    commits = _CommitTap()
+    tap = QueryTap()
+    commits = CommitTap()
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", tap)
+    event.listen(engine, "after_cursor_execute", tap.after)
     event.listen(engine, "commit", commits)
     tap.armed = False
     commits.armed = False
@@ -843,20 +1035,29 @@ async def test_bench_device_health_loop_fold(
 
     try:
         host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
-        for iteration in range(ITERS):
-            if CHURN > 0 and iteration > 0:
+        if scenario.seed_extra is not None:
+            await scenario.seed_extra(db_session, devices)
+        for iteration in range(WARMUP + ITERS):
+            armed = iteration >= WARMUP
+            if scenario.reseed_per_iteration and iteration > 0:
                 host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+                if scenario.seed_extra is not None:
+                    await scenario.seed_extra(db_session, devices)
+            if scenario.rearm is not None:
+                await scenario.rearm(db_session, devices)
 
+            shape = scenario_observation_shape(scenario=SCENARIO, devices=len(devices), churn=CHURN)
+            present = devices[: shape.present_count]
             revision = await next_observation_revision(db_session)
             section = _device_health_loop_section(
-                devices,
-                CHURN,
+                present,
+                unhealthy_count=shape.unhealthy_count,
                 revision=revision,
                 section_sequence=iteration + 1,
             )
 
-            tap.armed = True
-            commits.armed = True
+            tap.armed = armed
+            commits.armed = armed
             t0 = perf_counter()
             try:
                 settled = await service.fold_host_devices(
@@ -869,33 +1070,88 @@ async def test_bench_device_health_loop_fold(
                 fold_returned_at = perf_counter()
                 await settle_after_commit_tasks()
                 event_settled_at = perf_counter()
-                fold_wall_ms.append((fold_returned_at - t0) * 1000)
-                settled_wall_ms.append((event_settled_at - t0) * 1000)
+                if armed:
+                    fold_wall_ms.append((fold_returned_at - t0) * 1000)
+                    settled_wall_ms.append((event_settled_at - t0) * 1000)
                 tap.armed = False
                 commits.armed = False
 
             assert settled is True
+            present_ids = [device.device_id for device in present]
             receipt_rows = (
                 (
                     await db_session.execute(
-                        select(Device.device_checks_fold_applied_revision).where(
-                            Device.id.in_([device.device_id for device in devices])
-                        )
+                        select(Device.device_checks_fold_applied_revision).where(Device.id.in_(present_ids))
                     )
                 )
                 .scalars()
                 .all()
             )
-            assert len(receipt_rows) == len(devices)
+            assert len(receipt_rows) == len(present_ids)
             assert set(receipt_rows) == {revision}
+            if scenario.expect_receipts == "present-only":
+                omitted_ids = [device.device_id for device in devices[shape.present_count :]]
+                stale_rows = (
+                    (
+                        await db_session.execute(
+                            select(Device.device_checks_fold_applied_revision).where(Device.id.in_(omitted_ids))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert all(row < revision for row in stale_rows), "omitted devices must not advance receipts"
+
+        explain_plans: list[dict[str, str]] = []
+        if EXPLAIN:
+            explain_plans = await _explain_top_statements(db_session.bind, tap)
+            print("  query plans (top call sites by total time):")
+            for entry in explain_plans:
+                print(f"    -- {entry['callsite']}  [{entry['signature']}]  ({entry['mode']})")
+                for line in entry["plan"].splitlines():
+                    print(f"       {line}")
 
         _report_device_health_loop(tap, commits, fold_wall_ms, settled_wall_ms)
+        if JSON_PATH:
+            report = build_json_report(
+                config={
+                    "scenario": SCENARIO,
+                    "devices": DEVICES,
+                    "iters": ITERS,
+                    "warmup": WARMUP,
+                    "churn": CHURN,
+                    "fleet": os.getenv("FOLD_BENCH_FLEET", "mixed"),
+                    "lifecycle": LIFECYCLE_MODE,
+                },
+                tap=tap,
+                commits=commits,
+                iters=ITERS,
+                fold_wall_ms=fold_wall_ms,
+                settled_wall_ms=settled_wall_ms,
+                explain_plans=explain_plans,
+            )
+            Path(JSON_PATH).write_text(json.dumps(report, indent=2))
         attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
         assert "unattributed" not in attributed_callsites
         assert "app.devices.locking.lock_device_handle" in attributed_callsites
-        if CHURN > 0:
+        # Gated on reseed_per_iteration, not just effective_unhealthy > 0: a device
+        # already offline is never re-escalated (connectivity._escalate_health_failure
+        # skips handle_health_failure once was_offline), so a static scenario that
+        # never re-seeds (e.g. repeat-unhealthy) has its one real transition land in
+        # the unarmed warm-up iteration and legitimately shows zero deferred queries
+        # in the armed window -- that non-reseeding no-op is exactly what such a
+        # scenario measures. scenario.verify is the honesty guard for that case.
+        effective_unhealthy = scenario_observation_shape(
+            scenario=SCENARIO,
+            devices=len(devices),
+            churn=CHURN,
+        ).unhealthy_count
+        if effective_unhealthy > 0 and scenario.reseed_per_iteration:
             assert tap.deferred_total > 0
             assert commits.deferred_count > 0
+        if scenario.verify is not None:
+            await scenario.verify(db_session, tap, devices)
     finally:
         event.remove(engine, "before_cursor_execute", tap)
+        event.remove(engine, "after_cursor_execute", tap.after)
         event.remove(engine, "commit", commits)
