@@ -24,7 +24,7 @@ dependencies = [
     "fastapi==0.139.0",
     "uvicorn[standard]==0.51.0",
     "pydantic-settings==2.14.2",
-    "httpx2==2.5.0",
+    "httpx2==2.7.0",
     # httpcore probes for sniffio on its hot path with a bare `import sniffio`
     # fallback; without the package installed the import FAILS on every call,
     # and failed imports are never cached — each one re-runs importlib
