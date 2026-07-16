@@ -52,9 +52,9 @@ class SectionHashMismatchError(Exception):
         self.section = section
 
 
-# One snapshot per host: the latest consolidated status push. Read by the
-# host_sweep liveness/convergence stages, host diagnostics, and the resource
-# telemetry stage — the single snapshot source (no second fetch path).
+# One snapshot per host: the latest consolidated status push. Read back by
+# StatusFoldLoop (stamped guarded health sections), host diagnostics, and the
+# device-capability active-target fill — the single snapshot source.
 HOST_STATUS_NAMESPACE = "status_push.host_status"
 
 # Both health axes now move to the async facts-only reconciler (StatusFoldLoop).
@@ -62,6 +62,13 @@ HOST_STATUS_NAMESPACE = "status_push.host_status"
 # ObservationFold tuple keeps only the cheap, lock-free folds.
 GUARDED_SECTIONS = ("node_health", "device_health")
 HEALTH_SECTIONS = ("node_health", "device_health")
+
+# Only sections read back from the store are persisted: the guarded sections
+# consumed by the async StatusFoldLoop, plus appium_processes for host
+# diagnostics and the device-capability active-target fill. Telemetry and
+# properties sections fold synchronously from the in-memory payload and are
+# never read from the store, so they are not written to it.
+PERSISTED_SECTIONS = ("appium_processes", *GUARDED_SECTIONS)
 
 # Key under which Txn B publishes the Txn-A-reserved revision on each guarded
 # snapshot section. The async node fold passes it to the guarded health writer.
@@ -119,6 +126,10 @@ def push_sections(push: HostStatusPush) -> dict[str, Any]:
         "device_telemetry": push.device_telemetry,
         "device_properties": push.device_properties,
     }
+
+
+def _persisted_payload(sections: dict[str, Any]) -> dict[str, Any]:
+    return {name: sections[name] for name in PERSISTED_SECTIONS if name in sections}
 
 
 class HostStatusPushService:
@@ -211,7 +222,7 @@ class HostStatusPushService:
                 "publication_id": publication_id,
                 "boot_id": str(push.boot_id) if push.boot_id is not None else None,
                 "received_at": received_at,
-                "payload": sections,
+                "payload": _persisted_payload(sections),
             },
         )
         record_host_status_push(host_id=str(host.id))
@@ -276,7 +287,7 @@ class HostStatusPushService:
                 section[OBSERVATION_RECEIVED_AT_KEY] = first_received_at
 
         finalized = dict(current)
-        finalized["payload"] = sections
+        finalized["payload"] = _persisted_payload(sections)
         await control_plane_state_store.set_value(db, HOST_STATUS_NAMESPACE, str(host.id), finalized)
         return fold_payload
 
