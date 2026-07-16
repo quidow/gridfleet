@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import math
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from contextvars import ContextVar
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,20 +98,76 @@ def statement_signature(sql: str) -> str:
     return f"{verb} {m.group(2) or '?'}"
 
 
+def percentile(values: list[float], q: float) -> float:
+    """Nearest-rank percentile. Returns 0.0 for an empty list."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(1, math.ceil(q * len(ordered)))
+    return ordered[rank - 1]
+
+
 class QueryTap:
+    """before/after_cursor_execute listener pair.
+
+    ``__call__`` is the ``before_cursor_execute`` hook (keeps the historical
+    3-positional-arg call shape working); ``after`` is the optional
+    ``after_cursor_execute`` hook that adds duration/rows/last-statement
+    capture. Timing state rides on the SQLAlchemy execution context so
+    concurrent cursors cannot cross-talk.
+    """
+
     def __init__(self) -> None:
         self.counter: Counter[str] = Counter()
         self.callsite_counter: Counter[tuple[str, str]] = Counter()
         self.total = 0
         self.armed = True
+        self.durations: dict[tuple[str, str], list[float]] = defaultdict(list)
+        self.rows: Counter[tuple[str, str]] = Counter()
+        self.last_statement: dict[tuple[str, str], tuple[str, object]] = {}
 
-    def __call__(self, conn: object, cursor: object, statement: str, *a: object) -> None:
+    def __call__(
+        self,
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object = None,
+        context: object = None,
+        executemany: bool = False,
+    ) -> None:
         if not self.armed:
             return
         self.total += 1
         signature = statement_signature(statement)
         self.counter[signature] += 1
-        self.callsite_counter[(ACTIVE_DB_CALLSITE.get(), signature)] += 1
+        key = (ACTIVE_DB_CALLSITE.get(), signature)
+        self.callsite_counter[key] += 1
+        if context is not None:
+            context._fold_bench_t0 = perf_counter()  # type: ignore[attr-defined]
+            context._fold_bench_key = key  # type: ignore[attr-defined]
+
+    def after(
+        self,
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        if not self.armed or context is None:
+            return
+        t0 = getattr(context, "_fold_bench_t0", None)
+        key = getattr(context, "_fold_bench_key", None)
+        if t0 is None or key is None:
+            return
+        del context._fold_bench_t0  # a later re-execute on the same context must re-arm
+        del context._fold_bench_key
+        self.durations[key].append((perf_counter() - t0) * 1000)
+        rowcount = getattr(cursor, "rowcount", -1)
+        if isinstance(rowcount, int) and rowcount > 0:
+            self.rows[key] += rowcount
+        self.last_statement[key] = (statement, parameters)
 
     @property
     def deferred_total(self) -> int:

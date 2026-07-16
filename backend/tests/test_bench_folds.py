@@ -13,6 +13,10 @@ The device-health loop benchmark uses the production lifecycle policy by
 default. Set ``FOLD_BENCH_LIFECYCLE=isolated`` to retain the core-only profile
 with lifecycle hooks mocked.
 
+Set ``FOLD_BENCH_WARMUP`` (default 1) to control how many untimed/unarmed
+iterations the device-health loop benchmark runs before the timed ``ITERS``
+iterations begin.
+
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
 """
@@ -56,6 +60,7 @@ from tests.bench_instrumentation import (
     CommitTap,
     QueryTap,
     install_async_session_callsite_profiler,
+    percentile,
 )
 from tests.fakes import FakeSettingsReader
 from tests.helpers import build_connectivity_service, settle_after_commit_tasks
@@ -74,6 +79,7 @@ pytestmark = [
 
 DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
 ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
+WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
 CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
 _raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
 if _raw_lifecycle_mode not in ("real", "isolated"):
@@ -535,8 +541,6 @@ def _report_device_health_loop(
     fold_wall_ms: list[float],
     settled_wall_ms: list[float],
 ) -> None:
-    avg_fold_ms = sum(fold_wall_ms) / len(fold_wall_ms)
-    avg_settled_ms = sum(settled_wall_ms) / len(settled_wall_ms)
     source_queries_per_fold = tap.source_total / ITERS
     deferred_queries_per_fold = tap.deferred_total / ITERS
     complete_queries_per_fold = tap.total / ITERS
@@ -556,12 +560,12 @@ def _report_device_health_loop(
         f"\n{'=' * 78}\nfold_host_devices: {DEVICES} devices x {ITERS} iters  churn={CHURN}  lifecycle={LIFECYCLE_MODE}"
     )
     print(
-        f"  fold-return wall time:       avg {avg_fold_ms:.1f} ms   "
-        f"({', '.join(f'{wall:.0f}' for wall in fold_wall_ms)})"
+        f"  fold-return wall time:       median {percentile(fold_wall_ms, 0.5):.1f} ms   "
+        f"p95 {percentile(fold_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in fold_wall_ms)})"
     )
     print(
-        f"  event-settled wall time:     avg {avg_settled_ms:.1f} ms   "
-        f"({', '.join(f'{wall:.0f}' for wall in settled_wall_ms)})"
+        f"  event-settled wall time:     median {percentile(settled_wall_ms, 0.5):.1f} ms   "
+        f"p95 {percentile(settled_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in settled_wall_ms)})"
     )
     print(
         f"  SOURCE queries/fold:         {source_queries_per_fold:.0f}   "
@@ -583,6 +587,15 @@ def _report_device_health_loop(
     print("  top call sites per fold:")
     for (callsite, signature), count in tap.callsite_counter.most_common(24):
         print(f"    {count / ITERS:8.1f}  {callsite}  [{signature}]")
+    print("  top call sites per fold by total time (~rows are driver rowcounts, approximate):")
+    by_time = sorted(tap.durations.items(), key=lambda kv: sum(kv[1]), reverse=True)
+    for (callsite, signature), durations in by_time[:24]:
+        calls = tap.callsite_counter[(callsite, signature)]
+        print(
+            f"    {calls / ITERS:8.1f}  {sum(durations) / ITERS:9.1f}ms  "
+            f"med {percentile(durations, 0.5):7.2f}ms  p95 {percentile(durations, 0.95):7.2f}ms  "
+            f"~rows {tap.rows[(callsite, signature)] / ITERS:8.1f}  {callsite}  [{signature}]"
+        )
 
 
 async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]) -> None:
@@ -632,6 +645,7 @@ async def test_bench_device_health_loop_fold(
     commits = CommitTap()
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", tap)
+    event.listen(engine, "after_cursor_execute", tap.after)
     event.listen(engine, "commit", commits)
     tap.armed = False
     commits.armed = False
@@ -640,7 +654,8 @@ async def test_bench_device_health_loop_fold(
 
     try:
         host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
-        for iteration in range(ITERS):
+        for iteration in range(WARMUP + ITERS):
+            armed = iteration >= WARMUP
             if CHURN > 0 and iteration > 0:
                 host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
 
@@ -652,8 +667,8 @@ async def test_bench_device_health_loop_fold(
                 section_sequence=iteration + 1,
             )
 
-            tap.armed = True
-            commits.armed = True
+            tap.armed = armed
+            commits.armed = armed
             t0 = perf_counter()
             try:
                 settled = await service.fold_host_devices(
@@ -666,8 +681,9 @@ async def test_bench_device_health_loop_fold(
                 fold_returned_at = perf_counter()
                 await settle_after_commit_tasks()
                 event_settled_at = perf_counter()
-                fold_wall_ms.append((fold_returned_at - t0) * 1000)
-                settled_wall_ms.append((event_settled_at - t0) * 1000)
+                if armed:
+                    fold_wall_ms.append((fold_returned_at - t0) * 1000)
+                    settled_wall_ms.append((event_settled_at - t0) * 1000)
                 tap.armed = False
                 commits.armed = False
 
@@ -695,4 +711,5 @@ async def test_bench_device_health_loop_fold(
             assert commits.deferred_count > 0
     finally:
         event.remove(engine, "before_cursor_execute", tap)
+        event.remove(engine, "after_cursor_execute", tap.after)
         event.remove(engine, "commit", commits)

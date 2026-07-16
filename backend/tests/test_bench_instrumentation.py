@@ -97,3 +97,54 @@ def test_bench_cost_partition_separates_deferred_event_work() -> None:
     assert tap.deferred_total == 2
     assert commits.source_count == 1
     assert commits.deferred_count == 2
+
+
+def test_bench_percentile_nearest_rank() -> None:
+    from tests.bench_instrumentation import percentile
+
+    values = [5.0, 1.0, 3.0, 2.0, 4.0]
+    assert percentile(values, 0.5) == 3.0
+    assert percentile(values, 0.95) == 5.0
+    assert percentile([7.0], 0.95) == 7.0
+    assert percentile([], 0.95) == 0.0
+
+
+class _FakeContext:
+    pass
+
+
+class _FakeCursor:
+    rowcount = 3
+
+
+def test_bench_query_tap_records_duration_rows_and_last_statement() -> None:
+    tap = QueryTap()
+    context = _FakeContext()
+    token = ACTIVE_DB_CALLSITE.set("app.devices.locking.lock_device_handle")
+    try:
+        tap(None, _FakeCursor(), "SELECT devices.id FROM devices", ("p1",), context, False)
+        tap.after(None, _FakeCursor(), "SELECT devices.id FROM devices", ("p1",), context, False)
+    finally:
+        ACTIVE_DB_CALLSITE.reset(token)
+
+    key = ("app.devices.locking.lock_device_handle", "SELECT devices")
+    assert len(tap.durations[key]) == 1
+    assert tap.durations[key][0] >= 0.0
+    assert tap.rows[key] == 3
+    assert tap.last_statement[key] == ("SELECT devices.id FROM devices", ("p1",))
+
+
+def test_bench_query_tap_after_without_before_is_ignored() -> None:
+    tap = QueryTap()
+    tap.after(None, _FakeCursor(), "SELECT 1", (), _FakeContext(), False)
+    assert tap.durations == {}
+
+
+def test_bench_query_tap_disarmed_records_nothing() -> None:
+    tap = QueryTap()
+    tap.armed = False
+    context = _FakeContext()
+    tap(None, _FakeCursor(), "SELECT devices.id FROM devices", (), context, False)
+    tap.after(None, _FakeCursor(), "SELECT devices.id FROM devices", (), context, False)
+    assert tap.total == 0
+    assert tap.durations == {}
