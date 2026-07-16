@@ -51,6 +51,9 @@ benchmark drives (default ``steady``):
   second half is omitted from the pushed section entirely, so both terminal-noop
   paths (maintenance consume, missing-device skip) are measured together
   (maintenance devices are pushed unhealthy so the short-circuit is provable).
+- ``stale-run-exclusion`` -- every device is reserved by one non-terminal run
+  with an indefinite health-failure exclusion, re-armed before every iteration,
+  so the healthy fold's self-heal hook takes its run-restore mutation path.
 
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
@@ -70,7 +73,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, select, update
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import HeartbeatService
@@ -83,6 +86,7 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
+from app.devices.models.reservation import DeviceReservation, ExclusionKind
 from app.devices.services import lifecycle_policy_state
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
@@ -98,6 +102,7 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
+from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.bench_instrumentation import (
@@ -296,6 +301,72 @@ async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_
     assert still_healthy == len(devices) // 2, "maintenance short-circuit must ignore the pushed unhealthy signal"
 
 
+async def _seed_stale_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    """One non-terminal run reserving every device, each reservation carrying an
+    indefinite health exclusion — the state restore_run_after_self_heal clears."""
+    run = TestRun(name="bench-exclusion-run", state=RunState.active, requirements=[])
+    db.add(run)
+    await db.flush()
+    now = now_utc()
+    for d in devices:
+        db.add(
+            DeviceReservation(
+                run_id=run.id,
+                device_id=d.device_id,
+                identity_value=d.identity,
+                connection_target=d.identity,
+                pack_id=d.spec.pack_id,
+                platform_id=d.spec.platform_id,
+                os_version=d.spec.os_version,
+                excluded=True,
+                exclusion_kind=ExclusionKind.exclusion.value,
+                exclusion_reason="bench health-failure exclusion",
+                excluded_at=now,
+                excluded_until=None,
+            )
+        )
+    await db.commit()
+
+
+async def _rearm_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+    await db.execute(
+        update(DeviceReservation)
+        .where(
+            DeviceReservation.device_id.in_([d.device_id for d in devices]),
+            DeviceReservation.released_at.is_(None),
+        )
+        .values(
+            excluded=True,
+            exclusion_kind=ExclusionKind.exclusion.value,
+            exclusion_reason="bench health-failure exclusion",
+            excluded_at=now_utc(),
+            excluded_until=None,
+        )
+    )
+    await db.commit()
+
+
+async def _verify_run_exclusion_restored(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    # The appium-xcuitest test-fixture manifest (tests/packs/fixtures/manifests/appium-xcuitest.yaml)
+    # marks "bundle_id" required_for_session for real devices; _seed_fleet never sets it, so those
+    # devices are permanently setup_required -> offline and never reach the connectivity healthy
+    # path's self-heal branch (_maybe_auto_recover only calls reconcile_self_heal_locked when
+    # operational_state != offline). Only the appium-uiautomator2 share of the fleet is ready (all of
+    # it, under FOLD_BENCH_FLEET=homogeneous), so the restored-exclusion floor is scoped to those
+    # devices, mirroring _verify_stale_ladder_cleared.
+    ready = [d for d in devices if d.spec.pack_id != "appium-xcuitest"]
+    still_excluded = await db.scalar(
+        select(func.count())
+        .select_from(DeviceReservation)
+        .where(
+            DeviceReservation.device_id.in_([d.device_id for d in ready]),
+            DeviceReservation.released_at.is_(None),
+            DeviceReservation.excluded.is_(True),
+        )
+    )
+    assert still_excluded == 0, f"restore_run_after_self_heal did not clear {still_excluded} exclusions"
+
+
 _SCENARIOS: dict[str, _HealthScenario] = {
     "steady": _HealthScenario(
         unhealthy_count=lambda n: _churn_count(n, CHURN),
@@ -333,6 +404,13 @@ _SCENARIOS: dict[str, _HealthScenario] = {
         seed_extra=_seed_maintenance_half,
         verify=_verify_terminal_noop,
         expect_receipts="present-only",
+    ),
+    "stale-run-exclusion": _HealthScenario(
+        unhealthy_count=lambda n: 0,
+        reseed_per_iteration=False,
+        seed_extra=_seed_stale_run_exclusions,
+        rearm=_rearm_run_exclusions,
+        verify=_verify_run_exclusion_restored,
     ),
 }
 if SCENARIO not in _SCENARIOS:
