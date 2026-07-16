@@ -161,20 +161,38 @@ async def test_unhealthy_fold_holds_device_lock_after_health_write(
             await session.commit()
 
     fold_task = asyncio.create_task(fold())
-    await asyncio.wait_for(health_written.wait(), timeout=2.0)
-    writer_task = asyncio.create_task(api_writer())
-    await asyncio.wait_for(writer_started.wait(), timeout=2.0)
+    writer_task: asyncio.Task[None] | None = None
+    writer_acquired_wait_task: asyncio.Task[bool] | None = None
     writer_blocked = False
     try:
-        await asyncio.wait_for(asyncio.shield(writer_acquired.wait()), timeout=0.1)
-    except TimeoutError:
-        writer_blocked = True
+        await asyncio.wait_for(health_written.wait(), timeout=2.0)
+        writer_task = asyncio.create_task(api_writer())
+        await asyncio.wait_for(writer_started.wait(), timeout=2.0)
+        writer_acquired_wait_task = asyncio.create_task(writer_acquired.wait())
+        try:
+            await asyncio.wait_for(asyncio.shield(writer_acquired_wait_task), timeout=0.1)
+        except TimeoutError:
+            writer_blocked = True
     finally:
         release_fold.set()
+        tasks = [
+            fold_task,
+            *([writer_task] if writer_task is not None else []),
+            *([writer_acquired_wait_task] if writer_acquired_wait_task is not None else []),
+        ]
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
+        except TimeoutError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-    fold_result, _ = await asyncio.wait_for(asyncio.gather(fold_task, writer_task), timeout=5.0)
+    assert writer_task is not None
+    assert writer_acquired_wait_task is not None
+    writer_task.result()
+    assert writer_acquired_wait_task.result() is True
     assert writer_blocked, "competing Device writer acquired the fold-owned row lock"
-    assert fold_result is True
+    assert fold_task.result() is True
 
     async with db_session_maker() as verify:
         final = await verify.get(Device, device_id)
@@ -195,6 +213,8 @@ async def test_unhealthy_fold_holds_appium_node_lock_until_commit(
     host_id = device.host_id
     node_locked = asyncio.Event()
     release_fold = asyncio.Event()
+    probe_started = asyncio.Event()
+    probe_acquired = asyncio.Event()
     writer_started = asyncio.Event()
     writer_node_locked = asyncio.Event()
     original = appium_node_locking.lock_appium_node_for_device
@@ -232,21 +252,64 @@ async def test_unhealthy_fold_holds_appium_node_lock_until_commit(
             )
             await session.commit()
 
+    async def node_lock_probe() -> None:
+        async with db_session_maker() as session:
+            probe_started.set()
+            node = await original(session, device_id)
+            assert node is not None
+            probe_acquired.set()
+            await session.rollback()
+
     fold_task = asyncio.create_task(fold())
-    await asyncio.wait_for(node_locked.wait(), timeout=2.0)
-    writer_task = asyncio.create_task(desired_state_writer())
-    await asyncio.wait_for(writer_started.wait(), timeout=2.0)
+    probe_task: asyncio.Task[None] | None = None
+    writer_task: asyncio.Task[None] | None = None
+    probe_acquired_wait_task: asyncio.Task[bool] | None = None
+    writer_node_locked_wait_task: asyncio.Task[bool] | None = None
+    probe_blocked = False
     writer_blocked = False
     try:
-        await asyncio.wait_for(asyncio.shield(writer_node_locked.wait()), timeout=0.1)
-    except TimeoutError:
-        writer_blocked = True
+        await asyncio.wait_for(node_locked.wait(), timeout=2.0)
+        probe_task = asyncio.create_task(node_lock_probe())
+        await asyncio.wait_for(probe_started.wait(), timeout=2.0)
+        writer_task = asyncio.create_task(desired_state_writer())
+        await asyncio.wait_for(writer_started.wait(), timeout=2.0)
+        probe_acquired_wait_task = asyncio.create_task(probe_acquired.wait())
+        try:
+            await asyncio.wait_for(asyncio.shield(probe_acquired_wait_task), timeout=0.1)
+        except TimeoutError:
+            probe_blocked = True
+        writer_node_locked_wait_task = asyncio.create_task(writer_node_locked.wait())
+        try:
+            await asyncio.wait_for(asyncio.shield(writer_node_locked_wait_task), timeout=0.1)
+        except TimeoutError:
+            writer_blocked = True
     finally:
         release_fold.set()
+        tasks = [
+            fold_task,
+            *([probe_task] if probe_task is not None else []),
+            *([writer_task] if writer_task is not None else []),
+            *([probe_acquired_wait_task] if probe_acquired_wait_task is not None else []),
+            *([writer_node_locked_wait_task] if writer_node_locked_wait_task is not None else []),
+        ]
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
+        except TimeoutError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-    fold_result, _ = await asyncio.wait_for(asyncio.gather(fold_task, writer_task), timeout=5.0)
+    assert probe_task is not None
+    assert writer_task is not None
+    assert probe_acquired_wait_task is not None
+    assert writer_node_locked_wait_task is not None
+    probe_task.result()
+    writer_task.result()
+    assert probe_acquired_wait_task.result() is True
+    assert writer_node_locked_wait_task.result() is True
+    assert probe_blocked, "read-only AppiumNode FOR UPDATE probe acquired the fold-owned row lock"
     assert writer_blocked, "competing desired-state writer acquired locks before the fold committed"
-    assert fold_result is True
+    assert fold_task.result() is True
     assert observed_states == [AppiumDesiredState.stopped]
 
     async with db_session_maker() as verify:
@@ -308,21 +371,39 @@ async def test_unhealthy_fold_and_background_intent_reconciler_do_not_deadlock_o
             return changed
 
     fold_task = asyncio.create_task(fold())
-    await asyncio.wait_for(node_locked.wait(), timeout=2.0)
-    reconcile_task = asyncio.create_task(background_reconcile())
-    await asyncio.wait_for(reconcile_lock_started.wait(), timeout=2.0)
+    reconcile_task: asyncio.Task[bool] | None = None
+    reconcile_device_locked_wait_task: asyncio.Task[bool] | None = None
     reconcile_blocked = False
     try:
-        await asyncio.wait_for(asyncio.shield(reconcile_device_locked.wait()), timeout=0.1)
-    except TimeoutError:
-        reconcile_blocked = True
+        await asyncio.wait_for(node_locked.wait(), timeout=2.0)
+        reconcile_task = asyncio.create_task(background_reconcile())
+        await asyncio.wait_for(reconcile_lock_started.wait(), timeout=2.0)
+        reconcile_device_locked_wait_task = asyncio.create_task(reconcile_device_locked.wait())
+        try:
+            await asyncio.wait_for(asyncio.shield(reconcile_device_locked_wait_task), timeout=0.1)
+        except TimeoutError:
+            reconcile_blocked = True
     finally:
         release_fold.set()
+        tasks = [
+            fold_task,
+            *([reconcile_task] if reconcile_task is not None else []),
+            *([reconcile_device_locked_wait_task] if reconcile_device_locked_wait_task is not None else []),
+        ]
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
+        except TimeoutError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-    fold_result, _changed = await asyncio.wait_for(asyncio.gather(fold_task, reconcile_task), timeout=5.0)
+    assert reconcile_task is not None
+    assert reconcile_device_locked_wait_task is not None
+    reconcile_task.result()
+    assert reconcile_device_locked_wait_task.result() is True
     await settle_after_commit_tasks()
     assert reconcile_blocked, "background reconciler acquired the Device lock before the fold committed"
-    assert fold_result is True
+    assert fold_task.result() is True
 
     async with db_session_maker() as verify:
         final_device = await verify.get(Device, device_id)

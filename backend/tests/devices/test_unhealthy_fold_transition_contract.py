@@ -21,16 +21,15 @@ from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
+from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.bench_instrumentation import CommitTap, install_async_session_callsite_profiler
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device, seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import create_device, create_reserved_run, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-    from app.runs.models import TestRun
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -325,9 +324,13 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
     unhealthy_fold: tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, device, _node, section = unhealthy_fold
+    service, device, node, section = unhealthy_fold
     device_id = device.id
     host_id = device.host_id
+    restart_watermark = _OBSERVED_AT - timedelta(seconds=30)
+    node.restart_requested_at = restart_watermark
+    run = await create_reserved_run(db_session, name="rollback-active-run", devices=[device])
+    run_id = run.id
     original = LifecyclePolicyActionsService.record_auto_stopped_incident
 
     async def fail_after_mutations(
@@ -353,7 +356,12 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
         rolled_back_node = (
             await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
         ).scalar_one()
+        rolled_back_run = await verify.get(TestRun, run_id)
+        rolled_back_reservation = (
+            await verify.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+        ).scalar_one()
         assert rolled_back is not None
+        assert rolled_back_run is not None
         assert (
             rolled_back.device_checks_healthy,
             rolled_back.device_checks_summary,
@@ -367,20 +375,22 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
             rolled_back_node.accepting_new_sessions,
             rolled_back_node.stop_pending,
             rolled_back_node.restart_requested_at,
-        ) == (AppiumDesiredState.running, 4723, True, False, None)
+        ) == (AppiumDesiredState.running, 4723, True, False, restart_watermark)
         assert rolled_back.operational_state_last_emitted == DeviceOperationalState.available
         assert rolled_back.lifecycle_policy_state == {}
+        assert rolled_back_run.state == RunState.active
+        assert (
+            rolled_back_reservation.excluded,
+            rolled_back_reservation.exclusion_kind,
+            rolled_back_reservation.exclusion_reason,
+            rolled_back_reservation.excluded_at,
+            rolled_back_reservation.excluded_until,
+        ) == (False, None, None, None, None)
         assert (
             rolled_back.device_checks_fold_applied_revision,
             rolled_back.device_checks_fold_boot_id,
             rolled_back.device_checks_fold_section_sequence,
         ) == (0, None, None)
-        assert (
-            await verify.scalar(
-                select(func.count()).select_from(DeviceReservation).where(DeviceReservation.device_id == device_id)
-            )
-            == 0
-        )
         assert (
             await verify.scalar(
                 select(func.count())
@@ -408,12 +418,26 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
 
     async with db_session_maker() as verify:
         applied = await verify.get(Device, device_id)
+        applied_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
+        applied_run = await verify.get(TestRun, run_id)
+        applied_reservation = (
+            await verify.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+        ).scalar_one()
         assert applied is not None
+        assert applied_run is not None
         assert (
             applied.device_checks_fold_applied_revision,
             applied.device_checks_fold_boot_id,
             applied.device_checks_fold_section_sequence,
         ) == (_REVISION, _BOOT_ID, _SECTION_SEQUENCE)
+        assert (applied_node.desired_state, applied_node.restart_requested_at) == (AppiumDesiredState.stopped, None)
+        assert applied_run.state == RunState.active
+        assert (
+            applied_reservation.excluded,
+            applied_reservation.exclusion_kind,
+            applied_reservation.exclusion_reason,
+            applied_reservation.excluded_until,
+        ) == (True, "exclusion", "Device health checks failed", None)
         first_device_events = list(
             (
                 await verify.execute(
@@ -444,6 +468,10 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
     assert [event_type.value for event_type in first_device_events] == [
         "desired_state_changed",
         "desired_state_changed",
+        "desired_state_changed",
+        "desired_state_changed",
+        "desired_state_changed",
+        "lifecycle_run_excluded",
         "health_check_fail",
         "desired_state_changed",
         "lifecycle_auto_stopped",
@@ -452,12 +480,19 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
         "device.operational_state_changed",
         "device.health_changed",
         "device.lifecycle_incident",
+        "device.lifecycle_incident",
     ]
     assert first_history == ["failure_observed", "auto_stop_commissioned", "auto_stopped"]
 
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
     await settle_after_commit_tasks()
     async with db_session_maker() as verify:
+        redelivered_node = (
+            await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
+        ).scalar_one()
+        redelivered_reservation = (
+            await verify.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+        ).scalar_one()
         assert await verify.scalar(
             select(func.count()).select_from(DeviceEvent).where(DeviceEvent.device_id == device_id)
         ) == len(first_device_events)
@@ -471,6 +506,15 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
             .select_from(DeviceRemediationLogEntry)
             .where(DeviceRemediationLogEntry.device_id == device_id)
         ) == len(first_history)
+        assert (redelivered_node.desired_state, redelivered_node.restart_requested_at) == (
+            AppiumDesiredState.stopped,
+            None,
+        )
+        assert (
+            redelivered_reservation.excluded,
+            redelivered_reservation.exclusion_kind,
+            redelivered_reservation.exclusion_reason,
+        ) == (True, "exclusion", "Device health checks failed")
 
 
 async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_devices(
