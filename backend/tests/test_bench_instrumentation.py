@@ -189,3 +189,33 @@ def test_bench_json_report_shape() -> None:
         "rows_per_fold": 4.0,
     }
     assert report["explain"] == []
+
+
+def test_bench_explain_never_analyzes_writes() -> None:
+    from tests.bench_instrumentation import explain_statement_sql
+
+    assert explain_statement_sql("SELECT * FROM devices").startswith("EXPLAIN (ANALYZE, BUFFERS) ")
+    assert explain_statement_sql("  select 1").startswith("EXPLAIN (ANALYZE, BUFFERS) ")
+    for write in ("UPDATE devices SET name = $1", "INSERT INTO devices VALUES ($1)", "DELETE FROM devices"):
+        sql = explain_statement_sql(write)
+        assert sql.startswith("EXPLAIN ")
+        assert "ANALYZE" not in sql
+
+
+def test_bench_explain_targets_are_top_by_total_time() -> None:
+    from tests.bench_instrumentation import select_explain_targets
+
+    tap = QueryTap()
+    slow = ("app.a.slow", "SELECT device_remediation_log")
+    fast = ("app.b.fast", "SELECT devices")
+    unstatemented = ("app.c.nostmt", "SELECT sessions")
+    tap.durations[slow].extend([50.0, 50.0])
+    tap.durations[fast].append(1.0)
+    tap.durations[unstatemented].append(99.0)  # no last_statement captured -> skipped
+    tap.last_statement[slow] = ("SELECT * FROM device_remediation_log WHERE device_id = $1", ("x",))
+    tap.last_statement[fast] = ("SELECT id FROM devices", ())
+
+    targets = select_explain_targets(tap, top_n=2)
+
+    assert [key for key, _stmt, _params in targets] == [slow, fast]
+    assert targets[0][1] == "SELECT * FROM device_remediation_log WHERE device_id = $1"

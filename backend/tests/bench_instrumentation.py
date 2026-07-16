@@ -182,6 +182,31 @@ class QueryTap:
         return self.total - self.deferred_total
 
 
+def explain_statement_sql(statement: str) -> str:
+    """EXPLAIN wrapper: ANALYZE only for SELECTs — an ANALYZE'd write would execute it."""
+    if statement.lstrip().upper().startswith("SELECT"):
+        return f"EXPLAIN (ANALYZE, BUFFERS) {statement}"
+    return f"EXPLAIN {statement}"
+
+
+def select_explain_targets(tap: QueryTap, top_n: int = 8) -> list[tuple[tuple[str, str], str, object]]:
+    """Top call sites by cumulative statement time that captured a statement.
+    ``top_n`` bounds the *result count*: call sites without a captured statement
+    are skipped and backfilled from the next-ranked candidate rather than
+    dropping a slot."""
+    ranked = sorted(tap.durations.items(), key=lambda kv: sum(kv[1]), reverse=True)
+    targets: list[tuple[tuple[str, str], str, object]] = []
+    for key, _durations in ranked:
+        captured = tap.last_statement.get(key)
+        if captured is None:
+            continue
+        statement, parameters = captured
+        targets.append((key, statement, parameters))
+        if len(targets) >= top_n:
+            break
+    return targets
+
+
 def build_json_report(
     *,
     config: dict[str, object],

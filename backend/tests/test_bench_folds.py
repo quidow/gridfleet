@@ -21,6 +21,10 @@ Set ``FOLD_BENCH_JSON`` to a file path to also write a machine-readable JSON
 report of the device-health loop benchmark (see ``build_json_report`` in
 tests/bench_instrumentation.py) to that path.
 
+Set ``FOLD_BENCH_EXPLAIN=1`` to capture EXPLAIN plans for the hottest statements
+of the device-health loop benchmark (best-effort; a failed plan is reported
+inline rather than failing the benchmark).
+
 The benchmark exercises only facts-backed folds; the asynchronous device-health
 fold is measured separately by the StatusFoldLoop benchmark.
 """
@@ -66,8 +70,10 @@ from tests.bench_instrumentation import (
     CommitTap,
     QueryTap,
     build_json_report,
+    explain_statement_sql,
     install_async_session_callsite_profiler,
     percentile,
+    select_explain_targets,
 )
 from tests.fakes import FakeSettingsReader
 from tests.helpers import build_connectivity_service, settle_after_commit_tasks
@@ -76,7 +82,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 pytestmark = [
     pytest.mark.db,
@@ -93,6 +99,7 @@ if _raw_lifecycle_mode not in ("real", "isolated"):
     raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
 LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
 JSON_PATH = os.getenv("FOLD_BENCH_JSON")
+EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
 
 
 def _build_real_lifecycle_connectivity_service() -> ConnectivityService:
@@ -543,6 +550,26 @@ def _report_whole_push(tap: QueryTap, commits: CommitTap, wall_ms: list[float]) 
         print(f"    {n / ITERS:8.1f}  {sig}")
 
 
+async def _explain_top_statements(engine: AsyncEngine, tap: QueryTap) -> list[dict[str, str]]:
+    """Best-effort plans for the hottest statements. Runs unarmed on a fresh
+    connection and rolls back. A failed plan (parameter-shape mismatch, etc.)
+    is reported inline, never raised — this is diagnostics, not correctness."""
+    plans: list[dict[str, str]] = []
+    async with engine.connect() as conn:
+        for (callsite, signature), statement, parameters in select_explain_targets(tap):
+            sql = explain_statement_sql(statement)
+            mode = "analyze" if sql.startswith("EXPLAIN (") else "plain"
+            try:
+                result = await conn.exec_driver_sql(sql, parameters or ())
+                plan = "\n".join(str(row[0]) for row in result)
+            except Exception as exc:  # noqa: BLE001 - diagnostics must not fail the bench
+                plan = f"EXPLAIN failed: {exc!r}"
+                await conn.rollback()
+            plans.append({"callsite": callsite, "signature": signature, "mode": mode, "plan": plan})
+        await conn.rollback()
+    return plans
+
+
 def _report_device_health_loop(
     tap: QueryTap,
     commits: CommitTap,
@@ -710,6 +737,15 @@ async def test_bench_device_health_loop_fold(
             assert len(receipt_rows) == len(devices)
             assert set(receipt_rows) == {revision}
 
+        explain_plans: list[dict[str, str]] = []
+        if EXPLAIN:
+            explain_plans = await _explain_top_statements(db_session.bind, tap)
+            print("  query plans (top call sites by total time):")
+            for entry in explain_plans:
+                print(f"    -- {entry['callsite']}  [{entry['signature']}]  ({entry['mode']})")
+                for line in entry["plan"].splitlines():
+                    print(f"       {line}")
+
         _report_device_health_loop(tap, commits, fold_wall_ms, settled_wall_ms)
         if JSON_PATH:
             report = build_json_report(
@@ -727,6 +763,7 @@ async def test_bench_device_health_loop_fold(
                 iters=ITERS,
                 fold_wall_ms=fold_wall_ms,
                 settled_wall_ms=settled_wall_ms,
+                explain_plans=explain_plans,
             )
             Path(JSON_PATH).write_text(json.dumps(report, indent=2))
         attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
