@@ -139,6 +139,9 @@ class _HealthScenario:
 
 
 async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+    assert all(d.identity.startswith("bench-g0-") for d in devices), (
+        "repeat-unhealthy must observe the generation-0 fleet across all iterations; a re-seed occurred"
+    )
     k = _churn_count(len(devices), _REPEAT_CHURN)
     unhealthy = await db.scalar(
         select(func.count())
