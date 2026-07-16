@@ -11,7 +11,7 @@ from sqlalchemy import event, func, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEvent
+from app.devices.models import Device, DeviceEvent, DeviceOperationalState, DeviceReservation
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
@@ -24,11 +24,13 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from tests.bench_instrumentation import CommitTap, install_async_session_callsite_profiler
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import create_device, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.runs.models import TestRun
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -315,6 +317,312 @@ async def test_unhealthy_fold_preserves_transition_artifacts_and_order(
         ),
     )
     assert redelivery_counts == first_delivery_counts
+
+
+async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    unhealthy_fold: tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, device, _node, section = unhealthy_fold
+    device_id = device.id
+    host_id = device.host_id
+    original = LifecyclePolicyActionsService.record_auto_stopped_incident
+
+    async def fail_after_mutations(
+        self: LifecyclePolicyActionsService,
+        db: AsyncSession,
+        target: Device,
+        *,
+        run: TestRun | None,
+        reason: str,
+        source: str,
+        detail: str,
+    ) -> None:
+        await original(self, db, target, run=run, reason=reason, source=source, detail=detail)
+        raise RuntimeError("sentinel lifecycle failure")
+
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_after_mutations)
+
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is False
+    await settle_after_commit_tasks()
+
+    async with db_session_maker() as verify:
+        rolled_back = await verify.get(Device, device_id)
+        rolled_back_node = (
+            await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
+        ).scalar_one()
+        assert rolled_back is not None
+        assert (
+            rolled_back.device_checks_healthy,
+            rolled_back.device_checks_summary,
+            rolled_back.device_checks_checked_at,
+            rolled_back.device_checks_observation_revision,
+            rolled_back.failure_episode_id,
+        ) == (True, "Healthy", _OBSERVED_AT - timedelta(minutes=1), 1, None)
+        assert (
+            rolled_back_node.desired_state,
+            rolled_back_node.desired_port,
+            rolled_back_node.accepting_new_sessions,
+            rolled_back_node.stop_pending,
+            rolled_back_node.restart_requested_at,
+        ) == (AppiumDesiredState.running, 4723, True, False, None)
+        assert rolled_back.operational_state_last_emitted == DeviceOperationalState.available
+        assert rolled_back.lifecycle_policy_state == {}
+        assert (
+            rolled_back.device_checks_fold_applied_revision,
+            rolled_back.device_checks_fold_boot_id,
+            rolled_back.device_checks_fold_section_sequence,
+        ) == (0, None, None)
+        assert (
+            await verify.scalar(
+                select(func.count()).select_from(DeviceReservation).where(DeviceReservation.device_id == device_id)
+            )
+            == 0
+        )
+        assert (
+            await verify.scalar(
+                select(func.count())
+                .select_from(DeviceRemediationLogEntry)
+                .where(DeviceRemediationLogEntry.device_id == device_id)
+            )
+            == 0
+        )
+        assert (
+            await verify.scalar(select(func.count()).select_from(DeviceEvent).where(DeviceEvent.device_id == device_id))
+            == 0
+        )
+        assert (
+            await verify.scalar(
+                select(func.count())
+                .select_from(SystemEvent)
+                .where(SystemEvent.data.contains({"device_id": str(device_id)}))
+            )
+            == 0
+        )
+
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", original)
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
+    await settle_after_commit_tasks()
+
+    async with db_session_maker() as verify:
+        applied = await verify.get(Device, device_id)
+        assert applied is not None
+        assert (
+            applied.device_checks_fold_applied_revision,
+            applied.device_checks_fold_boot_id,
+            applied.device_checks_fold_section_sequence,
+        ) == (_REVISION, _BOOT_ID, _SECTION_SEQUENCE)
+        first_device_events = list(
+            (
+                await verify.execute(
+                    select(DeviceEvent.event_type)
+                    .where(DeviceEvent.device_id == device_id)
+                    .order_by(DeviceEvent.created_at, DeviceEvent.id)
+                )
+            ).scalars()
+        )
+        first_system_events = list(
+            (
+                await verify.execute(
+                    select(SystemEvent.type)
+                    .where(SystemEvent.data.contains({"device_id": str(device_id)}))
+                    .order_by(SystemEvent.id)
+                )
+            ).scalars()
+        )
+        first_history = list(
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry.action)
+                    .where(DeviceRemediationLogEntry.device_id == device_id)
+                    .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+                )
+            ).scalars()
+        )
+    assert [event_type.value for event_type in first_device_events] == [
+        "desired_state_changed",
+        "desired_state_changed",
+        "health_check_fail",
+        "desired_state_changed",
+        "lifecycle_auto_stopped",
+    ]
+    assert first_system_events == [
+        "device.operational_state_changed",
+        "device.health_changed",
+        "device.lifecycle_incident",
+    ]
+    assert first_history == ["failure_observed", "auto_stop_commissioned", "auto_stopped"]
+
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
+    await settle_after_commit_tasks()
+    async with db_session_maker() as verify:
+        assert await verify.scalar(
+            select(func.count()).select_from(DeviceEvent).where(DeviceEvent.device_id == device_id)
+        ) == len(first_device_events)
+        assert await verify.scalar(
+            select(func.count())
+            .select_from(SystemEvent)
+            .where(SystemEvent.data.contains({"device_id": str(device_id)}))
+        ) == len(first_system_events)
+        assert await verify.scalar(
+            select(func.count())
+            .select_from(DeviceRemediationLogEntry)
+            .where(DeviceRemediationLogEntry.device_id == device_id)
+        ) == len(first_history)
+
+
+async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_devices(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    unhealthy_fold: tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, seeded_device, _seeded_node, section = unhealthy_fold
+    devices = [seeded_device]
+    for suffix in ("a", "b"):
+        device = await create_device(
+            db_session,
+            host_id=seeded_device.host_id,
+            name=f"unhealthy-transition-{suffix}",
+            operational_state=DeviceOperationalState.available,
+        )
+        device.device_checks_healthy = True
+        device.device_checks_summary = "Healthy"
+        device.device_checks_checked_at = _OBSERVED_AT - timedelta(minutes=1)
+        device.device_checks_observation_revision = 1
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1000,
+                active_connection_target=device.identity_value,
+                health_running=True,
+                last_health_checked_at=_OBSERVED_AT - timedelta(minutes=1),
+                last_observed_at=_OBSERVED_AT - timedelta(minutes=1),
+            )
+        )
+        devices.append(device)
+    await db_session.commit()
+    ordered = sorted(devices, key=lambda item: item.id)
+    first_id, middle_id, final_id = (item.id for item in ordered)
+    host_id = seeded_device.host_id
+    section["devices"] = [
+        {
+            "device_id": str(item.id),
+            "probe_status": "observed",
+            "presence": "present",
+            "health": {"healthy": False, "checks": []},
+            "lifecycle_state": {"status": "unsupported", "value": None},
+        }
+        for item in ordered
+    ]
+    original = LifecyclePolicyActionsService.record_auto_stopped_incident
+
+    async def fail_middle(
+        self: LifecyclePolicyActionsService,
+        db: AsyncSession,
+        target: Device,
+        *,
+        run: TestRun | None,
+        reason: str,
+        source: str,
+        detail: str,
+    ) -> None:
+        await original(self, db, target, run=run, reason=reason, source=source, detail=detail)
+        if target.id == middle_id:
+            raise RuntimeError("sentinel middle-device failure")
+
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_middle)
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is False
+    await settle_after_commit_tasks()
+
+    async with db_session_maker() as verify:
+        after_failure = {
+            item.id: item
+            for item in (
+                await verify.execute(select(Device).where(Device.id.in_((first_id, middle_id, final_id))))
+            ).scalars()
+        }
+        event_counts_after_failure = {
+            device_id: await verify.scalar(
+                select(func.count()).select_from(DeviceEvent).where(DeviceEvent.device_id == device_id)
+            )
+            for device_id in (first_id, middle_id, final_id)
+        }
+        system_event_counts_after_failure = {
+            device_id: await verify.scalar(
+                select(func.count())
+                .select_from(SystemEvent)
+                .where(SystemEvent.data.contains({"device_id": str(device_id)}))
+            )
+            for device_id in (first_id, middle_id, final_id)
+        }
+        history_counts_after_failure = {
+            device_id: await verify.scalar(
+                select(func.count())
+                .select_from(DeviceRemediationLogEntry)
+                .where(DeviceRemediationLogEntry.device_id == device_id)
+            )
+            for device_id in (first_id, middle_id, final_id)
+        }
+        nodes_after_failure = {
+            node.device_id: node
+            for node in (
+                await verify.execute(
+                    select(AppiumNode).where(AppiumNode.device_id.in_((first_id, middle_id, final_id)))
+                )
+            ).scalars()
+        }
+    assert event_counts_after_failure == {first_id: 5, middle_id: 0, final_id: 5}
+    assert system_event_counts_after_failure == {first_id: 3, middle_id: 0, final_id: 3}
+    assert history_counts_after_failure == {first_id: 3, middle_id: 0, final_id: 3}
+    assert after_failure[first_id].device_checks_fold_applied_revision == _REVISION
+    assert after_failure[middle_id].device_checks_fold_applied_revision == 0
+    assert after_failure[middle_id].device_checks_healthy is True
+    assert nodes_after_failure[middle_id].desired_state == AppiumDesiredState.running
+    assert after_failure[final_id].device_checks_fold_applied_revision == _REVISION
+
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", original)
+    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
+    await settle_after_commit_tasks()
+
+    async with db_session_maker() as verify:
+        completed = {
+            item.id: item
+            for item in (
+                await verify.execute(select(Device).where(Device.id.in_((first_id, middle_id, final_id))))
+            ).scalars()
+        }
+        completed_event_counts = {
+            device_id: await verify.scalar(
+                select(func.count()).select_from(DeviceEvent).where(DeviceEvent.device_id == device_id)
+            )
+            for device_id in (first_id, middle_id, final_id)
+        }
+        completed_system_event_counts = {
+            device_id: await verify.scalar(
+                select(func.count())
+                .select_from(SystemEvent)
+                .where(SystemEvent.data.contains({"device_id": str(device_id)}))
+            )
+            for device_id in (first_id, middle_id, final_id)
+        }
+        completed_history_counts = {
+            device_id: await verify.scalar(
+                select(func.count())
+                .select_from(DeviceRemediationLogEntry)
+                .where(DeviceRemediationLogEntry.device_id == device_id)
+            )
+            for device_id in (first_id, middle_id, final_id)
+        }
+    assert completed_event_counts == {first_id: 5, middle_id: 5, final_id: 5}
+    assert completed_system_event_counts == {first_id: 3, middle_id: 3, final_id: 3}
+    assert completed_history_counts == {first_id: 3, middle_id: 3, final_id: 3}
+    assert all(item.device_checks_fold_applied_revision == _REVISION for item in completed.values())
 
 
 async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
