@@ -73,8 +73,38 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
     assert stored["payload"]["appium_processes"]["running_nodes"][0]["port"] == 4723
     assert stored["payload"]["node_health"]["reported_at"] == "2026-07-09T00:00:01+00:00"
     assert stored["payload"]["device_health"]["reported_at"] == "2026-07-09T00:00:02+00:00"
-    assert stored["payload"]["device_telemetry"]["reported_at"] == "2026-07-09T00:00:03+00:00"
-    assert stored["payload"]["device_properties"]["reported_at"] == "2026-07-09T00:00:04+00:00"
+    # Telemetry/properties sections fold synchronously and are not persisted.
+    assert "host_telemetry" not in stored["payload"]
+    assert "device_telemetry" not in stored["payload"]
+    assert "device_properties" not in stored["payload"]
+
+
+async def test_status_push_trims_unread_sections_from_stored_snapshot(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    online_host = await _make_host(db_session, status=HostStatus.online, hostname="status-push-trim")
+    process = AsyncMock()
+    monkeypatch.setattr(HostStatusPushService, "process_observation_folds", process)
+    body = {
+        "host_id": str(online_host.id),
+        "appium_processes": {"running_nodes": [{"port": 4723, "pid": 111}]},
+        "host_telemetry": {"recorded_at": "2026-07-17T00:00:00+00:00", "cpu_percent": 1.0},
+        "node_health": {"reported_at": "2026-07-17T00:00:01+00:00", "nodes": []},
+        "device_health": {"reported_at": "2026-07-17T00:00:02+00:00", "devices": {}},
+        "device_telemetry": {"reported_at": "2026-07-17T00:00:03+00:00", "devices": {}},
+        "device_properties": {"reported_at": "2026-07-17T00:00:04+00:00", "devices": {}},
+    }
+
+    resp = await client.post("/agent/hosts/status", json=body)
+
+    assert resp.status_code == 204
+    stored = await control_plane_state_store.get_value(db_session, HOST_STATUS_NAMESPACE, str(online_host.id))
+    # Only sections read back from the store are persisted.
+    assert set(stored["payload"]) == {"appium_processes", "node_health", "device_health"}
+    # The synchronous folds still receive every pushed section.
+    process.assert_awaited_once()
+    fold_payload = process.await_args.kwargs["payload"]
+    assert {"host_telemetry", "device_telemetry", "device_properties"} <= set(fold_payload)
 
 
 async def test_status_push_never_writes_status(client: AsyncClient, db_session: AsyncSession) -> None:

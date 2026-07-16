@@ -72,7 +72,7 @@ Every public health fact has exactly one durable home:
 
 | Namespace | Owner | Purpose |
 | --- | --- | --- |
-| `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `status_fold_loop`, `host_sweep_loop`, and host diagnostics | latest consolidated agent status push per host (Appium processes, health sections, host telemetry) — the single snapshot source; guarded health sections become eligible only after post-convergence stamping |
+| `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `status_fold_loop`, host diagnostics, and the device-capability active-target fill | latest consolidated agent status push per host (Appium processes + guarded health sections only; telemetry/properties sections fold synchronously off the in-memory payload and are not stored) — the single snapshot source; guarded health sections become eligible only after post-convergence stamping |
 | `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
 | `connectivity.previously_offline` | `host_sweep` connectivity fold | remembers why a reconnect is treated as recovery rather than first startup |
 | `hardware_telemetry.state` | `host_sweep` hardware-telemetry fold | stale/fresh telemetry bookkeeping |
