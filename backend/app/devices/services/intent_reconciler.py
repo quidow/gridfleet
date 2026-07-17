@@ -16,7 +16,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.node_poke import poke_node_refresh
-from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import (
     DesiredStateWrite,
     write_desired_grid_run_id,
@@ -43,6 +43,7 @@ from app.devices.services.decision import (
     parse_command,
 )
 from app.devices.services.event import record_event
+from app.devices.services.intent_types import release_rollout_intent_source
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
 from app.lifecycle.services import remediation_log
@@ -298,6 +299,67 @@ async def reconcile_locked_device(
     )
 
 
+async def _apply_rollout_stamp(
+    db: AsyncSession,
+    *,
+    device_id: uuid.UUID,
+    node: AppiumNode,
+    stored: list[DeviceIntent],
+    facts: DecisionFacts,
+    now: datetime,
+) -> list[DeviceIntent]:
+    """Revoke a converged rollout intent inline (Finding 6) and mint the
+    restart stamp once the rollout can safely apply (Findings 2, 5, 7).
+
+    Returns the intent list with a converged rollout row removed so the
+    decision ladder below does not see it.
+    """
+    rollout_source = release_rollout_intent_source(device_id)
+    rollout_row = next((row for row in stored if row.source == rollout_source), None)
+    target_release = rollout_row.payload.get("target_release") if rollout_row is not None else None
+    # Finding 6: inline convergence revoke. The agent reports the converged
+    # release within ~10 s of a restart (push fold into observed_pack_release);
+    # drop the rollout intent here so the device re-enters the allocatable pool
+    # without waiting for the 60 s janitor stage. The stage's revoke branch
+    # remains the backstop for the no-longer-candidate cases.
+    if rollout_row is not None and target_release is not None and node.observed_pack_release == target_release:
+        await db.delete(rollout_row)
+        return [row for row in stored if row is not rollout_row]
+    # Stamp gate: mint restart_requested_at once the rollout can safely apply.
+    # Finding 7: parse_command is the single liveness authority (expiry,
+    # tombstone, unknown-kind) — do not re-derive its rules here. Finding 5:
+    # only stamp while the node is still release-mismatched (a converged node
+    # has no rollout to apply; a crash-restart that lands on the target
+    # release must not be force-restarted). Finding 2: a reservation-bound
+    # device is mid-run even between sessions — defer the stamp until the run
+    # releases (mirrors pack drain's active-work definition). Finding 1: the
+    # stamp is only the *intent* to restart; the watermark is re-validated
+    # below at write time before it reaches the node.
+    rollout_command = parse_command(rollout_row, now) if rollout_row is not None else None
+    if (
+        rollout_row is not None
+        and rollout_command is not None
+        and rollout_command.restart_requested_at is None
+        and target_release is not None
+        and node.observed_pack_release is not None
+        and node.observed_pack_release != target_release
+        and facts.reservation_run_id is None
+        and not await device_has_live_session(db, device_id)
+    ):
+        rollout_row.payload = {**rollout_row.payload, "restart_requested_at": now.isoformat()}
+    return stored
+
+
+def _rollout_target_release(stored: list[DeviceIntent], device_id: uuid.UUID) -> str | None:
+    """The target release of the live rollout intent for this device, or None."""
+    rollout_source = release_rollout_intent_source(device_id)
+    row = next((row for row in stored if row.source == rollout_source), None)
+    if row is None:
+        return None
+    target = row.payload.get("target_release")
+    return target if isinstance(target, str) else None
+
+
 async def _reconcile_loaded_device(
     db: AsyncSession,
     device: Device,
@@ -318,7 +380,7 @@ async def _reconcile_loaded_device(
         return False
 
     now = now_utc()
-    stored = (
+    stored: list[DeviceIntent] = list(
         (
             await db.execute(
                 select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
@@ -327,12 +389,35 @@ async def _reconcile_loaded_device(
         .scalars()
         .all()
     )
-    commands = [c for c in (parse_command(row, now) for row in stored) if c is not None]
     facts = await gather_decision_facts(db, device, now)
+    stored = await _apply_rollout_stamp(db, device_id=device_id, node=node, stored=stored, facts=facts, now=now)
+    target_release = _rollout_target_release(stored, device_id)
+    commands = [c for c in (parse_command(row, now) for row in stored) if c is not None]
 
     node_decision = decide_node_process(commands, facts)
     grid_decision = decide_grid_routing(facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
+    # Findings 1, 5: re-validate at watermark-write time. A stamp minted when
+    # the node was idle may sit dormant while a higher-ranked start wins the
+    # ladder; by the time the rollout wins and carries the stamp, a session
+    # may have started, the node may have converged, or a reservation may
+    # have bound the device. Suppress the watermark in any of those cases —
+    # the node is already draining (accepting_new_sessions=False), so the
+    # stamp stays dormant and the next reconcile re-validates. Only the
+    # rollout rung (running_draining) routes a stamp to the watermark; the
+    # start rung carries its own watermark and is unaffected.
+    restart_watermark = node_decision.restart_requested_at
+    if (
+        node_decision.desired_state == "running_draining"
+        and restart_watermark is not None
+        and (
+            await device_has_live_session(db, device_id)
+            or facts.reservation_run_id is not None
+            or target_release is None
+            or node.observed_pack_release == target_release
+        )
+    ):
+        restart_watermark = None
     # Universal session-safety invariant: only an explicit hard stop
     # (``stop_mode == "hard"`` — operator force-release, bulk operator stop,
     # same-priority conflict) may flip ``desired_state=stopped`` while a
@@ -373,7 +458,7 @@ async def _reconcile_loaded_device(
         write=DesiredStateWrite(
             target=target_state,
             desired_port=desired_port,
-            restart_requested_at=node_decision.restart_requested_at,
+            restart_requested_at=restart_watermark,
             reason=node_decision.reason,
         ),
     )

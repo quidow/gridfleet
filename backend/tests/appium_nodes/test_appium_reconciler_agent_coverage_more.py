@@ -23,8 +23,6 @@ if TYPE_CHECKING:
 
     from app.hosts.models import Host
 
-pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
-
 
 async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str) -> Device:
     device = await create_device_record(
@@ -85,6 +83,7 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
         )
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_start_stop_restart_node_guard_paths(
     db_session: AsyncSession,
     db_host: Host,
@@ -199,6 +198,51 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     set_extra.assert_awaited_once_with(db, node_id=node.id, capability_key="custom:flag", value="yes")
 
 
+async def test_mark_node_started_preserves_observed_pack_release_when_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = uuid.uuid4()
+    node = AppiumNode(device_id=device_id, port=4723)
+    device = SimpleNamespace(
+        id=device_id,
+        host_id=uuid.uuid4(),
+        appium_node=node,
+        connection_target="mark-start-release",
+        name="mark-start-release",
+    )
+    db = MagicMock(flush=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
+    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        node_agent.appium_node_locking,
+        "lock_appium_node_for_device",
+        AsyncMock(return_value=node),
+    )
+    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(node_agent, "reset_reconciler_start_failure_if_needed", AsyncMock(return_value=False))
+
+    await node_agent.mark_node_started(
+        db,
+        device,
+        port=4723,
+        pid=123,
+        details=NodeStartDetails(pack_release="2026.07.2"),
+        settings=FakeSettingsReader({}),
+        publisher=Mock(),
+    )
+    result = await node_agent.mark_node_started(
+        db,
+        device,
+        port=4723,
+        pid=123,
+        details=NodeStartDetails(),
+        settings=FakeSettingsReader({}),
+        publisher=Mock(),
+    )
+
+    assert result.observed_pack_release == "2026.07.2"
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_mark_node_started_clears_stale_reconciler_failure(
     db_session: AsyncSession,
     db_host: Host,

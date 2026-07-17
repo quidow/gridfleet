@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
@@ -110,6 +111,28 @@ def test_desired_running_observed_with_new_spawn_time_repairs_observed_state() -
 
     assert action.kind == "db_mark_running"
     assert action.started_at == new_spawn
+
+
+def test_desired_running_observed_with_new_pack_release_repairs_observed_state() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+        observed_pack_release="2026.07.1",
+    )
+    obs = ObservedEntry(
+        port=4723,
+        pid=12345,
+        connection_target=row.connection_target,
+        pack_release="2026.07.2",
+    )
+
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+
+    assert action.kind == "db_mark_running"
+    assert action.pack_release == "2026.07.2"
 
 
 def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry() -> None:
@@ -368,8 +391,11 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         state="running",
         port=4723,
         pid=12345,
-        started_at=None,
-        active_connection_target=row.connection_target,
+        details=NodeStartDetails(
+            started_at=None,
+            pack_release=None,
+            active_connection_target=row.connection_target,
+        ),
     )
 
 
@@ -398,7 +424,7 @@ async def test_converge_host_rows_db_clear_branch() -> None:
         state="stopped",
         port=None,
         pid=None,
-        active_connection_target=None,
+        details=NodeStartDetails(),
     )
 
 

@@ -64,6 +64,32 @@ def test_parse_running_nodes_ignores_pull_convergence_fields() -> None:
     ]
 
 
+def test_parse_running_nodes_carries_pack_release() -> None:
+    payload = {
+        "running_nodes": [
+            {
+                "port": 4723,
+                "pid": 42,
+                "connection_target": "SERIAL1",
+                "platform_id": "ios",
+                "pack_release": "2026.07.2",
+            },
+            {"port": 4724, "pid": 43, "connection_target": "SERIAL2", "platform_id": "ios"},
+            {
+                "port": 4725,
+                "pid": 44,
+                "connection_target": "SERIAL3",
+                "platform_id": "ios",
+                "pack_release": 7,
+            },
+        ]
+    }
+
+    nodes = parse_running_nodes(payload)
+
+    assert [node.pack_release for node in nodes] == ["2026.07.2", None, None]
+
+
 def test_parse_running_nodes_parses_started_at() -> None:
     payload = {
         "running_nodes": [

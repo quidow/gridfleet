@@ -44,6 +44,42 @@ class IntentService:
             raise ValueError(f"Duplicate intent source values are not allowed in one batch: {sources}")
 
         now = now_utc()
+        # Finding 3 (TOCTOU): a rollout stage snapshot is taken unlocked, so a
+        # concurrent inline reconcile (e.g. on session release) may have stamped
+        # ``restart_requested_at`` into the existing row between the snapshot and
+        # this upsert (which runs under the device lock). Preserve a concurrent
+        # stamp when the stage's payload carries the same ``target_release`` but
+        # no stamp — otherwise the stale snapshot clobbers the stamp and the
+        # stage's inline reconcile mints a fresh one, double-restarting the node.
+        # Only rollout intents carry ``target_release``, so the merge is scoped
+        # to them and never touches operator-start payloads.
+        rollout_sources = [
+            intent.source
+            for intent in intents
+            if "target_release" in intent.payload and intent.payload.get("restart_requested_at") is None
+        ]
+        preserved_stamps: dict[str, str] = {}
+        if rollout_sources:
+            existing = (
+                await self._db.execute(
+                    select(DeviceIntent.source, DeviceIntent.payload).where(
+                        DeviceIntent.device_id == device_id,
+                        DeviceIntent.source.in_(rollout_sources),
+                    )
+                )
+            ).all()
+            by_source = {source: payload for source, payload in existing}
+            for intent in intents:
+                if intent.source not in by_source:
+                    continue
+                existing_payload = by_source[intent.source]
+                if not isinstance(existing_payload, dict):
+                    continue
+                existing_stamp = existing_payload.get("restart_requested_at")
+                existing_target = existing_payload.get("target_release")
+                if isinstance(existing_stamp, str) and existing_target == intent.payload.get("target_release"):
+                    preserved_stamps[intent.source] = existing_stamp
+
         stmt = insert(DeviceIntent).values(
             [
                 {
@@ -51,7 +87,14 @@ class IntentService:
                     "source": intent.source,
                     "kind": intent.kind.value,
                     "run_id": intent.run_id,
-                    "payload": dict(intent.payload),
+                    "payload": {
+                        **dict(intent.payload),
+                        **(
+                            {"restart_requested_at": preserved_stamps[intent.source]}
+                            if intent.source in preserved_stamps
+                            else {}
+                        ),
+                    },
                     "expires_at": intent.expires_at,
                     "created_at": now,
                     "updated_at": now,

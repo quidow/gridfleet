@@ -14,7 +14,7 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 - Sync stray sessions on Appium that don't belong to the internal state.
 - Expire stale queue tickets and fail crash-orphaned pending rows (`grid_allocation_reaper`).
 - Transition device maintenance lifecycles (`device_intent_reconciler`).
-- Run trivial periodic chores as `stage_due` stages of the `janitor` loop (base tick 15 s): `run_reaper`, `fleet_capacity` (60 s), `pack_drain` backstop (60 s), `data_cleanup` (hourly, skips boot), and the heartbeat-snapshot flush (15 s).
+- Run trivial periodic chores as `stage_due` stages of the `janitor` loop (base tick 15 s): `run_reaper`, `fleet_capacity` (60 s), `pack_drain` backstop (60 s), `release_rollout` (60 s), `data_cleanup` (hourly, skips boot), and the heartbeat-snapshot flush (15 s).
 
 **Scheduling doctrine:** a `BackgroundLoop` per independent lifecycle; `stage_due` stages only as sub-cadences of an owning sweep (host_sweep's partition probe; the janitor's stages above). Stage cadences are plumbing constants, never registry settings. Pack drain is event-driven — session/run release paths call `complete_drain_if_draining` inline so a pack disables on the release commit; the janitor's `pack_drain` stage is only the backstop.
 
@@ -48,6 +48,8 @@ is rejected at registration with HTTP 426, and the same check runs on every
 `/agent/hosts/status` push — a stale-contract agent's push is rejected, it
 stops stamping `last_heartbeat`, and it reads offline within the recency
 window. See `docs/design/04-backend-agent-contract.md` for the full contract.
+
+When an operator selects a new pack release, the 60-second `release_rollout` janitor stage creates a drain-safe restart intent for nodes still running the previous release. The agent includes the pinned release used to start each running node in its status-push snapshot, and `reconciler_agent.py` folds it into `AppiumNode.observed_pack_release`. The intent removes the node from new allocation, then the normal reconciler stamps the restart watermark once it observes no live session.
 
 At push ingest, the handler folds the observation sections (`node_health`,
 `device_health`, `device_telemetry`, `device_properties`, `host_telemetry`)

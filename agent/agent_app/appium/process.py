@@ -1159,6 +1159,10 @@ class AppiumProcessManager:
             "platform_id": info.platform_id,
             "started_at": info.started_at.isoformat(),
         }
+        spec = self._launch_specs.get(info.port)
+        if spec is not None and spec.pack_release is not None:
+            # The release this node was started from drives backend pack rollouts.
+            payload["pack_release"] = spec.pack_release
         # Re-emit has_active_session for the agent self-update drain gate (harness C1).
         # The grid relay that used to track sessions is gone, so the only authoritative
         # source is Appium itself: query localhost GET /appium/sessions per running node.

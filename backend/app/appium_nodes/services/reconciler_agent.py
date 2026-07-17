@@ -76,6 +76,7 @@ class NodeStartDetails:
     active_connection_target: str | None = None
     allocated_caps: dict[str, Any] | None = None
     started_at: datetime | None = None
+    pack_release: str | None = None
 
 
 __all__ = [
@@ -144,6 +145,8 @@ async def mark_node_started(
     node = upsert_node(db, device, port, pid, active_connection_target, settings=settings)
     if details.started_at is not None:
         node.started_at = details.started_at
+    if details.pack_release is not None:
+        node.observed_pack_release = details.pack_release
     await db.flush()
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot promote Appium resource claims")

@@ -97,6 +97,7 @@ def _desired_select() -> Select[Any]:
         AppiumNode.port,
         AppiumNode.pid,
         AppiumNode.started_at,
+        AppiumNode.observed_pack_release,
         AppiumNode.active_connection_target,
         AppiumNode.stop_pending,
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
@@ -113,6 +114,7 @@ def _row_to_desired(row: Any, *, reconciler_failure_present: bool = False) -> De
         port=row.port,
         pid=row.pid,
         started_at=row.started_at,
+        observed_pack_release=row.observed_pack_release,
         active_connection_target=row.active_connection_target,
         stop_pending=row.stop_pending,
         lifecycle_policy_state=row.lifecycle_policy_state,
@@ -361,6 +363,7 @@ class ReconcilerService:
                     pid=entry.pid,
                     connection_target=entry.connection_target,
                     started_at=entry.started_at,
+                    pack_release=entry.pack_release,
                 )
                 for entry in running
             ]
@@ -394,7 +397,7 @@ class ReconcilerService:
             if stale_rows:
                 clear_observed = self._write_observed_factory()
                 for row in stale_rows:
-                    await clear_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
+                    await clear_observed(row=row, state="stopped", port=None, pid=None, details=NodeStartDetails())
             active_rows = [
                 row
                 for row in rows
@@ -546,10 +549,8 @@ class ReconcilerService:
             state: str,
             port: int | None,
             pid: int | None,
-            active_connection_target: str | None,
-            started_at: datetime | None = None,
+            details: NodeStartDetails | None = None,
             clear_desired_port: bool = False,
-            allocated_caps: object = None,
         ) -> None:
             async with resolved_session_scope() as db:
                 device = await _load_device_for_reconciler(db, row.device_id)
@@ -561,11 +562,7 @@ class ReconcilerService:
                         device,
                         port=port or row.port or 0,
                         pid=pid,
-                        details=NodeStartDetails(
-                            active_connection_target=active_connection_target,
-                            started_at=started_at,
-                            allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
-                        ),
+                        details=details or NodeStartDetails(),
                         publisher=self._publisher,
                         settings=self._settings,
                     )
