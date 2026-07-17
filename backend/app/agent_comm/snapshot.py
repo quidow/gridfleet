@@ -17,6 +17,7 @@ class RunningAppiumNode:
     connection_target: str
     platform_id: str
     started_at: datetime | None = None
+    pack_release: str | None = None
 
 
 def _parse_started_at(value: object) -> datetime | None:
@@ -49,6 +50,7 @@ def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[Runnin
             continue
         if not isinstance(connection_target, str) or not isinstance(platform_id, str):
             continue
+        pack_release = entry.get("pack_release")
         nodes.append(
             RunningAppiumNode(
                 port=port,
@@ -56,6 +58,7 @@ def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[Runnin
                 connection_target=connection_target,
                 platform_id=platform_id,
                 started_at=_parse_started_at(entry.get("started_at")),
+                pack_release=pack_release if isinstance(pack_release, str) and pack_release else None,
             )
         )
     return nodes
