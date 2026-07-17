@@ -24,14 +24,17 @@ class AdapterLoadError(RuntimeError):
     """Raised when an adapter wheel cannot be extracted, installed or imported."""
 
 
-def _extract_wheel(tarball_path: Path, dest_dir: Path) -> Path:
+def _extract_wheel(tarball_path: Path, dest_dir: Path) -> Path | None:
+    """Extract the adapter wheel, or return None when the tarball ships none.
+
+    A wheel-less tarball is the Tier-1 manifest-only pack shape (docs: Minimal
+    Packs, Three Tiers) — a supported artifact, not a load failure.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tarball_path, mode="r:*") as tar:
         wheels = [m for m in tar.getmembers() if m.name.endswith(".whl") and m.name.startswith("adapter/")]
         if not wheels:
-            raise AdapterLoadError(
-                f"tarball {tarball_path} contains no adapter wheel under adapter/*.whl",
-            )
+            return None
         if len(wheels) > 1:
             raise AdapterLoadError(
                 f"tarball {tarball_path} contains multiple adapter wheels; not supported",
@@ -110,10 +113,15 @@ async def _install_wheel(wheel: Path, target_dir: Path) -> None:
     await asyncio.to_thread(_install_wheel_sync, wheel, target_dir)
 
 
-async def prepare_adapter_site(*, tarball_path: Path, runtime_dir: Path) -> Path:
-    """Extract and install the adapter wheel, returning its worker ``site``."""
+async def prepare_adapter_site(*, tarball_path: Path, runtime_dir: Path) -> Path | None:
+    """Extract and install the adapter wheel, returning its worker ``site``.
+
+    Returns None when the tarball ships no adapter wheel (manifest-only pack).
+    """
     wheel_dir = runtime_dir / "wheels"
     site_dir = (runtime_dir / "site").resolve()
     wheel = _extract_wheel(tarball_path, wheel_dir)
+    if wheel is None:
+        return None
     await _install_wheel(wheel, site_dir)
     return site_dir

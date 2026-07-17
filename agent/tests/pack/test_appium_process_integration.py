@@ -79,6 +79,7 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
         spec: AppiumLaunchSpec,
         *,
         clear_logs_on_failure: bool,
+        pack_worker: object = None,
     ) -> object:
         captured["spec"] = spec
 

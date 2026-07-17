@@ -176,6 +176,10 @@ def _build_adapter_loader(
             timeout=60.0,
         )
         site_dir = await prepare_adapter_site(tarball_path=tarball_path, runtime_dir=runtime_dir)
+        if site_dir is None:
+            # Tier-1 manifest-only pack: the tarball ships no adapter wheel.
+            adapter_registry.mark_adapterless(pack.id, pack.release)
+            return
         handle = await supervisor.start(pack.id, pack.release, site_dir)
         adapter_registry.set(pack.id, pack.release, handle)
 
@@ -203,6 +207,7 @@ async def _start_pack_loop_when_ready(
         runtime_registry=runtime_registry,
         adapter_registry=adapter_registry,
         adapter_loader=adapter_loader,
+        retained_adapter_keys=appium_mgr.retained_pack_worker_keys,
         on_status=on_status,
     )
     app.state.pack_state_loop = loop
@@ -290,6 +295,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reg_task = _start_registration_task()
     appium_mgr.set_runtime_registry(runtime_registry)
     appium_mgr.set_adapter_registry(adapter_registry)
+    appium_mgr.set_desired_packs_provider(
+        lambda: app.state.pack_state_loop.latest_desired_packs if app.state.pack_state_loop else None
+    )
     appium_mgr.start_log_maintenance()
 
     status_loop: StatusPushLoop | None = None

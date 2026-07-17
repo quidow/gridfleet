@@ -66,6 +66,23 @@ class PackStartPayloadError(RuntimeError):
     """Raised when a pack-owned device cannot be converted into a pack start payload."""
 
 
+async def selected_release_id(session: AsyncSession, pack_id: str) -> str | None:
+    """The release the agent's desired driver-packs endpoint would serve now.
+
+    Used to bracket launch-payload builds: the release-owned fields are read in
+    separate queries, so the caller compares this entry-time read against the
+    stamp derived at the end and refuses a payload torn by a concurrent
+    release switch.
+    """
+    pack = await session.scalar(
+        select(DriverPack).where(DriverPack.id == pack_id).options(selectinload(DriverPack.releases))
+    )
+    if pack is None:
+        return None
+    release = selected_release(pack.releases, pack.current_release)
+    return release.release if release is not None else None
+
+
 def resolve_pack_for_device(device: Device) -> tuple[str, str] | None:
     """Return (pack_id, platform_id) for the device, or None if not set."""
     if device.pack_id and device.platform_id:
@@ -160,6 +177,10 @@ async def build_pack_start_payload(
     return {
         "pack_id": pack_id,
         "platform_id": platform_id,
+        # The release this payload's caps/lifecycle data came from — the same
+        # selection the agent's desired driver-packs endpoint serves. The agent
+        # start gate requires both to agree before spawning a node.
+        "pack_release": release.release if release is not None else None,
         "appium_platform_name": appium_platform_name,
         "appium_env": appium_env,
         "insecure_features": insecure_features,

@@ -329,8 +329,216 @@ async def test_xcuitest_pack_with_no_adapter_posts_empty_doctor_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_adapter_load_failure_blocks_adapter_shipping_pack() -> None:
+    """A pack that ships an adapter tarball must not report installed when its
+    adapter worker failed to load: node starts for it defer (the worker supplies
+    connection caps like appium:udid), so the pack must surface as blocked with
+    the load failure instead of a green installed row."""
+    pack = _android_pack()
+    pack["tarball_sha256"] = "b" * 64
+    client = _FakeClient(_make_desired([pack]))
+    registry = AdapterRegistry()
+
+    async def failing_loader(pack: object, env: object) -> None:
+        raise RuntimeError("tarball missing on disk")
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=registry,
+        adapter_loader=failing_loader,
+    )
+
+    await loop.run_once()
+
+    payload = loop.latest_status()
+    assert payload is not None
+    pack_entry = next(p for p in payload["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "blocked"
+    assert pack_entry["blocked_reason"] == "adapter_load_failed"
+    assert pack_entry["runtime_id"] is not None
+    assert payload["doctor"] == [
+        {
+            "pack_id": "appium-uiautomator2",
+            "check_id": "adapter_load",
+            "ok": False,
+            "message": "adapter load failed: tarball missing on disk",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stamps_runtime_release_for_pack() -> None:
+    """A successful reconcile records which release produced the pack's runtime
+    env, so the start gate can tell a fresh runtime from one retained across a
+    failed or in-flight upgrade."""
+    from agent_app.pack.runtime_registry import RuntimeRegistry
+
+    pack = _android_pack(release="2026.04.0")
+    client = _FakeClient(_make_desired([pack]))
+    runtime_registry = RuntimeRegistry()
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        runtime_registry=runtime_registry,
+    )
+
+    await loop.run_once()
+
+    assert runtime_registry.release_for_pack("appium-uiautomator2") == "2026.04.0"
+
+
+@pytest.mark.asyncio
+async def test_adapterless_tarball_pack_reports_installed() -> None:
+    """A tarball the loader inspected and marked adapterless (Tier-1
+    manifest-only pack) is installed, not blocked — and the loader is not
+    re-invoked every tick for it."""
+    pack = _android_pack()
+    pack["tarball_sha256"] = "c" * 64
+    client = _FakeClient(_make_desired([pack]))
+    registry = AdapterRegistry()
+    loader_calls: list[str] = []
+
+    async def marking_loader(pack: object, env: object) -> None:
+        loader_calls.append(pack.id)  # type: ignore[attr-defined]
+        registry.mark_adapterless(pack.id, pack.release)  # type: ignore[attr-defined]
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=registry,
+        adapter_loader=marking_loader,
+    )
+
+    await loop.run_once()
+
+    payload = loop.latest_status()
+    assert payload is not None
+    pack_entry = next(p for p in payload["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "installed"
+    assert pack_entry["blocked_reason"] is None
+    assert payload["doctor"] == []
+
+    await loop.run_once()
+    assert loader_calls == ["appium-uiautomator2"]
+
+
+@pytest.mark.asyncio
+async def test_adapterless_pack_with_declared_lifecycle_actions_is_blocked() -> None:
+    """The declare-it-then-implement-it rule applies to wheel-less tarballs too:
+    a pack whose manifest declares lifecycle_actions but ships no adapter can
+    never dispatch the required hook — blocked, not installed."""
+    pack = _android_pack()
+    pack["tarball_sha256"] = "d" * 64
+    pack["platforms"][0]["lifecycle_actions"] = [{"id": "boot"}]
+    client = _FakeClient(_make_desired([pack]))
+    registry = AdapterRegistry()
+
+    async def marking_loader(pack: object, env: object) -> None:
+        registry.mark_adapterless(pack.id, pack.release)  # type: ignore[attr-defined]
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=registry,
+        adapter_loader=marking_loader,
+    )
+
+    await loop.run_once()
+
+    payload = loop.latest_status()
+    assert payload is not None
+    pack_entry = next(p for p in payload["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "blocked"
+    assert pack_entry["blocked_reason"] is not None
+    assert "lifecycle_action" in pack_entry["blocked_reason"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_less_pack_with_declared_lifecycle_actions_is_blocked() -> None:
+    """The declare-it-then-implement-it rule also covers packs with no tarball
+    at all: declared lifecycle_actions can never dispatch without an adapter."""
+    pack = _android_pack()
+    pack["platforms"][0]["lifecycle_actions"] = [{"id": "boot"}]
+    client = _FakeClient(_make_desired([pack]))
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=AdapterRegistry(),
+        adapter_loader=None,
+    )
+
+    await loop.run_once()
+
+    payload = loop.latest_status()
+    assert payload is not None
+    pack_entry = next(p for p in payload["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "blocked"
+    assert pack_entry["blocked_reason"] is not None
+    assert "lifecycle_action" in pack_entry["blocked_reason"]
+
+
+class _ShutdownRecordingHandle:
+    def __init__(self, pack_id: str, release: str) -> None:
+        self.pack_id = pack_id
+        self.release = release
+        self.supported_hooks: frozenset[str] = frozenset({"post_session"})
+        self.alive = True
+        self.shutdowns = 0
+
+    async def shutdown(self) -> None:
+        self.shutdowns += 1
+
+
+@pytest.mark.asyncio
+async def test_sweep_retains_superseded_worker_while_node_pins_its_release() -> None:
+    """A worker whose release left the desired list survives the sweep while a
+    running node's launch spec still pins that release — its post_session
+    teardown must dispatch to the release the node was started from. Reaped
+    once nothing retains it."""
+    pack = _android_pack(release="2026.05.0")
+    pack["tarball_sha256"] = "e" * 64
+    client = _FakeClient(_make_desired([pack]))
+    registry = AdapterRegistry()
+    old_handle = _ShutdownRecordingHandle("appium-uiautomator2", "2026.04.0")
+    registry.set("appium-uiautomator2", "2026.04.0", old_handle)  # type: ignore[arg-type]
+    retained: set[tuple[str, str]] = {("appium-uiautomator2", "2026.04.0")}
+
+    async def loader(pack: object, env: object) -> None:
+        registry.set(
+            pack.id,  # type: ignore[attr-defined]
+            pack.release,  # type: ignore[attr-defined]
+            _ShutdownRecordingHandle(pack.id, pack.release),  # type: ignore[attr-defined, arg-type]
+        )
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=registry,
+        adapter_loader=loader,
+        retained_adapter_keys=lambda: retained,
+    )
+
+    await loop.run_once()
+    assert registry.get("appium-uiautomator2", "2026.04.0") is old_handle
+    assert old_handle.shutdowns == 0
+
+    retained.clear()
+    await loop.run_once()
+    assert registry.get("appium-uiautomator2", "2026.04.0") is None
+    assert old_handle.shutdowns == 1
+
+
+@pytest.mark.asyncio
 async def test_adapter_load_failure_surfaces_as_doctor_entry() -> None:
-    """When adapter_loader raises, the pack still reports installed but emits an adapter_load failure entry."""
+    """A manifest-only pack (no adapter tarball) expects no adapter worker: a
+    raising loader still reports installed, with the failure as a doctor entry."""
     client = _FakeClient(_make_desired([_android_pack()]))
     registry = AdapterRegistry()
 

@@ -121,6 +121,60 @@ def _node(
     }
 
 
+def _release_switch_launch(release: str | None) -> dict[str, Any]:
+    return {
+        "connection_target": "device-1",
+        "platform_id": "android_mobile",
+        "port": 4723,
+        "pack_id": "appium-uiautomator2",
+        "pack_release": release,
+        "session_override": True,
+        "accepting_new_sessions": True,
+        "stop_pending": False,
+        "grid_run_id": None,
+    }
+
+
+def _running_manager_with_release(release: str | None) -> _Manager:
+    manager = _Manager([_Info(port=4723, connection_target="device-1")])
+    manager._launch_specs[4723].pack_release = release
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_release_switch_logs_but_never_restarts_running_node(caplog: pytest.LogCaptureFixture) -> None:
+    """A running node is never restarted for a release switch by the agent:
+    without backend allocation control any check-then-stop races a fresh
+    session create and kills in-flight work. The mismatch is surfaced (once
+    per transition, not every tick) for operators and the future backend
+    rollout flow."""
+    manager = _running_manager_with_release("2026.06.0")
+    loop = NodeStateLoop(client=_Client([_node(launch=_release_switch_launch("2026.07.0"))]), manager=manager)
+
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.node_state"):
+        await loop.run_once()
+        await loop.run_once()
+
+    assert manager.stopped == []
+    assert manager.started == []
+    mismatch_logs = [r for r in caplog.records if "pack release" in r.getMessage()]
+    assert len(mismatch_logs) == 1
+
+
+@pytest.mark.asyncio
+async def test_unversioned_launch_does_not_log_release_mismatch(caplog: pytest.LogCaptureFixture) -> None:
+    """Legacy payloads without pack_release stay silent."""
+    manager = _running_manager_with_release("2026.06.0")
+    loop = NodeStateLoop(client=_Client([_node(launch=_release_switch_launch(None))]), manager=manager)
+
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.node_state"):
+        await loop.run_once()
+
+    assert manager.stopped == []
+    assert manager.started == []
+    assert not [r for r in caplog.records if "pack release" in r.getMessage()]
+
+
 @pytest.mark.asyncio
 async def test_starts_desired_running_node_that_is_not_local() -> None:
     manager = _Manager()

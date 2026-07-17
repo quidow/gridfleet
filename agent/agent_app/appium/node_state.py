@@ -52,6 +52,7 @@ class NodeStateLoop:
     poll_interval: float = 5.0
     notify_change: Callable[[], None] | None = None
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
+    _logged_release_mismatches: set[tuple[int, str, str]] = field(default_factory=set, init=False, repr=False)
 
     async def run_once(self) -> None:
         desired = NodesDesired.model_validate(await self.client.fetch_desired())
@@ -116,6 +117,33 @@ class NodeStateLoop:
             local.connection_target != launch.connection_target or local.platform_id != launch.platform_id
         )
         needs_restart = force_restart or (target_changed and not boot_resolves_target)
+        launch_specs = getattr(self.manager, "_launch_specs", {})
+        current = launch_specs.get(spec.port)
+        stored_release = getattr(current, "pack_release", None)
+        if (
+            local is not None
+            and not needs_restart
+            and stored_release is not None
+            and launch.pack_release is not None
+            and stored_release != launch.pack_release
+        ):
+            # Pack release switch: the running node was started from another
+            # release than the one this launch payload derives from. The agent
+            # must NOT restart it: allocation is backend-owned, so any local
+            # idle-check races a fresh session create and would kill in-flight
+            # work. Surface the mismatch (once per transition, not every tick)
+            # for operators and the backend rollout flow; the node converges on
+            # its next natural restart.
+            transition = (spec.port, stored_release, launch.pack_release)
+            if transition not in self._logged_release_mismatches:
+                self._logged_release_mismatches.add(transition)
+                logger.info(
+                    "node %s runs pack release %s while %s is desired; "
+                    "not restarting a live node — restart it manually or via the backend",
+                    spec.device_id,
+                    stored_release,
+                    launch.pack_release,
+                )
         if local is not None and needs_restart:
             await self.manager.stop(spec.port)
             running_by_port.pop(spec.port, None)
@@ -148,8 +176,6 @@ class NodeStateLoop:
             running_by_port[spec.port] = started
             self._notify()
         else:
-            launch_specs = getattr(self.manager, "_launch_specs", {})
-            current = launch_specs.get(spec.port)
             flags_changed = current is None or (
                 current.accepting_new_sessions != spec.accepting_new_sessions
                 or current.stop_pending != spec.stop_pending

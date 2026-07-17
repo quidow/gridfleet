@@ -563,6 +563,30 @@ def test_missing_declared_hooks_empty_when_adapter_implements_them() -> None:
     assert missing_declared_hooks(_pack_declaring_capabilities(), FakeWorkerHandle(_GoodAdapter())) == []
 
 
+def test_missing_declared_hooks_sees_device_type_override_lifecycle_actions() -> None:
+    """lifecycle_actions declared only under device_type_overrides (e.g. the
+    xcuitest simulator override) still require the lifecycle_action hook."""
+    pack = DesiredPack(
+        id="override-only",
+        release="1.0.0",
+        appium_server=_installable(),
+        appium_driver=_installable(),
+        platforms=[
+            DesiredPlatform(
+                id="p",
+                automation_name="a",
+                device_types=["real_device", "simulator"],
+                connection_types=["usb"],
+                identity_scheme="s",
+                identity_scope="host",
+                stereotype={},
+                device_type_overrides={"simulator": {"lifecycle_actions": [{"id": "boot"}]}},
+            )
+        ],
+    )
+    assert missing_declared_hooks(pack, FakeWorkerHandle(_MinimalAdapter())) == ["lifecycle_action"]
+
+
 def test_missing_declared_hooks_empty_when_manifest_declares_nothing() -> None:
     pack = DesiredPack(
         id="core-only",
