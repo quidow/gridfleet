@@ -347,7 +347,7 @@ async def build_node_launch_payload(
         payload["pack_id"] = pack_overrides["pack_id"]
         payload["platform_id"] = pack_overrides["platform_id"]
         payload["appium_platform_name"] = pack_overrides["appium_platform_name"]
-        for key in ("lifecycle_actions", "connection_behavior", "insecure_features"):
+        for key in ("pack_release", "lifecycle_actions", "connection_behavior", "insecure_features"):
             if key in pack_overrides:
                 payload[key] = pack_overrides[key]
         # Merge host tool_env (operator per-host config) under pack appium_env

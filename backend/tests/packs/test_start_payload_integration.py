@@ -134,6 +134,57 @@ async def test_build_node_launch_payload_forwards_pack_appium_env(
 
 
 @pytest.mark.asyncio
+async def test_build_node_launch_payload_stamps_pack_release(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The launch payload carries the release its caps/lifecycle data came from,
+    selected exactly as the agent's desired driver-packs endpoint selects it —
+    the agent requires both to agree before starting a node."""
+    from sqlalchemy import select
+
+    from app.packs.models import DriverPack
+    from app.packs.services.release_ordering import selected_release
+
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        identity_value="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        connection_target="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        name="Living Room",
+        os_version="26.4",
+        host_id=uuid.uuid4(),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.5",
+        device_config={"wda_base_url": "http://192.168.1.5"},
+    )
+
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", AsyncMock(return_value=None))
+
+    payload = await appium_reconciler_agent.build_node_launch_payload(
+        db_session,
+        device,
+        port=4723,
+        allocated_caps=None,
+        settings=FakeSettingsReader({}),
+    )
+
+    pack = (await db_session.execute(select(DriverPack).where(DriverPack.id == "appium-xcuitest"))).scalar_one()
+    await db_session.refresh(pack, attribute_names=["releases"])
+    expected = selected_release(pack.releases, pack.current_release)
+    assert expected is not None
+    assert payload["pack_release"] == expected.release
+
+
+@pytest.mark.asyncio
 async def test_build_node_launch_payload_sends_device_field_caps_only_to_appium_defaults(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

@@ -160,6 +160,10 @@ async def build_pack_start_payload(
     return {
         "pack_id": pack_id,
         "platform_id": platform_id,
+        # The release this payload's caps/lifecycle data came from — the same
+        # selection the agent's desired driver-packs endpoint serves. The agent
+        # start gate requires both to agree before spawning a node.
+        "pack_release": release.release if release is not None else None,
         "appium_platform_name": appium_platform_name,
         "appium_env": appium_env,
         "insecure_features": insecure_features,
