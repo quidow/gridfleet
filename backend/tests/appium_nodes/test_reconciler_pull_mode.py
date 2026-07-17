@@ -18,7 +18,7 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
-from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry
+from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.core.metrics_recorders import (
     APPIUM_PULL_MODE_ORPHANS_OBSERVED,
     APPIUM_PULL_MODE_SKIPPED_ACTIONS,
@@ -113,18 +113,45 @@ async def test_pull_host_observed_running_writes_same_as_push_mode(monkeypatch: 
     """A DB-only action (db_mark_running) is untouched by pull mode: the observed
     columns are written exactly as ``_execute_action`` writes them in push mode."""
     device_id = uuid.uuid4()
-    row = _desired_row(device_id=device_id, desired_state="running", desired_port=4723, connection_target="pull-mark")
-    observed = [ObservedEntry(port=4723, pid=999, connection_target="pull-mark")]
+    row = _desired_row(
+        device_id=device_id,
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=999,
+        connection_target="pull-mark",
+        active_connection_target="pull-mark",
+        observed_pack_release="2026.07.1",
+    )
+    payload = {
+        "appium_processes": {
+            "running_nodes": [
+                {
+                    "port": 4723,
+                    "pid": 999,
+                    "connection_target": "pull-mark",
+                    "platform_id": "android_mobile",
+                    "pack_release": "2026.07.2",
+                }
+            ]
+        }
+    }
 
     node = SimpleNamespace(desired_state="running", desired_port=4723, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
+    monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
     mark_started = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "mark_node_started", mark_started)
 
-    svc = _make_service()
-    await svc.converge_host_rows(
-        _DummySession(), [row], observed, host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100
+    svc = _make_service(session_factory=_DummySession)
+    await svc.reconcile_host(
+        host_id=row.host_id,
+        host_ip="10.0.0.1",
+        agent_port=5100,
+        rows=[row],
+        backoff_until_by_device={},
+        payload=payload,
     )
 
     mark_started.assert_awaited_once()
@@ -132,6 +159,7 @@ async def test_pull_host_observed_running_writes_same_as_push_mode(monkeypatch: 
     assert kwargs["port"] == 4723
     assert kwargs["pid"] == 999
     assert kwargs["details"].active_connection_target == "pull-mark"
+    assert kwargs["details"].pack_release == "2026.07.2"
 
 
 async def test_pull_host_stopped_desired_absent_from_payload_marks_observed_stopped(
