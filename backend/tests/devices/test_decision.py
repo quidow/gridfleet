@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from app.appium_nodes.models import AppiumDesiredState
 from app.devices.services.decision import (
     Command,
     CommandKind,
@@ -17,6 +18,7 @@ from app.devices.services.decision import (
     decide_grid_routing,
     decide_node_process,
     decide_recovery,
+    map_node_process_decision,
     parse_command,
 )
 from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, VERIFICATION_OUTCOME_PASSED
@@ -129,6 +131,31 @@ def test_plain_starts_carry_no_watermark() -> None:
     d = decide_node_process([cmd(CommandKind.operator_start)], facts())
     assert d.desired_state == "running"
     assert d.restart_requested_at is None
+
+
+def test_release_rollout_drains_but_keeps_node_running() -> None:
+    decision = decide_node_process([cmd(CommandKind.release_rollout)], facts())
+
+    assert decision.desired_state == "running_draining"
+    assert decision.restart_requested_at is None
+    assert map_node_process_decision(decision) == (AppiumDesiredState.running, False, False)
+
+
+def test_release_rollout_carries_stamped_watermark() -> None:
+    stamp = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
+    decision = decide_node_process([cmd(CommandKind.release_rollout, restart_requested_at=stamp)], facts())
+
+    assert decision.desired_state == "running_draining"
+    assert decision.restart_requested_at == stamp
+
+
+def test_operator_start_outranks_release_rollout() -> None:
+    decision = decide_node_process(
+        [cmd(CommandKind.release_rollout), cmd(CommandKind.operator_start)],
+        facts(),
+    )
+
+    assert decision.desired_state == "running"
 
 
 def test_derived_stop_directive_gracefully_stops() -> None:

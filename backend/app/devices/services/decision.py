@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-NodeProcessState = str  # "running" | "running_blocked" | "stopping_graceful" | "stopped"
+NodeProcessState = str  # "running" | "running_draining" | "running_blocked" | "stopping_graceful" | "stopped"
 StopMode = str  # "hard" | "graceful" | "defer"
 
 
@@ -154,6 +154,14 @@ def decide_node_process(commands: list[Command], facts: DecisionFacts) -> NodePr
             reason = "remediation recovery start"
         return NodeProcessDecision("running", None, reason, restart_requested_at=watermark)
     if facts.in_service:
+        rollout = next((c for c in commands if c.kind is CommandKind.release_rollout), None)
+        if rollout is not None:
+            return NodeProcessDecision(
+                "running_draining",
+                None,
+                f"{rollout.source} release rollout",
+                restart_requested_at=rollout.restart_requested_at,
+            )
         return NodeProcessDecision("running", None, "baseline:idle standing start")
     return NodeProcessDecision("stopped", None, "no active node_process command")
 
@@ -182,6 +190,8 @@ def decide_recovery(commands: list[Command], facts: DecisionFacts) -> RecoveryDe
 def map_node_process_decision(decision: NodeProcessDecision) -> tuple[AppiumDesiredState, bool, bool]:
     if decision.desired_state == "running":
         return AppiumDesiredState.running, True, False
+    if decision.desired_state == "running_draining":
+        return AppiumDesiredState.running, False, False
     if decision.desired_state == "running_blocked":
         return AppiumDesiredState.running, False, True
     if decision.desired_state == "stopping_graceful":
