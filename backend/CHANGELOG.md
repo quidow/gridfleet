@@ -14,6 +14,241 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.4.0...gridfleet-backend-v0.5.0) (2026-07-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** remove manifest doctor block and host_fields_schema
+* **backend:** drop six presentation/plumbing settings rows
+* **backend:** node health debounce becomes duration-based
+* **backend:** device-check debounce becomes duration-based
+* **backend:** 10 plumbing settings are removed from the registry and fixed as code constants (values unchanged from their defaults): general.heartbeat_interval_sec, general.partition_probe_interval_sec, general.intent_reconcile_interval_sec, grid.session_poll_interval_sec, appium_reconciler.host_parallelism, agent.http_pool_enabled, agent.http_pool_max_keepalive, agent.http_pool_idle_seconds, agent.circuit_breaker_failure_threshold, agent.circuit_breaker_cooldown_seconds. Operator-tuned rows for these keys are deleted by migration.
+* **agent:** GET /agent/pack/devices/{target}/properties and /telemetry are gone — these observations ride the consolidated status push (contract v6); backends on the flag-day release no longer dial them. Their now-unreferenced response schemas are dropped from agent schemas and the backend's regenerated agent_comm/generated.py.
+* **backend:** agents must speak orchestration contract v6 (local observation probes in the status push) — older agents are rejected at registration with 426. The general.node_check_interval_sec, device_check_interval_sec, host_resource_telemetry_interval_sec, hardware_telemetry_interval_sec, property_refresh_interval_sec, and probe_concurrency_per_host settings are removed (probe cadences are now agent-side constants); a migration deletes their rows.
+* **backend:** device detail ?include=orchestration intent entries rename axis to kind; device_intents requires the 2026_07_10_intent_kind migration.
+* **agent:** push one consolidated status; stop pushing pack status separately
+* **backend:** derive host liveness from status-push recency
+* **agent:** converge restarts from the spawn-time watermark
+* **backend:** replace the transition-token lease with a restart watermark
+* **main:** prune zero-user driver-pack verticals ([#771](https://github.com/quidow/gridfleet/issues/771))
+* **backend:** require orchestration contract v3 (rejects pre-node-pull agents)
+* **backend:** drop agent_reconfigure_outbox table and model
+* **backend:** delete reconfigure-outbox delivery; poke is the only agent wake
+* **backend:** reconcile_host()/converge_host_rows() drop the node_pull parameter; reconciler_agent no longer exports start_remote_node/stop_remote_node.
+
+### Features
+
+* add agent-local observation probes ([5b2e750](https://github.com/quidow/gridfleet/commit/5b2e7503959a8e16a7da8f4b14f2f3136718796f))
+* **agent:** advertise node_desired_pull capability when pull is enabled ([5a24ec5](https://github.com/quidow/gridfleet/commit/5a24ec57dafa9f79d7f57d15981cd6024042008c))
+* **agent:** converge restarts from the spawn-time watermark ([b432bd9](https://github.com/quidow/gridfleet/commit/b432bd941d5db0aaa318d1a589065d742b596504))
+* **agent:** emit boot_id and per-section dedup token on status push ([802a72c](https://github.com/quidow/gridfleet/commit/802a72c16b48513bdaad52282845e78dda2ae399))
+* **agent:** node desired-state pull loop (phase 8a) ([a5e5ec6](https://github.com/quidow/gridfleet/commit/a5e5ec6cddbf9eb28dd7ef1b8ece4249b9be8634))
+* **agent:** node refresh poke endpoint and applied-generation health reporting ([a1f8203](https://github.com/quidow/gridfleet/commit/a1f820393c8e6e6ff4730df5daf79003edc312bc))
+* **agent:** push one consolidated status; stop pushing pack status separately ([4e2f7d8](https://github.com/quidow/gridfleet/commit/4e2f7d8ed8a8430605d62ea69b53cedc842f041a))
+* **agent:** remove dead appium start/stop/reconfigure surface ([1ba8283](https://github.com/quidow/gridfleet/commit/1ba82836980dff413cc12f0fac51bcea85f67abe))
+* **agent:** remove dialed device properties and telemetry probe routes ([1ec4c8b](https://github.com/quidow/gridfleet/commit/1ec4c8b060e129d883263221904b9b5740db43e3))
+* **agent:** run adapter hooks in pack worker subprocesses ([3cbbd42](https://github.com/quidow/gridfleet/commit/3cbbd4277e3646a5a10d6347b0885c72c0285e3e))
+* backend-owned appium session creation (WS-14.1) ([347599c](https://github.com/quidow/gridfleet/commit/347599ccac415cb330ad0a6f15be6effed688933))
+* **backend:** add appium node observed_pack_release column ([c866d64](https://github.com/quidow/gridfleet/commit/c866d64a3cfb816ed682fae18c252e774e74387e))
+* **backend:** add boot fence and per-section dedup cursor to status push ([4058ebe](https://github.com/quidow/gridfleet/commit/4058ebe3bb22fce34e78ede54279f15f276453ad))
+* **backend:** add deadline-governed create retry and durable remediation ([d20ae1e](https://github.com/quidow/gridfleet/commit/d20ae1ed50d9b64b99f8323152593b515714f25e))
+* **backend:** add derived remediation stop and start rungs ([5c6a6ad](https://github.com/quidow/gridfleet/commit/5c6a6ad9a652d3f829e84cf68d0ba5a13d558f23))
+* **backend:** add device_health fold receipt columns to device ([aae545f](https://github.com/quidow/gridfleet/commit/aae545fcc7f9e83cc707c49dc9030f9fda6b77bb))
+* **backend:** add device_health_remediation durable worker ([6451837](https://github.com/quidow/gridfleet/commit/64518377dde0469374938136bae12c9cad63ef45))
+* **backend:** add device_health_remediation job kind and dedupe schema ([360a96b](https://github.com/quidow/gridfleet/commit/360a96bcd28b1216766e5123f64f634aa36c93b9))
+* **backend:** add device_remediation_log table and retention window ([7d0e4c8](https://github.com/quidow/gridfleet/commit/7d0e4c8b306bebc090c39a2460936dfe72b264a9))
+* **backend:** add explicit decision ladders for device desired state ([7cdb496](https://github.com/quidow/gridfleet/commit/7cdb496150c6a9bd3460bad235cd7678d5471cec))
+* **backend:** add facts-only device_health fold for the status fold loop ([607b3bf](https://github.com/quidow/gridfleet/commit/607b3bf2173c325bb8fe147a634206c41f22db25))
+* **backend:** add facts-only device_health_remediation enqueue helper ([4e38043](https://github.com/quidow/gridfleet/commit/4e380437b539c991c444d2959f2c7b0bced71cea))
+* **backend:** add lifecycle_state_capable to probe-targets dto ([8a1facb](https://github.com/quidow/gridfleet/commit/8a1facb8c461665c1082d3b7b194f34201a14856))
+* **backend:** add raw-body appium session create for the router flow ([5153636](https://github.com/quidow/gridfleet/commit/51536364e3e095672420fd5b706dbb9111c6c705))
+* **backend:** add read-time recovery availability projection ([8596d36](https://github.com/quidow/gridfleet/commit/8596d368c8f5646c9c8705debdcbe261d3580eab))
+* **backend:** add release rollout janitor stage ([bba748c](https://github.com/quidow/gridfleet/commit/bba748c122cb1e9e4ec927ff46f1106f05ed5286))
+* **backend:** add release_rollout command to the node decision ladder ([619140b](https://github.com/quidow/gridfleet/commit/619140be23b46e091fb6836d7dcdef7a767d7990))
+* **backend:** add shared pushed device_health parser ([243075b](https://github.com/quidow/gridfleet/commit/243075b626b6b8a1cc64355f322391a8e8767c9b))
+* **backend:** add shared remediation escalation module ([a108341](https://github.com/quidow/gridfleet/commit/a108341b9f7104cd0bdf54d20322d38a1b700e6a))
+* **backend:** add status-push fold reconciler foundation ([c8ade5f](https://github.com/quidow/gridfleet/commit/c8ade5fb72d5e36741e6b7550c53adfd32b4f4e7))
+* **backend:** add the consolidated agent status-push ingest route ([8d41c8b](https://github.com/quidow/gridfleet/commit/8d41c8b3be42c4557085c2a89534f00e662832c8))
+* **backend:** add two-axis observation-revision guard for health folds ([2879d24](https://github.com/quidow/gridfleet/commit/2879d24a5b789eff4b0fcf7512dd4a63105ef6f1))
+* **backend:** agent-facing desired appium-nodes endpoint ([ba27086](https://github.com/quidow/gridfleet/commit/ba2708669660f617c7ded459f9f4b92d85a3fa24))
+* **backend:** agent-pull node desired state — phase 8b (backend mode switch) ([ab471d7](https://github.com/quidow/gridfleet/commit/ab471d78a046198fc6f708d0b5e2ac187e3bb23e))
+* **backend:** apply pushed emulator_state synchronously on the push path ([2d7bc1d](https://github.com/quidow/gridfleet/commit/2d7bc1d109037317e953832c6e0bf17d0226ebd3))
+* **backend:** bounded deadline-governed create-retry with target exclusion ([ad09257](https://github.com/quidow/gridfleet/commit/ad09257aacc655c8128aa8d773983aa9dd3f18ad))
+* **backend:** create-and-promote orchestrator for backend-owned session creation ([1c18729](https://github.com/quidow/gridfleet/commit/1c187299ec53ec12c1d69283cfd7f1644f6548be))
+* **backend:** decide desired state from commands plus facts ([a4cb172](https://github.com/quidow/gridfleet/commit/a4cb1728e1b7eec9fd24f3545670a62fbb4ad684))
+* **backend:** delete reconfigure-outbox delivery; poke is the only agent wake ([5735033](https://github.com/quidow/gridfleet/commit/573503327ab43d72cfcb9209fb0f7ea9ddb615ae))
+* **backend:** delete the intent dirty queue ([0ee0077](https://github.com/quidow/gridfleet/commit/0ee00773fd488cc3d084f06fb7a8dd3c51a760ac))
+* **backend:** demote registration to enrollment-only; ingest telemetry from the push ([47b8861](https://github.com/quidow/gridfleet/commit/47b8861159823f854f9151fe910a09604e4ed412))
+* **backend:** derive host liveness from status-push recency ([cf56e05](https://github.com/quidow/gridfleet/commit/cf56e05812c92f3c7455b90aceaf8fdd3119cadc))
+* **backend:** derive node-process directive and deferred-stop from the remediation log ([65cbc7b](https://github.com/quidow/gridfleet/commit/65cbc7b7c6f828cd65617c49a61be1b635797d4f))
+* **backend:** derive operational bus-event severity from the transition alone ([d7743ef](https://github.com/quidow/gridfleet/commit/d7743efebfd2ade7cfd363c2e74fbe937373d78f))
+* **backend:** device-check debounce becomes duration-based ([8e2d8c8](https://github.com/quidow/gridfleet/commit/8e2d8c8ca8d687de245fc1b6206d8d96c7e35cf5))
+* **backend:** drop agent_reconfigure_outbox table and model ([c14b106](https://github.com/quidow/gridfleet/commit/c14b1064c958a44d7d259eca78a80da1c5683593))
+* **backend:** drop device_intent_dirty table and full-scan cadence setting ([e84bdf5](https://github.com/quidow/gridfleet/commit/e84bdf5e3760c04ddcca2451f060a5a6e6168e97))
+* **backend:** drop recovery_allowed/recovery_blocked_reason columns ([b63b305](https://github.com/quidow/gridfleet/commit/b63b3058dd869496cc4962d6b8930373f2dee3a8))
+* **backend:** drop six presentation/plumbing settings rows ([15a25b5](https://github.com/quidow/gridfleet/commit/15a25b597e73ed8b1b83edac43dcf52ac82f2bf7))
+* **backend:** drop the claimed ticket state ([60ffa93](https://github.com/quidow/gridfleet/commit/60ffa937872644bf18d26f6632a8ac3f52478995))
+* **backend:** drop the claimed ticket state ([db2d2c7](https://github.com/quidow/gridfleet/commit/db2d2c71ae856cd934b91c98804e8eb1c9e9a7cd))
+* **backend:** drop the intent dirty queue ([066d666](https://github.com/quidow/gridfleet/commit/066d66648ef3cd78d87b43da9c4f7a2b31ffbe83))
+* **backend:** enforce the orchestration contract on every status push ([370764a](https://github.com/quidow/gridfleet/commit/370764a744210dda430f919302283d7edfa371c6))
+* **backend:** escalate appium start failures on the shared ladder ([50c97c4](https://github.com/quidow/gridfleet/commit/50c97c4ff3074e8e498132402c8671aa3b8db0ab))
+* **backend:** fold device_health off the request path onto the loop ([1ccee73](https://github.com/quidow/gridfleet/commit/1ccee73dd947173924f6d41a76291d6535956393))
+* **backend:** fold host_telemetry per push; delete the sweep's global-stage machinery ([b00d4e5](https://github.com/quidow/gridfleet/commit/b00d4e523f007f6b4521ee04387719357dd72b2a))
+* **backend:** fold pushed device_health; retire the connectivity dial pass ([4464c3f](https://github.com/quidow/gridfleet/commit/4464c3fc1f35b172460a04117112cb1d26b06320))
+* **backend:** fold pushed device_properties; drop the property refresh dial ([5e0de53](https://github.com/quidow/gridfleet/commit/5e0de5323bc00e754083fe9c4c0a2704ff6cf0f7))
+* **backend:** fold pushed device_telemetry; drop the hardware telemetry dial ([35814e9](https://github.com/quidow/gridfleet/commit/35814e9fe9199dbb339ef7729fea58b39c4110f1))
+* **backend:** fold pushed node_health observations in host_sweep ([069b788](https://github.com/quidow/gridfleet/commit/069b7888674073b23c768ca88f8eebd0f9fba13a))
+* **backend:** fold pushed observations at ingest ([ed86da6](https://github.com/quidow/gridfleet/commit/ed86da69464ecafeab7ff4801569edebdb12e9ca))
+* **backend:** fold pushed observations into durable facts at ingest ([aeaa622](https://github.com/quidow/gridfleet/commit/aeaa622b596993be29c84338955cb9e97b30aad8))
+* **backend:** fold the agent-observed pack release into appium nodes ([29fffe9](https://github.com/quidow/gridfleet/commit/29fffe9db89d1185802b884a55efda3fff545bc8))
+* **backend:** gate node-health restarts behind shared escalation ([00ceced](https://github.com/quidow/gridfleet/commit/00cecedd7fb076a6503e61297b6fbdab93e15966))
+* **backend:** gate recovery via the projection; drop stored suppression ([b82a6b5](https://github.com/quidow/gridfleet/commit/b82a6b5e7e4ad501e14e59564a4c05df5380e00c))
+* **backend:** grid create-failure node-down helper via guarded writer ([ebad5fd](https://github.com/quidow/gridfleet/commit/ebad5fdc90b79fa98a34711872196c400350d4b0))
+* **backend:** inline fold consumes pushed device presence and lifecycle by device_id ([9e7236c](https://github.com/quidow/gridfleet/commit/9e7236c71bd8f4255b5491c484f4ea00834ec6c5))
+* **backend:** intent reconciler scans every device every tick ([994ce7b](https://github.com/quidow/gridfleet/commit/994ce7b2520cc4f0d92d0c9b5110f26b48bcb0c1))
+* **backend:** janitor background loop scaffold with stage_due stages ([af3b221](https://github.com/quidow/gridfleet/commit/af3b221716298804d7d62e4bc6728aef6be8bbe7))
+* **backend:** janitor loop replaces four standalone loops and the flusher ([966506e](https://github.com/quidow/gridfleet/commit/966506e25d9aea370f3bf2f262da28af206f6498))
+* **backend:** lifecycle write-on-diff and repeat-safe remediation gate ([74a4e20](https://github.com/quidow/gridfleet/commit/74a4e208be18f4a1d7ae7b489a21b812e46125f7))
+* **backend:** m2 ordering for pushed emulator_state writes ([b0ad859](https://github.com/quidow/gridfleet/commit/b0ad8596a79b16b7836d5d68d595647193805615))
+* **backend:** mint and clear failure_episode_id on device health transitions ([3d00786](https://github.com/quidow/gridfleet/commit/3d00786302801747189f45c8dedd346ece3b2a89))
+* **backend:** mirror agent-reported appium spawn time into started_at ([9c9b09d](https://github.com/quidow/gridfleet/commit/9c9b09d49ed9bd8efbbec32332f31add3fe0f204))
+* **backend:** move node_health folding onto a level-triggered StatusFoldLoop ([7d7fd46](https://github.com/quidow/gridfleet/commit/7d7fd465a4fd6b9e047d2e966b699da1962845e4))
+* **backend:** node health debounce becomes duration-based ([0230173](https://github.com/quidow/gridfleet/commit/023017330daa37f15c970e02c9bb42c6c185a986))
+* **backend:** node-pull is the only reconcile mode; delete push start/stop clients ([f7c5d94](https://github.com/quidow/gridfleet/commit/f7c5d9472c860f8501f49688e16a8bc8826d5a6b))
+* **backend:** observe-only node convergence for pull-capable hosts ([a83d058](https://github.com/quidow/gridfleet/commit/a83d058c80cf40bbbf0f2d3b37a7677ecaf8a69e))
+* **backend:** one scheduling idiom — janitor loop merge ([fcf1ea1](https://github.com/quidow/gridfleet/commit/fcf1ea17edf38b318b217a5cd72ad83e04776e3a))
+* **backend:** own grid session creation ([b0506c3](https://github.com/quidow/gridfleet/commit/b0506c32e056cfa53d77983fbb06beea810e1492))
+* **backend:** pack release rollout ([66114f5](https://github.com/quidow/gridfleet/commit/66114f5b3054b0d2337892c040b0ed279c8eb6a9))
+* **backend:** parse pack_release from running-node snapshots ([139a248](https://github.com/quidow/gridfleet/commit/139a248f5c38cd05b26b572b1cdc83e4690beae4))
+* **backend:** poke agents only when reconcile changed node state ([a0ab62b](https://github.com/quidow/gridfleet/commit/a0ab62bcab115b8b6339d537989aaa1a90777b7b))
+* **backend:** poke replaces reconfigure delivery for pull-capable hosts ([2cafa3a](https://github.com/quidow/gridfleet/commit/2cafa3a4f24380ae60171b28a1ac80c9c3caa639))
+* **backend:** port-conflict re-pin and backoff from agent-reported start failures ([f7805f5](https://github.com/quidow/gridfleet/commit/f7805f5235e7704788e2d384454f4a7f5b5013a5))
+* **backend:** probe sessions carry a claim row from birth (WS-16.1) ([576e82f](https://github.com/quidow/gridfleet/commit/576e82f9c31cc3a07265a4b6e316cbf2b51db868))
+* **backend:** probe-target roster pull and declared status-push observation fields ([1d6c1a8](https://github.com/quidow/gridfleet/commit/1d6c1a8f1a4fa97925d6d8a3492d1b376c3bd599))
+* **backend:** project the recovery badge and blocked state from facts ([9bfc780](https://github.com/quidow/gridfleet/commit/9bfc7809d080ea8860d492d4c0fc56b9bc326ea1))
+* **backend:** pure remediation-ladder derivation and policy-view synthesizer ([a3b1519](https://github.com/quidow/gridfleet/commit/a3b151999e4992b9d715ad06de06e07371ccefd5))
+* **backend:** record event causes at observation sites, drop observed_reason threading ([caf5117](https://github.com/quidow/gridfleet/commit/caf51173b55ddb4c0f5df3fba42caefe6c5819a6))
+* **backend:** record maintenance audit rows in the maintenance service ([796485e](https://github.com/quidow/gridfleet/commit/796485e6d7903009ac43929e1de695e63a50b734))
+* **backend:** recovery availability as a read-time projection ([9766763](https://github.com/quidow/gridfleet/commit/97667639c44bac6daf1747626f090f3794d066a7))
+* **backend:** registration writes enrollment only; push owns runtime facts ([3f7d408](https://github.com/quidow/gridfleet/commit/3f7d40854836f9b718171001e11a2387d1f51f44))
+* **backend:** reject non-repeat-safe remediation actions at manifest load ([cc0a707](https://github.com/quidow/gridfleet/commit/cc0a7079c9a3aa171559e15e98e0918b7f1caba5))
+* **backend:** release paths complete pack drains inline; janitor stage is backstop ([031be45](https://github.com/quidow/gridfleet/commit/031be45c00724181d0f9d28945dd069160703a6f))
+* **backend:** remediation-log appends and ladder loaders ([7db3aa2](https://github.com/quidow/gridfleet/commit/7db3aa2d1da455cc49112913667022798571ae55))
+* **backend:** remove manifest doctor block and host_fields_schema ([f5245ff](https://github.com/quidow/gridfleet/commit/f5245ffc11b2da3507894e6488b07b915facb93e))
+* **backend:** remove obsolete start-failure threshold setting ([52a1709](https://github.com/quidow/gridfleet/commit/52a170991bbcf62e24381899e13483cb4423610e))
+* **backend:** replace the transition-token lease with a restart watermark ([37e83ff](https://github.com/quidow/gridfleet/commit/37e83ffeb4526b89fdfffd3eb516f4e498757410))
+* **backend:** require orchestration contract v3 (rejects pre-node-pull agents) ([2c9dd2e](https://github.com/quidow/gridfleet/commit/2c9dd2eba36091676ea9dfecde3b613a5e8e2c5f))
+* **backend:** require orchestration contract v7 for host enrollment ([63da5fc](https://github.com/quidow/gridfleet/commit/63da5fcd5b38cc47d648f35320fc81f31d151e47))
+* **backend:** require probe-pushing agents; delete dial-out probe settings ([5aec8fa](https://github.com/quidow/gridfleet/commit/5aec8fa3e8da8abf5c3aa985dc7d77c6ba60e791))
+* **backend:** resume lost allocations from the session row ([ce281eb](https://github.com/quidow/gridfleet/commit/ce281ebb95a26c4cd28c1088046ebc428ab7fa72))
+* **backend:** route lifecycle recovery failures through shared escalation ([8f31346](https://github.com/quidow/gridfleet/commit/8f313465705d2abd5de7c92547711d705fe52b0e))
+* **backend:** serve host online/offline as a read-time recency projection ([27578c1](https://github.com/quidow/gridfleet/commit/27578c19f4b8267bbd357ff8699ba8f18141dc91))
+* **backend:** settings diet — plumbing to constants, no env seeding, secure auto-accept ([e57b814](https://github.com/quidow/gridfleet/commit/e57b81441e32be6ae0f3ce0b4266095adb62a520))
+* **backend:** single host-liveness edge detector in the sweep ([7f636ef](https://github.com/quidow/gridfleet/commit/7f636efe98561cb6db1b3657338fbeb7c2fd2c30))
+* **backend:** stamp allocation sessions with their queue ticket id ([81bdfd3](https://github.com/quidow/gridfleet/commit/81bdfd340af3ab96098c65b8f2a4622d00f64782))
+* **backend:** stamp stable rollout restart watermark ([fb6cf5f](https://github.com/quidow/gridfleet/commit/fb6cf5fde63f250cd74da1d32071b4b24527e774))
+* **backend:** telemetry sample folds are idempotent under re-processing ([f58ae41](https://github.com/quidow/gridfleet/commit/f58ae41c1b9647ba95fed3e9d0db6944424b7205))
+* **backend:** thread request-local exclusion set through try_allocate ([fcb0f86](https://github.com/quidow/gridfleet/commit/fcb0f86cdc27e67a5769d938c431ed8d964bbb42))
+* **backend:** treat outcome-stamped verification leases as tombstones ([3f83da1](https://github.com/quidow/gridfleet/commit/3f83da164ef8a1bea63cd7486e1fcb1076812744))
+* **backend:** typed create outcome classifier with per-attempt metric ([b6cc4d9](https://github.com/quidow/gridfleet/commit/b6cc4d94bb7130b7a7419229223d481e9787c8d6))
+* **backend:** unify automated remediation escalation ([43dc128](https://github.com/quidow/gridfleet/commit/43dc128e96608008b0e5effab2bf042e32e809f0))
+* **backend:** verification probes claim with a session row from birth ([9988116](https://github.com/quidow/gridfleet/commit/99881162fed1943d375f817c08edc7184c3dde2f))
+* **backend:** viability probes claim their device with a session row from birth ([3a01979](https://github.com/quidow/gridfleet/commit/3a019796753ee2cacf48dcdbf8c47c5af8bb54b8))
+* **frontend:** toast behavior comes from built-in defaults ([c045be8](https://github.com/quidow/gridfleet/commit/c045be85dd0fa1d1ff67a01544260f48235c132d))
+* **main:** move device health reconciliation onto status fold loop ([75b629b](https://github.com/quidow/gridfleet/commit/75b629b505cac2f84cc34774973b86978a2718ba))
+* **main:** prune zero-user driver-pack verticals ([#771](https://github.com/quidow/gridfleet/issues/771)) ([064c67f](https://github.com/quidow/gridfleet/commit/064c67f4359e67819dde87ee452417bc72090c9e))
+* read-time host liveness + enrollment-only registration (WS-2.3/2.4) ([3629e56](https://github.com/quidow/gridfleet/commit/3629e56141b275e3f0d275db683434c14e74972f))
+* ws-14.2 pack zero-user surface deletion ([762e186](https://github.com/quidow/gridfleet/commit/762e1860e456cd6c199ca6a664209ae4e45cab7c))
+
+
+### Bug Fixes
+
+* **agent:** fail safe on incomplete device observations ([8e8b922](https://github.com/quidow/gridfleet/commit/8e8b922965df92d25eb232b14f93539f43fa8fd1))
+* **agent:** stop phantom iOS/tvOS simulator launches on real-device hosts ([4cfd852](https://github.com/quidow/gridfleet/commit/4cfd852e755630b45d532a7e28497e56cb7ac673))
+* **backend:** align presentation migration metadata ([5794bcf](https://github.com/quidow/gridfleet/commit/5794bcfaefb5b9cbbbce1627e715497279e308ea))
+* **backend:** batch the maintenance remediation-log prune ([2dea1c4](https://github.com/quidow/gridfleet/commit/2dea1c41cc83f1578ca486dac47940756815590b))
+* **backend:** bound node-refresh poke timeout and fan out run-create pokes concurrently ([aeef5f7](https://github.com/quidow/gridfleet/commit/aeef5f7622f2f3ae7b5aed143f4091d3e576d70f))
+* **backend:** bound probe create timeout below the grid claim window ([aa9e941](https://github.com/quidow/gridfleet/commit/aa9e9412bdeebf19e0b6dfa1f58275fea6900f33))
+* **backend:** close checkpoint verification regressions ([094310f](https://github.com/quidow/gridfleet/commit/094310f6edbc6a3a7bb1afb05b39186c28fb3f97))
+* **backend:** complete orphaned remediation jobs as no-ops ([ba287a4](https://github.com/quidow/gridfleet/commit/ba287a4b5f46e77519d69abc10aa07dffa8a432a))
+* **backend:** count distinct telemetry observations for hardware hysteresis ([3093df0](https://github.com/quidow/gridfleet/commit/3093df0c0ab6c4066c980c8da30a39759774a4e2))
+* **backend:** enforce create-retry budget after allocation polling ([c2c9008](https://github.com/quidow/gridfleet/commit/c2c900851b54e34037e04f646f7396fd23b00e4e))
+* **backend:** fold emulator node observations by port so recovery can converge ([068e4b7](https://github.com/quidow/gridfleet/commit/068e4b7afb1446cbb713503472e6d52da0bedd8a))
+* **backend:** force-close leaked running probe rows in the liveness sweep ([8ac725c](https://github.com/quidow/gridfleet/commit/8ac725c1accb21ba97d22db0c6f5ba6e263e725b))
+* **backend:** guarantee session-viability probe teardown ([9101837](https://github.com/quidow/gridfleet/commit/910183728e931090f3e1c3879f4b3c8fb0ddd52d))
+* **backend:** harden pack release rollout stamping and revoke protocol ([6101cf1](https://github.com/quidow/gridfleet/commit/6101cf1262f7030133074455102518130369450e))
+* **backend:** harden status push fold publication ([220c042](https://github.com/quidow/gridfleet/commit/220c042b0653c1363df797610b4b805cfcaa8dc2))
+* **backend:** harden status-push health reconciliation ([e4ebe30](https://github.com/quidow/gridfleet/commit/e4ebe3039e4a49e9cbc61ffffd3b146e6c174463))
+* **backend:** keep leader lock connection out of an open transaction ([df6503b](https://github.com/quidow/gridfleet/commit/df6503bf88892874fd7cdb7a38df8ba2d7477fde))
+* **backend:** keep run-create pokes sequential; shared AsyncSession is not concurrency-safe ([83d7278](https://github.com/quidow/gridfleet/commit/83d7278e8027d1264b83b283a7473d413b020798))
+* **backend:** make appium resource-claim port uniqueness host-wide ([d12c424](https://github.com/quidow/gridfleet/commit/d12c4242900e97139ab945cd9a1681bb29607be9))
+* **backend:** migrate pull-mode stale-clear call site to details= signature ([e91cef9](https://github.com/quidow/gridfleet/commit/e91cef9dd9402840d54a00748442277a839a807e))
+* **backend:** preserve disconnected node stop contract ([cf393a1](https://github.com/quidow/gridfleet/commit/cf393a18cf73287015fc7acffe516020baff1956))
+* **backend:** preserve drain flags in pulled launch payloads ([d4f60e4](https://github.com/quidow/gridfleet/commit/d4f60e4c2043cba020f2fc5e89864d0e80250987))
+* **backend:** preserve grid create response wire statuses ([e2a3ff9](https://github.com/quidow/gridfleet/commit/e2a3ff90daf25c7c36c5ec3bd4d4cf44e95bc48c))
+* **backend:** preserve remediation dispatch context in worker ([d54cb1d](https://github.com/quidow/gridfleet/commit/d54cb1dbcf3ef9c8f46a36d7667767a28b0cc589))
+* **backend:** project reserved parallel-resource caps into pull desired launch ([789af1f](https://github.com/quidow/gridfleet/commit/789af1fa1a16e713c6910d827a5390e17e41ece2))
+* **backend:** prune remediation logs for maintenance devices ([67244f1](https://github.com/quidow/gridfleet/commit/67244f17de0e1cdd0d14cb13d332d89338157182))
+* **backend:** refuse launch payloads torn by a concurrent release switch ([988da6f](https://github.com/quidow/gridfleet/commit/988da6f10dfbc3c1d3f79168c58c9ec6394c4f67))
+* **backend:** reject inactive fold lock proof ([02b8d04](https://github.com/quidow/gridfleet/commit/02b8d040d0a5a21f66a74f61d488c2ec65da049b))
+* **backend:** require active target for release rollout ([e19a5cb](https://github.com/quidow/gridfleet/commit/e19a5cb89d93ca0c52376c1ef9f8e3a1386dfdeb))
+* **backend:** reserve parallel-resource ports at operator node start ([376bcff](https://github.com/quidow/gridfleet/commit/376bcff174999effe96666a603a69c6106a58be4))
+* **backend:** reset the remediation episode when entering maintenance ([1f8214e](https://github.com/quidow/gridfleet/commit/1f8214e7f430c04cb8029cda5d6456b01ef2316f))
+* **backend:** retain remediation jobs whose failure episode is still open ([d21a948](https://github.com/quidow/gridfleet/commit/d21a9488ee9af3e8cdb98cac8804d79202f0915b))
+* **backend:** skip maintenance devices in the connectivity fold ([3ffdaf9](https://github.com/quidow/gridfleet/commit/3ffdaf9007bfd72623e19ec5172d9de7eaabba59))
+* **backend:** stamp pack release into node launch payloads ([b6f7ccd](https://github.com/quidow/gridfleet/commit/b6f7ccdc8ba1a2d05d2a715cf44f1e374e22be58))
+* **backend:** stop discovery presence from disconnecting healthy devices ([b089a8c](https://github.com/quidow/gridfleet/commit/b089a8c1c3e9d8f43343fe6f112db32c630c3a02))
+* **backend:** stop probing devices that are in maintenance ([052774d](https://github.com/quidow/gridfleet/commit/052774d3f8442e66ffd8ec30bfac41fd06300b2f))
+* **backend:** tighten create protocol and deadline gates ([abfb042](https://github.com/quidow/gridfleet/commit/abfb0422aebba70ed83c8aedc1c67eaf7f09fb76))
+* presence discovery must not disconnect healthy registered devices ([0bc7ac2](https://github.com/quidow/gridfleet/commit/0bc7ac2d4962e88591292a837d861892aa17c216))
+
+
+### Performance Improvements
+
+* **backend:** cache device health fold state presence ([d10654c](https://github.com/quidow/gridfleet/commit/d10654c81caf7e3459303c5c766d9d59fd44c112))
+* **backend:** defer unused live_capabilities JSONB in the status-push folds ([2648842](https://github.com/quidow/gridfleet/commit/26488427eb83edfbe2cf4cb2269576d08b21e4e7))
+* **backend:** drop the dead device eager-load in the node-health fold ([86d9988](https://github.com/quidow/gridfleet/commit/86d9988c09b80c168752b6e0c3a950bd3bc07c63))
+* **backend:** drop the unused sessions eager-load in the node-health fold ([637c2ae](https://github.com/quidow/gridfleet/commit/637c2aefb08c5b7d425a951fc8dac0e8cd034155))
+* **backend:** index sessions(started_at,id) for the session-list endpoints ([228cd79](https://github.com/quidow/gridfleet/commit/228cd7982c21565ca66493bece472b150541f23d))
+* **backend:** keep unhealthy fold transition atomic ([30ce4a0](https://github.com/quidow/gridfleet/commit/30ce4a0adb078a38015cf4480e49162b912ea52c))
+* **backend:** preload pack catalog for health folds ([730d440](https://github.com/quidow/gridfleet/commit/730d440817d48b405146b84e5a573882e0b1e3a4))
+* **backend:** reuse device health fold locks ([9c455cb](https://github.com/quidow/gridfleet/commit/9c455cbc6aa06aa2ca3bb23b867116f683f7c9c8))
+* **backend:** reuse device lock for self-heal reconciliation ([026e9cf](https://github.com/quidow/gridfleet/commit/026e9cf214d77bccfd8767a503016c25d990857d))
+* **backend:** reuse fold lock for intent reconciliation ([50f8afb](https://github.com/quidow/gridfleet/commit/50f8afb180749510a6dd7774c27a5d6d9ba251e6))
+* **backend:** reuse the pack catalog across a status-push device fold ([ceddace](https://github.com/quidow/gridfleet/commit/ceddace5e9a391b00205eff76ee9baa8a55cc06f))
+* **backend:** skip identity-map sync on control-plane state deletes ([6dcd1a8](https://github.com/quidow/gridfleet/commit/6dcd1a8c9e0ec2c5b26bdb3b76519f4dec7a8c66))
+* **backend:** snapshot control-plane state keys once per device fold ([7485e1f](https://github.com/quidow/gridfleet/commit/7485e1fff070eef168afaee645467da8a242d7c7))
+* **backend:** stop persisting unread status-push snapshot sections ([6184e93](https://github.com/quidow/gridfleet/commit/6184e93a9ed3dc3382cf02a6ab4fdac0bf72f439))
+
+
+### Dependencies
+
+* **deps:** bump httpx2 in /backend in the python-dependencies group ([#834](https://github.com/quidow/gridfleet/issues/834)) ([34f0a7c](https://github.com/quidow/gridfleet/commit/34f0a7cf27286bb47da0b033e3b2ddb814a5ab9f))
+* **deps:** bump mypy in /backend in the python-dependencies group ([#821](https://github.com/quidow/gridfleet/issues/821)) ([1dc2e4a](https://github.com/quidow/gridfleet/commit/1dc2e4a99549dfed4ec6274796635a9233dad49e))
+* **deps:** bump ruff in /backend in the python-dependencies group ([#787](https://github.com/quidow/gridfleet/issues/787)) ([29e2ffa](https://github.com/quidow/gridfleet/commit/29e2ffa676311bbfa8bd73c44689c9e97734d61c))
+* **deps:** bump the python-dependencies group ([#756](https://github.com/quidow/gridfleet/issues/756)) ([ac6c00d](https://github.com/quidow/gridfleet/commit/ac6c00d7da28fbd930f84ffaa83f45218533f090))
+* **deps:** bump the python-dependencies group ([#844](https://github.com/quidow/gridfleet/issues/844)) ([31df2bc](https://github.com/quidow/gridfleet/commit/31df2bca5a6ca48811d7280005ff69b7a0feec4f))
+* **deps:** bump uvicorn[standard] ([#767](https://github.com/quidow/gridfleet/issues/767)) ([e793f06](https://github.com/quidow/gridfleet/commit/e793f06e8426893bdd5d4168da9da0033c5bf74c))
+
+
+### Documentation
+
+* **backend:** correct the batched-prune migration COMMIT comment ([080846c](https://github.com/quidow/gridfleet/commit/080846cc8624cd63104dc17ead7dfa08f3214ac1))
+* **backend:** disambiguate the two reconciler module families ([4086cdc](https://github.com/quidow/gridfleet/commit/4086cdc24a82d2875d0f8ce85ece797ff1fa7dd8))
+* **backend:** document read-time operational-state projection ([326812a](https://github.com/quidow/gridfleet/commit/326812afee65110f6064f6e164d305c503f8d9b2))
+* **backend:** document the restart watermark; drop token surfaces from ui ([a68330e](https://github.com/quidow/gridfleet/commit/a68330e1d41fcd9ce26d545a1fc237f1b49fd21a))
+* **backend:** point pool-idle comments at the plumbing constant ([a5b8927](https://github.com/quidow/gridfleet/commit/a5b8927254b36fb4daf131b490315c65bf5e72ca))
+* **backend:** record the device operational_state constructor alias as a deliberate shim ([2135e3c](https://github.com/quidow/gridfleet/commit/2135e3c2bf281b2e25f1b6f62f1da1bc3b1ff6cb))
+* **docs:** reconcile design docs 01–05 to code truth + pin two enumerations ([ae34806](https://github.com/quidow/gridfleet/commit/ae3480671963190363553a40fb175d203829a6af))
+* **main:** fix stale comments and settings doc drift ([508e051](https://github.com/quidow/gridfleet/commit/508e051f685eef325aaa88e1b892b633a1201b2b))
+* **main:** resync settings.md and e2e mock after the registry residue deletion ([d5cf274](https://github.com/quidow/gridfleet/commit/d5cf274c5404b5a1d0eb72e8864c6e980e0f8915))
+
+
+### Code Refactoring
+
+* **backend:** store intent command kind as a column; drop the intent axis ([c9db02e](https://github.com/quidow/gridfleet/commit/c9db02e2c2f14ed7e9b0ac0fd1f4460692ac6014))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.3.0...gridfleet-backend-v0.4.0) (2026-06-26)
 
 
