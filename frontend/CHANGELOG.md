@@ -12,6 +12,39 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.4.0...gridfleet-frontend-v0.5.0) (2026-07-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** device detail ?include=orchestration intent entries rename axis to kind; device_intents requires the 2026_07_10_intent_kind migration.
+* **main:** prune zero-user driver-pack verticals ([#771](https://github.com/quidow/gridfleet/issues/771))
+
+### Features
+
+* add agent-local observation probes ([5b2e750](https://github.com/quidow/gridfleet/commit/5b2e7503959a8e16a7da8f4b14f2f3136718796f))
+* **agent:** node desired-state pull loop (phase 8a) ([a5e5ec6](https://github.com/quidow/gridfleet/commit/a5e5ec6cddbf9eb28dd7ef1b8ece4249b9be8634))
+* **backend:** add lifecycle_state_capable to probe-targets dto ([8a1facb](https://github.com/quidow/gridfleet/commit/8a1facb8c461665c1082d3b7b194f34201a14856))
+* **backend:** add status-push fold reconciler foundation ([c8ade5f](https://github.com/quidow/gridfleet/commit/c8ade5fb72d5e36741e6b7550c53adfd32b4f4e7))
+* **backend:** one scheduling idiom — janitor loop merge ([fcf1ea1](https://github.com/quidow/gridfleet/commit/fcf1ea17edf38b318b217a5cd72ad83e04776e3a))
+* **backend:** probe-target roster pull and declared status-push observation fields ([1d6c1a8](https://github.com/quidow/gridfleet/commit/1d6c1a8f1a4fa97925d6d8a3492d1b376c3bd599))
+* **backend:** registration writes enrollment only; push owns runtime facts ([3f7d408](https://github.com/quidow/gridfleet/commit/3f7d40854836f9b718171001e11a2387d1f51f44))
+* **frontend:** toast behavior comes from built-in defaults ([c045be8](https://github.com/quidow/gridfleet/commit/c045be85dd0fa1d1ff67a01544260f48235c132d))
+* **main:** move device health reconciliation onto status fold loop ([75b629b](https://github.com/quidow/gridfleet/commit/75b629b505cac2f84cc34774973b86978a2718ba))
+* **main:** prune zero-user driver-pack verticals ([#771](https://github.com/quidow/gridfleet/issues/771)) ([064c67f](https://github.com/quidow/gridfleet/commit/064c67f4359e67819dde87ee452417bc72090c9e))
+* read-time host liveness + enrollment-only registration (WS-2.3/2.4) ([3629e56](https://github.com/quidow/gridfleet/commit/3629e56141b275e3f0d275db683434c14e74972f))
+* ws-14.2 pack zero-user surface deletion ([762e186](https://github.com/quidow/gridfleet/commit/762e1860e456cd6c199ca6a664209ae4e45cab7c))
+
+
+### Bug Fixes
+
+* **frontend:** regenerate openapi types for boot_id field ([c4b03f6](https://github.com/quidow/gridfleet/commit/c4b03f6f7f71b6ca582c29cd2e8a3ad0970d95ce))
+
+
+### Code Refactoring
+
+* **backend:** store intent command kind as a column; drop the intent axis ([c9db02e](https://github.com/quidow/gridfleet/commit/c9db02e2c2f14ed7e9b0ac0fd1f4460692ac6014))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.3.0...gridfleet-frontend-v0.4.0) (2026-06-26)
 
 
