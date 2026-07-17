@@ -207,6 +207,7 @@ async def _start_pack_loop_when_ready(
         runtime_registry=runtime_registry,
         adapter_registry=adapter_registry,
         adapter_loader=adapter_loader,
+        retained_adapter_keys=appium_mgr.retained_pack_worker_keys,
         on_status=on_status,
     )
     app.state.pack_state_loop = loop

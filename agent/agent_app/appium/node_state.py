@@ -52,6 +52,7 @@ class NodeStateLoop:
     poll_interval: float = 5.0
     notify_change: Callable[[], None] | None = None
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
+    _logged_release_mismatches: set[tuple[int, str, str]] = field(default_factory=set, init=False, repr=False)
 
     async def run_once(self) -> None:
         desired = NodesDesired.model_validate(await self.client.fetch_desired())
@@ -127,16 +128,18 @@ class NodeStateLoop:
             and stored_release != launch.pack_release
         ):
             # Pack release switch: the running node was started from another
-            # release than the one this launch payload derives from. Restart it
-            # drain-safely — only once the local Appium reports zero live
-            # sessions; an active or unknown session state waits for the next
-            # tick rather than killing in-flight work.
-            active = await self.manager._node_has_active_session(spec.port)
-            if active is False:
-                needs_restart = True
-            else:
+            # release than the one this launch payload derives from. The agent
+            # must NOT restart it: allocation is backend-owned, so any local
+            # idle-check races a fresh session create and would kill in-flight
+            # work. Surface the mismatch (once per transition, not every tick)
+            # for operators and the backend rollout flow; the node converges on
+            # its next natural restart.
+            transition = (spec.port, stored_release, launch.pack_release)
+            if transition not in self._logged_release_mismatches:
+                self._logged_release_mismatches.add(transition)
                 logger.info(
-                    "node %s pack release changed (%s -> %s); waiting for the active session to end",
+                    "node %s runs pack release %s while %s is desired; "
+                    "not restarting a live node — restart it manually or via the backend",
                     spec.device_id,
                     stored_release,
                     launch.pack_release,

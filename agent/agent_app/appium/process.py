@@ -353,6 +353,13 @@ class AppiumProcessManager:
     def set_desired_packs_provider(self, provider: Callable[[], list[DesiredPack] | None]) -> None:
         self._desired_packs_provider = provider
 
+    def retained_pack_worker_keys(self) -> set[tuple[str, str]]:
+        """(pack_id, release) pairs pinned by current launch specs — the pack
+        state loop must not reap these workers while their nodes exist."""
+        return {
+            (spec.pack_id, spec.pack_release) for spec in self._launch_specs.values() if spec.pack_release is not None
+        }
+
     def _resolve_pack_worker(
         self, registry: AdapterRegistry, pack_id: str, *, requested_release: str | None
     ) -> tuple[str | None, WorkerHandle | None]:
@@ -1040,7 +1047,13 @@ class AppiumProcessManager:
         """
         if self._adapter_registry is None or spec is None or not spec.pack_id:
             return
-        handle = self._adapter_registry.get_current(spec.pack_id)
+        # Teardown belongs to the release the node was started from: after a
+        # release switch get_current() points at the new adapter. Legacy specs
+        # without a pinned release keep the current-worker fallback.
+        if spec.pack_release is not None:
+            handle = self._adapter_registry.get(spec.pack_id, spec.pack_release)
+        else:
+            handle = self._adapter_registry.get_current(spec.pack_id)
         if handle is None:
             return
         if not adapter_supports(handle, "post_session"):

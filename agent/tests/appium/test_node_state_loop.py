@@ -46,12 +46,6 @@ class _Manager:
         self.reconfigured: list[tuple[int, dict[str, Any]]] = []
         self.start_failures: list[dict[str, Any]] = []
         self._fail_start_with = fail_start_with
-        self.session_active: bool | None = False
-        self.session_checks: list[int] = []
-
-    async def _node_has_active_session(self, port: int) -> bool | None:
-        self.session_checks.append(port)
-        return self.session_active
 
     def list_running(self) -> list[_Info]:
         return list(self.running)
@@ -148,59 +142,37 @@ def _running_manager_with_release(release: str | None) -> _Manager:
 
 
 @pytest.mark.asyncio
-async def test_release_switch_restarts_idle_node() -> None:
-    """A pack release switch reaches a running node as a drain-safe restart:
-    the node restarts only once its local Appium reports zero live sessions."""
+async def test_release_switch_logs_but_never_restarts_running_node(caplog: pytest.LogCaptureFixture) -> None:
+    """A running node is never restarted for a release switch by the agent:
+    without backend allocation control any check-then-stop races a fresh
+    session create and kills in-flight work. The mismatch is surfaced (once
+    per transition, not every tick) for operators and the future backend
+    rollout flow."""
     manager = _running_manager_with_release("2026.06.0")
-    manager.session_active = False
     loop = NodeStateLoop(client=_Client([_node(launch=_release_switch_launch("2026.07.0"))]), manager=manager)
 
-    await loop.run_once()
-
-    assert manager.stopped == [4723]
-    assert len(manager.started) == 1
-    assert manager.started[0]["pack_release"] == "2026.07.0"
-
-
-@pytest.mark.asyncio
-async def test_release_switch_waits_while_session_active() -> None:
-    """A live client session blocks the release-switch restart; retry next tick."""
-    manager = _running_manager_with_release("2026.06.0")
-    manager.session_active = True
-    loop = NodeStateLoop(client=_Client([_node(launch=_release_switch_launch("2026.07.0"))]), manager=manager)
-
-    await loop.run_once()
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.node_state"):
+        await loop.run_once()
+        await loop.run_once()
 
     assert manager.stopped == []
     assert manager.started == []
-    assert manager.session_checks == [4723]
+    mismatch_logs = [r for r in caplog.records if "pack release" in r.getMessage()]
+    assert len(mismatch_logs) == 1
 
 
 @pytest.mark.asyncio
-async def test_release_switch_waits_when_session_state_unknown() -> None:
-    """Unknown session state (Appium unreachable) blocks the restart — never
-    kill a possibly-live session on uncertainty."""
-    manager = _running_manager_with_release("2026.06.0")
-    manager.session_active = None
-    loop = NodeStateLoop(client=_Client([_node(launch=_release_switch_launch("2026.07.0"))]), manager=manager)
-
-    await loop.run_once()
-
-    assert manager.stopped == []
-    assert manager.started == []
-
-
-@pytest.mark.asyncio
-async def test_unversioned_launch_does_not_trigger_release_restart() -> None:
-    """Legacy payloads without pack_release keep today's behavior."""
+async def test_unversioned_launch_does_not_log_release_mismatch(caplog: pytest.LogCaptureFixture) -> None:
+    """Legacy payloads without pack_release stay silent."""
     manager = _running_manager_with_release("2026.06.0")
     loop = NodeStateLoop(client=_Client([_node(launch=_release_switch_launch(None))]), manager=manager)
 
-    await loop.run_once()
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.node_state"):
+        await loop.run_once()
 
     assert manager.stopped == []
     assert manager.started == []
-    assert manager.session_checks == []
+    assert not [r for r in caplog.records if "pack release" in r.getMessage()]
 
 
 @pytest.mark.asyncio

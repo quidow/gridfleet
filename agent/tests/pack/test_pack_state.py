@@ -483,6 +483,58 @@ async def test_artifact_less_pack_with_declared_lifecycle_actions_is_blocked() -
     assert "lifecycle_action" in pack_entry["blocked_reason"]
 
 
+class _ShutdownRecordingHandle:
+    def __init__(self, pack_id: str, release: str) -> None:
+        self.pack_id = pack_id
+        self.release = release
+        self.supported_hooks: frozenset[str] = frozenset({"post_session"})
+        self.alive = True
+        self.shutdowns = 0
+
+    async def shutdown(self) -> None:
+        self.shutdowns += 1
+
+
+@pytest.mark.asyncio
+async def test_sweep_retains_superseded_worker_while_node_pins_its_release() -> None:
+    """A worker whose release left the desired list survives the sweep while a
+    running node's launch spec still pins that release — its post_session
+    teardown must dispatch to the release the node was started from. Reaped
+    once nothing retains it."""
+    pack = _android_pack(release="2026.05.0")
+    pack["tarball_sha256"] = "e" * 64
+    client = _FakeClient(_make_desired([pack]))
+    registry = AdapterRegistry()
+    old_handle = _ShutdownRecordingHandle("appium-uiautomator2", "2026.04.0")
+    registry.set("appium-uiautomator2", "2026.04.0", old_handle)  # type: ignore[arg-type]
+    retained: set[tuple[str, str]] = {("appium-uiautomator2", "2026.04.0")}
+
+    async def loader(pack: object, env: object) -> None:
+        registry.set(
+            pack.id,  # type: ignore[attr-defined]
+            pack.release,  # type: ignore[attr-defined]
+            _ShutdownRecordingHandle(pack.id, pack.release),  # type: ignore[attr-defined, arg-type]
+        )
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=registry,
+        adapter_loader=loader,
+        retained_adapter_keys=lambda: retained,
+    )
+
+    await loop.run_once()
+    assert registry.get("appium-uiautomator2", "2026.04.0") is old_handle
+    assert old_handle.shutdowns == 0
+
+    retained.clear()
+    await loop.run_once()
+    assert registry.get("appium-uiautomator2", "2026.04.0") is None
+    assert old_handle.shutdowns == 1
+
+
 @pytest.mark.asyncio
 async def test_adapter_load_failure_surfaces_as_doctor_entry() -> None:
     """A manifest-only pack (no adapter tarball) expects no adapter worker: a

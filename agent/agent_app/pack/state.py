@@ -53,6 +53,7 @@ class PackStateLoop:
     runtime_registry: RuntimeRegistry | None = None
     adapter_registry: AdapterRegistry | None = None
     adapter_loader: AdapterLoaderFn | None = None
+    retained_adapter_keys: Callable[[], set[tuple[str, str]]] | None = None
     on_status: Callable[[], None] | None = None
     _latest_desired: list[DesiredPack] | None = field(default=None, init=False, repr=False)
     _latest_status: dict[str, Any] | None = field(default=None, init=False, repr=False)
@@ -301,8 +302,13 @@ class PackStateLoop:
 
         if self.adapter_registry is not None:
             desired_keys = {(pack.id, pack.release) for pack in parsed.packs if pack.has_adapter_platform}
+            # A worker whose release left the desired list is retained while a
+            # running node's launch spec still pins that release: the node's
+            # post_session teardown must dispatch to the release it was started
+            # from. Reaped on a later sweep once nothing retains it.
+            retained_keys = self.retained_adapter_keys() if self.retained_adapter_keys is not None else set()
             for pack_id, release in self.adapter_registry.keys():  # noqa: SIM118
-                if (pack_id, release) in desired_keys:
+                if (pack_id, release) in desired_keys or (pack_id, release) in retained_keys:
                     continue
                 handle = self.adapter_registry.remove(pack_id, release)
                 if handle is not None:
