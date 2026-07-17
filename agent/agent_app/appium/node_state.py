@@ -116,6 +116,31 @@ class NodeStateLoop:
             local.connection_target != launch.connection_target or local.platform_id != launch.platform_id
         )
         needs_restart = force_restart or (target_changed and not boot_resolves_target)
+        launch_specs = getattr(self.manager, "_launch_specs", {})
+        current = launch_specs.get(spec.port)
+        stored_release = getattr(current, "pack_release", None)
+        if (
+            local is not None
+            and not needs_restart
+            and stored_release is not None
+            and launch.pack_release is not None
+            and stored_release != launch.pack_release
+        ):
+            # Pack release switch: the running node was started from another
+            # release than the one this launch payload derives from. Restart it
+            # drain-safely — only once the local Appium reports zero live
+            # sessions; an active or unknown session state waits for the next
+            # tick rather than killing in-flight work.
+            active = await self.manager._node_has_active_session(spec.port)
+            if active is False:
+                needs_restart = True
+            else:
+                logger.info(
+                    "node %s pack release changed (%s -> %s); waiting for the active session to end",
+                    spec.device_id,
+                    stored_release,
+                    launch.pack_release,
+                )
         if local is not None and needs_restart:
             await self.manager.stop(spec.port)
             running_by_port.pop(spec.port, None)
@@ -148,8 +173,6 @@ class NodeStateLoop:
             running_by_port[spec.port] = started
             self._notify()
         else:
-            launch_specs = getattr(self.manager, "_launch_specs", {})
-            current = launch_specs.get(spec.port)
             flags_changed = current is None or (
                 current.accepting_new_sessions != spec.accepting_new_sessions
                 or current.stop_pending != spec.stop_pending
