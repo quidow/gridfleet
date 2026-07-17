@@ -14,6 +14,7 @@ from app.devices.services import intent_reconciler
 from app.devices.services.decision import DecisionFacts
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, release_rollout_intent_source
+from app.packs.services.release_rollout import RELEASE_ROLLOUT_INTENT_TTL_SEC
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -30,7 +31,7 @@ def _rollout_intent(device_id: uuid.UUID, *, target_release: str) -> IntentRegis
         source=release_rollout_intent_source(device_id),
         kind=CommandKind.release_rollout,
         payload={"target_release": target_release},
-        expires_at=now_utc() + timedelta(minutes=15),
+        expires_at=now_utc() + timedelta(seconds=RELEASE_ROLLOUT_INTENT_TTL_SEC),
     )
 
 

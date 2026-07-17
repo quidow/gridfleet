@@ -73,6 +73,7 @@ from app.hosts import router as hosts
 from app.hosts import router_agent as hosts_router_agent
 from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
+from app.packs.services.release_rollout import RELEASE_ROLLOUT_STAGE_INTERVAL_SEC, run_release_rollout_stage
 from app.portability import router as portability_router
 from app.runs import router as runs_router
 from app.runs.service_reaper import reap_stale_runs
@@ -164,6 +165,9 @@ def _build_janitor(app_services: AppServices) -> JanitorLoop:
         # Backstop only: release paths complete drains inline (event-driven).
         await app_services.packs.lifecycle.complete_draining_packs_once(db)
 
+    async def _release_rollout_stage(db: AsyncSession) -> None:
+        await run_release_rollout_stage(db, publisher=app_services.events.publisher)
+
     async def _data_cleanup_stage(db: AsyncSession) -> None:
         await devices.data_cleanup.cleanup_old_data(db)
 
@@ -177,6 +181,7 @@ def _build_janitor(app_services: AppServices) -> JanitorLoop:
             JanitorStage("run_reaper", JANITOR_BASE_INTERVAL_SEC, _run_reaper_stage),
             JanitorStage("fleet_capacity", 60.0, _fleet_capacity_stage),
             JanitorStage("pack_drain", 60.0, _pack_drain_stage),
+            JanitorStage("release_rollout", RELEASE_ROLLOUT_STAGE_INTERVAL_SEC, _release_rollout_stage),
             JanitorStage("data_cleanup", 3600.0, _data_cleanup_stage, skip_first_cycle=True),
             JanitorStage("flush", BACKGROUND_LOOP_FLUSH_INTERVAL_SEC, _flush_stage),
         ),
