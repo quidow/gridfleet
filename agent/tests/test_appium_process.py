@@ -340,6 +340,33 @@ async def test_process_snapshot_reports_has_active_session_true() -> None:
     }
 
 
+async def test_running_node_snapshot_reports_pack_release() -> None:
+    """The backend needs the release a node was started from for rollouts."""
+    manager = AppiumProcessManager()
+    manager._launch_specs[4770] = AppiumLaunchSpec(
+        connection_target="00008030-000455193E38402E",
+        port=4770,
+        extra_caps=None,
+        session_override=True,
+        device_type="real_device",
+        ip_address=None,
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        pack_release="2026.07.2",
+    )
+    info = AppiumProcessInfo(port=4770, pid=111, connection_target="00008030-000455193E38402E", platform_id="ios")
+
+    with patch.object(manager, "_node_has_active_session", new_callable=AsyncMock, return_value=False):
+        snapshot = await manager._running_node_snapshot(info)
+
+    assert snapshot["pack_release"] == "2026.07.2"
+
+    manager._launch_specs.pop(4770)
+    with patch.object(manager, "_node_has_active_session", new_callable=AsyncMock, return_value=False):
+        snapshot = await manager._running_node_snapshot(info)
+    assert "pack_release" not in snapshot
+
+
 async def test_process_snapshot_reports_spawn_time() -> None:
     manager = AppiumProcessManager()
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
