@@ -397,7 +397,7 @@ class ReconcilerService:
             if stale_rows:
                 clear_observed = self._write_observed_factory()
                 for row in stale_rows:
-                    await clear_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
+                    await clear_observed(row=row, state="stopped", port=None, pid=None, details=NodeStartDetails())
             active_rows = [
                 row
                 for row in rows

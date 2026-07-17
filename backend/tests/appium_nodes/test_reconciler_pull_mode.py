@@ -23,6 +23,7 @@ from app.core.metrics_recorders import (
     APPIUM_PULL_MODE_ORPHANS_OBSERVED,
     APPIUM_PULL_MODE_SKIPPED_ACTIONS,
 )
+from app.core.timeutil import now_utc
 from app.devices.models import DeviceOperationalState
 from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
@@ -476,3 +477,45 @@ async def test_pull_host_port_conflict_repin_preserves_restart_watermark(
     await db_session.refresh(node)
     assert node.restart_requested_at == restart_requested_at
     assert node.desired_port != 4723
+
+
+async def test_pull_host_backoff_stale_pid_clear_uses_details_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A device in recovery backoff with a stale observed pid must be DB-cleared
+    without raising. Regression guard: the pull-mode stale-clear call site must
+    use the ``details=`` signature, not the removed ``active_connection_target``
+    kwarg (which raised TypeError and aborted the host's convergence cycle)."""
+    device_id = uuid.uuid4()
+    host_id = uuid.uuid4()
+    # In backoff (backoff_until > now), desired running, stale pid/target in DB,
+    # and the agent reports no node for it this pass → rows_needing_stale_clear
+    # selects it for a db_clear_stale_running.
+    row = _desired_row(
+        device_id=device_id,
+        host_id=host_id,
+        desired_state="stopped",
+        desired_port=None,
+        port=4723,
+        pid=999,
+        connection_target="backoff-stale",
+        active_connection_target="backoff-stale",
+    )
+    backoff = {device_id: now_utc() + timedelta(seconds=60)}
+    # No running nodes reported for this device.
+    payload = {"appium_processes": {"running_nodes": []}}
+    device = SimpleNamespace(id=device_id, appium_node=None)
+    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
+    monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
+    mark_stopped = AsyncMock()
+    monkeypatch.setattr(appium_reconciler, "mark_node_stopped", mark_stopped)
+
+    svc = _make_service(session_factory=_DummySession)
+    # Must not raise TypeError on the stale-clear _write call.
+    await svc.reconcile_host(
+        host_id=host_id,
+        host_ip="10.0.0.1",
+        agent_port=5100,
+        rows=[row],
+        backoff_until_by_device=backoff,
+        payload=payload,
+    )
+    mark_stopped.assert_awaited_once()
