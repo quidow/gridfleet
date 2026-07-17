@@ -185,6 +185,73 @@ async def test_build_node_launch_payload_stamps_pack_release(
 
 
 @pytest.mark.asyncio
+async def test_build_node_launch_payload_rejects_mid_build_release_switch(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The payload's release-owned fields are read in separate queries; under
+    READ COMMITTED a concurrent release switch can tear them. The build reads
+    the selected release at entry and refuses the payload when the stamp
+    derived at the end disagrees — the agent skips this tick and the next poll
+    derives everything from the new release."""
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from app.appium_nodes.exceptions import NodeManagerError
+    from app.packs.manifest import load_manifest_yaml
+    from app.packs.models import DriverPack
+    from app.packs.services import start_shim as pack_start_shim
+    from tests.packs.factories import seed_manifest_pack
+
+    await seed_test_packs(db_session)
+    fixture = Path(__file__).parent / "fixtures" / "manifests" / "appium-xcuitest.yaml"
+    second = load_manifest_yaml(fixture.read_text().replace("release: 2026.04.12", "release: 9999.01.1"))
+    await seed_manifest_pack(db_session, second)
+    pack = (await db_session.execute(select(DriverPack).where(DriverPack.id == "appium-xcuitest"))).scalar_one()
+    pack.current_release = "2026.04.12"
+    await db_session.commit()
+
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        identity_value="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        connection_target="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+        name="Living Room",
+        os_version="26.4",
+        host_id=uuid.uuid4(),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.5",
+        device_config={"wda_base_url": "http://192.168.1.5"},
+    )
+
+    real_build = pack_start_shim.build_pack_start_payload
+
+    async def switching_build(session: AsyncSession, **kwargs: object) -> dict[str, object] | None:
+        row = (await session.execute(select(DriverPack).where(DriverPack.id == "appium-xcuitest"))).scalar_one()
+        row.current_release = "9999.01.1"
+        await session.flush()
+        return await real_build(session, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", AsyncMock(return_value=None))
+    monkeypatch.setattr(appium_reconciler_agent, "build_pack_start_payload", switching_build)
+
+    with pytest.raises(NodeManagerError, match="release"):
+        await appium_reconciler_agent.build_node_launch_payload(
+            db_session,
+            device,
+            port=4723,
+            allocated_caps=None,
+            settings=FakeSettingsReader({}),
+        )
+
+
+@pytest.mark.asyncio
 async def test_build_node_launch_payload_sends_device_field_caps_only_to_appium_defaults(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

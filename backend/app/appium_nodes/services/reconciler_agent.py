@@ -316,6 +316,13 @@ async def build_node_launch_payload(
     resolved_pack = resolve_pack_for_device(device)
     if resolved_pack is None:
         raise NodeManagerError(f"Device {device.id} has no driver pack platform")
+    # Entry-time read of the selected release. Every release-owned field below
+    # (stereotype, platform data, appium_env, insecure_features) is loaded in
+    # its own query under READ COMMITTED, so a concurrent release switch can
+    # tear them. The stamp computed at the end must match this read or the
+    # payload is refused — the agent skips the tick and the next poll derives
+    # everything from the new release.
+    entry_release = await pack_start_shim.selected_release_id(db, resolved_pack[0])
     stereotype = await render_stereotype(
         db,
         pack_id=resolved_pack[0],
@@ -343,6 +350,10 @@ async def build_node_launch_payload(
         pack_overrides = await build_pack_start_payload(db, device=device, stereotype=stereotype)
     except PackStartPayloadError as exc:
         raise NodeManagerError(str(exc)) from exc
+    if pack_overrides is not None and pack_overrides.get("pack_release") != entry_release:
+        raise NodeManagerError(
+            f"pack {resolved_pack[0]!r} release changed while building the launch payload; retrying next poll"
+        )
     if pack_overrides is not None:
         payload["pack_id"] = pack_overrides["pack_id"]
         payload["platform_id"] = pack_overrides["platform_id"]
