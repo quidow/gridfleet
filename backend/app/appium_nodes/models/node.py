@@ -34,6 +34,10 @@ class AppiumNode(Base):
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Observation: the pack release the agent started this node from (folded
+    # from the status-push running-node snapshot). Read by the release-rollout
+    # detector; NULL for nodes started by agents predating the field.
+    observed_pack_release: Mapped[str | None] = mapped_column(String, nullable=True)
     # DB constraints keep desired_state to running/stopped and require stopped intent to have no desired_port.
     desired_state: Mapped[AppiumDesiredState] = mapped_column(
         Enum(AppiumDesiredState, name="nodestate", create_type=False),

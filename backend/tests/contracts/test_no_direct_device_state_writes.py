@@ -50,6 +50,12 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
             "app/appium_nodes/services/heartbeat.py",
         }
     ),
+    "observed_pack_release": frozenset(
+        {
+            # Folded from the agent status push, same writer as pid/port.
+            "app/appium_nodes/services/reconciler_agent.py",
+        }
+    ),
     "health_running": frozenset({"app/devices/services/health.py"}),
     "health_state": frozenset({"app/devices/services/health.py"}),
     "last_health_checked_at": frozenset({"app/devices/services/health.py"}),
