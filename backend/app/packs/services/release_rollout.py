@@ -26,9 +26,13 @@ RELEASE_ROLLOUT_INTENT_TTL_SEC = 900
 async def run_release_rollout_stage(db: AsyncSession, *, publisher: EventPublisher) -> None:
     devices = (
         await db.execute(
-            select(Device.id, Device.pack_id, AppiumNode.pid, AppiumNode.observed_pack_release).outerjoin(
-                AppiumNode, AppiumNode.device_id == Device.id
-            )
+            select(
+                Device.id,
+                Device.pack_id,
+                AppiumNode.pid,
+                AppiumNode.active_connection_target,
+                AppiumNode.observed_pack_release,
+            ).outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         )
     ).all()
     stored = (
@@ -39,17 +43,18 @@ async def run_release_rollout_stage(db: AsyncSession, *, publisher: EventPublish
     existing = {row.device_id: row for row in stored if row.source == release_rollout_intent_source(row.device_id)}
     selected = {
         pack_id: await selected_release_id(db, pack_id)
-        for pack_id in {pack_id for _, pack_id, _, _ in devices if pack_id is not None}
+        for pack_id in {pack_id for _, pack_id, _, _, _ in devices if pack_id is not None}
     }
     service = IntentService(db)
     expires_at = now_utc() + timedelta(seconds=RELEASE_ROLLOUT_INTENT_TTL_SEC)
 
-    for device_id, pack_id, pid, observed_release in devices:
+    for device_id, pack_id, pid, active_connection_target, observed_release in devices:
         target_release = selected.get(pack_id) if pack_id is not None else None
         row = existing.get(device_id)
         if (
             target_release is not None
             and pid is not None
+            and active_connection_target is not None
             and observed_release is not None
             and observed_release != target_release
         ):

@@ -68,7 +68,17 @@ class _IntentService:
 async def test_stage_classifies_snapshot_and_commits_each_mutation(monkeypatch: pytest.MonkeyPatch) -> None:
     ids = {
         name: uuid.uuid4()
-        for name in ("same", "changed", "converged", "stopped", "legacy", "no_node", "missing", "null_pack")
+        for name in (
+            "same",
+            "changed",
+            "converged",
+            "stopped",
+            "partial",
+            "legacy",
+            "no_node",
+            "missing",
+            "null_pack",
+        )
     }
     intents = [
         DeviceIntent(
@@ -84,14 +94,15 @@ async def test_stage_classifies_snapshot_and_commits_each_mutation(monkeypatch: 
         [
             _Result(
                 [
-                    (ids["same"], "pack-a", 11, "old"),
-                    (ids["changed"], "pack-a", 12, "old"),
-                    (ids["converged"], "pack-a", 13, "selected-a"),
-                    (ids["stopped"], "pack-a", None, "old"),
-                    (ids["legacy"], "pack-a", 14, None),
-                    (ids["no_node"], "pack-a", None, None),
-                    (ids["missing"], "pack-missing", 15, "old"),
-                    (ids["null_pack"], None, 16, "old"),
+                    (ids["same"], "pack-a", 11, "target-a", "old"),
+                    (ids["changed"], "pack-a", 12, "target-b", "old"),
+                    (ids["converged"], "pack-a", 13, "target-c", "selected-a"),
+                    (ids["stopped"], "pack-a", None, "target-d", "old"),
+                    (ids["partial"], "pack-a", 14, None, "old"),
+                    (ids["legacy"], "pack-a", 15, "target-e", None),
+                    (ids["no_node"], "pack-a", None, None, None),
+                    (ids["missing"], "pack-missing", 16, "target-f", "old"),
+                    (ids["null_pack"], None, 17, "target-g", "old"),
                 ]
             ),
             _Result(intents),
@@ -121,12 +132,13 @@ async def test_stage_classifies_snapshot_and_commits_each_mutation(monkeypatch: 
     assert set(service.revocations) == {
         ids["converged"],
         ids["stopped"],
+        ids["partial"],
         ids["legacy"],
         ids["no_node"],
         ids["missing"],
         ids["null_pack"],
     }
-    assert timeline[1::2] == ["commit"] * 8
+    assert timeline[1::2] == ["commit"] * 9
 
 
 async def _running_device(
@@ -238,6 +250,9 @@ async def test_detector_revokes_converged_intent(db_session: AsyncSession, db_ho
 async def test_detector_cleans_stopped_legacy_and_unselected_intents(db_session: AsyncSession, db_host: Host) -> None:
     await seed_test_packs(db_session)
     stopped, _ = await _running_device(db_session, db_host, name="rollout-stopped", pid=None)
+    partial, partial_node = await _running_device(db_session, db_host, name="rollout-partial")
+    partial_node.active_connection_target = None
+    await db_session.commit()
     legacy, _ = await _running_device(db_session, db_host, name="rollout-legacy", observed_release=None)
     unselected = await create_device(
         db_session,
@@ -246,9 +261,14 @@ async def test_detector_cleans_stopped_legacy_and_unselected_intents(db_session:
         pack_id="missing-pack",
         platform_id="unknown",
     )
-    for device in (stopped, legacy, unselected):
+    for device in (stopped, partial, legacy, unselected):
         await _seed_intent(db_session, device.id)
 
     await run_release_rollout_stage(db_session, publisher=event_bus)
 
-    assert [await _intent(db_session, device.id) for device in (stopped, legacy, unselected)] == [None, None, None]
+    assert [await _intent(db_session, device.id) for device in (stopped, partial, legacy, unselected)] == [
+        None,
+        None,
+        None,
+        None,
+    ]
