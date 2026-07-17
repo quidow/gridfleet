@@ -43,6 +43,7 @@ from app.devices.services.decision import (
     parse_command,
 )
 from app.devices.services.event import record_event
+from app.devices.services.intent_types import release_rollout_intent_source
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
 from app.lifecycle.services import remediation_log
@@ -327,6 +328,15 @@ async def _reconcile_loaded_device(
         .scalars()
         .all()
     )
+    rollout_source = release_rollout_intent_source(device_id)
+    rollout_row = next((row for row in stored if row.source == rollout_source), None)
+    if (
+        rollout_row is not None
+        and (rollout_row.expires_at is None or rollout_row.expires_at > now)
+        and rollout_row.payload.get("restart_requested_at") is None
+        and not await device_has_live_session(db, device_id)
+    ):
+        rollout_row.payload = {**rollout_row.payload, "restart_requested_at": now.isoformat()}
     commands = [c for c in (parse_command(row, now) for row in stored) if c is not None]
     facts = await gather_decision_facts(db, device, now)
 
