@@ -99,6 +99,7 @@ contract test for the full per-column enumeration.
 | `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` |
 | `AppiumNode.desired_state` / `desired_port` | `app.appium_nodes.services.desired_state_writer` |
 | `AppiumNode.restart_requested_at` (restart watermark) | `app.appium_nodes.services.desired_state_writer` (no clearing protocol — a satisfied watermark is inert) |
+| `AppiumNode.observed_pack_release` | `app.appium_nodes.services.reconciler_agent` (folded from the agent status-push running-node snapshot) |
 
 The remaining protected columns are appium-node **observation** state, written by
 the observed-state writers (the `app.appium_nodes.services.reconciler*` modules;
@@ -111,6 +112,12 @@ time, mirrored from the agent snapshot), `health_running`, `health_state`,
 `PROTECTED_COLUMN_WRITERS` for the exact per-column writer set rather than copying
 it into another document. Add any new sanctioned writer to that table in the same
 change as the production write.
+
+### Pack release rollout
+
+The `release_rollout` command drains a node for a selected-pack release change. In the node-process decision ladder it sits below stored and derived starts and above the in-service baseline, and maps to `running_draining`: `desired_state=running`, `accepting_new_sessions=false`, and `stop_pending=false`. The 60-second detector registers it only for a running node with a reported release that differs from the selected release; it skips legacy `observed_pack_release=NULL` nodes and revokes any existing rollout when the node is stopped, partial, legacy, converged, or no longer selected.
+
+Under the device lock, the reconciler writes `restart_requested_at` into the rollout payload only once and only after no authoritative live session remains. A rollout refresh for the same target preserves that stamp, while a changed target starts without one and receives a fresh idle-safe stamp. The detector refreshes the 15-minute TTL while the mismatch persists, so expiration restores availability if the rollout cannot complete.
 
 ### Row locking
 
