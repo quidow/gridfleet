@@ -2,6 +2,28 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.37.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.3...gridfleet-agent-v0.37.0) (2026-07-17)
+
+
+### Features
+
+* **agent:** report the started pack release in running-node snapshots ([435199f](https://github.com/quidow/gridfleet/commit/435199ffe6afa1a19a07b8c16b7737265b3a52d6))
+* **backend:** pack release rollout ([66114f5](https://github.com/quidow/gridfleet/commit/66114f5b3054b0d2337892c040b0ed279c8eb6a9))
+
+
+### Bug Fixes
+
+* **agent:** make release transitions safe for running nodes and teardown ([29cbd6d](https://github.com/quidow/gridfleet/commit/29cbd6d2cf34ff5846095439c2ca8ecd1b8e638d))
+* **agent:** never start appium nodes without the pack adapter's connection caps ([d16aa5f](https://github.com/quidow/gridfleet/commit/d16aa5fd666b027ffebd9b147a8ce62f0870de20))
+* **agent:** restart nodes drain-safely after a pack release switch ([c3ae3cf](https://github.com/quidow/gridfleet/commit/c3ae3cf545930fb636dd59ef81cef73f36fbcf49))
+* **agent:** stop phantom iOS/tvOS simulator launches on real-device hosts ([4cfd852](https://github.com/quidow/gridfleet/commit/4cfd852e755630b45d532a7e28497e56cb7ac673))
+
+
+### Dependencies
+
+* **deps:** bump httpx2 in /agent in the python-dependencies group ([#833](https://github.com/quidow/gridfleet/issues/833)) ([5ad277c](https://github.com/quidow/gridfleet/commit/5ad277cd5706975d759e78fc79f42b193c8b091e))
+* **deps:** bump the python-dependencies group across 1 directory with 2 updates ([#842](https://github.com/quidow/gridfleet/issues/842)) ([25d8f88](https://github.com/quidow/gridfleet/commit/25d8f887e8a3ad07f8ddf50ec9e0221757219bce))
+
 ## [0.36.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.2...gridfleet-agent-v0.36.3) (2026-07-14)
 
 
