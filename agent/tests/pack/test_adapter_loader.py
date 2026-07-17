@@ -39,12 +39,14 @@ async def test_prepare_adapter_site_extracts_wheel(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_adapter_wheel_raises(tmp_path: Path) -> None:
+async def test_missing_adapter_wheel_returns_none(tmp_path: Path) -> None:
+    """Tier-1 manifest-only packs ship a tarball with no adapter/*.whl — a valid
+    shape, not a load failure (docs: Minimal Packs, Three Tiers)."""
     tarball = tmp_path / "bare.tar.gz"
     with tarfile.open(tarball, "w:gz"):
         pass
-    with pytest.raises(AdapterLoadError, match="adapter"):
-        await prepare_adapter_site(tarball_path=tarball, runtime_dir=tmp_path / "runtime")
+    site = await prepare_adapter_site(tarball_path=tarball, runtime_dir=tmp_path / "runtime")
+    assert site is None
 
 
 @pytest.mark.asyncio

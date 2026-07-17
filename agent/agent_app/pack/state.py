@@ -6,7 +6,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from agent_app.pack.adapter_dispatch import adapter_supports, dispatch_doctor, missing_declared_hooks
+from agent_app.pack.adapter_dispatch import (
+    adapter_supports,
+    declared_adapter_hooks,
+    dispatch_doctor,
+    missing_declared_hooks,
+)
 from agent_app.pack.contexts import DoctorCtx
 from agent_app.pack.manifest import DesiredPack, parse_desired_payload
 from agent_app.pack.runtime_policy import resolve_runtime_spec
@@ -160,7 +165,7 @@ class PackStateLoop:
                 )
 
             if self.runtime_registry is not None:
-                self.runtime_registry.set_for_pack(pack.id, env)
+                self.runtime_registry.set_for_pack(pack.id, env, release=pack.release)
                 runtime_changed = env.runtime_id != prev_runtime_ids.get(pack_id)
                 if runtime_changed:
                     doctor_entries.extend(await self._doctor_entries_for_pack(pack, host_id=host_id))
@@ -170,6 +175,7 @@ class PackStateLoop:
                 and self.adapter_registry is not None
                 and pack.has_adapter_platform
                 and not self.adapter_registry.has(pack.id, pack.release)
+                and not self.adapter_registry.is_adapterless(pack.id, pack.release)
             ):
                 try:
                     await self.adapter_loader(pack, env)
@@ -187,6 +193,52 @@ class PackStateLoop:
             loaded_adapter = (
                 self.adapter_registry.get(pack.id, pack.release) if self.adapter_registry is not None else None
             )
+            if (
+                loaded_adapter is None
+                and self.adapter_registry is not None
+                and pack.has_adapter_platform
+                and pack.tarball_sha256
+                and not self.adapter_registry.is_adapterless(pack.id, pack.release)
+            ):
+                # The pack ships an adapter but its worker is absent after the load
+                # attempt above. Node starts for this pack defer until the worker is
+                # loaded (pre_session supplies the device connection caps), so an
+                # "installed" row would hide why devices never come up. Surface the
+                # blocked state; the doctor entry carries the load failure detail.
+                pack_entries.append(
+                    {
+                        "pack_id": pack.id,
+                        "pack_release": pack.release,
+                        "runtime_id": env.runtime_id,
+                        "status": "blocked",
+                        "blocked_reason": "adapter_load_failed",
+                    }
+                )
+                continue
+            if (
+                loaded_adapter is None
+                and self.adapter_registry is not None
+                and (not pack.tarball_sha256 or self.adapter_registry.is_adapterless(pack.id, pack.release))
+            ):
+                # The declare-it-then-implement-it rule for packs without an
+                # adapter — wheel-less tarballs and artifact-less packs alike: a
+                # declared adapter-owned capability can never be dispatched
+                # when the pack ships no adapter at all.
+                required = declared_adapter_hooks(pack)
+                if required:
+                    pack_entries.append(
+                        {
+                            "pack_id": pack.id,
+                            "pack_release": pack.release,
+                            "runtime_id": env.runtime_id,
+                            "status": "blocked",
+                            "blocked_reason": (
+                                "manifest declares capabilities that require an adapter, "
+                                "but the tarball ships none: " + ", ".join(required)
+                            ),
+                        }
+                    )
+                    continue
             if loaded_adapter is not None and not getattr(loaded_adapter, "alive", True):
                 doctor_entries.append(
                     {
@@ -255,6 +307,10 @@ class PackStateLoop:
                 handle = self.adapter_registry.remove(pack_id, release)
                 if handle is not None:
                     await handle.shutdown()
+            # Adapterless marks have no worker handle, so the removal loop above
+            # never reaps them; a retired release re-uploaded with a wheel must
+            # not be silently skipped by a stale mark.
+            self.adapter_registry.purge_adapterless_except(desired_keys)
 
         self._latest_status = {
             "runtimes": runtime_entries,

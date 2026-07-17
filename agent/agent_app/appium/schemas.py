@@ -26,6 +26,10 @@ class AppiumStartRequest(BaseModel):
     headless: bool = True
     pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
     platform_id: str = Field(min_length=1, pattern=PLATFORM_ID_PATTERN)
+    # Release the backend derived this launch payload from; None on payloads
+    # from backends that predate the field. The start gate requires it to match
+    # the pack-state cache's desired release exactly.
+    pack_release: str | None = None
 
     appium_platform_name: str | None = None
     appium_env: dict[str, str] | None = None

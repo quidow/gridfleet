@@ -23,7 +23,7 @@ from agent_app.pack.adapter_types import (
 )
 
 if TYPE_CHECKING:
-    from agent_app.pack.manifest import DesiredPack
+    from agent_app.pack.manifest import DesiredPack, DesiredPlatform
     from agent_app.pack.worker_supervisor import WorkerHandle
 
 ADAPTER_HOOK_TIMEOUT_SECONDS: float = 30.0
@@ -34,11 +34,26 @@ def adapter_supports(handle: WorkerHandle, hook: str) -> bool:
     return hook in handle.supported_hooks
 
 
+def _platform_declares_lifecycle(platform: DesiredPlatform) -> bool:
+    if platform.lifecycle_actions:
+        return True
+    # device_type_overrides may declare lifecycle_actions the base platform
+    # omits (e.g. the xcuitest simulator override's boot/shutdown).
+    return any(
+        isinstance(override, dict) and override.get("lifecycle_actions")
+        for override in platform.device_type_overrides.values()
+    )
+
+
+def declared_adapter_hooks(pack: DesiredPack) -> list[str]:
+    """Adapter hooks the pack's manifest declarations require (the
+    declare-it-then-implement-it rule)."""
+    declares_lifecycle = any(_platform_declares_lifecycle(platform) for platform in pack.platforms)
+    return ["lifecycle_action"] if declares_lifecycle else []
+
+
 def missing_declared_hooks(pack: DesiredPack, handle: WorkerHandle) -> list[str]:
-    declares_lifecycle = any(platform.lifecycle_actions for platform in pack.platforms)
-    if declares_lifecycle and not adapter_supports(handle, "lifecycle_action"):
-        return ["lifecycle_action"]
-    return []
+    return [hook for hook in declared_adapter_hooks(pack) if not adapter_supports(handle, hook)]
 
 
 class AdapterHookTimeoutError(Exception):

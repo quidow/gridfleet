@@ -37,6 +37,10 @@ from agent_app.appium.process import (
 )
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
+from agent_app.pack.manifest import DesiredPack, DesiredPlatform
+from agent_app.pack.runtime import RuntimeEnv
+from agent_app.pack.runtime_registry import RuntimeRegistry
+from agent_app.pack.runtime_types import AppiumInstallable
 from agent_app.tools.paths import _parse_node_version
 from tests.pack.fake_worker import FakeWorkerHandle
 
@@ -1393,6 +1397,564 @@ async def test_start_defers_when_boot_succeeds_without_resolved_target() -> None
 
     # No Appium process is spawned for a deferred start.
     assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+def _desired_pack(
+    pack_id: str,
+    *,
+    tarball_sha256: str | None,
+    lifecycle_actions: list[dict[str, object]] | None = None,
+) -> DesiredPack:
+    return DesiredPack(
+        id=pack_id,
+        release="2026.07.1",
+        appium_server=AppiumInstallable(
+            source="npm", package="appium", version="==3.3.1", recommended=None, known_bad=[]
+        ),
+        appium_driver=AppiumInstallable(
+            source="npm", package="appium-xcuitest-driver", version="==10.43.1", recommended=None, known_bad=[]
+        ),
+        platforms=[
+            DesiredPlatform(
+                id="ios",
+                automation_name="XCUITest",
+                device_types=["real_device", "simulator"],
+                connection_types=["usb"],
+                identity_scheme="apple_udid",
+                identity_scope="global",
+                stereotype={},
+                lifecycle_actions=list(lifecycle_actions) if lifecycle_actions else [],
+            )
+        ],
+        tarball_sha256=tarball_sha256,
+    )
+
+
+async def test_start_defers_when_adapter_shipping_pack_has_no_loaded_worker() -> None:
+    """An adapter-shipping pack whose worker is not loaded yet must defer the start.
+
+    ``pre_session`` is the only writer of the device connection caps
+    (``appium:udid``) into ``--default-capabilities``; a node launched without
+    them serves every udid-less session create (viability probes, raw client
+    bodies) from the driver's fallback — XCUITest creates and boots a Simulator
+    on a real-device host."""
+    manager = AppiumProcessManager()
+    manager.set_adapter_registry(AdapterRegistry())
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="adapter"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4754,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_defers_when_desired_packs_are_unknown() -> None:
+    """Before the pack state loop's first reconcile the agent cannot tell whether
+    the pack ships an adapter — starting anyway risks an adapter-less node."""
+    manager = AppiumProcessManager()
+    manager.set_adapter_registry(AdapterRegistry())
+    manager.set_desired_packs_provider(lambda: None)
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="adapter"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4754,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_proceeds_for_adapterless_tarball_pack() -> None:
+    """A Tier-1 manifest-only pack ships a tarball with no adapter wheel; once
+    the loader has recorded that, starts must proceed without adapter caps."""
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5005)
+    adapter_registry = AdapterRegistry()
+    adapter_registry.mark_adapterless("appium-xcuitest", "2026.07.1")
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            return_value=appium_proc,
+        ) as create_proc,
+    ):
+        info = await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4757,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert info.port == 4757
+    assert create_proc.await_args_list
+    # The launch spec pins the release the start actually resolved (the request
+    # itself was legacy/unversioned): an auto-restart after an upgrade must
+    # defer on the release mismatch instead of silently rebinding the old
+    # launch metadata and merged caps to the newer release.
+    assert manager._launch_specs[4757].pack_release == "2026.07.1"
+    await manager.shutdown()
+
+
+async def test_start_defers_until_desired_release_adapter_is_loaded() -> None:
+    """During a pack upgrade the old release's worker stays current while the new
+    release reconciles. Starting with it would bake old-adapter caps onto the
+    already-swapped new runtime — a mixed node nothing restarts afterwards.
+    Require the desired release's worker."""
+
+    class _OldAdapter:
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            return {"appium:udid": "stale"}
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set(
+        "appium-xcuitest", "2026.06.0", FakeWorkerHandle(_OldAdapter(), pack_id="appium-xcuitest", release="2026.06.0")
+    )  # type: ignore[arg-type]
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="adapter"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4758,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_defers_when_release_changes_during_start() -> None:
+    """The resolved release is revalidated under the start lock: a pack-loop
+    reconcile that publishes a new release while this start awaits pre_session
+    (or the lock) must defer, not pair the old release's caps with the newly
+    swapped runtime."""
+
+    class _NewAdapter:
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            return {"appium:udid": "fresh"}
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    desired = [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)]
+
+    new_pack = _desired_pack("appium-xcuitest", tarball_sha256="b" * 64)
+    new_pack.release = "2026.08.0"
+
+    class _RacingAdapter:
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            # A pack-loop reconcile completes mid-start: the desired list flips
+            # to the new release and its worker finishes loading.
+            desired[0] = new_pack
+            adapter_registry.set(
+                "appium-xcuitest",
+                "2026.08.0",
+                FakeWorkerHandle(_NewAdapter(), pack_id="appium-xcuitest", release="2026.08.0"),  # type: ignore[arg-type]
+            )
+            return {"appium:udid": "stale"}
+
+    adapter_registry.set(
+        "appium-xcuitest",
+        "2026.07.1",
+        FakeWorkerHandle(_RacingAdapter(), pack_id="appium-xcuitest", release="2026.07.1"),  # type: ignore[arg-type]
+    )
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: desired)
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="changed during start"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4759,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_defers_when_pack_missing_from_known_desired_list() -> None:
+    """A known desired list that omits the pack means it was disabled or
+    retired; the stale still-current worker must not serve the start while
+    cleanup is in flight."""
+
+    class _StaleAdapter:
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            return {"appium:udid": "stale"}
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set(
+        "appium-xcuitest",
+        "2026.07.1",
+        FakeWorkerHandle(_StaleAdapter(), pack_id="appium-xcuitest", release="2026.07.1"),  # type: ignore[arg-type]
+    )
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-uiautomator2", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="desired"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4761,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_does_not_boot_through_stale_worker_during_upgrade() -> None:
+    """During an upgrade the retired release's worker stays current until the new
+    one loads; the boot hook must not run on it — the deferral has to land before
+    any adapter side effect, or every retry repeats the stale boot."""
+    boot_calls: list[str] = []
+
+    class _OldAdapter:
+        async def lifecycle_action(self, action_id: str, args: dict[str, object], ctx: object) -> LifecycleActionResult:
+            boot_calls.append(action_id)
+            return LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
+
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            return {"appium:udid": "stale"}
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set(
+        "appium-uiautomator2",
+        "2026.06.0",
+        FakeWorkerHandle(_OldAdapter(), pack_id="appium-uiautomator2", release="2026.06.0"),  # type: ignore[arg-type]
+    )
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-uiautomator2", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="adapter"),
+    ):
+        await manager.start(
+            connection_target="Pixel_8_API_35",
+            port=4762,
+            device_type="emulator",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            lifecycle_actions=[{"id": "boot"}],
+        )
+
+    assert boot_calls == []
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_defers_on_pack_release_mismatch_with_desired_list() -> None:
+    """The backend stamps the launch payload with the release its caps and
+    lifecycle data came from. After a backend release switch, the node poll can
+    deliver that new-release launch while the pack cache still serves the old
+    release (the polls are independent) — a start in that window pairs launch
+    data and runtime/worker from different releases, and nothing restarts the
+    node afterwards. Require exact agreement."""
+
+    class _Adapter:
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            return {"appium:udid": "x"}
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set(
+        "appium-xcuitest",
+        "2026.07.1",
+        FakeWorkerHandle(_Adapter(), pack_id="appium-xcuitest", release="2026.07.1"),  # type: ignore[arg-type]
+    )
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="mismatch"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4764,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+            pack_release="2026.08.0",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_defers_when_adapterless_release_changes_during_start() -> None:
+    """Release identity is tracked even when no worker exists: an adapterless
+    release swap between resolution and the locked revalidation must defer, not
+    pair the old launch data with the new release's runtime."""
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.mark_adapterless("appium-xcuitest", "2026.07.1")
+    adapter_registry.mark_adapterless("appium-xcuitest", "2026.08.0")
+    new_pack = _desired_pack("appium-xcuitest", tarball_sha256="b" * 64)
+    new_pack.release = "2026.08.0"
+    calls = {"count": 0}
+
+    def provider() -> list[DesiredPack]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)]
+        return [new_pack]
+
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(provider)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="changed during start"),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4763,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+@pytest.mark.parametrize("tarball_sha256", ["a" * 64, None], ids=["adapterless_tarball", "artifact_less"])
+async def test_start_defers_when_pack_without_adapter_declares_lifecycle_hooks(tarball_sha256: str | None) -> None:
+    """A pack that declares lifecycle_actions but has no adapter worker can
+    never dispatch its boot hook; silently skipping boot and spawning Appium
+    anyway launches nodes for devices that were never booted. Defer locally —
+    the blocked host-pack status does not stop the backend desired-node
+    endpoint from sending launch data."""
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    if tarball_sha256 is not None:
+        adapter_registry.mark_adapterless("appium-xcuitest", "2026.07.1")
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(
+        lambda: [_desired_pack("appium-xcuitest", tarball_sha256=tarball_sha256, lifecycle_actions=[{"id": "boot"}])]
+    )
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="adapter"),
+    ):
+        await manager.start(
+            connection_target="SIM-UDID",
+            port=4767,
+            device_type="simulator",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+            lifecycle_actions=[{"id": "boot"}],
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_spawn_env_ignores_stale_current_worker_when_resolved_adapterless() -> None:
+    """The spawn path must use the resolved worker snapshot, not a fresh
+    get_current() lookup: during an adapter→adapterless transition the retired
+    worker stays current until cleanup, and its subprocess env (PATH dirs, env
+    vars) must not leak into the new release's Appium process."""
+
+    class _StaleHandle:
+        pack_id = "appium-xcuitest"
+        release = "2026.06.0"
+        supported_hooks = frozenset({"pre_session"})
+        alive = True
+
+        def subprocess_env(self) -> SubprocessEnvContribution:
+            return SubprocessEnvContribution(extra_path_dirs=["/stale/bin"], env_vars={"STALE_ADAPTER": "1"})
+
+    captured: dict[str, Any] = {}
+
+    async def fake_spawn(*cmd: str, **kwargs: object) -> FakeProcess:
+        captured["env"] = kwargs.get("env")
+        return FakeProcess(pid=5007)
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set("appium-xcuitest", "2026.06.0", _StaleHandle())  # type: ignore[arg-type]
+    adapter_registry.mark_adapterless("appium-xcuitest", "2026.07.1")
+    manager.set_adapter_registry(adapter_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-xcuitest", tarball_sha256="a" * 64)])
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", side_effect=fake_spawn),
+    ):
+        await manager.start(
+            connection_target="00008030-000455193E38402E",
+            port=4768,
+            device_type="real_device",
+            pack_id="appium-xcuitest",
+            platform_id="ios",
+        )
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert "STALE_ADAPTER" not in env
+    assert "/stale/bin" not in env.get("PATH", "")
+    await manager.shutdown()
+
+
+async def test_start_defers_when_runtime_release_is_stale() -> None:
+    """An artifact-less release bump publishes the new desired list before the
+    runtime reconciles (and a failed reconcile retains the old env). The start
+    gate must require the runtime recorded for the exact desired release, or
+    the old runtime launches with the new release's payload."""
+    manager = AppiumProcessManager()
+    manager.set_adapter_registry(AdapterRegistry())
+    runtime_registry = RuntimeRegistry()
+    runtime_registry.set_for_pack(
+        "appium-roku-dlenroc",
+        RuntimeEnv(
+            runtime_id="old-runtime",
+            appium_home="/fake/old",
+            appium_bin="/fake/old/node_modules/.bin/appium",
+            server_package="appium",
+            server_version="3.0.0",
+        ),
+        release="2026.06.0",
+    )
+    manager.set_runtime_registry(runtime_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-roku-dlenroc", tarball_sha256=None)])
+
+    with (
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
+        pytest.raises(StartDeferredError, match="runtime"),
+    ):
+        await manager.start(
+            connection_target="192.168.0.10",
+            port=4765,
+            device_type="real_device",
+            pack_id="appium-roku-dlenroc",
+            platform_id="roku",
+        )
+
+    assert not create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_proceeds_when_runtime_release_matches() -> None:
+    """Steady state: the runtime recorded for the desired release lets the
+    start proceed."""
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5006)
+    manager.set_adapter_registry(AdapterRegistry())
+    runtime_registry = RuntimeRegistry()
+    runtime_registry.set_for_pack(
+        "appium-roku-dlenroc",
+        RuntimeEnv(
+            runtime_id="current-runtime",
+            appium_home="/fake/current",
+            appium_bin="/fake/current/node_modules/.bin/appium",
+            server_package="appium",
+            server_version="3.0.0",
+        ),
+        release="2026.07.1",
+    )
+    manager.set_runtime_registry(runtime_registry)
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-roku-dlenroc", tarball_sha256=None)])
+
+    with (
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            return_value=appium_proc,
+        ) as create_proc,
+    ):
+        info = await manager.start(
+            connection_target="192.168.0.10",
+            port=4766,
+            device_type="real_device",
+            pack_id="appium-roku-dlenroc",
+            platform_id="roku",
+        )
+
+    assert info.port == 4766
+    assert create_proc.await_args_list
+    await manager.shutdown()
+
+
+async def test_start_proceeds_for_pack_without_adapter_tarball() -> None:
+    """A manifest-only pack (no adapter tarball) legitimately has no worker; its
+    nodes must keep starting without adapter caps."""
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5004)
+    manager.set_adapter_registry(AdapterRegistry())
+    manager.set_desired_packs_provider(lambda: [_desired_pack("appium-roku-dlenroc", tarball_sha256=None)])
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            return_value=appium_proc,
+        ) as create_proc,
+    ):
+        info = await manager.start(
+            connection_target="192.168.0.10",
+            port=4755,
+            device_type="real_device",
+            pack_id="appium-roku-dlenroc",
+            platform_id="roku",
+        )
+
+    assert info.port == 4755
+    assert create_proc.await_args_list
     await manager.shutdown()
 
 

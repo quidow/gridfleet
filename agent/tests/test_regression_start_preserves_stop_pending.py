@@ -27,7 +27,9 @@ async def test_start_with_stop_pending_preserves_stop_intent(monkeypatch: pytest
     fake_proc.returncode = None
     fake_proc.pid = 12345
 
-    async def fake_start_appium_server(spec: object, *, clear_logs_on_failure: bool) -> MagicMock:
+    async def fake_start_appium_server(
+        spec: object, *, clear_logs_on_failure: bool, pack_worker: object = None
+    ) -> MagicMock:
         del spec, clear_logs_on_failure
         return fake_proc
 

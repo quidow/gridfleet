@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -39,6 +40,7 @@ from agent_app.config import agent_settings
 from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_dispatch import (
     adapter_supports,
+    declared_adapter_hooks,
     dispatch_lifecycle_action,
     dispatch_post_session,
     dispatch_pre_session,
@@ -46,7 +48,9 @@ from agent_app.pack.adapter_dispatch import (
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import SessionOutcome, SessionSpec, SubprocessEnvContribution
 from agent_app.pack.contexts import LifecycleCtx
+from agent_app.pack.manifest import DesiredPack
 from agent_app.pack.runtime_registry import RuntimeRegistry
+from agent_app.pack.worker_supervisor import WorkerHandle
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +258,7 @@ class AppiumLaunchSpec:
     ip_address: str | None
     pack_id: str
     platform_id: str
+    pack_release: str | None = None
     accepting_new_sessions: bool = True
     stop_pending: bool = False
     grid_run_id: uuid.UUID | None = None
@@ -336,6 +341,7 @@ class AppiumProcessManager:
         self._intentional_stop_ports: set[int] = set()
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
+        self._desired_packs_provider: Callable[[], list[DesiredPack] | None] | None = None
         self._start_lock = asyncio.Lock()
 
     def set_runtime_registry(self, registry: RuntimeRegistry) -> None:
@@ -343,6 +349,87 @@ class AppiumProcessManager:
 
     def set_adapter_registry(self, registry: AdapterRegistry) -> None:
         self._adapter_registry = registry
+
+    def set_desired_packs_provider(self, provider: Callable[[], list[DesiredPack] | None]) -> None:
+        self._desired_packs_provider = provider
+
+    def _resolve_pack_worker(
+        self, registry: AdapterRegistry, pack_id: str, *, requested_release: str | None
+    ) -> tuple[str | None, WorkerHandle | None]:
+        """Resolve the (release, worker) snapshot this start binds to — the
+        worker serves both the boot lifecycle dispatch and pre_session.
+
+        The worker is None when the pack legitimately has no adapter — no
+        tarball, or a tarball the loader inspected and marked adapterless
+        (Tier-1 manifest-only pack); the release still identifies what was
+        resolved so the locked revalidation can detect a swap. Raises
+        StartDeferredError while that is not yet known or the desired release's
+        worker is not loaded: pre_session is the only writer of the device
+        connection caps (e.g. appium:udid), and a node started without them
+        serves every udid-less session create from the driver's fallback —
+        XCUITest creates and boots a Simulator on a real-device host. The
+        desired release is required exactly: during an upgrade the old release's
+        worker stays current while the new runtime is already registered, and a
+        start in that window would bake stale adapter caps onto the new runtime
+        with nothing restarting the mixed node later.
+        """
+        packs = self._desired_packs_provider() if self._desired_packs_provider is not None else None
+        if packs is None:
+            # Desired packs unknown (unwired provider, or before the pack state
+            # loop's first fetch): fall back to the current handle; with nothing
+            # loaded, defer rather than start a bare node. A launch pinned to a
+            # release must not be served by a different release's handle.
+            handle = registry.get_current(pack_id)
+            if handle is None:
+                raise StartDeferredError(f"driver-pack adapter for {pack_id!r} is not loaded yet")
+            if requested_release is not None and handle.release != requested_release:
+                raise StartDeferredError(
+                    f"driver-pack adapter for {pack_id!r} release {requested_release!r} is not loaded yet"
+                )
+            return handle.release, handle
+        desired = next((pack for pack in packs if pack.id == pack_id), None)
+        if desired is None:
+            # The list is known and omits the pack: it was disabled or retired.
+            # The still-current worker is stale — do not let it serve a start
+            # that races the pack cleanup.
+            raise StartDeferredError(f"pack {pack_id!r} is not in the desired driver-pack list")
+        if requested_release is not None and desired.release != requested_release:
+            # The node poll and pack poll are independent; after a backend
+            # release switch one cache refreshes before the other. Launch data
+            # belongs to requested_release — pairing it with another release's
+            # runtime/worker would persist a mixed node. Defer until both agree.
+            raise StartDeferredError(
+                f"pack {pack_id!r} release mismatch: launch expects {requested_release!r}, "
+                f"desired list has {desired.release!r}"
+            )
+        if self._runtime_registry is not None and self._runtime_registry.release_for_pack(pack_id) != desired.release:
+            # The desired list publishes before the runtime reconciles, and a
+            # failed reconcile retains the previous env. Without this check an
+            # artifact-less release bump would launch the old runtime with the
+            # new release's payload (adapter packs are covered indirectly — the
+            # new worker only loads after a successful runtime install).
+            raise StartDeferredError(f"runtime for pack {pack_id!r} release {desired.release!r} is not installed yet")
+        if not (desired.tarball_sha256 and desired.has_adapter_platform) or registry.is_adapterless(
+            pack_id, desired.release
+        ):
+            # No adapter can ever exist for this release. If the manifest still
+            # declares adapter-owned hooks (lifecycle boot/shutdown/...), the
+            # start must not proceed — the boot dispatch would silently no-op
+            # and Appium would spawn for a device that was never booted. The
+            # pack reports blocked for the same reason; the backend desired-node
+            # endpoint keeps sending launch data regardless, so the gate is here.
+            required = declared_adapter_hooks(desired)
+            if required:
+                raise StartDeferredError(
+                    f"pack {pack_id!r} declares hooks that require an adapter it does not ship: " + ", ".join(required)
+                )
+            return desired.release, None
+        handle = registry.get(pack_id, desired.release)
+        if handle is None:
+            raise StartDeferredError(
+                f"driver-pack adapter for {pack_id!r} release {desired.release!r} is not loaded yet"
+            )
+        return desired.release, handle
 
     def start_log_maintenance(self) -> None:
         """Sweep orphaned Appium log files and start the periodic size-cap pass."""
@@ -636,6 +723,7 @@ class AppiumProcessManager:
         spec: AppiumLaunchSpec,
         *,
         clear_logs_on_failure: bool,
+        pack_worker: WorkerHandle | None = None,
     ) -> asyncio.subprocess.Process:
         appium_platform = spec.appium_platform_name or spec.platform_id
         extra_caps = dict(spec.extra_caps) if spec.extra_caps is not None else None
@@ -646,8 +734,10 @@ class AppiumProcessManager:
         caps = sanitize_appium_driver_capabilities(caps)
 
         invocation = resolve_appium_invocation_for_pack(pack_id=spec.pack_id, registry=self._runtime_registry)
-        handle = self._adapter_registry.get_current(spec.pack_id) if self._adapter_registry is not None else None
-        adapter_env = getattr(handle, "subprocess_env", None) if handle is not None else None
+        # The caller's resolved worker snapshot — not a fresh get_current()
+        # lookup, which can still point at a retired release's worker during an
+        # adapter→adapterless transition and leak its subprocess env.
+        adapter_env = getattr(pack_worker, "subprocess_env", None) if pack_worker is not None else None
         if callable(adapter_env):
             adapter_env = adapter_env()
         env = build_env(
@@ -733,6 +823,7 @@ class AppiumProcessManager:
         *,
         pack_id: str,
         extra_caps: dict[str, Any] | None = None,
+        pack_release: str | None = None,
         accepting_new_sessions: bool = True,
         stop_pending: bool = False,
         grid_run_id: uuid.UUID | None = None,
@@ -753,13 +844,18 @@ class AppiumProcessManager:
         _validate_appium_port_in_range(port)
         self._cancel_task(self._appium_restart_tasks, port)
         resolved_connection_target = connection_target
+        pack_worker: WorkerHandle | None = None
+        pack_worker_release: str | None = None
+        if self._adapter_registry is not None:
+            pack_worker_release, pack_worker = self._resolve_pack_worker(
+                self._adapter_registry, pack_id, requested_release=pack_release
+            )
         if self._adapter_registry is not None and _has_lifecycle_action(lifecycle_actions or [], "boot"):
-            handle = self._adapter_registry.get_current(pack_id)
-            if handle is None or not adapter_supports(handle, "lifecycle_action"):
+            if pack_worker is None or not adapter_supports(pack_worker, "lifecycle_action"):
                 result = None
             else:
                 lifecycle_result = await dispatch_lifecycle_action(
-                    handle,
+                    pack_worker,
                     "boot",
                     {"headless": headless},
                     LifecycleCtx(host_id="", device_identity_value=connection_target),
@@ -784,22 +880,20 @@ class AppiumProcessManager:
                 # once boot resolves the serial the start proceeds with a usable udid.
                 raise StartDeferredError(f"boot for {connection_target!r} has not resolved a device serial yet")
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
-        if self._adapter_registry is not None:
-            handle = self._adapter_registry.get_current(pack_id)
-            if handle is not None:
-                if not adapter_supports(handle, "pre_session"):
-                    adapter_caps = {}
-                else:
-                    adapter_caps = await dispatch_pre_session(
-                        handle,
-                        SessionSpec(
-                            pack_id=pack_id,
-                            platform_id=platform_id,
-                            device_identity_value=resolved_connection_target,
-                            capabilities=merged_extra_caps,
-                        ),
-                    )
-                merged_extra_caps.update(adapter_caps)
+        if pack_worker is not None:
+            if not adapter_supports(pack_worker, "pre_session"):
+                adapter_caps = {}
+            else:
+                adapter_caps = await dispatch_pre_session(
+                    pack_worker,
+                    SessionSpec(
+                        pack_id=pack_id,
+                        platform_id=platform_id,
+                        device_identity_value=resolved_connection_target,
+                        capabilities=merged_extra_caps,
+                    ),
+                )
+            merged_extra_caps.update(adapter_caps)
         spec = AppiumLaunchSpec(
             connection_target=resolved_connection_target,
             port=port,
@@ -812,6 +906,10 @@ class AppiumProcessManager:
             ip_address=ip_address,
             pack_id=pack_id,
             platform_id=platform_id,
+            # Pin the release this start resolved (covers legacy unversioned
+            # payloads too) so an auto-restart replays against the same release
+            # and defers on a mismatch instead of rebinding old launch data.
+            pack_release=pack_worker_release if self._adapter_registry is not None else pack_release,
             appium_platform_name=appium_platform_name,
             appium_env=dict(appium_env) if appium_env else None,
             insecure_features=list(insecure_features) if insecure_features else [],
@@ -832,6 +930,19 @@ class AppiumProcessManager:
                     f"Appium already running for target {resolved_connection_target!r} on port {duplicate.port}"
                 )
 
+            if self._adapter_registry is not None:
+                # Revalidate under the lock: a pack-loop reconcile may have
+                # published a different release while this start awaited boot,
+                # pre_session, or the lock. The boot side effects and merged
+                # caps belong to the snapshot resolved above; spawning them
+                # onto a swapped runtime would persist a mixed node. Defer so
+                # the retry re-derives everything against the new release.
+                revalidated_release, revalidated_worker = self._resolve_pack_worker(
+                    self._adapter_registry, pack_id, requested_release=pack_release
+                )
+                if revalidated_release != pack_worker_release or (revalidated_worker is None) != (pack_worker is None):
+                    raise StartDeferredError(f"driver-pack release for {pack_id!r} changed during start")
+
             self._launch_specs[port] = spec
             self._intentional_stop_ports.discard(port)
             # Honor the operator's stop_pending intent across restarts: when
@@ -844,7 +955,9 @@ class AppiumProcessManager:
                 self._stop_pending_ports.add(port)
             else:
                 self._stop_pending_ports.discard(port)
-            appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
+            appium_proc = await self._start_appium_server(
+                spec, clear_logs_on_failure=port not in self._info, pack_worker=pack_worker
+            )
             started_at = datetime.now(UTC)
 
             info = self._info.get(port)
