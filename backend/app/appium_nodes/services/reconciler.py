@@ -543,17 +543,14 @@ class ReconcilerService:
     ) -> Callable[..., Awaitable[None]]:
         resolved_session_scope = session_scope or self._session_factory
 
-        async def _write(  # noqa: PLR0913
+        async def _write(
             *,
             row: DesiredRow,
             state: str,
             port: int | None,
             pid: int | None,
-            active_connection_target: str | None,
-            started_at: datetime | None = None,
-            pack_release: str | None = None,
+            details: NodeStartDetails | None = None,
             clear_desired_port: bool = False,
-            allocated_caps: object = None,
         ) -> None:
             async with resolved_session_scope() as db:
                 device = await _load_device_for_reconciler(db, row.device_id)
@@ -565,12 +562,7 @@ class ReconcilerService:
                         device,
                         port=port or row.port or 0,
                         pid=pid,
-                        details=NodeStartDetails(
-                            active_connection_target=active_connection_target,
-                            started_at=started_at,
-                            pack_release=pack_release,
-                            allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
-                        ),
+                        details=details or NodeStartDetails(),
                         publisher=self._publisher,
                         settings=self._settings,
                     )

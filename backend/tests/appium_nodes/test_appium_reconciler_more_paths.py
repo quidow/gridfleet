@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
+from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.hosts.models import HostStatus
 from tests.fakes import FakeSettingsReader
@@ -120,9 +121,8 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         state="running",
         port=None,
         pid=123,
-        active_connection_target="dev",
+        details=NodeStartDetails(active_connection_target="dev", allocated_caps={"x": "y"}),
         clear_desired_port=True,
-        allocated_caps={"x": "y"},
     )
     appium_reconciler.mark_node_started.assert_awaited_once()
 
@@ -131,7 +131,6 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         state="stopped",
         port=None,
         pid=None,
-        active_connection_target=None,
         clear_desired_port=True,
     )
     appium_reconciler.mark_node_stopped.assert_awaited_once()
@@ -175,15 +174,22 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
         session_factory=Mock(),
     )
     observed = _reconciler_svc._write_observed_factory(session_scope=lambda: db)
-    await observed(row=row, state="running", port=4723, pid=1, active_connection_target="dev")
+    await observed(row=row, state="running", port=4723, pid=1, details=NodeStartDetails(active_connection_target="dev"))
 
     device = SimpleNamespace(id=row.device_id, appium_node=None)
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=device))
-    await observed(row=row, state="running", port=4723, pid=1, active_connection_target="dev", clear_desired_port=True)
+    await observed(
+        row=row,
+        state="running",
+        port=4723,
+        pid=1,
+        details=NodeStartDetails(active_connection_target="dev"),
+        clear_desired_port=True,
+    )
 
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
-    await observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
+    await observed(row=row, state="stopped", port=None, pid=None)
 
 
 async def test_session_scope_reuses_existing_db() -> None:

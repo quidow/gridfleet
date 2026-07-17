@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS
 from app.core.observability import get_logger
 
@@ -240,7 +241,7 @@ async def _execute_action(
             await reset_start_failure(row=row)
         return
     if action.kind == "db_clear_stale_running":
-        await write_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
+        await write_observed(row=row, state="stopped", port=None, pid=None, details=NodeStartDetails())
         return
     if action.kind == "db_mark_running":
         await write_observed(
@@ -248,8 +249,10 @@ async def _execute_action(
             state="running",
             port=action.port,
             pid=action.pid,
-            started_at=action.started_at,
-            pack_release=action.pack_release,
-            active_connection_target=action.active_connection_target,
+            details=NodeStartDetails(
+                active_connection_target=action.active_connection_target,
+                started_at=action.started_at,
+                pack_release=action.pack_release,
+            ),
         )
         return

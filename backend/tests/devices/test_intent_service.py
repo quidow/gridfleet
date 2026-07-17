@@ -127,6 +127,97 @@ async def test_revoke_intent_deletes(db_session: AsyncSession, db_host: Host) ->
     assert intents == []
 
 
+async def test_register_rollout_preserves_concurrent_stamp_for_same_target(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """Finding 3 (TOCTOU): a rollout stage snapshot is taken unlocked; a
+    concurrent inline reconcile may have stamped ``restart_requested_at``
+    between the snapshot and this upsert. register_intents must preserve a
+    concurrent stamp when the caller's payload carries the same target but no
+    stamp, so the stage's stale snapshot cannot clobber a fresher stamp."""
+    from app.devices.services.intent_types import release_rollout_intent_source
+
+    device = await create_device(db_session, host_id=db_host.id, name="rollout-toctou")
+    service = IntentService(db_session)
+    source = release_rollout_intent_source(device.id)
+    # Seed a stamped rollout intent (the concurrent inline reconcile's write).
+    await service.register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=source,
+                kind=CommandKind.release_rollout,
+                payload={"target_release": "B", "restart_requested_at": "2026-07-17T12:00:00+00:00"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    # Stage re-registers from a stale snapshot (no stamp) for the same target.
+    await service.register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=source,
+                kind=CommandKind.release_rollout,
+                payload={"target_release": "B"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(
+            select(DeviceIntent).where(DeviceIntent.device_id == device.id, DeviceIntent.source == source)
+        )
+    ).scalar_one()
+    # The concurrent stamp is preserved, not clobbered to None.
+    assert row.payload["restart_requested_at"] == "2026-07-17T12:00:00+00:00"
+    assert row.payload["target_release"] == "B"
+
+
+async def test_register_rollout_resets_stamp_when_target_changes(db_session: AsyncSession, db_host: Host) -> None:
+    """A target change resets the rollout: the existing stamp is NOT preserved
+    when the new payload targets a different release (the new rollout starts
+    without a stamp so the reconciler mints a fresh idle-safe one)."""
+    from app.devices.services.intent_types import release_rollout_intent_source
+
+    device = await create_device(db_session, host_id=db_host.id, name="rollout-reset")
+    service = IntentService(db_session)
+    source = release_rollout_intent_source(device.id)
+    await service.register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=source,
+                kind=CommandKind.release_rollout,
+                payload={"target_release": "old", "restart_requested_at": "2026-07-17T12:00:00+00:00"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    await service.register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=source,
+                kind=CommandKind.release_rollout,
+                payload={"target_release": "new"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(
+            select(DeviceIntent).where(DeviceIntent.device_id == device.id, DeviceIntent.source == source)
+        )
+    ).scalar_one()
+    assert row.payload["target_release"] == "new"
+    assert row.payload.get("restart_requested_at") is None
+
+
 async def test_reconcile_now_derives_state_inline(db_session: AsyncSession, db_host: Host) -> None:
     """reconcile_now = lock + flush + inline reconcile; read-your-writes for
     operator/observation paths, no queue row involved."""

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
@@ -390,9 +391,11 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         state="running",
         port=4723,
         pid=12345,
-        started_at=None,
-        pack_release=None,
-        active_connection_target=row.connection_target,
+        details=NodeStartDetails(
+            started_at=None,
+            pack_release=None,
+            active_connection_target=row.connection_target,
+        ),
     )
 
 
@@ -421,7 +424,7 @@ async def test_converge_host_rows_db_clear_branch() -> None:
         state="stopped",
         port=None,
         pid=None,
-        active_connection_target=None,
+        details=NodeStartDetails(),
     )
 
 

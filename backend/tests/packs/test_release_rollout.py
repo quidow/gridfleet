@@ -4,6 +4,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
@@ -123,12 +124,12 @@ async def test_stage_classifies_snapshot_and_commits_each_mutation(monkeypatch: 
     await run_release_rollout_stage(db, publisher=object())  # type: ignore[arg-type]
 
     assert sorted(selected_calls) == ["pack-a", "pack-missing"]
-    assert [device_id for device_id, _ in service.registrations] == [ids["same"], ids["changed"]]
-    assert service.registrations[0][1].payload == {
-        "target_release": "selected-a",
-        "restart_requested_at": "stamp-same",
-    }
-    assert service.registrations[1][1].payload == {"target_release": "selected-a"}
+    # ``same`` is already stamped for the same target — finding 4 caps the
+    # refresh so the TTL safety valve can expire; it is NOT re-registered.
+    # ``changed`` is stamped for a different target — re-registered without a
+    # stamp so the reconciler mints a fresh idle-safe stamp for the new release.
+    assert [device_id for device_id, _ in service.registrations] == [ids["changed"]]
+    assert service.registrations[0][1].payload == {"target_release": "selected-a"}
     assert set(service.revocations) == {
         ids["converged"],
         ids["stopped"],
@@ -138,7 +139,7 @@ async def test_stage_classifies_snapshot_and_commits_each_mutation(monkeypatch: 
         ids["missing"],
         ids["null_pack"],
     }
-    assert timeline[1::2] == ["commit"] * 9
+    assert timeline[1::2] == ["commit"] * 8
 
 
 async def _running_device(
@@ -220,7 +221,15 @@ async def test_detector_resets_stamp_when_target_changes(db_session: AsyncSessio
     assert row is not None
     old_stamp = row.payload["restart_requested_at"]
 
-    pack = await db_session.get(DriverPack, device.pack_id)
+    pack = (
+        (
+            await db_session.execute(
+                select(DriverPack).where(DriverPack.id == device.pack_id).options(selectinload(DriverPack.releases))
+            )
+        ).scalar_one()
+        if device.pack_id is not None
+        else None
+    )
     assert pack is not None
     manifest = pack.releases[0].manifest_json
     pack.current_release = "9999.01.1"

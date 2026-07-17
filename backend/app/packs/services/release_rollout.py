@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
@@ -58,18 +58,28 @@ async def run_release_rollout_stage(db: AsyncSession, *, publisher: EventPublish
             and observed_release is not None
             and observed_release != target_release
         ):
-            payload: dict[str, Any] = {"target_release": target_release}
-            if row is not None and row.payload.get("target_release") == target_release:
-                stamp = row.payload.get("restart_requested_at")
-                if isinstance(stamp, str):
-                    payload["restart_requested_at"] = stamp
+            # Finding 4: once stamped for the SAME target (restart requested),
+            # stop refreshing the TTL so the 15-minute safety valve can expire
+            # and restore availability if the rollout cannot complete (bad
+            # release). A target change resets the rollout: re-register without
+            # a stamp so the reconciler mints a fresh idle-safe stamp. The
+            # inline convergence revoke (reconciler) and this stage's revoke
+            # branch clean up the row on convergence or no-longer-candidate.
+            existing_target = row.payload.get("target_release") if row is not None else None
+            already_stamped = (
+                row is not None
+                and row.payload.get("restart_requested_at") is not None
+                and existing_target == target_release
+            )
+            if already_stamped:
+                continue
             await service.register_intents_and_reconcile(
                 device_id=device_id,
                 intents=[
                     IntentRegistration(
                         source=release_rollout_intent_source(device_id),
                         kind=CommandKind.release_rollout,
-                        payload=payload,
+                        payload={"target_release": target_release},
                         expires_at=expires_at,
                     )
                 ],

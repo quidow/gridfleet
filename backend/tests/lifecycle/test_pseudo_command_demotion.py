@@ -223,6 +223,7 @@ def test_command_kind_set_is_external_will_only() -> None:
         "forced_release",
         "operator:start",
         "verification",
+        "release_rollout",
     }
 
 
