@@ -8,11 +8,10 @@ if TYPE_CHECKING:
 
 packs_settings = PacksConfig()
 
-_SUBMODULES = frozenset({"adapter", "manifest", "models", "routers", "schemas", "services"})
+_SUBMODULES = frozenset({"manifest", "models", "routers", "schemas", "services"})
 
 __all__ = [
     "PacksConfig",
-    "adapter",
     "manifest",
     "models",
     "packs_settings",

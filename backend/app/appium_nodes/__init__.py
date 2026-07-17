@@ -4,10 +4,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from types import ModuleType
 
-_SUBMODULES = frozenset({"exception_handlers", "exceptions", "models", "routers", "services"})
+_SUBMODULES = frozenset({"exceptions", "models", "routers", "services"})
 
 __all__ = [
-    "exception_handlers",
     "exceptions",
     "models",
     "routers",
