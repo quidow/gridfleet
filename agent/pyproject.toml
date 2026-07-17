@@ -21,7 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastapi==0.139.0",
+    "fastapi==0.139.2",
     "uvicorn[standard]==0.51.0",
     "pydantic-settings==2.14.2",
     "httpx2==2.7.0",
