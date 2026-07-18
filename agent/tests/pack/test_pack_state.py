@@ -433,7 +433,7 @@ async def test_adapterless_pack_with_declared_lifecycle_actions_is_blocked() -> 
     never dispatch the required hook — blocked, not installed."""
     pack = _android_pack()
     pack["tarball_sha256"] = "d" * 64
-    pack["platforms"][0]["lifecycle_actions"] = [{"id": "boot"}]
+    pack["platforms"][0]["lifecycle_actions"] = [{"id": "reconnect"}]
     client = _FakeClient(_make_desired([pack]))
     registry = AdapterRegistry()
 
@@ -463,7 +463,7 @@ async def test_artifact_less_pack_with_declared_lifecycle_actions_is_blocked() -
     """The declare-it-then-implement-it rule also covers packs with no tarball
     at all: declared lifecycle_actions can never dispatch without an adapter."""
     pack = _android_pack()
-    pack["platforms"][0]["lifecycle_actions"] = [{"id": "boot"}]
+    pack["platforms"][0]["lifecycle_actions"] = [{"id": "reconnect"}]
     client = _FakeClient(_make_desired([pack]))
     loop = PackStateLoop(
         client=client,

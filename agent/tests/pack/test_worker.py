@@ -137,7 +137,7 @@ class Adapter:
     proc = await _start_worker(tmp_path, timeout=0.2)
     try:
         response = await asyncio.wait_for(
-            _request(proc, 1, "health_check", {"ctx": {"device_identity_value": "d", "allow_boot": False}}),
+            _request(proc, 1, "health_check", {"ctx": {"device_identity_value": "d"}}),
             timeout=2,
         )
         assert response["error"]["kind"] == "timeout"  # type: ignore[index]

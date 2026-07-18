@@ -40,7 +40,6 @@ async def test_adapter_health_check_threads_ip_ping_fields() -> None:
         pack_release="1.0.0",
         ctx=HealthCtx(
             device_identity_value="abc",
-            allow_boot=False,
             platform_id="p",
             device_type="real_device",
             connection_type="usb",
@@ -68,7 +67,6 @@ async def test_adapter_health_check_threads_expected_identity() -> None:
         pack_release="1.0.0",
         ctx=HealthCtx(
             device_identity_value="10.0.0.5",
-            allow_boot=False,
             expected_identity_value="SER123",
         ),
     )
@@ -83,7 +81,7 @@ async def test_adapter_health_check_expected_identity_defaults_to_none() -> None
         adapter_registry=registry,  # type: ignore[arg-type]
         pack_id="pkg",
         pack_release="1.0.0",
-        ctx=HealthCtx(device_identity_value="10.0.0.5", allow_boot=False),
+        ctx=HealthCtx(device_identity_value="10.0.0.5"),
     )
     assert getattr(adapter.last_ctx, "expected_identity_value", "missing") is None
 

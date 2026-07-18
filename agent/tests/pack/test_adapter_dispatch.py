@@ -74,7 +74,7 @@ class _GoodAdapter:
 
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
+        action_id: Literal["reconnect", "release_forwarded_ports"],
         args: dict[str, object],
         ctx: object,
     ) -> LifecycleActionResult:
@@ -120,7 +120,7 @@ class _RaisingAdapter:
 
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
+        action_id: Literal["reconnect", "release_forwarded_ports"],
         args: dict[str, object],
         ctx: object,
     ) -> LifecycleActionResult:
@@ -156,7 +156,7 @@ class _WrongTypeAdapter:
 
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
+        action_id: Literal["reconnect", "release_forwarded_ports"],
         args: dict[str, object],
         ctx: object,
     ) -> LifecycleActionResult:
@@ -223,9 +223,7 @@ async def test_dispatch_doctor_returns_list() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_health_check_returns_list() -> None:
     adapter = _GoodAdapter()
-    results = await dispatch_health_check(
-        FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554", allow_boot=False)
-    )
+    results = await dispatch_health_check(FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554"))
     assert isinstance(results, list)
     assert results[0].check_id == "device_online"
     assert results[0].ok is True
@@ -298,9 +296,7 @@ async def test_dispatch_doctor_execution_error() -> None:
 async def test_dispatch_health_check_execution_error() -> None:
     adapter = _RaisingAdapter()
     with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_health_check(
-            FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554", allow_boot=False)
-        )
+        await dispatch_health_check(FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554"))
     assert exc_info.value.hook == "health_check"
 
 
@@ -370,9 +366,7 @@ async def test_dispatch_doctor_contract_error() -> None:
 async def test_dispatch_health_check_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_health_check(
-            FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554", allow_boot=False)
-        )
+        await dispatch_health_check(FakeWorkerHandle(adapter), HealthCtx(device_identity_value="emulator-5554"))
     assert exc_info.value.hook == "health_check"
 
 
@@ -382,7 +376,7 @@ async def test_dispatch_lifecycle_action_contract_error() -> None:
     with pytest.raises(AdapterContractError) as exc_info:
         await dispatch_lifecycle_action(
             FakeWorkerHandle(adapter),
-            "state",
+            "reconnect",
             {},
             LifecycleCtx(host_id="host-1", device_identity_value="emulator-5554"),
         )
@@ -580,7 +574,7 @@ def test_missing_declared_hooks_sees_device_type_override_lifecycle_actions() ->
                 identity_scheme="s",
                 identity_scope="host",
                 stereotype={},
-                device_type_overrides={"simulator": {"lifecycle_actions": [{"id": "boot"}]}},
+                device_type_overrides={"simulator": {"lifecycle_actions": [{"id": "reconnect"}]}},
             )
         ],
     )

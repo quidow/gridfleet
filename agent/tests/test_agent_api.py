@@ -30,7 +30,6 @@ from tests.pack.fake_worker import FakeWorkerHandle
 
 class _AdapterContext(Protocol):
     device_identity_value: object
-    allow_boot: object
     connection_target: object
 
 
@@ -134,7 +133,7 @@ async def test_pack_device_health_dispatches_correctly(client: AsyncClient) -> N
 
     assert resp.status_code == 200
     assert resp.json()["healthy"] is True
-    assert adapter.health_calls == [("serial-1", False)]
+    assert adapter.health_calls == ["serial-1"]
 
 
 async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -> None:
@@ -221,13 +220,13 @@ class _FakeAdapter:
     pack_release = "1.0"
 
     def __init__(self) -> None:
-        self.health_calls: list[tuple[str, bool]] = []
+        self.health_calls: list[str] = []
         self.telemetry_calls: list[tuple[str, str]] = []
         self.lifecycle_calls: list[tuple[str, str, dict[str, object]]] = []
 
     async def health_check(self, ctx: object) -> list[HealthCheckResult]:
         ctx_any = cast("_AdapterContext", ctx)
-        self.health_calls.append((str(ctx_any.device_identity_value), bool(ctx_any.allow_boot)))
+        self.health_calls.append(str(ctx_any.device_identity_value))
         return [HealthCheckResult(check_id="adapter_alive", ok=True)]
 
     async def telemetry(self, ctx: object) -> HardwareTelemetry:

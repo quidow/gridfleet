@@ -50,7 +50,6 @@ async def test_health_ctx_carries_claimed_ports_and_live_flag() -> None:
         pack_release="1",
         ctx=HealthCtx(
             device_identity_value="t",
-            allow_boot=False,
             claimed_ports={"appium:systemPort": 8200},
             has_live_session=False,
         ),

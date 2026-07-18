@@ -342,17 +342,19 @@ async def test_other_start_failure_is_recorded_as_spawn_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_boot_resolved_running_node_is_not_bounced_on_target_mismatch() -> None:
-    # An emulator's launch carries a "boot" action whose connection_target is the
-    # AVD name ("Pixel_6"); boot resolves it to the live adb serial ("emulator-5554")
-    # and the agent runs Appium under that serial. The next convergence tick sees
-    # local.connection_target ("emulator-5554") != launch.connection_target ("Pixel_6")
-    # and, without this guard, treats that as a target change and stops+restarts the
-    # node every tick — bouncing Appium so every session create hits a restart gap and
-    # disconnects. A boot-resolved running node must be left running; a real serial
-    # change (e.g. emulator console port 5554->5556) is handled by node-health/recovery,
-    # and an explicit operator restart still goes through restart_requested_at.
-    boot_launch = {
+async def test_host_resolved_running_node_is_not_bounced_on_target_mismatch() -> None:
+    # An emulator's launch carries a connection_behavior that requests host
+    # resolution; its connection_target is the AVD name ("Pixel_6"), and the
+    # adapter resolves it to the live adb serial ("emulator-5554") at node start,
+    # running Appium under that serial. The next convergence tick sees
+    # local.connection_target ("emulator-5554") != launch.connection_target
+    # ("Pixel_6") and, without this guard, treats that as a target change and
+    # stops+restarts the node every tick — bouncing Appium so every session
+    # create hits a restart gap and disconnects. A host-resolved running node
+    # must be left running; a real serial change (e.g. emulator console port
+    # 5554->5556) is handled by node-health/recovery, and an explicit operator
+    # restart still goes through restart_requested_at.
+    resolve_launch = {
         "connection_target": "Pixel_6",
         "platform_id": "android_mobile",
         "port": 4728,
@@ -361,23 +363,24 @@ async def test_boot_resolved_running_node_is_not_bounced_on_target_mismatch() ->
         "accepting_new_sessions": True,
         "stop_pending": False,
         "grid_run_id": None,
-        "lifecycle_actions": [{"id": "boot"}],
+        "connection_behavior": {"host_resolution_action": "resolve"},
     }
     manager = _Manager([_Info(port=4728, connection_target="emulator-5554")])
-    loop = NodeStateLoop(client=_Client([_node(port=4728, launch=boot_launch)]), manager=manager)
+    loop = NodeStateLoop(client=_Client([_node(port=4728, launch=resolve_launch)]), manager=manager)
 
     await loop.run_once()
 
-    # The running, boot-resolved node is untouched: no stop, no restart.
+    # The running, host-resolved node is untouched: no stop, no restart.
     assert manager.stopped == []
     assert manager.started == []
 
 
 @pytest.mark.asyncio
-async def test_target_change_still_restarts_node_without_boot_action() -> None:
-    # A real device's launch has no "boot" action: its connection_target is the
-    # direct serial, and a genuine target change must still stop+restart the node.
-    # Guards against over-broadly skipping target_changed restarts.
+async def test_target_change_still_restarts_node_without_host_resolution() -> None:
+    # A real device's launch does not request host resolution: its
+    # connection_target is the direct serial, and a genuine target change must
+    # still stop+restart the node. Guards against over-broadly skipping
+    # target_changed restarts.
     real_launch = {
         "connection_target": "new-serial",
         "platform_id": "android_mobile",
@@ -387,14 +390,14 @@ async def test_target_change_still_restarts_node_without_boot_action() -> None:
         "accepting_new_sessions": True,
         "stop_pending": False,
         "grid_run_id": None,
-        "lifecycle_actions": [],
+        "connection_behavior": {},
     }
     manager = _Manager([_Info(port=4723, connection_target="old-serial")])
     loop = NodeStateLoop(client=_Client([_node(port=4723, launch=real_launch)]), manager=manager)
 
     await loop.run_once()
 
-    # A real target change (no boot resolution) still restarts the node.
+    # A real target change (no host resolution) still restarts the node.
     assert manager.stopped == [4723]
     assert len(manager.started) == 1
     assert manager.started[0]["connection_target"] == "new-serial"
@@ -402,12 +405,14 @@ async def test_target_change_still_restarts_node_without_boot_action() -> None:
 
 @pytest.mark.asyncio
 async def test_deferred_start_is_not_recorded_as_failure(caplog: pytest.LogCaptureFixture) -> None:
-    # A boot that has not yet resolved a device serial defers the start rather than
-    # spawning Appium with an unresolved udid. Deferral is transient (emulator still
-    # booting / adb momentarily unresponsive), so it must NOT be recorded as a
-    # start_failure — that would feed the backend's recovery/review escalation and
-    # trade the session-viability backoff spiral for a start-failure spiral.
-    manager = _Manager(fail_start_with=StartDeferredError("boot for 'Pixel_6' not resolved yet"))
+    # A start whose driver-pack adapter is not loaded yet defers rather than
+    # spawning Appium without its hooks. Deferral is transient (pack reconcile
+    # still running / momentarily unavailable), so it must NOT be recorded as a
+    # start_failure — that would feed the backend's recovery/review escalation
+    # and trade the session-viability backoff spiral for a start-failure spiral.
+    manager = _Manager(
+        fail_start_with=StartDeferredError("driver-pack adapter for 'appium-uiautomator2' is not loaded yet")
+    )
     loop = NodeStateLoop(client=_Client([_node()]), manager=manager)
 
     with caplog.at_level(logging.INFO, logger="agent_app.appium.node_state"):
@@ -415,4 +420,4 @@ async def test_deferred_start_is_not_recorded_as_failure(caplog: pytest.LogCaptu
 
     assert manager.start_failures == []
     assert manager.started == []
-    assert "not resolved yet" in caplog.text
+    assert "not loaded yet" in caplog.text

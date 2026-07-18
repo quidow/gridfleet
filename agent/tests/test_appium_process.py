@@ -31,7 +31,6 @@ from agent_app.appium.process import (
     AppiumProcessInfo,
     AppiumProcessManager,
     _find_java,
-    _has_lifecycle_action,
     build_env,
     sanitize_appium_driver_capabilities,
 )
@@ -947,21 +946,22 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     assert snapshot["recent_restart_events"][-1]["process"] == "appium"
 
 
-async def test_auto_restart_defers_when_boot_has_not_resolved_serial() -> None:
-    """A crash auto-restart whose boot has not resolved a device serial must
+async def test_auto_restart_defers_when_driver_pack_not_loaded_yet() -> None:
+    """A crash auto-restart whose driver-pack adapter is not loaded yet must
     abort cleanly instead of churning retries.
 
-    ``start()`` raises ``StartDeferredError`` when boot succeeded but no serial
-    is available yet (emulator still booting / adb transiently unresponsive).
-    Treating that as a generic restart failure would advance the auto-restart
-    backoff and ERROR-log a transient condition, then exhaust and drop the port.
-    The convergence loop owns the steady-state retry; auto-restart just aborts.
+    ``start()`` raises ``StartDeferredError`` when the driver-pack adapter for
+    the pack is not loaded yet (pack reconcile still running / transiently
+    unavailable). Treating that as a generic restart failure would advance the
+    auto-restart backoff and ERROR-log a transient condition, then exhaust and
+    drop the port. The convergence loop owns the steady-state retry; auto-restart
+    just aborts.
     """
     manager = AppiumProcessManager()
     old_appium_proc = FakeProcess(pid=1111, returncode=1)
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", old_appium_proc)
     manager._launch_specs[4723] = AppiumLaunchSpec(
-        connection_target="device-boot",
+        connection_target="device-1",
         port=4723,
         extra_caps=None,
         session_override=True,
@@ -973,12 +973,12 @@ async def test_auto_restart_defers_when_boot_has_not_resolved_serial() -> None:
     manager._info[4723] = AppiumProcessInfo(
         port=4723,
         pid=1111,
-        connection_target="device-boot",
+        connection_target="device-1",
         platform_id="android_mobile",
     )
 
     async def _defer_start(**_kwargs: object) -> AppiumProcessInfo:
-        raise StartDeferredError("boot for 'device-boot' has not resolved a device serial yet")
+        raise StartDeferredError("driver-pack adapter for 'appium-uiautomator2' is not loaded yet")
 
     with (
         patch.object(manager, "start", side_effect=_defer_start) as start_mock,
@@ -1262,11 +1262,11 @@ class _LifecycleAdapter:
         return {"appium:udid": spec_any.device_identity_value}
 
 
-async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provided() -> None:
-    """Virtual-device boot is delegated to the loaded adapter."""
+async def test_start_uses_adapter_resolve_when_connection_behavior_requests_it() -> None:
+    """Host resolution is delegated to the loaded adapter when connection_behavior requests it."""
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5001)
-    lifecycle_actions = [{"id": "boot", "timeout_sec": 120}]
+    connection_behavior = {"host_resolution_action": "resolve"}
     adapter = _LifecycleAdapter(
         LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
     )
@@ -1290,10 +1290,10 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
-            lifecycle_actions=lifecycle_actions,
+            connection_behavior=connection_behavior,
         )
 
-    assert adapter.calls == [("boot", {"headless": True}, "Pixel_8_API_35")]
+    assert adapter.calls == [("resolve", {}, "Pixel_8_API_35")]
     assert info.connection_target == "emulator-5554"
     args = create_proc.await_args_list[0].args
     caps = json.loads(args[args.index("--default-capabilities") + 1])
@@ -1301,11 +1301,12 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
     await manager.shutdown()
 
 
-async def test_start_uses_adapter_for_simulator_boot() -> None:
-    """Adapter lifecycle_action is called for simulator boot."""
+async def test_start_does_not_dispatch_resolve_for_simulator_udid_identity() -> None:
+    """Apple simulators use simulator_udid identity: the UDID is the connection
+    target, so connection_behavior does not request host resolution and the
+    adapter's lifecycle action is not invoked for resolve."""
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5002)
-    lifecycle_actions = [{"id": "boot"}]
     adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="running", resolved_connection_target="SIM-UUID"))
     adapter_registry = AdapterRegistry()
     adapter_registry.set("appium-xcuitest", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
@@ -1327,19 +1328,19 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
             device_type="simulator",
             pack_id="appium-xcuitest",
             platform_id="ios",
-            lifecycle_actions=lifecycle_actions,
+            connection_behavior={},
         )
 
-    assert adapter.calls == [("boot", {"headless": True}, "SIM-UUID")]
+    assert adapter.calls == []
     assert info.connection_target == "SIM-UUID"
     await manager.shutdown()
 
 
-async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
-    """Boot triggers when lifecycle_actions contains 'boot', regardless of device_type."""
+async def test_start_dispatches_resolve_based_on_connection_behavior_not_device_type() -> None:
+    """Host resolution triggers when connection_behavior requests it, regardless of device_type."""
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5010)
-    lifecycle_actions = [{"id": "boot"}]
+    connection_behavior = {"host_resolution_action": "resolve"}
     adapter = _LifecycleAdapter(
         LifecycleActionResult(ok=True, state="running", resolved_connection_target="device-serial")
     )
@@ -1363,25 +1364,25 @@ async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
             device_type="real_device",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
-            lifecycle_actions=lifecycle_actions,
+            connection_behavior=connection_behavior,
         )
 
     assert info.connection_target == "device-serial"
-    assert adapter.calls == [("boot", {"headless": True}, "MyAVD")]
+    assert adapter.calls == [("resolve", {}, "MyAVD")]
     await manager.shutdown()
 
 
-async def test_start_raises_when_adapter_boot_fails() -> None:
-    """When adapter lifecycle_action returns ok=False, start() raises RuntimeError."""
+async def test_start_raises_when_adapter_resolve_fails() -> None:
+    """When the adapter resolve action returns ok=False, start() raises DeviceNotFoundError."""
     manager = AppiumProcessManager()
-    lifecycle_actions = [{"id": "boot"}]
+    connection_behavior = {"host_resolution_action": "resolve"}
     adapter = _LifecycleAdapter(LifecycleActionResult(ok=False, detail="AVD 'Bad_AVD' could not be started"))
     adapter_registry = AdapterRegistry()
     adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
 
     with (
-        pytest.raises(RuntimeError, match="could not be started"),
+        pytest.raises(DeviceNotFoundError, match="could not be started"),
     ):
         await manager.start(
             connection_target="Bad_AVD",
@@ -1389,17 +1390,18 @@ async def test_start_raises_when_adapter_boot_fails() -> None:
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
-            lifecycle_actions=lifecycle_actions,
+            connection_behavior=connection_behavior,
         )
 
 
-async def test_start_defers_when_boot_succeeds_without_resolved_target() -> None:
-    """Boot that succeeds but has not resolved a device serial must not strand Appium
-    with an AVD-name udid baked into --default-capabilities (every session create would
-    then 500 with "Device <AVD> was not in the list of connected devices"). Defer the
-    start instead so the node-state loop retries next tick once the serial resolves."""
+async def test_start_raises_when_resolve_returns_no_serial() -> None:
+    """A resolve that succeeds but returns no resolved connection target must
+    not strand Appium with an AVD-name udid baked into --default-capabilities
+    (every session create would then 500 with "Device <AVD> was not in the list
+    of connected devices"). Fail the start immediately so the node-state loop
+    retries next tick once the serial resolves."""
     manager = AppiumProcessManager()
-    lifecycle_actions = [{"id": "boot"}]
+    connection_behavior = {"host_resolution_action": "resolve"}
     adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="booting"))
     adapter_registry = AdapterRegistry()
     adapter_registry.set("appium-uiautomator2", "2026.04.0", FakeWorkerHandle(adapter))  # type: ignore[arg-type]
@@ -1411,7 +1413,7 @@ async def test_start_defers_when_boot_succeeds_without_resolved_target() -> None
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec") as create_proc,
-        pytest.raises(StartDeferredError, match="Pixel_6"),
+        pytest.raises(DeviceNotFoundError, match="Pixel_6"),
     ):
         await manager.start(
             connection_target="Pixel_6",
@@ -1419,10 +1421,10 @@ async def test_start_defers_when_boot_succeeds_without_resolved_target() -> None
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
-            lifecycle_actions=lifecycle_actions,
+            connection_behavior=connection_behavior,
         )
 
-    # No Appium process is spawned for a deferred start.
+    # No Appium process is spawned when resolve returns no serial.
     assert not create_proc.await_args_list
     await manager.shutdown()
 
@@ -1669,15 +1671,15 @@ async def test_start_defers_when_pack_missing_from_known_desired_list() -> None:
     await manager.shutdown()
 
 
-async def test_start_does_not_boot_through_stale_worker_during_upgrade() -> None:
+async def test_start_does_not_resolve_through_stale_worker_during_upgrade() -> None:
     """During an upgrade the retired release's worker stays current until the new
-    one loads; the boot hook must not run on it — the deferral has to land before
-    any adapter side effect, or every retry repeats the stale boot."""
-    boot_calls: list[str] = []
+    one loads; the resolve hook must not run on it — the deferral has to land before
+    any adapter side effect, or every retry repeats the stale resolve."""
+    resolve_calls: list[str] = []
 
     class _OldAdapter:
         async def lifecycle_action(self, action_id: str, args: dict[str, object], ctx: object) -> LifecycleActionResult:
-            boot_calls.append(action_id)
+            resolve_calls.append(action_id)
             return LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
 
         async def pre_session(self, spec: object) -> dict[str, object]:
@@ -1703,10 +1705,10 @@ async def test_start_does_not_boot_through_stale_worker_during_upgrade() -> None
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
-            lifecycle_actions=[{"id": "boot"}],
+            connection_behavior={"host_resolution_action": "resolve"},
         )
 
-    assert boot_calls == []
+    assert resolve_calls == []
     assert not create_proc.await_args_list
     await manager.shutdown()
 
@@ -1794,8 +1796,8 @@ async def test_start_defers_when_adapterless_release_changes_during_start() -> N
 @pytest.mark.parametrize("tarball_sha256", ["a" * 64, None], ids=["adapterless_tarball", "artifact_less"])
 async def test_start_defers_when_pack_without_adapter_declares_lifecycle_hooks(tarball_sha256: str | None) -> None:
     """A pack that declares lifecycle_actions but has no adapter worker can
-    never dispatch its boot hook; silently skipping boot and spawning Appium
-    anyway launches nodes for devices that were never booted. Defer locally —
+    never dispatch its lifecycle hook; silently skipping it and spawning Appium
+    anyway launches nodes for devices whose hook never ran. Defer locally —
     the blocked host-pack status does not stop the backend desired-node
     endpoint from sending launch data."""
     manager = AppiumProcessManager()
@@ -1804,7 +1806,13 @@ async def test_start_defers_when_pack_without_adapter_declares_lifecycle_hooks(t
         adapter_registry.mark_adapterless("appium-xcuitest", "2026.07.1")
     manager.set_adapter_registry(adapter_registry)
     manager.set_desired_packs_provider(
-        lambda: [_desired_pack("appium-xcuitest", tarball_sha256=tarball_sha256, lifecycle_actions=[{"id": "boot"}])]
+        lambda: [
+            _desired_pack(
+                "appium-xcuitest",
+                tarball_sha256=tarball_sha256,
+                lifecycle_actions=[{"id": "reconnect"}],
+            )
+        ]
     )
 
     with (
@@ -1817,7 +1825,7 @@ async def test_start_defers_when_pack_without_adapter_declares_lifecycle_hooks(t
             device_type="simulator",
             pack_id="appium-xcuitest",
             platform_id="ios",
-            lifecycle_actions=[{"id": "boot"}],
+            lifecycle_actions=[{"id": "reconnect"}],
         )
 
     assert not create_proc.await_args_list
@@ -2028,12 +2036,6 @@ async def test_status_does_not_probe_unmanaged_localhost_port(monkeypatch: pytes
 # ---------------------------------------------------------------------------
 # Lowest-hanging-fruit coverage for helper functions / simple branches
 # ---------------------------------------------------------------------------
-
-
-def test_has_lifecycle_action_true_and_false() -> None:
-    assert _has_lifecycle_action([{"id": "boot"}, {"id": "reboot"}], "boot") is True
-    assert _has_lifecycle_action([{"id": "boot"}], "reboot") is False
-    assert _has_lifecycle_action([], "boot") is False
 
 
 def test_sanitize_appium_driver_capabilities_drops_gridfleet_and_known_keys() -> None:

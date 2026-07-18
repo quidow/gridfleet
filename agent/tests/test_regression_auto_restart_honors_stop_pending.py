@@ -42,7 +42,6 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
         insecure_features=[],
         lifecycle_actions=[],
         connection_behavior={},
-        headless=False,
     )
 
     mgr._appium_procs[port] = cast("asyncio.subprocess.Process", fake_proc)

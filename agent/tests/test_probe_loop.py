@@ -21,8 +21,6 @@ class _Roster:
                 "connection_type": "virtual",
                 "identity_value": "emulator-5554",
                 "claimed_ports": {},
-                "allow_boot": False,
-                "headless": True,
                 "ip_ping_timeout_sec": 1.5,
                 "ip_ping_count": 2,
             },
@@ -35,8 +33,6 @@ class _Roster:
                 "connection_type": "usb",
                 "identity_value": "serial-1",
                 "claimed_ports": {"appium:systemPort": 8200},
-                "allow_boot": False,
-                "headless": True,
                 "ip_ping_timeout_sec": 1.5,
                 "ip_ping_count": 2,
             },
@@ -148,17 +144,12 @@ async def test_latest_results_shape() -> None:
 @pytest.mark.asyncio
 async def test_device_health_section_emits_typed_items_including_failures() -> None:
     roster = _Roster()
-    roster.devices[0]["lifecycle_state_capable"] = True
-    roster.devices[1]["lifecycle_state_capable"] = False
 
     async def _health(**kwargs: object) -> dict[str, Any] | None:
         # d2 (serial-1) fails to answer; every roster entry must still get an item.
         if kwargs["connection_target"] == "serial-1":
             return None
         return {"healthy": True, "detail": None, "checks": [], "recommended_action": None}
-
-    async def _lifecycle(**kwargs: object) -> dict[str, Any]:
-        return {"success": True, "state": "device", "detail": None}
 
     loop = ProbeLoop(
         roster_client=roster,
@@ -167,7 +158,6 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
         health_probe=_health,
         telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
-        lifecycle_probe=_lifecycle,
     )
     await loop._refresh_roster()
     section = await loop._probe_device_health_section()
@@ -176,12 +166,8 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
     # Presence is never derived from discovery on the health cadence.
     assert {item["presence"] for item in section["devices"]} == {"unknown"}
     assert items["d1"]["probe_status"] == "observed"
-    assert items["d1"]["lifecycle_state"]["status"] == "observed"
-    assert items["d1"]["lifecycle_state"]["value"] == "device"
-    assert isinstance(items["d1"]["lifecycle_state"]["observed_at"], str)
     assert items["d2"]["probe_status"] == "error"
     assert items["d2"]["health"] is None
-    assert items["d2"]["lifecycle_state"] == {"status": "unsupported", "value": None}
 
 
 async def test_probe_loop_has_no_discovery_hook() -> None:
@@ -208,30 +194,7 @@ async def test_device_health_section_never_derives_presence_from_discovery() -> 
 
 
 @pytest.mark.asyncio
-async def test_failed_lifecycle_probe_does_not_publish_returned_state() -> None:
-    roster = _Roster()
-    roster.devices[0]["lifecycle_state_capable"] = True
-
-    async def _lifecycle(**kwargs: object) -> dict[str, Any]:
-        # Some adapters include their last-known state on a failed action. It is
-        # not a successful observation and must not become emulator_state.
-        return {"success": False, "state": "device", "detail": "probe failed"}
-
-    loop = ProbeLoop(
-        roster_client=roster,
-        manager=_Manager(),
-        host_identity=_identity(),
-        health_probe=_health_probe,
-        telemetry_probe=_telemetry_probe,
-        properties_probe=_properties_probe,
-        lifecycle_probe=_lifecycle,
-    )
-
-    assert await loop._lifecycle_item(roster.devices[0]) == {"status": "error", "value": None}
-
-
-@pytest.mark.asyncio
-async def test_device_health_limits_lifecycle_probe_concurrency() -> None:
+async def test_device_health_section_limits_probe_concurrency() -> None:
     roster = _Roster()
     template = roster.devices[0]
     roster.devices = [
@@ -240,29 +203,27 @@ async def test_device_health_limits_lifecycle_probe_concurrency() -> None:
             "device_id": f"d{index}",
             "connection_target": f"serial-{index}",
             "identity_value": f"serial-{index}",
-            "lifecycle_state_capable": True,
         }
         for index in range(10)
     ]
     active = 0
     peak = 0
 
-    async def _lifecycle(**kwargs: object) -> dict[str, Any]:
+    async def _health(**kwargs: object) -> dict[str, Any]:
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
         await asyncio.sleep(0.01)
         active -= 1
-        return {"success": True, "state": "device", "detail": None}
+        return {"healthy": True, "detail": None, "checks": [], "recommended_action": None}
 
     loop = ProbeLoop(
         roster_client=roster,
         manager=_Manager(),
         host_identity=_identity(),
-        health_probe=_health_probe,
+        health_probe=_health,
         telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
-        lifecycle_probe=_lifecycle,
     )
     await loop._refresh_roster()
 
