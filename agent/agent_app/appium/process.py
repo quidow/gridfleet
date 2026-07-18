@@ -368,7 +368,7 @@ class AppiumProcessManager:
         self, registry: AdapterRegistry, pack_id: str, *, requested_release: str | None
     ) -> tuple[str | None, WorkerHandle | None]:
         """Resolve the (release, worker) snapshot this start binds to — the
-        worker serves both the boot lifecycle dispatch and pre_session.
+        worker serves both the resolve host-resolution dispatch and pre_session.
 
         The worker is None when the pack legitimately has no adapter — no
         tarball, or a tarball the loader inspected and marked adapterless
@@ -424,11 +424,12 @@ class AppiumProcessManager:
             pack_id, desired.release
         ):
             # No adapter can ever exist for this release. If the manifest still
-            # declares adapter-owned hooks (lifecycle boot/shutdown/...), the
-            # start must not proceed — the boot dispatch would silently no-op
-            # and Appium would spawn for a device that was never booted. The
-            # pack reports blocked for the same reason; the backend desired-node
-            # endpoint keeps sending launch data regardless, so the gate is here.
+            # declares adapter-owned hooks that require an adapter it does not
+            # ship, the start must not proceed — the dispatch would silently
+            # no-op and Appium would spawn for a device whose hooks never ran.
+            # The pack reports blocked for the same reason; the backend
+            # desired-node endpoint keeps sending launch data regardless, so
+            # the gate is here.
             required = declared_adapter_hooks(desired)
             if required:
                 raise StartDeferredError(
@@ -934,11 +935,12 @@ class AppiumProcessManager:
 
             if self._adapter_registry is not None:
                 # Revalidate under the lock: a pack-loop reconcile may have
-                # published a different release while this start awaited boot,
-                # pre_session, or the lock. The boot side effects and merged
-                # caps belong to the snapshot resolved above; spawning them
-                # onto a swapped runtime would persist a mixed node. Defer so
-                # the retry re-derives everything against the new release.
+                # published a different release while this start awaited
+                # resolve, pre_session, or the lock. The resolve side effects
+                # and merged caps belong to the snapshot resolved above;
+                # spawning them onto a swapped runtime would persist a mixed
+                # node. Defer so the retry re-derives everything against the
+                # new release.
                 revalidated_release, revalidated_worker = self._resolve_pack_worker(
                     self._adapter_registry, pack_id, requested_release=pack_release
                 )
