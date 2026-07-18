@@ -53,12 +53,6 @@ _ADB_SEARCH_PATHS = [
     "/opt/android-sdk/platform-tools",
     "/usr/local/android-sdk/platform-tools",
 ]
-_EMULATOR_SEARCH_PATHS = [
-    os.path.expanduser("~/Library/Android/sdk/emulator"),
-    os.path.expanduser("~/Android/Sdk/emulator"),
-    "/opt/android-sdk/emulator",
-    "/usr/local/android-sdk/emulator",
-]
 
 
 def find_android_home() -> str | None:
@@ -74,11 +68,6 @@ def find_android_home() -> str | None:
 
 def find_adb() -> str:
     return find_tool("adb", [os.path.join(path, "adb") for path in _ADB_SEARCH_PATHS])
-
-
-def find_emulator() -> str | None:
-    emulator = find_tool("emulator", [os.path.join(path, "emulator") for path in _EMULATOR_SEARCH_PATHS])
-    return emulator if emulator != "emulator" else None
 
 
 async def get_running_emulator_avd_name(adb: str, serial: str) -> str:
