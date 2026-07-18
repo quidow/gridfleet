@@ -767,6 +767,7 @@ class AppiumProcessManager:
             str(spec.port),
             "--default-capabilities",
             json.dumps(caps),
+            "--log-no-colors",
         ]
         if spec.session_override:
             appium_cmd.append("--session-override")

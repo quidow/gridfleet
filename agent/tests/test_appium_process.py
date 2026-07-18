@@ -261,6 +261,7 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
         "4723",
         "--default-capabilities",
     )
+    assert "--log-no-colors" in create_proc.await_args_list[0].args
     assert "--session-override" in create_proc.await_args_list[0].args
     logs = manager.get_logs(4723)
     assert any("appium ready" in line for line in logs)
