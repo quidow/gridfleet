@@ -160,7 +160,7 @@ class LifecycleAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: Literal["state", "reconnect", "boot", "shutdown", "release_forwarded_ports"]
+    id: Literal["reconnect", "release_forwarded_ports"]
     remediation: bool = False
 
 

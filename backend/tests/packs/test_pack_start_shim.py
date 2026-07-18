@@ -118,7 +118,7 @@ async def test_pack_start_payload_applies_device_type_override_for_emulator(db_s
 
     assert payload is not None
     action_ids = {action["id"] for action in payload["lifecycle_actions"]}
-    assert "boot" in action_ids
+    assert "release_forwarded_ports" in action_ids
     assert payload["connection_behavior"]["default_connection_type"] == "virtual"
 
 

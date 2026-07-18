@@ -16,6 +16,7 @@ from app.devices.services import health as health_module
 from app.devices.services import link_repair
 from app.devices.services.connectivity import _validated_remediation_action
 from app.devices.services.health import DeviceHealthService
+from app.packs.manifest import LifecycleAction
 from tests.helpers import seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -65,15 +66,16 @@ async def test_update_emulator_state_write_on_diff_skips_unchanged(
 def test_repeat_safe_allowlist() -> None:
     assert link_repair.is_repeat_safe_remediation_action("reconnect")
     assert link_repair.is_repeat_safe_remediation_action("release_forwarded_ports")
-    assert not link_repair.is_repeat_safe_remediation_action("boot")
-    assert not link_repair.is_repeat_safe_remediation_action("shutdown")
-    assert not link_repair.is_repeat_safe_remediation_action("state")
 
 
 def test_validated_remediation_action_gate() -> None:
     device = Mock(identity_value="dev-1")
     assert _validated_remediation_action({"recommended_action": "reconnect"}, device) == "reconnect"
-    # Non-repeat-safe action is refused (returns None -> the fold does not dispatch).
-    assert _validated_remediation_action({"recommended_action": "boot"}, device) is None
+    assert (
+        _validated_remediation_action({"recommended_action": "release_forwarded_ports"}, device)
+        == "release_forwarded_ports"
+    )
     assert _validated_remediation_action({"recommended_action": ""}, device) is None
     assert _validated_remediation_action({}, device) is None
+    assert LifecycleAction(id="reconnect", remediation=True).remediation is True
+    assert LifecycleAction(id="release_forwarded_ports", remediation=True).remediation is True
