@@ -41,7 +41,7 @@ function androidCatalog() {
             identity_scheme: 'android_serial',
             identity_scope: 'host',
             discovery_kind: 'adb',
-            lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+            lifecycle_actions: [{ id: 'reconnect' }],
             device_fields_schema: [],
             capabilities: {},
             display_metadata: { icon_kind: 'mobile' },
@@ -54,7 +54,7 @@ function androidCatalog() {
             },
             device_type_overrides: {
               emulator: {
-                lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+                lifecycle_actions: [],
                 connection_behavior: {
                   default_device_type: 'emulator',
                   default_connection_type: 'virtual',
@@ -92,7 +92,7 @@ function xcuitestCatalog() {
             identity_scheme: 'apple_udid',
             identity_scope: 'global',
             discovery_kind: 'apple',
-            lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+            lifecycle_actions: [{ id: 'reconnect' }],
             device_fields_schema: [],
             capabilities: {},
             display_metadata: { icon_kind: 'tv' },
@@ -141,7 +141,7 @@ function xcuitestCatalog() {
               },
               simulator: {
                 identity: { scheme: 'simulator_udid', scope: 'host' },
-                lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+                lifecycle_actions: [],
                 connection_behavior: {
                   default_device_type: 'simulator',
                   default_connection_type: 'virtual',
@@ -225,7 +225,7 @@ describe('AddDeviceModal manual driver registration', () => {
               identity_scheme: 'generic_serial',
               identity_scope: 'host',
               discovery_kind: 'network_endpoint',
-              lifecycle_actions: [{ id: 'state' }],
+              lifecycle_actions: [],
               device_fields_schema: [],
               capabilities: {},
               display_metadata: { icon_kind: 'tv' },

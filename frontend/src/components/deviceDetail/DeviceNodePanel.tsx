@@ -1,6 +1,5 @@
 import { Play, Power, RefreshCw, Square, Wrench } from 'lucide-react';
 import { StatusBadge } from '../../components/StatusBadge';
-import { isEmulatorRunning, isEmulatorStopped } from '../../lib/emulatorState';
 import {
   useEnterDeviceMaintenance,
   useExitDeviceMaintenance,
@@ -21,10 +20,7 @@ type Props = {
 };
 
 const LIFECYCLE_ACTION_LABELS: Record<string, string> = {
-  boot: 'Boot',
-  shutdown: 'Shutdown',
   reconnect: 'Reconnect',
-  state: 'Refresh State',
 };
 
 function lifecycleActionLabel(action: string): string {
@@ -210,20 +206,15 @@ export function DeviceNodePanel({ device }: Props) {
           <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-text-3">Lifecycle</h3>
           <div className="flex flex-wrap gap-2">
             {lifecycleActions.map((action) => {
-              const isBoot = action === 'boot';
-              const isShutdown = action === 'shutdown';
-              const disabled =
-                rowBusy ||
-                (isBoot && isEmulatorRunning(device.emulator_state)) ||
-                (isShutdown && isEmulatorStopped(device.emulator_state));
+              const disabled = rowBusy;
               return (
                 <Button
                   key={action}
                   size="sm"
-                  variant={isShutdown ? 'secondary' : 'primary'}
+                  variant="primary"
                   onClick={() => lifecycleAction.mutate({ id: device.id, action })}
                   disabled={disabled}
-                  leadingIcon={isShutdown ? <Square size={14} /> : <Play size={14} />}
+                  leadingIcon={<Play size={14} />}
                   title={lifecycleActionLabel(action)}
                 >
                   {pendingAction === 'running-lifecycle-action' && lifecycleAction.variables?.action === action

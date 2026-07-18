@@ -1,12 +1,11 @@
 import type { ReactNode } from 'react';
 import type { DeviceRead } from '../../types';
 import { resolvePlatformLabel } from '../../lib/labels';
-import { EmulatorStateBadge } from '../../components/EmulatorStateBadge';
 
 export function buildDeviceDetailSubtitleNode(
   device: Pick<
     DeviceRead,
-    'platform_id' | 'platform_label' | 'os_version' | 'os_version_display' | 'host_id' | 'emulator_state'
+    'platform_id' | 'platform_label' | 'os_version' | 'os_version_display' | 'host_id'
   >,
   hostLabel: string | null,
 ): ReactNode {
@@ -19,7 +18,6 @@ export function buildDeviceDetailSubtitleNode(
   return (
     <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
       <span>{metaParts.join(' · ')}</span>
-      {device.emulator_state ? <EmulatorStateBadge state={device.emulator_state} /> : null}
     </span>
   );
 }

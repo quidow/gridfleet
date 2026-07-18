@@ -7,7 +7,6 @@ import { Badge } from '../../components/ui/Badge';
 import { Popover } from '../../components/ui/Popover';
 import { missingSetupFieldLabel } from '../../components/readiness';
 import { availabilityTone, deviceChipStatus } from '../../lib/deviceState';
-import { isEmulatorStopped } from '../../lib/emulatorState';
 import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import { getPendingDeviceActionLabel, type DevicePendingAction } from '../../lib/devicePendingAction';
 import type { RowActionItem } from '../../components/ui/RowActionsMenu';
@@ -148,28 +147,24 @@ export function buildDeviceMenuItems(
       onSelect: () => onAction({ type: 'start-node', deviceId: device.id }),
       disabled:
         rowBusy || !!device.reservation || device.operational_state === 'maintenance' ||
-        device.readiness_state !== 'verified' || isEmulatorStopped(device.emulator_state),
-      title: isEmulatorStopped(device.emulator_state)
-        ? 'Emulator/simulator is not running'
-        : device.reservation
-          ? `Reserved by ${device.reservation.run_name}`
-          : device.operational_state === 'maintenance'
-            ? 'Disabled during maintenance'
-            : device.readiness_state !== 'verified'
-              ? 'Complete setup and verification first'
-              : 'Start Node',
+        device.readiness_state !== 'verified',
+      title: device.reservation
+        ? `Reserved by ${device.reservation.run_name}`
+        : device.operational_state === 'maintenance'
+          ? 'Disabled during maintenance'
+          : device.readiness_state !== 'verified'
+            ? 'Complete setup and verification first'
+            : 'Start Node',
     },
     {
       key: 'stop-node',
       label: pendingAction === 'stopping' ? 'Stopping Node...' : 'Stop Node',
       icon: <Square size={15} />,
       onSelect: () => onAction({ type: 'stop-node', deviceId: device.id }),
-      disabled: rowBusy || !!device.reservation || isEmulatorStopped(device.emulator_state),
-      title: isEmulatorStopped(device.emulator_state)
-        ? 'Emulator/simulator is not running'
-        : device.reservation
-          ? `Reserved by ${device.reservation.run_name}`
-          : 'Stop Node',
+      disabled: rowBusy || !!device.reservation,
+      title: device.reservation
+        ? `Reserved by ${device.reservation.run_name}`
+        : 'Stop Node',
     },
     {
       key: 'restart-node',
@@ -178,16 +173,14 @@ export function buildDeviceMenuItems(
       onSelect: () => onAction({ type: 'restart-node', deviceId: device.id }),
       disabled:
         rowBusy || !!device.reservation || device.operational_state === 'maintenance' ||
-        device.readiness_state !== 'verified' || isEmulatorStopped(device.emulator_state),
-      title: isEmulatorStopped(device.emulator_state)
-        ? 'Emulator/simulator is not running'
-        : device.reservation
-          ? `Reserved by ${device.reservation.run_name}`
-          : device.operational_state === 'maintenance'
-            ? 'Disabled during maintenance'
-            : device.readiness_state !== 'verified'
-              ? 'Complete setup and verification first'
-              : 'Restart Node',
+        device.readiness_state !== 'verified',
+      title: device.reservation
+        ? `Reserved by ${device.reservation.run_name}`
+        : device.operational_state === 'maintenance'
+          ? 'Disabled during maintenance'
+          : device.readiness_state !== 'verified'
+            ? 'Complete setup and verification first'
+            : 'Restart Node',
     },
     {
       key: 'verify',

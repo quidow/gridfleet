@@ -7,7 +7,6 @@ from agent_app.pack.worker_protocol import HOOK_SPECS
 IMPLEMENTED_HOOKS = {
     "discover",
     "health_check",
-    "lifecycle_action",
     "normalize_device",
 }
 
@@ -33,7 +32,6 @@ async def test_discover_returns_empty() -> None:
 async def test_health_check_uses_manifest_check_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Ctx:
         device_identity_value = "192.168.1.50"
-        allow_boot = False
 
     async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
         assert host == "192.168.1.50"
@@ -56,7 +54,6 @@ async def test_health_check_retries_once_on_transient_failure(monkeypatch: pytes
 
     class _Ctx:
         device_identity_value = "192.168.1.51"
-        allow_boot = False
 
     attempts = {"count": 0}
 
@@ -82,7 +79,6 @@ async def test_health_check_fails_when_both_attempts_fail(monkeypatch: pytest.Mo
 
     class _Ctx:
         device_identity_value = "192.168.1.52"
-        allow_boot = False
 
     attempts = {"count": 0}
 
@@ -109,7 +105,6 @@ async def test_health_check_identity_mismatch_fails(monkeypatch: pytest.MonkeyPa
 
     class _Ctx:
         device_identity_value = "192.168.1.50"
-        allow_boot = False
         expected_identity_value = "SER123"
 
     async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
@@ -133,7 +128,6 @@ async def test_health_check_identity_mismatch_fails(monkeypatch: pytest.MonkeyPa
 async def test_health_check_identity_match_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Ctx:
         device_identity_value = "192.168.1.50"
-        allow_boot = False
         expected_identity_value = "SER123"
 
     async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
@@ -157,7 +151,6 @@ async def test_health_check_identity_inconclusive_query_is_skipped(monkeypatch: 
 
     class _Ctx:
         device_identity_value = "192.168.1.50"
-        allow_boot = False
         expected_identity_value = "SER123"
 
     async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
@@ -183,7 +176,6 @@ async def test_health_check_without_expected_identity_skips_verification(
 
     class _Ctx:
         device_identity_value = "192.168.1.50"
-        allow_boot = False
 
     async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
         return True
@@ -203,7 +195,6 @@ async def test_health_check_without_expected_identity_skips_verification(
 async def test_health_check_unreachable_skips_identity_query(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Ctx:
         device_identity_value = "192.168.1.50"
-        allow_boot = False
         expected_identity_value = "SER123"
 
     async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:

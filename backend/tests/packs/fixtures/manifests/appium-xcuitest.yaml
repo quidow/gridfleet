@@ -71,7 +71,6 @@ platforms:
       - id: ping
         label: IP Reachable
     lifecycle_actions:
-      - id: state
       - id: reconnect
     connection_behavior:
       default_device_type: real_device
@@ -129,10 +128,7 @@ platforms:
         identity:
           scheme: simulator_udid
           scope: host
-        lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
+        lifecycle_actions: []
         connection_behavior:
           default_device_type: simulator
           default_connection_type: virtual
@@ -178,7 +174,6 @@ platforms:
       - id: ping
         label: IP Reachable
     lifecycle_actions:
-      - id: state
       - id: reconnect
     connection_behavior:
       default_device_type: real_device
@@ -220,10 +215,7 @@ platforms:
         identity:
           scheme: simulator_udid
           scope: host
-        lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
+        lifecycle_actions: []
         connection_behavior:
           default_device_type: simulator
           default_connection_type: virtual

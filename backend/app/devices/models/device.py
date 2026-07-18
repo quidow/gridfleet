@@ -206,8 +206,6 @@ class Device(Base):
     review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    emulator_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    emulator_state_source_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

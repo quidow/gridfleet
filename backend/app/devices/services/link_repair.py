@@ -27,10 +27,10 @@ REPAIR_MAX_ATTEMPTS = 3
 
 # B6: every action auto-dispatched as remediation MUST be repeat-safe (re-running
 # it yields the same end state), so a crash-after-dispatch retry is benign and no
-# attempt journal is needed. Operator-initiated lifecycle actions (boot/shutdown)
-# are deliberate and bypass this gate; only the automatic repair path is bounded
-# to this allowlist. A future destructive remediation action must build the
-# journal first — until then it is a loud rejection here, never a silent dispatch.
+# attempt journal is needed. Operator-initiated actions bypass this gate; only the
+# automatic repair path is bounded to this allowlist. A future destructive
+# remediation action must build the journal first — until then it is a loud
+# rejection here, never a silent dispatch.
 REPEAT_SAFE_REMEDIATION_ACTIONS = frozenset({"reconnect", "release_forwarded_ports"})
 
 

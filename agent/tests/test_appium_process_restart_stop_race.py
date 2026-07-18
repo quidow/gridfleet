@@ -35,7 +35,6 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
         insecure_features=[],
         lifecycle_actions=[],
         connection_behavior={},
-        headless=False,
     )
 
     fake_proc_typed = cast("asyncio.subprocess.Process", fake_proc)

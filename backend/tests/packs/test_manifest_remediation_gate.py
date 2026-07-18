@@ -48,34 +48,35 @@ def test_load_manifest_accepts_repeat_safe_remediation_action(action_id: str) ->
     assert manifest.platforms[0].lifecycle_actions[0].remediation is True
 
 
-def test_load_manifest_rejects_non_repeat_safe_remediation_action() -> None:
-    with pytest.raises(ManifestValidationError, match="not repeat-safe") as exc_info:
-        load_manifest_yaml(_manifest_yaml("- id: boot\n  remediation: true"))
-
-    message = str(exc_info.value)
-    assert "synthetic_platform" in message
-    assert "boot" in message
-    assert "reconnect" in message
-    assert "release_forwarded_ports" in message
+@pytest.mark.parametrize("action_id", ["boot", "shutdown", "state"])
+def test_load_manifest_rejects_removed_lifecycle_action_id(action_id: str) -> None:
+    with pytest.raises(ManifestValidationError, match="literal_error"):
+        load_manifest_yaml(_manifest_yaml(f"- id: {action_id}\n  remediation: true"))
 
 
-def test_load_manifest_accepts_unmarked_operator_action() -> None:
-    manifest = load_manifest_yaml(_manifest_yaml("- id: boot"))
+def test_load_manifest_accepts_unmarked_surviving_action() -> None:
+    manifest = load_manifest_yaml(_manifest_yaml("- id: reconnect"))
 
     assert manifest.platforms[0].lifecycle_actions[0].remediation is False
 
 
-def test_load_manifest_rejects_non_repeat_safe_remediation_action_in_device_type_override() -> None:
-    with pytest.raises(ManifestValidationError, match="not repeat-safe") as exc_info:
+def test_load_manifest_accepts_repeat_safe_remediation_action_in_device_type_override() -> None:
+    manifest = load_manifest_yaml(
+        _manifest_yaml(
+            "- id: release_forwarded_ports\n  remediation: true",
+            device_type_override=True,
+        )
+    )
+
+    override = manifest.platforms[0].device_type_overrides["emulator"]
+    assert override.lifecycle_actions[0].remediation is True
+
+
+def test_load_manifest_rejects_removed_lifecycle_action_id_in_device_type_override() -> None:
+    with pytest.raises(ManifestValidationError, match="literal_error"):
         load_manifest_yaml(
             _manifest_yaml(
                 "- id: shutdown\n  remediation: true",
                 device_type_override=True,
             )
         )
-
-    message = str(exc_info.value)
-    assert "synthetic_platform" in message
-    assert "shutdown" in message
-    assert "reconnect" in message
-    assert "release_forwarded_ports" in message

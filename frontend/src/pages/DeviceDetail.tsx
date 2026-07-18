@@ -6,7 +6,6 @@ import {
   useDevice,
   useDeviceHealth,
   useExitDeviceMaintenance,
-  useRunDeviceLifecycleAction,
   useStartNode,
 } from '../hooks/useDevices';
 import { useHosts } from '../hooks/useHosts';
@@ -79,7 +78,6 @@ function actionLinkClass(tone: DeviceDetailTriageTone): string {
 function TriageHero({
   triage,
   onVerify,
-  onLifecycleBoot,
   onStartNode,
   onExitMaintenance,
   pending,
@@ -87,11 +85,9 @@ function TriageHero({
 }: {
   triage: DeviceDetailTriage;
   onVerify: () => void;
-  onLifecycleBoot: () => void;
   onStartNode: () => void;
   onExitMaintenance: () => void;
   pending: {
-    lifecycleBoot: boolean;
     startNode: boolean;
   };
   verificationLabel?: string;
@@ -107,12 +103,6 @@ function TriageHero({
     }
     if (action.kind === 'verify') {
       return <Button onClick={onVerify}>{action.label}</Button>;
-    }
-    if (action.kind === 'launch-emulator') {
-      return <Button onClick={onLifecycleBoot} loading={pending.lifecycleBoot} leadingIcon={<Play size={15} />}>{action.label}</Button>;
-    }
-    if (action.kind === 'boot-simulator') {
-      return <Button onClick={onLifecycleBoot} loading={pending.lifecycleBoot} leadingIcon={<Play size={15} />}>{action.label}</Button>;
     }
     if (action.kind === 'start-node') {
       return <Button onClick={onStartNode} loading={pending.startNode} leadingIcon={<Play size={15} />}>{action.label}</Button>;
@@ -172,7 +162,6 @@ export function DeviceDetail() {
   } = useDeviceHealth(deviceId);
   const { data: hosts = [] } = useHosts();
   const deleteDevice = useDeleteDevice();
-  const lifecycleAction = useRunDeviceLifecycleAction();
   const startNode = useStartNode();
   const exitMaintenance = useExitDeviceMaintenance();
   const [tab, setTab] = useTabParam('tab', TAB_IDS as unknown as string[], 'triage');
@@ -194,7 +183,6 @@ export function DeviceDetail() {
   const canTestSession = !!device && !reservationLocked && !readinessLocked && deviceChipStatus(device) === 'available';
   const triage = device ? deriveDeviceDetailTriage(device, { health }) : null;
   const triagePending = {
-    lifecycleBoot: lifecycleAction.isPending && lifecycleAction.variables?.action === 'boot',
     startNode: startNode.isPending,
   };
   if (!device && isLoading) {
@@ -243,7 +231,6 @@ export function DeviceDetail() {
                 handoffMessage: verificationAction.handoffMessage,
               });
             }}
-            onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
             onStartNode={() => startNode.mutate(device.id)}
             onExitMaintenance={() => exitMaintenance.mutate(device.id)}
           />

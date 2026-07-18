@@ -1,8 +1,8 @@
 """Canonical parser for the pushed device_health section (contract v7).
 
-One shared representation used by the inline Phase-3 fold, the StatusFoldLoop
-device fold, and the synchronous emulator_state fold, so all three agree on
-membership, presence, and the v7-vs-legacy shape decision.
+One shared representation used by the inline Phase-3 fold and the StatusFoldLoop
+device fold, so both agree on membership, presence, and the v7-vs-legacy shape
+decision.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ class DeviceHealthItem:
     probe_status: str  # "observed" | "error"
     presence: str  # "present" | "absent" | "unknown"
     health: dict[str, Any] | None
-    lifecycle_state: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +31,7 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
     raw = section.get("devices")
     if not isinstance(raw, list):
         # Legacy (pre-v7) section: a dict keyed by connection_target. The fold
-        # falls back to presence/lifecycle dials for this host.
+        # falls back to the legacy presence dials for this host.
         return PushedDeviceHealth(is_v7=False, complete_gather=False, by_device_id={})
     by_id: dict[uuid.UUID, DeviceHealthItem] = {}
     for item in raw:
@@ -43,7 +42,6 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
         except ValueError, TypeError:
             continue
         health = item.get("health")
-        lifecycle = item.get("lifecycle_state")
         raw_probe_status = item.get("probe_status")
         probe_status = raw_probe_status if raw_probe_status in {"observed", "error"} else "error"
         raw_presence = item.get("presence")
@@ -53,7 +51,6 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
             probe_status=probe_status,
             presence=presence,
             health=health if isinstance(health, dict) else None,
-            lifecycle_state=lifecycle if isinstance(lifecycle, dict) else {},
         )
     return PushedDeviceHealth(
         is_v7=True,

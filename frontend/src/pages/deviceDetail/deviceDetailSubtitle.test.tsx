@@ -10,7 +10,6 @@ function baseDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     platform_label: null,
     os_version: 'API 37',
     host_id: 'host-01',
-    emulator_state: null,
     reservation: null,
     ...overrides,
   } as DeviceDetail;
@@ -51,24 +50,6 @@ describe('buildDeviceDetailSubtitleNode', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('My Custom Platform · API 37 · host-01')).toBeInTheDocument();
-  });
-
-  it('renders the EmulatorStateBadge when emulator_state is set', () => {
-    render(
-      <MemoryRouter>
-        <p>{buildDeviceDetailSubtitleNode(baseDevice({ emulator_state: 'stopped' }), 'host-01')}</p>
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId('emulator-state-badge')).toBeInTheDocument();
-  });
-
-  it('omits the EmulatorStateBadge when emulator_state is null', () => {
-    render(
-      <MemoryRouter>
-        <p>{buildDeviceDetailSubtitleNode(baseDevice(), 'host-01')}</p>
-      </MemoryRouter>,
-    );
-    expect(screen.queryByTestId('emulator-state-badge')).not.toBeInTheDocument();
   });
 
   it('does not render reservation info in subtitle (moved to triage card)', () => {

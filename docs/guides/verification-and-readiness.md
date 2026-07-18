@@ -104,13 +104,13 @@ Verification must resolve the device to a stable ADB serial on the selected host
 
 ### Virtual Devices
 
-Emulators and simulators now persist with `connection_type=virtual`.
+Emulators and simulators are externally managed and persist with `connection_type=virtual`.
 
 That means:
 
 - they do not borrow USB or network labels in the UI
 - they do not require IP input for readiness
-- verification still uses the selected host to confirm the device target is healthy and probe-able
+- verification probes the selected host to confirm the device target is healthy and probe-able; a non-booted virtual device fails verification as offline (same as an unplugged physical device)
 
 ### Roku
 

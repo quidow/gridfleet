@@ -32,12 +32,12 @@ def test_device_is_virtual_none() -> None:
 
 @pytest.fixture
 def lifecycle_actions_with_reconnect() -> list[dict]:
-    return [{"id": "state"}, {"id": "reconnect"}]
+    return [{"id": "reconnect"}]
 
 
 @pytest.fixture
 def lifecycle_actions_without_reconnect() -> list[dict]:
-    return [{"id": "state"}, {"id": "boot"}, {"id": "shutdown"}]
+    return [{"id": "release_forwarded_ports"}]
 
 
 def test_platform_has_lifecycle_action_present(lifecycle_actions_with_reconnect: list[dict]) -> None:

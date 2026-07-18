@@ -83,7 +83,7 @@ macOS hosts can run both Apple and Android lanes.
 
 ## Emulator And Simulator Preparation
 
-GridFleet can discover existing emulators and simulators, and it can auto-launch an existing Android AVD during verification or managed Appium startup.
+GridFleet can discover existing emulators and simulators, but it never boots or shuts them down. Boot virtual devices externally before enrollment or verification.
 
 What still needs to exist before that works:
 

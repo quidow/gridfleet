@@ -10,7 +10,6 @@ REQUIRED_METHODS = {
     "discover",
     "doctor",
     "health_check",
-    "lifecycle_action",
     "pre_session",
     "post_session",
     "normalize_device",

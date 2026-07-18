@@ -110,7 +110,6 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
         extra_caps=None,
         device_type="real_device",
         ip_address=None,
-        headless=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -173,7 +172,7 @@ async def test_pack_start_default_caps_use_appium_platform_name(
 
 
 @pytest.mark.asyncio
-async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_pack_emulator_start_uses_adapter_resolve(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
     lifecycle_action = AsyncMock(
         return_value=LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
@@ -233,13 +232,13 @@ async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pyte
         port=4723,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
-        lifecycle_actions=[{"id": "boot"}],
+        connection_behavior={"host_resolution_action": "resolve"},
         device_type="emulator",
     )
 
     args, _kwargs = lifecycle_action.await_args
-    assert args[0] == "boot"
-    assert args[1] == {"headless": True}
+    assert args[0] == "resolve"
+    assert args[1] == {"device_type": "emulator"}
     assert info.connection_target == "emulator-5554"
     cmd = captured["cmd"]
     assert isinstance(cmd, list)

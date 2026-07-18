@@ -350,10 +350,8 @@ def compose_app(
                     ObservationFold("device_telemetry", hardware_telemetry_svc.fold_host_device_telemetry),
                     ObservationFold("device_properties", property_refresh_svc.fold_host_device_properties),
                     ObservationFold("host_telemetry", resource_telemetry_svc.fold_host_telemetry),
-                    # device_health moved to StatusFoldLoop (Phase 4); the cheap
-                    # emulator_state application (A4/A5.5a) stays synchronous below.
+                    # device_health moved to StatusFoldLoop (Phase 4).
                 ),
-                apply_pushed_emulator_state=connectivity_svc.apply_pushed_emulator_state,
                 converge_host=functools.partial(
                     converge_pushed_host,
                     session_factory=session_factory,

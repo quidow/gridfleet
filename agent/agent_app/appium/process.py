@@ -55,9 +55,14 @@ from agent_app.pack.worker_supervisor import WorkerHandle
 logger = logging.getLogger(__name__)
 
 
-def _has_lifecycle_action(actions: list[dict[str, Any]], action_id: str) -> bool:
-    """Return True if any action in *actions* has id == *action_id*."""
-    return any(action.get("id") == action_id for action in actions)
+def _requests_host_resolution(connection_behavior: dict[str, Any] | None) -> bool:
+    """Return True if the platform's connection_behavior asks the adapter to
+    resolve a live connection target before starting Appium (e.g. an Android
+    emulator registered as ``avd:<name>`` whose running ADB serial must be
+    resolved at start time)."""
+    if not connection_behavior:
+        return False
+    return connection_behavior.get("host_resolution_action") == "resolve"
 
 
 READINESS_TIMEOUT = 30
@@ -267,7 +272,6 @@ class AppiumLaunchSpec:
     insecure_features: list[str] = field(default_factory=list)
     lifecycle_actions: list[dict[str, Any]] = field(default_factory=list)
     connection_behavior: dict[str, Any] = field(default_factory=dict)
-    headless: bool = True
 
 
 @dataclass(frozen=True)
@@ -364,7 +368,7 @@ class AppiumProcessManager:
         self, registry: AdapterRegistry, pack_id: str, *, requested_release: str | None
     ) -> tuple[str | None, WorkerHandle | None]:
         """Resolve the (release, worker) snapshot this start binds to — the
-        worker serves both the boot lifecycle dispatch and pre_session.
+        worker serves both the resolve host-resolution dispatch and pre_session.
 
         The worker is None when the pack legitimately has no adapter — no
         tarball, or a tarball the loader inspected and marked adapterless
@@ -420,11 +424,12 @@ class AppiumProcessManager:
             pack_id, desired.release
         ):
             # No adapter can ever exist for this release. If the manifest still
-            # declares adapter-owned hooks (lifecycle boot/shutdown/...), the
-            # start must not proceed — the boot dispatch would silently no-op
-            # and Appium would spawn for a device that was never booted. The
-            # pack reports blocked for the same reason; the backend desired-node
-            # endpoint keeps sending launch data regardless, so the gate is here.
+            # declares adapter-owned hooks that require an adapter it does not
+            # ship, the start must not proceed — the dispatch would silently
+            # no-op and Appium would spawn for a device whose hooks never ran.
+            # The pack reports blocked for the same reason; the backend
+            # desired-node endpoint keeps sending launch data regardless, so
+            # the gate is here.
             required = declared_adapter_hooks(desired)
             if required:
                 raise StartDeferredError(
@@ -682,11 +687,11 @@ class AppiumProcessManager:
                 await self._drop_failed_managed_port(port)
                 return
             except StartDeferredError as exc:
-                # boot has not resolved a device serial yet (emulator still
-                # booting / adb transiently unresponsive). This is transient, not a
-                # restart failure: do not advance the auto-restart backoff or drop
-                # the port. The node-state convergence loop retries start() next
-                # tick and defers again until boot resolves the serial.
+                # Start could not proceed yet (adapter/runtime still loading, or
+                # release changed mid-start). This is transient, not a restart
+                # failure: do not advance the auto-restart backoff or drop the
+                # port. The node-state convergence loop retries start() next tick
+                # and defers again until the transient condition clears.
                 logger.info(
                     "Appium auto-restart deferred for port %d: %s; convergence loop will retry",
                     port,
@@ -837,7 +842,6 @@ class AppiumProcessManager:
         session_override: bool = True,
         device_type: str | None = None,
         ip_address: str | None = None,
-        headless: bool = True,
         appium_platform_name: str | None = None,
         appium_env: dict[str, str] | None = None,
         insecure_features: list[str] | None = None,
@@ -857,35 +861,25 @@ class AppiumProcessManager:
             pack_worker_release, pack_worker = self._resolve_pack_worker(
                 self._adapter_registry, pack_id, requested_release=pack_release
             )
-        if self._adapter_registry is not None and _has_lifecycle_action(lifecycle_actions or [], "boot"):
-            if pack_worker is None or not adapter_supports(pack_worker, "lifecycle_action"):
-                result = None
+        if _requests_host_resolution(connection_behavior):
+            if (
+                self._adapter_registry is None
+                or pack_worker is None
+                or not adapter_supports(pack_worker, "lifecycle_action")
+            ):
+                raise StartDeferredError(f"driver-pack adapter for {pack_id!r} cannot perform host resolution")
+            lifecycle_result = await dispatch_lifecycle_action(
+                pack_worker,
+                "resolve",
+                {"device_type": device_type},
+                LifecycleCtx(host_id="", device_identity_value=connection_target),
+            )
+            if lifecycle_result.resolved_connection_target:
+                resolved_connection_target = lifecycle_result.resolved_connection_target
+            elif not lifecycle_result.ok:
+                raise DeviceNotFoundError(lifecycle_result.detail or f"{connection_target!r} could not be resolved")
             else:
-                lifecycle_result = await dispatch_lifecycle_action(
-                    pack_worker,
-                    "boot",
-                    {"headless": headless},
-                    LifecycleCtx(host_id="", device_identity_value=connection_target),
-                )
-                result = {
-                    "success": lifecycle_result.ok,
-                    "state": lifecycle_result.state,
-                    "detail": lifecycle_result.detail,
-                    "resolved_connection_target": lifecycle_result.resolved_connection_target,
-                }
-            if result and result.get("resolved_connection_target"):
-                resolved_connection_target = str(result["resolved_connection_target"])
-            elif result and result.get("success") is False:
-                raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be started"))
-            elif result and result.get("success") is True:
-                # boot succeeded but did not resolve a device serial (emulator still
-                # booting, or adb transiently unresponsive). Proceeding would bake the
-                # unresolved connection target — an AVD name — into
-                # --default-capabilities as ``appium:udid``, and every session create
-                # would 500 with "Device <udid> was not in the list of connected
-                # devices". Defer instead: the node-state loop retries next tick, and
-                # once boot resolves the serial the start proceeds with a usable udid.
-                raise StartDeferredError(f"boot for {connection_target!r} has not resolved a device serial yet")
+                raise DeviceNotFoundError(f"resolve for {connection_target!r} did not return a serial")
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
         if pack_worker is not None:
             if not adapter_supports(pack_worker, "pre_session"):
@@ -922,7 +916,6 @@ class AppiumProcessManager:
             insecure_features=list(insecure_features) if insecure_features else [],
             lifecycle_actions=list(lifecycle_actions) if lifecycle_actions else [],
             connection_behavior=dict(connection_behavior) if connection_behavior else {},
-            headless=headless,
         )
         async with self._start_lock:
             if port in self._appium_procs and self._appium_procs[port].returncode is None:
@@ -939,11 +932,12 @@ class AppiumProcessManager:
 
             if self._adapter_registry is not None:
                 # Revalidate under the lock: a pack-loop reconcile may have
-                # published a different release while this start awaited boot,
-                # pre_session, or the lock. The boot side effects and merged
-                # caps belong to the snapshot resolved above; spawning them
-                # onto a swapped runtime would persist a mixed node. Defer so
-                # the retry re-derives everything against the new release.
+                # published a different release while this start awaited
+                # resolve, pre_session, or the lock. The resolved target and
+                # merged caps belong to the snapshot resolved above;
+                # spawning them onto a swapped runtime would persist a mixed
+                # node. Defer so the retry re-derives everything against the
+                # new release.
                 revalidated_release, revalidated_worker = self._resolve_pack_worker(
                     self._adapter_registry, pack_id, requested_release=pack_release
                 )

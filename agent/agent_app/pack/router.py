@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Query, Request, status
 
@@ -73,6 +73,10 @@ def _adapter_lifecycle_payload(result: LifecycleActionResult) -> dict[str, Any]:
     payload: dict[str, Any] = {"success": result.ok, "state": result.state, "detail": result.detail}
     if result.resolved_connection_target is not None:
         payload["resolved_connection_target"] = result.resolved_connection_target
+    if result.identity_value is not None:
+        payload["identity_value"] = result.identity_value
+    if result.connection_target is not None:
+        payload["connection_target"] = result.connection_target
     return payload
 
 
@@ -87,8 +91,6 @@ async def run_device_health_probe(
     device_type: str,
     connection_type: str | None = None,
     ip_address: str | None = None,
-    allow_boot: bool = False,
-    headless: bool | None = None,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
     identity_value: str | None = None,
@@ -96,14 +98,13 @@ async def run_device_health_probe(
     has_live_session: bool | None = None,
 ) -> dict[str, Any]:
     """Run the pack health hook with the same context used by the HTTP route."""
-    del platform, headless
+    del platform
     handle = worker_or_none(adapter_registry, pack_id, release)
     if handle is not None and adapter_supports(handle, "health_check"):
         results = await dispatch_health_check(
             handle,
             HealthCtx(
                 device_identity_value=connection_target,
-                allow_boot=allow_boot,
                 platform_id=platform_id,
                 device_type=device_type,
                 connection_type=connection_type,
@@ -126,32 +127,6 @@ async def run_device_health_probe(
             }
         ],
     }
-
-
-async def run_device_lifecycle_state_probe(
-    *,
-    adapter_registry: AdapterRegistry | None,
-    platform: DesiredPlatform,
-    release: str,
-    pack_id: str,
-    platform_id: str,
-    connection_target: str,
-    host_id: str,
-    identity_value: str | None = None,
-) -> dict[str, Any] | None:
-    """Run the pack ``state`` lifecycle action with the same dispatch as the HTTP
-    route. Returns None when no adapter/action is available (caller reports error)."""
-    del platform, platform_id, identity_value
-    handle = worker_or_none(adapter_registry, pack_id, release)
-    if handle is None or not adapter_supports(handle, "lifecycle_action"):
-        return None
-    result = await dispatch_lifecycle_action(
-        handle,
-        "state",
-        {},
-        LifecycleCtx(host_id=host_id, device_identity_value=connection_target),
-    )
-    return _adapter_lifecycle_payload(result)
 
 
 async def run_device_telemetry_probe(
@@ -233,8 +208,6 @@ async def pack_device_health_route(
     device_type: Annotated[str, Query(min_length=1)],
     connection_type: Annotated[str | None, Query()] = None,
     ip_address: Annotated[str | None, Query()] = None,
-    allow_boot: Annotated[bool, Query()] = False,
-    headless: Annotated[bool, Query()] = True,
     ip_ping_timeout_sec: Annotated[float | None, Query(gt=0)] = None,
     ip_ping_count: Annotated[int | None, Query(ge=1)] = None,
     identity_value: Annotated[str | None, Query()] = None,
@@ -252,8 +225,6 @@ async def pack_device_health_route(
         device_type=device_type,
         connection_type=connection_type,
         ip_address=ip_address,
-        allow_boot=allow_boot,
-        headless=headless,
         ip_ping_timeout_sec=ip_ping_timeout_sec,
         ip_ping_count=ip_ping_count,
         identity_value=identity_value,
@@ -274,7 +245,7 @@ async def pack_device_health_route(
 async def pack_device_lifecycle_route(
     request: Request,
     connection_target: str,
-    action: str,
+    action: Literal["reconnect", "release_forwarded_ports", "resolve"],
     platform: DesiredPlatformDep,
     adapter_registry: OptionalAdapterRegistryDep,
     host_id: HostIdDep,
@@ -293,9 +264,8 @@ async def pack_device_lifecycle_route(
         )
         # A successful state-changing action (e.g. the backend's reconnect /
         # release_forwarded_ports link repair) should be re-observed promptly
-        # rather than at the next fixed probe cadence. "state" is a read-only
-        # poll, so it never wakes the loop.
-        if result.ok and action != "state":
+        # rather than at the next fixed probe cadence.
+        if result.ok and action != "resolve":
             probe_loop = getattr(request.app.state, "probe_loop", None)
             if probe_loop is not None:
                 probe_loop.request_immediate("device_health")

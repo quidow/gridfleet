@@ -55,9 +55,9 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     job: dict[str, object] = {"stages": []}
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
     settings = FakeSettingsReader({"appium.startup_timeout_sec": 30})
-    fetch = AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}})
+    fetch = AsyncMock(return_value={"healthy": True})
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
-    device = _device(device_type=DeviceType.emulator, tags={"emulator_headless": "false"})
+    device = _device(device_type=DeviceType.emulator)
 
     assert (
         await VerificationExecutionService(
@@ -72,8 +72,6 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
-    assert device.connection_target == "emulator-5554"
-    assert fetch.await_args.kwargs["headless"] is False
 
     fetch.side_effect = None
     fetch.return_value = {"healthy": False, "checks": [{"check_id": "boot_completed", "ok": False, "message": "no"}]}
@@ -88,9 +86,13 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
             node_manager=AsyncMock(),
-        ).run_device_health(job, _device(), http_client_factory=MagicMock())
+        ).run_device_health(job, _device(device_type=DeviceType.emulator), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
+    failure_probe_args = fetch.await_args_list[1].kwargs
+    assert failure_probe_args["device_type"] == "emulator"
+    assert "allow_boot" not in failure_probe_args
+    assert "headless" not in failure_probe_args
 
     fetch.side_effect = AgentCallError("10.0.0.1", "down")
     _s3 = FakeSettingsReader({})

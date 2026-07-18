@@ -47,7 +47,6 @@ import {
   invalidatePatchedDeviceQueries,
   patchDeviceQueries,
   rollbackOptimisticDeviceQueries,
-  updateEmulatorState,
   updateOperationalState,
   updateNodeOperationalState,
 } from '../lib/deviceQueryCache';
@@ -224,15 +223,10 @@ export function useRunDeviceLifecycleAction() {
     mutationKey: ['devices', 'lifecycle-action'],
     mutationFn: ({ id, action, args }: { id: string; action: string; args?: Record<string, unknown> }) =>
       runDeviceLifecycleAction(id, action, args),
-    onMutate: ({ id, action }) => {
-      const optimisticState = action === 'boot' ? 'booting' : action === 'shutdown' ? 'shutdown' : null;
-      return optimisticState ? patchDeviceQueries(qc, id, updateEmulatorState(optimisticState)) : undefined;
-    },
     onSuccess: (_data, { action }) => {
       toast.success(`Lifecycle action ${action.replaceAll('_', ' ')} queued`);
     },
-    onError: (error, { id, action }, context) => {
-      rollbackOptimisticDeviceQueries(qc, context);
+    onError: (error, { id, action }) => {
       toast.error(getErrorMessage(error, `Failed to run lifecycle action ${action} for device ${id}`));
     },
     onSettled: (_data, _error, { id }) => {

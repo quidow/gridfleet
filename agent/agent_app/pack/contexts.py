@@ -39,7 +39,6 @@ class TelemetryCtx:
 @dataclass
 class HealthCtx:
     device_identity_value: str
-    allow_boot: bool
     platform_id: str | None = None
     device_type: str | None = None
     connection_type: str | None = None

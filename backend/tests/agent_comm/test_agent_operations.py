@@ -229,7 +229,6 @@ async def test_pack_device_health_get_request() -> None:
                     "pack_id": "appium-uiautomator2",
                     "platform_id": "android_mobile",
                     "device_type": "real_device",
-                    "allow_boot": False,
                 },
                 "headers": {},
                 "timeout": 10,
@@ -269,50 +268,8 @@ async def test_pack_device_health_forwards_ip_ping_params() -> None:
                     "pack_id": "appium-uiautomator2",
                     "platform_id": "android_mobile",
                     "device_type": "real_device",
-                    "allow_boot": False,
                     "ip_ping_timeout_sec": 1.5,
                     "ip_ping_count": 2,
-                },
-                "headers": {},
-                "timeout": 10,
-            },
-        )
-    ]
-
-
-async def test_pack_device_health_forwards_headless_when_explicitly_requested() -> None:
-    client = StrictAgentClient(
-        get_response=_response(
-            "GET",
-            "http://10.0.0.5:5100/agent/pack/devices/emulator-5554/health",
-            payload={"healthy": True},
-        )
-    )
-
-    payload = await agent_operations.pack_device_health(
-        "10.0.0.5",
-        5100,
-        "emulator-5554",
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        allow_boot=True,
-        headless=False,
-        http_client_factory=_strict_client_factory(client),
-        timeout=10,
-        circuit_breaker=_noop_breaker(),
-    )
-
-    assert payload["healthy"] is True
-    assert client.get_calls == [
-        (
-            "http://10.0.0.5:5100/agent/pack/devices/emulator-5554/health",
-            {
-                "params": {
-                    "pack_id": "appium-uiautomator2",
-                    "platform_id": "android_mobile",
-                    "device_type": "real_device",
-                    "allow_boot": True,
-                    "headless": False,
                 },
                 "headers": {},
                 "timeout": 10,

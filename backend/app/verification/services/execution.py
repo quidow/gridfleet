@@ -31,7 +31,6 @@ from app.devices.services.intent_types import (
 from app.grid.allocation import node_target
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.operator_node import operator_start_source, operator_stop_sources
-from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions.service_probes import (
     ProbeSource,
     claim_probe_session,
@@ -40,9 +39,7 @@ from app.sessions.service_probes import (
 )
 from app.sessions.service_viability import build_probe_capabilities, grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy, SessionViabilityProbeInProgressError
-from app.verification.services.job_state import enum_value, set_stage
-
-device_is_virtual = pack_platform_catalog.device_is_virtual
+from app.verification.services.job_state import set_stage
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,7 +60,6 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
     from app.verification.services.preparation import PreparedVerificationContext
 
-AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 logger = logging.getLogger(__name__)
 
 
@@ -136,11 +132,7 @@ class VerificationExecutionService:
             )
             return None
 
-        device_type_str = enum_value(device.device_type)
-        is_virtual = device_type_str in ("emulator", "simulator")
-        running_detail = "Booting virtual device — this may take a few minutes" if is_virtual else None
-        await set_stage(job, "device_health", "running", detail=running_detail)
-        headless = (device.tags or {}).get("emulator_headless", "true") != "false"
+        await set_stage(job, "device_health", "running")
         try:
             result = await fetch_pack_device_health(
                 device.host.ip,
@@ -151,8 +143,6 @@ class VerificationExecutionService:
                 device_type=str(device.device_type) if device.device_type else "real_device",
                 connection_type=str(device.connection_type) if device.connection_type else None,
                 ip_address=device.ip_address,
-                allow_boot=True,
-                headless=headless,
                 http_client_factory=http_client_factory,
                 timeout=_device_health_timeout(device, settings=self._agent.settings),
                 circuit_breaker=self._agent.circuit_breaker,
@@ -164,14 +154,6 @@ class VerificationExecutionService:
             return detail
 
         if result.get("healthy"):
-            # If the agent auto-launched an AVD and resolved its ADB serial, use the
-            # live serial for this verification run only. The saved device keeps the
-            # stable AVD name so later node starts can launch it again.
-            avd_info = result.get("avd_launched")
-            if isinstance(avd_info, dict) and isinstance(avd_info.get("serial"), str):
-                resolved_serial: str = avd_info["serial"]
-                device.connection_target = resolved_serial
-
             await set_stage(job, "device_health", "passed", detail="Device health checks passed")
             return None
 
@@ -513,8 +495,7 @@ def _health_failure_detail(result: dict[str, Any]) -> str:
 
 
 def _device_health_timeout(device: Device, *, settings: SettingsReader) -> float | int:
-    if device_is_virtual(device):
-        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, settings.get_int("appium.startup_timeout_sec") + 5)
+    del settings, device
     return 10
 
 

@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.07.2
+release: 2026.07.3
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -83,7 +83,6 @@ platforms:
           connection_types: [usb]
           requires_ip_address: true
     lifecycle_actions:
-      - id: state
       - id: reconnect
     connection_behavior:
       default_device_type: real_device
@@ -136,10 +135,7 @@ platforms:
         identity:
           scheme: simulator_udid
           scope: host
-        lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
+        lifecycle_actions: []
         connection_behavior:
           default_device_type: simulator
           default_connection_type: virtual
@@ -190,7 +186,6 @@ platforms:
           connection_types: [usb]
           requires_ip_address: true
     lifecycle_actions:
-      - id: state
       - id: reconnect
     connection_behavior:
       default_device_type: real_device
@@ -240,10 +235,7 @@ platforms:
         identity:
           scheme: simulator_udid
           scope: host
-        lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
+        lifecycle_actions: []
         connection_behavior:
           default_device_type: simulator
           default_connection_type: virtual

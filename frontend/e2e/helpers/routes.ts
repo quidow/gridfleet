@@ -35,7 +35,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           identity_scheme: 'android_serial',
           identity_scope: 'host',
           discovery_kind: 'adb',
-          lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+          lifecycle_actions: [{ id: 'reconnect' }],
           health_checks: [
             { id: 'adb_connected', label: 'ADB Connected' },
             { id: 'adb_responsive', label: 'ADB Responsive' },
@@ -49,7 +49,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           connection_behavior: { default_device_type: 'real_device', default_connection_type: 'usb', requires_connection_target: true },
           device_type_overrides: {
             emulator: {
-              lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+              lifecycle_actions: [],
               connection_behavior: { default_device_type: 'emulator', default_connection_type: 'virtual', requires_connection_target: true },
             },
           },
@@ -73,7 +73,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           identity_scheme: 'apple_udid',
           identity_scope: 'global',
           discovery_kind: 'apple',
-          lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+          lifecycle_actions: [{ id: 'reconnect' }],
           health_checks: [
             { id: 'devicectl_visible', label: 'devicectl Visible' },
             { id: 'devicectl_paired', label: 'Device Paired' },
@@ -93,7 +93,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           device_type_overrides: {
             simulator: {
               identity: { scheme: 'simulator_udid', scope: 'host' },
-              lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+              lifecycle_actions: [],
               connection_behavior: { default_device_type: 'simulator', default_connection_type: 'virtual', requires_connection_target: true },
             },
           },
@@ -109,7 +109,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           identity_scheme: 'apple_udid',
           identity_scope: 'global',
           discovery_kind: 'apple',
-          lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+          lifecycle_actions: [{ id: 'reconnect' }],
           health_checks: [
             { id: 'devicectl_visible', label: 'devicectl Visible' },
             { id: 'devicectl_paired', label: 'Device Paired' },
@@ -156,7 +156,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
             },
             simulator: {
               identity: { scheme: 'simulator_udid', scope: 'host' },
-              lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+              lifecycle_actions: [],
               connection_behavior: { default_device_type: 'simulator', default_connection_type: 'virtual', requires_connection_target: true },
             },
           },

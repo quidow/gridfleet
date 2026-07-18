@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 class _AdapterContext(Protocol):
     device_identity_value: object
-    allow_boot: object
     connection_target: object
 
 
@@ -69,13 +68,13 @@ class _FakeAdapter:
     pack_release = "1.0"
 
     def __init__(self) -> None:
-        self.health_calls: list[tuple[str, bool]] = []
+        self.health_calls: list[str] = []
         self.telemetry_calls: list[tuple[str, str]] = []
         self.lifecycle_calls: list[tuple[str, str, dict[str, object]]] = []
 
     async def health_check(self, ctx: object) -> list[HealthCheckResult]:
         ctx_any = cast("_AdapterContext", ctx)
-        self.health_calls.append((str(ctx_any.device_identity_value), bool(ctx_any.allow_boot)))
+        self.health_calls.append(str(ctx_any.device_identity_value))
         return [HealthCheckResult(check_id="adapter_alive", ok=True)]
 
     async def telemetry(self, ctx: object) -> HardwareTelemetry:
@@ -127,13 +126,11 @@ async def test_pack_device_health_endpoint_covers_forwarding(client: AsyncClient
                 "pack_id": "appium-uiautomator2",
                 "platform_id": "android_mobile",
                 "device_type": "emulator",
-                "allow_boot": "true",
-                "headless": "false",
             },
         )
 
     assert resp.status_code == 200
-    assert adapter.health_calls == [("abc123", True)]
+    assert adapter.health_calls == ["abc123"]
 
 
 async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:

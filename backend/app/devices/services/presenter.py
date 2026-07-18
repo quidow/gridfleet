@@ -137,11 +137,6 @@ class DevicePresenterService:
             review_required=bool(device.review_required),
         )
 
-        emulator_state_value: str | None = None
-        raw = device.emulator_state
-        if isinstance(raw, str) and raw:
-            emulator_state_value = raw
-
         blocked_reason: str | None
         if precomputed is not None:
             blocked_reason = precomputed.blocked_reason
@@ -193,7 +188,6 @@ class DevicePresenterService:
             "lifecycle_policy_summary": lifecycle_summary,
             "needs_attention": needs_attention,
             "health_summary": health_summary,
-            "emulator_state": emulator_state_value,
             "blocked_reason": blocked_reason,
             "review_required": device.review_required,
             "review_reason": device.review_reason,

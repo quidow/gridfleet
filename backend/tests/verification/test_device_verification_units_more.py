@@ -119,7 +119,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
 
     monkeypatch.setattr(
         "app.verification.services.execution.fetch_pack_device_health",
-        AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}}),
+        AsyncMock(return_value={"healthy": True}),
     )
     assert (
         await VerificationExecutionService(
@@ -136,7 +136,6 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         ).run_device_health(_job(), device, http_client_factory=object)
         is None
     )
-    assert device.connection_target == "emulator-5554"
 
     monkeypatch.setattr(
         "app.verification.services.execution.fetch_pack_device_health",
@@ -951,7 +950,15 @@ async def test_preparation_resolution_and_validation_error_paths(
 
     monkeypatch.setattr(
         "app.verification.services.preparation.pack_device_lifecycle_action",
-        AsyncMock(return_value={"identity_value": "stable", "connection_target": "10.0.0.1:5555", "name": "Resolved"}),
+        AsyncMock(
+            return_value={
+                "success": True,
+                "identity_value": "stable",
+                "connection_target": "10.0.0.1:5555",
+                "resolved_connection_target": "10.0.0.1:5555",
+                "name": "Resolved",
+            }
+        ),
     )
     assert (
         await _prep_svc.resolve_host_derived_payload(
@@ -964,6 +971,12 @@ async def test_preparation_resolution_and_validation_error_paths(
     )
     assert payload["identity_value"] == "stable"
     assert payload["name"] == "Resolved"
+    resolution_call = preparation.pack_device_lifecycle_action.await_args
+    assert resolution_call.kwargs["args"] == {
+        "device_type": "real_device",
+        "connection_type": "network",
+        "ip_address": None,
+    }
 
     bad_create = DeviceVerificationCreate(
         pack_id="appium-uiautomator2",

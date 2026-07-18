@@ -30,7 +30,6 @@ from tests.pack.fake_worker import FakeWorkerHandle
 
 class _AdapterContext(Protocol):
     device_identity_value: object
-    allow_boot: object
     connection_target: object
 
 
@@ -134,7 +133,7 @@ async def test_pack_device_health_dispatches_correctly(client: AsyncClient) -> N
 
     assert resp.status_code == 200
     assert resp.json()["healthy"] is True
-    assert adapter.health_calls == [("serial-1", False)]
+    assert adapter.health_calls == ["serial-1"]
 
 
 async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -> None:
@@ -221,13 +220,13 @@ class _FakeAdapter:
     pack_release = "1.0"
 
     def __init__(self) -> None:
-        self.health_calls: list[tuple[str, bool]] = []
+        self.health_calls: list[str] = []
         self.telemetry_calls: list[tuple[str, str]] = []
         self.lifecycle_calls: list[tuple[str, str, dict[str, object]]] = []
 
     async def health_check(self, ctx: object) -> list[HealthCheckResult]:
         ctx_any = cast("_AdapterContext", ctx)
-        self.health_calls.append((str(ctx_any.device_identity_value), bool(ctx_any.allow_boot)))
+        self.health_calls.append(str(ctx_any.device_identity_value))
         return [HealthCheckResult(check_id="adapter_alive", ok=True)]
 
     async def telemetry(self, ctx: object) -> HardwareTelemetry:
@@ -265,18 +264,62 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
     assert adapter.lifecycle_calls == [("device-1", "reconnect", {"ip_address": "192.168.1.10", "port": 5555})]
 
 
-async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient) -> None:
+async def test_pack_device_lifecycle_resolve_does_not_wake_health_probe(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
-    app.state.adapter_registry = AdapterRegistry()
+    adapter = _FakeAdapter()
+    adapter.lifecycle_action = AsyncMock(
+        return_value=LifecycleActionResult(
+            ok=True,
+            identity_value="avd:Pixel_6",
+            connection_target="Pixel_6",
+            resolved_connection_target="emulator-5554",
+        )
+    )
+    registry = AdapterRegistry()
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
+    app.state.adapter_registry = registry
+    probe_loop = MagicMock()
+    previous_probe_loop = getattr(app.state, "probe_loop", None)
+    app.state.probe_loop = probe_loop
+
+    try:
+        with _latest_desired_override(desired_pack):
+            resp = await client.post(
+                "/agent/pack/devices/device-1/lifecycle/resolve",
+                params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
+                json={},
+            )
+    finally:
+        app.state.probe_loop = previous_probe_loop
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "success": True,
+        "state": "",
+        "detail": "",
+        "identity_value": "avd:Pixel_6",
+        "connection_target": "Pixel_6",
+        "resolved_connection_target": "emulator-5554",
+    }
+    probe_loop.request_immediate.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["unknown_action", "boot", "shutdown", "state"])
+async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient, action: str) -> None:
+    desired_pack = _make_adb_desired_pack()
+    adapter = _FakeAdapter()
+    registry = AdapterRegistry()
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
+    app.state.adapter_registry = registry
     with _latest_desired_override(desired_pack):
         resp = await client.post(
-            "/agent/pack/devices/device-1/lifecycle/unknown_action",
+            f"/agent/pack/devices/device-1/lifecycle/{action}",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
             json={},
         )
 
-    assert resp.status_code == 200
-    assert "Adapter not loaded" in resp.json()["detail"]
+    assert resp.status_code == 422
+    assert adapter.lifecycle_calls == []
 
 
 async def test_normalize_device_no_adapter(client: AsyncClient) -> None:

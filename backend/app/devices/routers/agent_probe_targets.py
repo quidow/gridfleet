@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
@@ -13,32 +13,9 @@ from app.devices.models import Device
 from app.devices.schemas.probe_targets import ProbeTargetOut, ProbeTargetsOut
 from app.devices.services.state import maintenance_sql
 from app.hosts.models import Host
-from app.packs.services.platform_catalog import platform_has_lifecycle_action
-from app.packs.services.platform_resolver import pack_platform_resolution_cache, resolve_pack_platform
 from app.settings.dependencies import SettingsServicesDep
 
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
 router = APIRouter(prefix="/agent/devices", tags=["agent-devices"])
-
-
-async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
-    """Whether this probe target's pack platform declares a ``state`` action.
-
-    This route owns the capability because it survives the deferred deletion of
-    the dial-era connectivity fold and its private helpers (A5.9).
-    """
-    try:
-        resolved = await resolve_pack_platform(
-            db,
-            pack_id=device.pack_id,
-            platform_id=device.platform_id,
-            device_type=device.device_type.value if device.device_type else None,
-        )
-    except LookupError:
-        return False
-    return platform_has_lifecycle_action(resolved.lifecycle_actions, "state")
 
 
 @router.get("/probe-targets", response_model=ProbeTargetsOut)
@@ -70,31 +47,24 @@ async def probe_targets(
     ip_ping_count = settings.get_int("device_checks.ip_ping.count_per_cycle")
 
     entries: list[ProbeTargetOut] = []
-    # Memoize pack-platform resolution across the per-device lifecycle-capability
-    # checks: a host's devices share a (pack_id, platform_id, device_type) tuple.
-    with pack_platform_resolution_cache():
-        for device in devices:
-            connection_target = device.connection_target or device.identity_value
-            if not connection_target:
-                continue
-            lifecycle_capable = await _lifecycle_state_capable(db, device)
-            claimed_ports = claimed_ports_by_node.get(device.appium_node.id, {}) if device.appium_node else {}
-            entries.append(
-                ProbeTargetOut(
-                    device_id=device.id,
-                    connection_target=connection_target,
-                    identity_value=device.identity_value,
-                    pack_id=device.pack_id,
-                    platform_id=device.platform_id,
-                    device_type=device.device_type.value,
-                    connection_type=device.connection_type.value if device.connection_type else None,
-                    ip_address=device.ip_address,
-                    headless=(device.tags or {}).get("emulator_headless", "true") != "false",
-                    allow_boot=False,
-                    ip_ping_timeout_sec=ip_ping_timeout_sec,
-                    ip_ping_count=ip_ping_count,
-                    claimed_ports=claimed_ports,
-                    lifecycle_state_capable=lifecycle_capable,
-                )
+    for device in devices:
+        connection_target = device.connection_target or device.identity_value
+        if not connection_target:
+            continue
+        claimed_ports = claimed_ports_by_node.get(device.appium_node.id, {}) if device.appium_node else {}
+        entries.append(
+            ProbeTargetOut(
+                device_id=device.id,
+                connection_target=connection_target,
+                identity_value=device.identity_value,
+                pack_id=device.pack_id,
+                platform_id=device.platform_id,
+                device_type=device.device_type.value,
+                connection_type=device.connection_type.value if device.connection_type else None,
+                ip_address=device.ip_address,
+                ip_ping_timeout_sec=ip_ping_timeout_sec,
+                ip_ping_count=ip_ping_count,
+                claimed_ports=claimed_ports,
             )
+        )
     return ProbeTargetsOut(host_id=host_id, devices=entries)

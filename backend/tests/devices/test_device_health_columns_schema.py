@@ -32,8 +32,9 @@ async def test_device_has_health_columns(db_session: AsyncSession) -> None:
             "session_viability_status",
             "session_viability_error",
             "session_viability_checked_at",
-            "emulator_state",
         }.issubset(cols), f"Missing columns on devices: {cols}"
+        assert "emulator_state" not in cols, f"emulator_state still present: {cols}"
+        assert "emulator_state_source_time" not in cols, f"emulator_state_source_time still present: {cols}"
         node_cols = {c["name"] for c in insp.get_columns("appium_nodes")}
         assert {
             "health_failing_since",

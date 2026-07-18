@@ -744,7 +744,6 @@ async def test_get_device(client: AsyncClient, db_session: AsyncSession, default
     assert data["identity_scope"] == "host"
     assert data["appium_node"] is None
     assert data["lifecycle_policy_summary"]["label"] == "Idle"
-    assert data["emulator_state"] is None
     assert data["hardware_health_status"] == "unknown"
     assert data["hardware_telemetry_state"] == "unknown"
     assert data["battery_level_percent"] is None
@@ -1008,32 +1007,6 @@ async def test_list_devices_filter_by_device_health_paginated_total(
     data = resp.json()
     assert data["total"] == 2
     assert len(data["items"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_device_detail_surfaces_emulator_state(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="avd-pixel-6",
-        connection_target="Pixel_6",
-        name="Pixel 6 Emulator",
-        device_type="emulator",
-    )
-    device_id = str(device.id)
-
-    from app.devices.services.health import DeviceHealthService
-
-    await DeviceHealthService(publisher=Mock()).update_emulator_state(db_session, device, "running")
-    await db_session.commit()
-
-    resp = await client.get(f"/api/devices/{device_id}")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["connection_type"] == "virtual"
-    assert data["emulator_state"] == "running"
 
 
 @pytest.mark.asyncio
@@ -1723,9 +1696,8 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
     device = await _create_device(
         db_session,
         default_host_id,
-        identity_value="avd:Pixel_6",
-        connection_target="Pixel_6",
-        device_type="emulator",
+        identity_value="real-android-001",
+        connection_target="real-android-001",
     )
 
     with patch(
@@ -1733,7 +1705,7 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
         new_callable=AsyncMock,
         return_value={"success": True, "state": "running"},
     ) as mock_lifecycle:
-        resp = await client.post(f"/api/devices/{device.id}/lifecycle/boot", json={"headless": True})
+        resp = await client.post(f"/api/devices/{device.id}/lifecycle/reconnect", json={})
 
     assert resp.status_code == 200
     assert resp.json()["state"] == "running"
@@ -1741,33 +1713,8 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
     _, kwargs = mock_lifecycle.call_args
     assert kwargs["pack_id"] == "appium-uiautomator2"
     assert kwargs["platform_id"] == "android_mobile"
-    assert kwargs["action"] == "boot"
-    assert kwargs["args"] == {"headless": True}
-
-
-@pytest.mark.asyncio
-async def test_device_lifecycle_state_updates_emulator_state(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="avd:Pixel_6",
-        connection_target="Pixel_6",
-        device_type="emulator",
-    )
-
-    with patch(
-        "app.devices.routers.control.pack_device_lifecycle_action",
-        new_callable=AsyncMock,
-        return_value={"success": True, "state": "running"},
-    ):
-        resp = await client.post(f"/api/devices/{device.id}/lifecycle/state")
-
-    assert resp.status_code == 200
-    detail_resp = await client.get(f"/api/devices/{device.id}")
-    assert detail_resp.status_code == 200
-    assert detail_resp.json()["emulator_state"] == "running"
+    assert kwargs["action"] == "reconnect"
+    assert kwargs["args"] == {}
 
 
 @pytest.mark.asyncio

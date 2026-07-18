@@ -52,6 +52,8 @@ class LifecycleActionResult:
     state: str = ""
     detail: str = ""
     resolved_connection_target: str | None = None
+    identity_value: str | None = None
+    connection_target: str | None = None
 
 
 @dataclass
@@ -67,7 +69,6 @@ class DiscoveryContext(Protocol):
 
 class HealthContext(Protocol):
     device_identity_value: str
-    allow_boot: bool
     # Expected device identity (serial) for adapters that can verify it at the
     # probed target; ``None`` when the caller has no confirmed identity.
     # Adapters must read it via ``getattr(ctx, "expected_identity_value", None)``
@@ -197,7 +198,7 @@ class DriverPackAdapter(Protocol):
     # --- Optional: lifecycle ----------------------------------------------
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state", "release_forwarded_ports"],
+        action_id: Literal["reconnect", "release_forwarded_ports", "resolve"],
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> LifecycleActionResult:

@@ -132,7 +132,7 @@ class ConnectionBehavior(BaseModel):
     requires_ip_address: bool = False
     requires_connection_target: bool = True
     allow_transport_identity_until_host_resolution: bool = False
-    host_resolution_action: str | None = None
+    host_resolution_action: Literal["resolve"] | None = None
 
 
 class ManifestParallelResourcePort(BaseModel):
@@ -160,7 +160,7 @@ class LifecycleAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: Literal["state", "reconnect", "boot", "shutdown", "release_forwarded_ports"]
+    id: Literal["reconnect", "release_forwarded_ports", "resolve"]
     remediation: bool = False
 
 

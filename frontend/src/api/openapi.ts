@@ -2122,7 +2122,7 @@ export interface components {
             /** Default Device Type */
             default_device_type?: ("real_device" | "emulator" | "simulator") | null;
             /** Host Resolution Action */
-            host_resolution_action?: string | null;
+            host_resolution_action?: "resolve" | null;
             /**
              * Requires Connection Target
              * @default true
@@ -2178,8 +2178,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             device_type: components["schemas"]["DeviceType"];
-            /** Emulator State */
-            emulator_state?: string | null;
             hardware_health_status: components["schemas"]["HardwareHealthStatus"];
             /** Hardware Telemetry Reported At */
             hardware_telemetry_reported_at: string | null;
@@ -2528,8 +2526,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             device_type: components["schemas"]["DeviceType"];
-            /** Emulator State */
-            emulator_state?: string | null;
             hardware_health_status: components["schemas"]["HardwareHealthStatus"];
             /** Hardware Telemetry Reported At */
             hardware_telemetry_reported_at: string | null;
@@ -4092,7 +4088,7 @@ export interface components {
              * Id
              * @enum {string}
              */
-            id: "state" | "reconnect" | "boot" | "shutdown" | "release_forwarded_ports";
+            id: "reconnect" | "release_forwarded_ports" | "resolve";
         };
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {
@@ -4373,11 +4369,6 @@ export interface components {
         };
         /** ProbeTargetOut */
         ProbeTargetOut: {
-            /**
-             * Allow Boot
-             * @default false
-             */
-            allow_boot: boolean;
             /** Claimed Ports */
             claimed_ports?: {
                 [key: string]: number;
@@ -4393,8 +4384,6 @@ export interface components {
             device_id: string;
             /** Device Type */
             device_type: string;
-            /** Headless */
-            headless?: boolean | null;
             /** Identity Value */
             identity_value?: string | null;
             /** Ip Address */
@@ -4403,11 +4392,6 @@ export interface components {
             ip_ping_count?: number | null;
             /** Ip Ping Timeout Sec */
             ip_ping_timeout_sec?: number | null;
-            /**
-             * Lifecycle State Capable
-             * @default false
-             */
-            lifecycle_state_capable: boolean;
             /** Pack Id */
             pack_id: string;
             /** Platform Id */

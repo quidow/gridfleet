@@ -170,12 +170,8 @@ async def test_blocking_worker_is_contained_and_other_pack_stays_live(tmp_path: 
         handle_a = registry.get("pack-a", "1.0.0")
         handle_b = registry.get("pack-b", "1.0.0")
         assert handle_a is not None and handle_b is not None
-        task_a = asyncio.create_task(
-            dispatch_health_check(handle_a, HealthCtx(device_identity_value="a", allow_boot=False))
-        )
-        task_b = asyncio.create_task(
-            dispatch_health_check(handle_b, HealthCtx(device_identity_value="b", allow_boot=False))
-        )
+        task_a = asyncio.create_task(dispatch_health_check(handle_a, HealthCtx(device_identity_value="a")))
+        task_b = asyncio.create_task(dispatch_health_check(handle_b, HealthCtx(device_identity_value="b")))
         with pytest.raises(AdapterHookTimeoutError):
             await task_a
         assert await task_b == []
@@ -185,7 +181,7 @@ async def test_blocking_worker_is_contained_and_other_pack_stays_live(tmp_path: 
                 break
             await asyncio.sleep(0.01)
         assert handle_a.alive
-        assert await dispatch_health_check(handle_a, HealthCtx(device_identity_value="a", allow_boot=False)) == []
+        assert await dispatch_health_check(handle_a, HealthCtx(device_identity_value="a")) == []
     finally:
         stop.set()
         await ticker_task

@@ -34,11 +34,9 @@ class DeviceNotFoundError(RuntimeError):
 class StartDeferredError(RuntimeError):
     """Raised when a start must be retried later without recording a failure.
 
-    A boot lifecycle action that succeeds but has not yet resolved a device serial
-    (emulator still booting, or adb transiently unresponsive) must not proceed to
-    spawn Appium: the unresolved connection target would be baked into
-    ``--default-capabilities`` as ``appium:udid``, and every session create would
-    fail with ``Device <udid> was not in the list of connected devices``. The
-    node-state loop catches this and retries next tick, so no ``start_failure`` is
-    recorded and the recovery flow does not escalate to review/backoff.
+    Used when a start cannot proceed yet but the condition is transient and not
+    a device/start failure: the driver-pack adapter or runtime is still loading,
+    the requested release is not installed yet, or the release changed mid-start.
+    The node-state loop catches this and retries next tick, so no ``start_failure``
+    is recorded and the recovery flow does not escalate to review/backoff.
     """

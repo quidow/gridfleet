@@ -368,6 +368,13 @@ class VerificationPreparationService:
                 pack_id=payload.get("pack_id", ""),
                 platform_id=payload.get("platform_id", ""),
                 action=action,
+                args={
+                    "device_type": getattr(payload.get("device_type"), "value", None)
+                    or (str(payload["device_type"]) if payload.get("device_type") else None),
+                    "connection_type": getattr(payload.get("connection_type"), "value", None)
+                    or (str(payload["connection_type"]) if payload.get("connection_type") else None),
+                    "ip_address": payload.get("ip_address"),
+                },
                 http_client_factory=http_client_factory,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,

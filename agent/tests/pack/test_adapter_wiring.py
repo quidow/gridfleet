@@ -82,7 +82,7 @@ class _RecordingAdapter:
 
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
+        action_id: Literal["reconnect", "release_forwarded_ports"],
         args: dict[str, Any],
         ctx: object,
     ) -> LifecycleActionResult:
@@ -374,7 +374,7 @@ async def test_health_check_dispatches_to_adapter() -> None:
         adapter_registry=registry,
         pack_id=pack.id,
         pack_release=pack.release,
-        ctx=HealthCtx(device_identity_value="VENDOR-1", allow_boot=False, platform_id="tvos"),
+        ctx=HealthCtx(device_identity_value="VENDOR-1", platform_id="tvos"),
     )
     assert payload is not None
     assert payload["healthy"] is True
@@ -390,7 +390,7 @@ async def test_health_check_without_adapter_returns_none() -> None:
         adapter_registry=registry,
         pack_id="vendor-foo",
         pack_release="0.1.0",
-        ctx=HealthCtx(device_identity_value="VENDOR-1", allow_boot=False),
+        ctx=HealthCtx(device_identity_value="VENDOR-1"),
     )
     assert payload is None
 

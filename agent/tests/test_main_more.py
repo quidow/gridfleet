@@ -102,7 +102,9 @@ async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:
         app.state.adapter_registry = None
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
-                "/agent/pack/devices/abc/lifecycle/reboot", params={"pack_id": "p", "platform_id": "x"}, json={}
+                "/agent/pack/devices/abc/lifecycle/reconnect",
+                params={"pack_id": "p", "platform_id": "x"},
+                json={},
             )
     finally:
         app.dependency_overrides.pop(_latest_desired, None)

@@ -34,7 +34,6 @@ const device = {
   reservation: null,
   lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
   health_summary: { device: { status: 'unknown', detail: 'not checked', checked_at: null }, node: { status: 'unknown', detail: 'no node', checked_at: null }, viability: { status: 'unknown', detail: 'not run', checked_at: null }, overall: 'unknown' },
-  emulator_state: null,
   created_at: '2026-04-27T00:00:00Z',
   updated_at: '2026-04-27T00:00:00Z',
 } satisfies DeviceRead;

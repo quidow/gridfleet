@@ -149,7 +149,7 @@ class DriverPackAdapter(Protocol):
     async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]: ...
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
+        action_id: Literal["reconnect", "release_forwarded_ports", "resolve"],
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> LifecycleActionResult: ...
@@ -178,6 +178,7 @@ If the manifest **declares** a capability, the adapter **must** carry its hook, 
 | Manifest declaration | Required adapter hook |
 |----------------------|-----------------------|
 | a platform `lifecycle_actions` entry | `lifecycle_action` |
+| `connection_behavior.host_resolution_action: resolve` | `lifecycle_action` |
 
 At adapter load the agent cross-checks these declarations against the loaded `Adapter` (`missing_declared_hooks`). A pack that declares a capability its adapter does not implement is reported `blocked`, with the missing hook named in `blocked_reason` — the same status pathway a runtime-resolution failure uses. (`health_check` has no manifest declaration, so it is never cross-checked: it is dispatched whenever an adapter is present and skipped when absent.)
 
@@ -190,7 +191,7 @@ The following hooks are wired and dispatched as of Phase B.2:
 | `discover` | When the agent runs device discovery for a platform that has a loaded adapter |
 | `doctor` | When a host doctor probe is triggered for this pack by the agent |
 | `health_check` | On each periodic device health check cycle for a device governed by this pack |
-| `lifecycle_action` | When a lifecycle action (`state`, `reconnect`, `boot`, `shutdown`) is dispatched for a device governed by this pack |
+| `lifecycle_action` | When a lifecycle action (`reconnect`, `release_forwarded_ports`, `resolve`) is dispatched for a device governed by this pack, including transport-identity resolution requested by `connection_behavior.host_resolution_action` |
 | `pre_session` | Immediately before an Appium session is started; return value is merged into the capability set |
 | `post_session` | After an Appium session ends; return value is ignored (cleanup / telemetry hook) |
 
@@ -199,7 +200,7 @@ Return-value contracts:
 - `discover` — returns `list[DiscoveryCandidate]`; the agent diffs against the current device registry.
 - `doctor` — returns `list[DoctorCheckResult]` (fields `check_id`, `ok`, `message`).
 - `health_check` — returns `list[HealthCheckResult]` (fields `check_id`, `ok`, `detail`, `recommended_action`, `debounce`).
-- `lifecycle_action` — returns a `LifecycleActionResult` (fields `ok`, `state`, `detail`, `resolved_connection_target`).
+- `lifecycle_action` — returns a `LifecycleActionResult` (fields `ok`, `detail`, `resolved_connection_target`, `identity_value`, `connection_target`; the last three keep live addressing separate from stable identity, while `state` is a legacy free-form field no longer used for power-state readout).
 - `pre_session` — returns a capabilities dict (merged over the incoming caps; keys from the adapter take precedence).
 - `post_session` — return value is ignored.
 

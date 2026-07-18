@@ -393,6 +393,7 @@ The baseline examples share the same flow:
   - baseline example supports optional `appium:os_version` filtering when you need a specific Fire OS release
 - iOS simulator:
   - baseline example intentionally targets the simulator lane with `appium:device_type=simulator`
+  - the simulator must be pre-booted externally before the baseline lane runs (GridFleet does not boot simulators)
 - tvOS:
   - baseline example intentionally targets a real device and assumes the host already satisfies XCUITest and WebDriverAgent prerequisites
 - Roku:

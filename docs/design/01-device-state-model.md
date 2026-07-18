@@ -56,7 +56,7 @@ Per-column sanctioned writers are enumerated **only** in `PROTECTED_COLUMN_WRITE
 
 ## Axis: Health (derived on read)
 
-Health-relevant facts live in typed columns: `Device.device_checks_*`, `Device.session_viability_*`, `Device.emulator_state`, and the node's health fields (`health_running`, `health_state`, `health_failing_since`, `last_health_checked_at`). The public summary returned by `/api/devices` is computed on read by `build_public_summary(device)` (`app.devices.services.health_view`, re-exported via `app.devices.services.health`) — a pure function; there is no stored health document to drift.
+Health-relevant facts live in typed columns: `Device.device_checks_*`, `Device.session_viability_*`, and the node's health fields (`health_running`, `health_state`, `health_failing_since`, `last_health_checked_at`). The public summary returned by `/api/devices` is computed on read by `build_public_summary(device)` (`app.devices.services.health_view`, re-exported via `app.devices.services.health`) — a pure function; there is no stored health document to drift.
 
 Rules the writers obey:
 

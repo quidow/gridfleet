@@ -460,7 +460,6 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
     health_http_client = _mock_http_client(
         payload={
             "healthy": True,
-            "avd_launched": {"avd_name": "Pixel_8_API_35", "serial": "emulator-5554"},
         }
     )
 
@@ -484,7 +483,7 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
     assert job["status"] == "completed"
-    client_factory.assert_called_with(timeout=190)
+    client_factory.assert_called_with(timeout=10)
 
     devices = (await client.get("/api/devices")).json()
     assert len(devices) == 1
@@ -592,7 +591,6 @@ async def test_avd_verification_allows_same_avd_name_on_different_hosts(
     healthy_http_client = _mock_http_client(
         payload={
             "healthy": True,
-            "avd_launched": {"avd_name": "Pixel_8_API_35", "serial": "emulator-5554"},
         }
     )
 

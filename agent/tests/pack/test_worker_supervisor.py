@@ -97,7 +97,7 @@ class Adapter:
             await asyncio.wait_for(
                 handle.call(
                     "health_check",
-                    {"ctx": {"device_identity_value": "d", "allow_boot": False}},
+                    {"ctx": {"device_identity_value": "d"}},
                 ),
                 timeout=2,
             )
@@ -106,7 +106,7 @@ class Adapter:
                 break
             await asyncio.sleep(0.01)
         assert handle.alive
-        assert await handle.call("health_check", {"ctx": {"device_identity_value": "d", "allow_boot": False}}) == []
+        assert await handle.call("health_check", {"ctx": {"device_identity_value": "d"}}) == []
     finally:
         await supervisor.shutdown_all()
 
@@ -166,7 +166,7 @@ async def test_event_loop_not_blocked_during_hang(tmp_path: Path) -> None:
     ticker_task = asyncio.create_task(ticker())
     try:
         with pytest.raises(AdapterHookTimeoutError):
-            await handle.call("health_check", {"ctx": {"device_identity_value": "d", "allow_boot": False}})
+            await handle.call("health_check", {"ctx": {"device_identity_value": "d"}})
     finally:
         stop.set()
         await ticker_task

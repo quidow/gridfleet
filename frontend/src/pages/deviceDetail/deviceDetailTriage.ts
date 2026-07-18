@@ -1,4 +1,3 @@
-import { isEmulatorRunning, isEmulatorStopped } from '../../lib/emulatorState';
 import {
   HARDWARE_HEALTH_STATUS_LABELS,
   HARDWARE_TELEMETRY_STATE_LABELS,
@@ -10,8 +9,6 @@ export type DeviceDetailTriageTone = 'ok' | 'warn' | 'error' | 'neutral' | 'info
 export type DeviceDetailTriageActionKind =
   | 'verify'
   | 'open-run'
-  | 'launch-emulator'
-  | 'boot-simulator'
   | 'start-node'
   | 'open-hardware-filter'
   | 'exit-maintenance'
@@ -40,16 +37,6 @@ export interface DeviceDetailTriage {
 type Options = {
   health?: DeviceHealth;
 };
-
-function virtualDeviceStopped(device: DeviceDetail): boolean {
-  if (device.device_type !== 'emulator' && device.device_type !== 'simulator') {
-    return false;
-  }
-  if (isEmulatorRunning(device.emulator_state)) {
-    return false;
-  }
-  return isEmulatorStopped(device.emulator_state) || device.operational_state === 'offline';
-}
 
 function hardwareTone(device: DeviceDetail): DeviceDetailTriageTone | null {
   if (device.hardware_health_status === 'critical') return 'error';
@@ -105,21 +92,6 @@ export function deriveDeviceDetailTriage(
       title: 'Excluded from reserved run',
       detail: reservation.exclusion_reason || 'This device is held out of the active run.',
       action: { kind: 'open-run', label: 'Open Run', to: `/runs/${reservation.run_id}` },
-    };
-  }
-
-  if (virtualDeviceStopped(device)) {
-    const isSimulator = device.device_type === 'simulator';
-    const noun = isSimulator ? 'Simulator' : 'Emulator';
-    return {
-      tone: 'error',
-      eyebrow: 'Virtual device stopped',
-      title: `${noun} is not running`,
-      detail: `${noun} must be running before the Appium node can serve sessions.`,
-      action: {
-        kind: isSimulator ? 'boot-simulator' : 'launch-emulator',
-        label: isSimulator ? 'Boot Simulator' : 'Launch Emulator',
-      },
     };
   }
 

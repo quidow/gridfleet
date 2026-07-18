@@ -9,7 +9,6 @@ from adapter.health import health_check
 
 class _Ctx:
     device_identity_value = "UDID123"
-    allow_boot = False
     platform_id = "ios"
     device_type = "real_device"
     connection_type = "usb"

@@ -1192,7 +1192,7 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
 
 async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> None:
     device_id = uuid.uuid4()
-    lifecycle_actions = [{"id": "reconnect"}, {"id": "state"}]
+    lifecycle_actions = [{"id": "reconnect"}]
     resolved = SimpleNamespace(lifecycle_actions=lifecycle_actions)
     device = _control_device(id=device_id)
     settings_services = _mock_settings_svc(FakeSettingsReader({}))
@@ -1334,28 +1334,37 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
                 )
         assert detail in str(exc.value.detail)
 
-    db = SimpleNamespace(commit=AsyncMock())
+    lifecycle_device = _control_device(
+        device_type=DeviceType.emulator,
+        connection_type=ConnectionType.virtual,
+        ip_address=None,
+        connection_target="Pixel_6",
+    )
+    lifecycle_dispatch = AsyncMock(return_value={"success": True, "resolved_connection_target": "emulator-5554"})
     with (
-        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch(
+            "app.devices.routers.control.get_device_for_update_or_404",
+            new=AsyncMock(return_value=lifecycle_device),
+        ),
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
         patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch(
-            "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"state": "running"})
-        ),
+        patch("app.devices.routers.control.pack_device_lifecycle_action", new=lifecycle_dispatch),
     ):
-        _ds_health = AsyncMock()
-        _ds_health.update_emulator_state = AsyncMock()
-        _ds_stub = AsyncMock()
-        _ds_stub.health = _ds_health
         assert await devices_control.device_lifecycle_action(
             device_id,
-            "state",
-            db=db,
+            "resolve",
+            db=object(),
             settings_services=_ctrl_ss,
             agent_comm=_lifecycle_ac,
-            device_services=_ds_stub,
-        ) == {"state": "running"}
-    db.commit.assert_awaited_once()
+            device_services=AsyncMock(),
+            body={"custom": "value"},
+        ) == {"success": True, "resolved_connection_target": "emulator-5554"}
+    assert lifecycle_dispatch.await_args.kwargs["args"] == {
+        "custom": "value",
+        "device_type": "emulator",
+        "connection_type": "virtual",
+        "ip_address": None,
+    }
 
     node = SimpleNamespace(port=4731, observed_running=True, health_running=None, health_state=None)
     health_device = _control_device(appium_node=node)

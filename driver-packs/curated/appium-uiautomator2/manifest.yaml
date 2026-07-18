@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-uiautomator2
-release: 2026.07.2
+release: 2026.07.3
 display_name: Appium UiAutomator2
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -60,7 +60,6 @@ platforms:
       - id: claimed_ports_free
         label: Driver Ports Free
     lifecycle_actions:
-      - id: state
       - id: reconnect
       - id: release_forwarded_ports
     connection_behavior:
@@ -73,15 +72,14 @@ platforms:
     device_type_overrides:
       emulator:
         lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
           - id: release_forwarded_ports
         connection_behavior:
           default_device_type: emulator
           default_connection_type: virtual
           requires_ip_address: false
           requires_connection_target: true
+          allow_transport_identity_until_host_resolution: true
+          host_resolution_action: resolve
     parallel_resources:
       ports:
         - capability_name: "appium:systemPort"
@@ -125,7 +123,6 @@ platforms:
       - id: claimed_ports_free
         label: Driver Ports Free
     lifecycle_actions:
-      - id: state
       - id: reconnect
       - id: release_forwarded_ports
     connection_behavior:
@@ -138,15 +135,14 @@ platforms:
     device_type_overrides:
       emulator:
         lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
           - id: release_forwarded_ports
         connection_behavior:
           default_device_type: emulator
           default_connection_type: virtual
           requires_ip_address: false
           requires_connection_target: true
+          allow_transport_identity_until_host_resolution: true
+          host_resolution_action: resolve
     parallel_resources:
       ports:
         - capability_name: "appium:systemPort"
@@ -190,7 +186,6 @@ platforms:
       - id: claimed_ports_free
         label: Driver Ports Free
     lifecycle_actions:
-      - id: state
       - id: reconnect
       - id: release_forwarded_ports
     connection_behavior:
