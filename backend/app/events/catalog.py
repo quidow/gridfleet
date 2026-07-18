@@ -287,7 +287,7 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         description="Device group was created, updated, or deleted.",
         default_severity="neutral",
         allowed_severities=frozenset({"neutral", "info"}),
-        typical_data_fields=("group_id", "action"),
+        typical_data_fields=("group_key", "action"),
     ),
     PublicEventDefinition(
         name="device_group.members_changed",
@@ -295,7 +295,7 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         description="Static device group membership changed.",
         default_severity="neutral",
         allowed_severities=frozenset({"neutral", "info"}),
-        typical_data_fields=("group_id", "added", "removed"),
+        typical_data_fields=("group_key", "added", "removed"),
     ),
     PublicEventDefinition(
         name="bulk.operation_completed",

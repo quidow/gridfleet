@@ -125,6 +125,28 @@ async def test_group_key_conflicts_and_unknown_keys_are_not_found(client: AsyncC
     assert (await client.get("/api/device-groups/unknown-lab")).status_code == 404
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "json"),
+    [
+        ("GET", "/api/device-groups/East", None),
+        ("PATCH", "/api/device-groups/East", {"name": "East"}),
+        ("DELETE", "/api/device-groups/East", None),
+        ("POST", "/api/device-groups/East/members", {"device_ids": []}),
+        ("DELETE", "/api/device-groups/East/members", {"device_ids": []}),
+        ("POST", "/api/device-groups/East/bulk/start-nodes", None),
+        ("POST", "/api/device-groups/East/bulk/stop-nodes", None),
+        ("POST", "/api/device-groups/East/bulk/restart-nodes", None),
+        ("POST", "/api/device-groups/East/bulk/enter-maintenance", {"device_ids": []}),
+        ("POST", "/api/device-groups/East/bulk/exit-maintenance", None),
+        ("POST", "/api/device-groups/East/bulk/reconnect", None),
+        ("POST", "/api/device-groups/East/bulk/update-tags", {"device_ids": [], "tags": {}, "merge": False}),
+        ("POST", "/api/device-groups/East/bulk/delete", None),
+    ],
+)
+async def test_group_routes_reject_malformed_keys(client: AsyncClient, method: str, path: str, json: object) -> None:
+    assert (await client.request(method, path, json=json)).status_code == 422
+
+
 async def test_create_dynamic_group(client: AsyncClient) -> None:
     data = await _create_group(
         client,

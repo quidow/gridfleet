@@ -30,6 +30,12 @@ def test_run_never_activated_is_registered_in_catalog() -> None:
     assert "reason" in definition.typical_data_fields
 
 
+def test_device_group_events_use_public_group_key() -> None:
+    definitions = {definition.name: definition for definition in PUBLIC_EVENT_CATALOG}
+    assert definitions["device_group.updated"].typical_data_fields == ("group_key", "action")
+    assert definitions["device_group.members_changed"].typical_data_fields == ("group_key", "added", "removed")
+
+
 def test_every_event_has_default_and_allowed_severities() -> None:
     for definition in PUBLIC_EVENT_CATALOG:
         assert definition.default_severity in definition.allowed_severities, (

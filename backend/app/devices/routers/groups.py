@@ -8,6 +8,7 @@ from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
+from app.devices.group_keys import GroupKey
 from app.devices.schemas.device import (
     BulkDeviceIds,
     BulkOperationResult,
@@ -32,7 +33,9 @@ DEVICE_GROUP_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 router = APIRouter(prefix="/api/device-groups", tags=["device-groups"], responses=DEVICE_GROUP_ERROR_RESPONSES)
 
 
-async def _group_device_ids_or_404(db: AsyncSession, group_key: str, device_services: DeviceServicesDep) -> list[UUID]:
+async def _group_device_ids_or_404(
+    db: AsyncSession, group_key: GroupKey, device_services: DeviceServicesDep
+) -> list[UUID]:
     group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
     return [device.id for device in group["devices"]]
 
@@ -52,7 +55,7 @@ async def list_groups(db: DbDep, device_services: DeviceServicesDep) -> list[dic
 
 
 @router.get("/{group_key}", response_model=DeviceGroupDetail, response_model_exclude_none=True)
-async def get_group(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def get_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
 
     payload = dict(group)
@@ -64,7 +67,7 @@ async def get_group(group_key: str, db: DbDep, device_services: DeviceServicesDe
 
 @router.patch("/{group_key}", response_model=DeviceGroupRead, response_model_exclude_none=True)
 async def update_group(
-    group_key: str,
+    group_key: GroupKey,
     data: DeviceGroupUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
@@ -74,7 +77,7 @@ async def update_group(
 
 
 @router.delete("/{group_key}", status_code=204)
-async def delete_group(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> None:
+async def delete_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> None:
     deleted = await device_services.groups.delete_group(db, group_key)
     if not deleted:
         raise HTTPException(status_code=404, detail="Group not found")
@@ -82,7 +85,7 @@ async def delete_group(group_key: str, db: DbDep, device_services: DeviceService
 
 @router.post("/{group_key}/members")
 async def add_members(
-    group_key: str,
+    group_key: GroupKey,
     body: GroupMembershipUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
@@ -96,7 +99,7 @@ async def add_members(
 
 @router.delete("/{group_key}/members")
 async def remove_members(
-    group_key: str,
+    group_key: GroupKey,
     body: GroupMembershipUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
@@ -111,26 +114,26 @@ async def remove_members(
 
 
 @router.post("/{group_key}/bulk/start-nodes", response_model=BulkOperationResult)
-async def group_bulk_start(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def group_bulk_start(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
     return await device_services.bulk.bulk_start_nodes(db, device_ids, caller="group")
 
 
 @router.post("/{group_key}/bulk/stop-nodes", response_model=BulkOperationResult)
-async def group_bulk_stop(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def group_bulk_stop(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
     return await device_services.bulk.bulk_stop_nodes(db, device_ids, caller="group")
 
 
 @router.post("/{group_key}/bulk/restart-nodes", response_model=BulkOperationResult)
-async def group_bulk_restart(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def group_bulk_restart(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
     return await device_services.bulk.bulk_restart_nodes(db, device_ids, caller="group")
 
 
 @router.post("/{group_key}/bulk/enter-maintenance", response_model=BulkOperationResult)
 async def group_bulk_enter_maintenance(
-    group_key: str,
+    group_key: GroupKey,
     body: BulkDeviceIds,
     db: DbDep,
     device_services: DeviceServicesDep,
@@ -140,14 +143,16 @@ async def group_bulk_enter_maintenance(
 
 
 @router.post("/{group_key}/bulk/exit-maintenance", response_model=BulkOperationResult)
-async def group_bulk_exit_maintenance(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def group_bulk_exit_maintenance(
+    group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep
+) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
     return await device_services.bulk.bulk_exit_maintenance(db, device_ids)
 
 
 @router.post("/{group_key}/bulk/reconnect", response_model=BulkOperationResult)
 async def group_bulk_reconnect(
-    group_key: str,
+    group_key: GroupKey,
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
@@ -157,7 +162,7 @@ async def group_bulk_reconnect(
 
 @router.post("/{group_key}/bulk/update-tags", response_model=BulkOperationResult)
 async def group_bulk_update_tags(
-    group_key: str,
+    group_key: GroupKey,
     body: BulkTagsUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
@@ -167,6 +172,6 @@ async def group_bulk_update_tags(
 
 
 @router.post("/{group_key}/bulk/delete", response_model=BulkOperationResult)
-async def group_bulk_delete(group_key: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def group_bulk_delete(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
     return await device_services.bulk.bulk_delete(db, device_ids)
