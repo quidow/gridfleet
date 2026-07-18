@@ -11,7 +11,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler_agent import (
     ReconcilerAgentService,
-    build_agent_start_payload,
     require_management_host,
 )
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -284,56 +283,6 @@ async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None
 
     with pytest.raises(NodeManagerError, match="has no host assigned"):
         require_management_host(device)
-
-
-# ---------------------------------------------------------------------------
-# Phase 95: build_agent_start_payload headless flag
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_session: AsyncSession) -> None:
-    """No emulator_headless tag → headless=True in the payload."""
-    host = await create_host(client, **HOST_PAYLOAD)
-    device = await create_device_record(
-        db_session,
-        host_id=host["id"],
-        identity_value="avd:Pixel_6",
-        connection_target="Pixel_6",
-        name="Pixel 6 Emulator",
-        device_type="emulator",
-    )
-
-    payload = build_agent_start_payload(
-        device,
-        4723,
-        settings=FakeSettingsReader({}),
-    )
-
-    assert payload["headless"] is True
-
-
-@pytest.mark.asyncio
-async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db_session: AsyncSession) -> None:
-    """emulator_headless='false' tag → headless=False in the payload."""
-    host = await create_host(client, **HOST_PAYLOAD)
-    device = await create_device_record(
-        db_session,
-        host_id=host["id"],
-        identity_value="avd:Pixel_9",
-        connection_target="Pixel_9",
-        name="Pixel 9 Emulator",
-        device_type="emulator",
-        tags={"emulator_headless": "false"},
-    )
-
-    payload = build_agent_start_payload(
-        device,
-        4724,
-        settings=FakeSettingsReader({}),
-    )
-
-    assert payload["headless"] is False
 
 
 # ---------------------------------------------------------------------------

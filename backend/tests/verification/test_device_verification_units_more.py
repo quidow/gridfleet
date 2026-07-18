@@ -119,7 +119,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
 
     monkeypatch.setattr(
         "app.verification.services.execution.fetch_pack_device_health",
-        AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}}),
+        AsyncMock(return_value={"healthy": True}),
     )
     assert (
         await VerificationExecutionService(
@@ -136,7 +136,6 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         ).run_device_health(_job(), device, http_client_factory=object)
         is None
     )
-    assert device.connection_target == "emulator-5554"
 
     monkeypatch.setattr(
         "app.verification.services.execution.fetch_pack_device_health",

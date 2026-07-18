@@ -235,7 +235,6 @@ def build_agent_start_payload(
     extra_caps: dict[str, Any] | None = None,
     settings: SettingsReader,
 ) -> dict[str, Any]:
-    headless = (device.tags or {}).get("emulator_headless", "true") != "false"
     manager_owned_keys = appium_capability_keys.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
     node = (
         None if "appium_node" in sqlalchemy_inspect(device).unloaded else cast("AppiumNode | None", device.appium_node)
@@ -266,7 +265,6 @@ def build_agent_start_payload(
         # ponytail: never flipped in production; re-add a registry row if a
         # driver pack ever needs lingering sessions preserved.
         "session_override": True,
-        "headless": headless,
     }
 
 
