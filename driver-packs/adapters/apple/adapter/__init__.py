@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
@@ -12,8 +12,6 @@ from agent_app.pack.adapter_types import (
     HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
-    LifecycleActionResult,
-    LifecycleContext,
     NormalizedDevice,
     NormalizeDeviceContext,
     SessionOutcome,
@@ -49,16 +47,6 @@ class Adapter:
         from .health import health_check
 
         return await health_check(ctx)
-
-    async def lifecycle_action(
-        self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state", "release_forwarded_ports"],
-        args: dict[str, Any],
-        ctx: LifecycleContext,
-    ) -> LifecycleActionResult:
-        from .lifecycle import lifecycle_action
-
-        return await lifecycle_action(action_id, args, ctx)
 
     async def pre_session(self, spec: SessionSpec) -> dict[str, Any]:
         from .session import pre_session

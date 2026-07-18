@@ -133,6 +133,8 @@ async def _discover_simulators() -> list[DiscoveryCandidate]:
             udid = str(device.get("udid") or "")
             if not udid or device.get("isAvailable") is False:
                 continue
+            if str(device.get("state") or "") != "Booted":
+                continue
             name = str(device.get("name") or "Simulator")
             candidates.append(
                 DiscoveryCandidate(
@@ -147,7 +149,6 @@ async def _discover_simulators() -> list[DiscoveryCandidate]:
                         "model": "Simulator",
                         "os_version": version,
                         "connection_target": udid,
-                        "simulator_state": str(device.get("state") or ""),
                     },
                     runnable=True,
                     missing_requirements=[],

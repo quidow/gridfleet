@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from adapter.discovery import discover_apple_devices
+from adapter.discovery import _discover_simulators, discover_apple_devices
 
 
 class _Ctx:
@@ -127,7 +127,7 @@ async def test_discover_real_device_and_simulator(mock_cmd: AsyncMock) -> None:
     simctl = {
         "devices": {
             "com.apple.CoreSimulator.SimRuntime.iOS-17-2": [
-                {"udid": "SIM123", "name": "iPhone 15", "state": "Shutdown", "isAvailable": True}
+                {"udid": "SIM123", "name": "iPhone 15", "state": "Booted", "isAvailable": True}
             ]
         }
     }
@@ -146,3 +146,22 @@ async def test_discover_real_device_and_simulator(mock_cmd: AsyncMock) -> None:
 @patch("adapter.discovery.run_cmd", new_callable=AsyncMock, return_value="")
 async def test_discover_no_tools(mock_cmd: AsyncMock) -> None:
     assert await discover_apple_devices(_Ctx()) == []
+
+
+@pytest.mark.asyncio
+@patch("adapter.discovery.run_cmd", new_callable=AsyncMock)
+async def test_discover_simulators_filters_to_booted_only(mock_cmd: AsyncMock) -> None:
+    mock_cmd.return_value = json.dumps({
+        "devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-17-0": [
+                {"udid": "BOOTED-UUID", "name": "iPhone 15", "state": "Booted", "isAvailable": True},
+                {"udid": "SHUTDOWN-UUID", "name": "iPhone 14", "state": "Shutdown", "isAvailable": True},
+            ]
+        }
+    })
+    candidates = await _discover_simulators()
+    udids = [c.identity_value for c in candidates]
+    assert "BOOTED-UUID" in udids
+    assert "SHUTDOWN-UUID" not in udids
+    for c in candidates:
+        assert "simulator_state" not in c.detected_properties
