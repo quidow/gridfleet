@@ -23,7 +23,6 @@ class AppiumStartRequest(BaseModel):
     device_type: str | None = None
     ip_address: str | None = None
     session_override: bool = True
-    headless: bool = True
     pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
     platform_id: str = Field(min_length=1, pattern=PLATFORM_ID_PATTERN)
     # Release the backend derived this launch payload from; None on payloads

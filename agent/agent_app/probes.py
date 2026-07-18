@@ -40,7 +40,6 @@ class ProbeLoop:
     telemetry_probe: ProbeCallable
     properties_probe: ProbeCallable
     on_results: Callable[[], None] | None = None
-    lifecycle_probe: ProbeCallable | None = None
     _results: dict[str, Any] = field(default_factory=dict, init=False)
     _roster: list[dict[str, Any]] = field(default_factory=list, init=False)
     _due: dict[str, float] = field(default_factory=dict, init=False)
@@ -175,31 +174,10 @@ class ProbeLoop:
             },
         }
 
-    async def _lifecycle_item(self, entry: dict[str, Any]) -> dict[str, Any]:
-        """The pushed lifecycle_state for one device: ``unsupported`` when the
-        platform declares no ``state`` action, ``observed`` with the value, or
-        ``error`` when the probe raised or returned nothing usable."""
-        if not entry.get("lifecycle_state_capable") or self.lifecycle_probe is None:
-            return {"status": "unsupported", "value": None}
-        try:
-            result = await self.lifecycle_probe(
-                pack_id=entry["pack_id"],
-                platform_id=entry["platform_id"],
-                connection_target=entry["connection_target"],
-                identity_value=entry.get("identity_value"),
-            )
-        except Exception:
-            logger.warning("device_lifecycle_state_probe_failed", exc_info=True)
-            return {"status": "error", "value": None}
-        state = result.get("state") if isinstance(result, dict) and result.get("success") is True else None
-        if isinstance(state, str) and state:
-            return {"status": "observed", "value": state, "observed_at": _now_iso()}
-        return {"status": "error", "value": None}
-
     async def _probe_device_health_section(self) -> dict[str, Any]:
         """The v7 device_health section: one typed item per roster entry (even for
-        probe failures), keyed by stable device_id, carrying presence, health, and
-        lifecycle_state, plus a section-level ``complete_gather`` flag."""
+        probe failures), keyed by stable device_id, carrying presence and health,
+        plus a section-level ``complete_gather`` flag."""
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
         live = {
@@ -210,7 +188,6 @@ class ProbeLoop:
         async def one(entry: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 health = await self._run_health(entry, live.get(entry.get("connection_target"), False))
-                lifecycle = await self._lifecycle_item(entry)
             return {
                 "device_id": entry["device_id"],
                 "probe_status": "observed" if health is not None else "error",
@@ -218,7 +195,6 @@ class ProbeLoop:
                 # device's liveness — the health cadence does not run discovery.
                 "presence": "unknown",
                 "health": health,
-                "lifecycle_state": lifecycle,
             }
 
         items = await asyncio.gather(*(one(entry) for entry in self._roster))
@@ -232,8 +208,6 @@ class ProbeLoop:
             device_type=entry["device_type"],
             connection_type=entry.get("connection_type"),
             ip_address=entry.get("ip_address"),
-            allow_boot=entry.get("allow_boot", False),
-            headless=entry.get("headless"),
             ip_ping_timeout_sec=entry.get("ip_ping_timeout_sec"),
             ip_ping_count=entry.get("ip_ping_count"),
             identity_value=entry.get("identity_value"),

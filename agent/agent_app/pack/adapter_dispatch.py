@@ -38,7 +38,7 @@ def _platform_declares_lifecycle(platform: DesiredPlatform) -> bool:
     if platform.lifecycle_actions:
         return True
     # device_type_overrides may declare lifecycle_actions the base platform
-    # omits (e.g. the xcuitest simulator override's boot/shutdown).
+    # omits (e.g. an emulator override's release_forwarded_ports).
     return any(
         isinstance(override, dict) and override.get("lifecycle_actions")
         for override in platform.device_type_overrides.values()
