@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.38.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.38.0...gridfleet-agent-v0.38.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **agent:** disable terminal colors in appium logs ([6b9bb91](https://github.com/quidow/gridfleet/commit/6b9bb9123e268d993555749dede3b9227273bb90))
+
 ## [0.38.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.37.0...gridfleet-agent-v0.38.0) (2026-07-18)
 
 
