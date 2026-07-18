@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
@@ -19,6 +20,10 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 
+class GroupKeyConflictError(ValueError):
+    pass
+
+
 class DeviceGroupsService:
     def __init__(self, *, publisher: EventPublisher, crud: DeviceCrudProtocol) -> None:
         self._publisher = publisher
@@ -26,17 +31,24 @@ class DeviceGroupsService:
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
         group = DeviceGroup(
+            key=data.key,
             name=data.name,
             description=data.description,
             group_type=GroupType(data.group_type),
             filters=_dump_filters(data.filters),
         )
         db.add(group)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError as exc:
+            await db.rollback()
+            if _constraint_name(exc) == "ix_device_groups_key":
+                raise GroupKeyConflictError(f"Device group key '{data.key}' already exists") from exc
+            raise
         self._publisher.queue_for_session(
             db,
             "device_group.updated",
-            {"group_id": str(group.id), "action": "created"},
+            {"group_key": group.key, "action": "created"},
         )
         await db.commit()
         await db.refresh(group)
@@ -68,10 +80,10 @@ class DeviceGroupsService:
             output.append(_serialize_group(group, device_count=count))
         return output
 
-    async def get_group(self, db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | None:
+    async def get_group(self, db: AsyncSession, group_key: str) -> dict[str, Any] | None:
         stmt = (
             select(DeviceGroup)
-            .where(DeviceGroup.id == group_id)
+            .where(DeviceGroup.key == group_key)
             .options(selectinload(DeviceGroup.memberships).selectinload(DeviceGroupMembership.device))
         )
         result = await db.execute(stmt)
@@ -89,10 +101,8 @@ class DeviceGroupsService:
             "devices": devices,
         }
 
-    async def update_group(self, db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate) -> DeviceGroup | None:
-        stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
-        result = await db.execute(stmt)
-        group = result.scalar_one_or_none()
+    async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
+        group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
             return None
         updates = data.model_dump(exclude_unset=True)
@@ -104,28 +114,29 @@ class DeviceGroupsService:
         self._publisher.queue_for_session(
             db,
             "device_group.updated",
-            {"group_id": str(group.id), "action": "updated"},
+            {"group_key": group.key, "action": "updated"},
         )
         await db.commit()
         await db.refresh(group)
         return group
 
-    async def delete_group(self, db: AsyncSession, group_id: uuid.UUID) -> bool:
-        stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
-        result = await db.execute(stmt)
-        group = result.scalar_one_or_none()
+    async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
+        group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
             return False
         await db.delete(group)
         self._publisher.queue_for_session(
             db,
             "device_group.updated",
-            {"group_id": str(group_id), "action": "deleted"},
+            {"group_key": group.key, "action": "deleted"},
         )
         await db.commit()
         return True
 
-    async def add_members(self, db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
+    async def add_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
+        group = await _get_group_row(db, group_key, for_update=True)
+        if group is None:
+            return None
         if not device_ids:
             return 0
         # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
@@ -135,7 +146,7 @@ class DeviceGroupsService:
         # exists check and the subsequent insert.
         stmt = (
             pg_insert(DeviceGroupMembership)
-            .values([{"group_id": group_id, "device_id": device_id} for device_id in device_ids])
+            .values([{"group_id": group.id, "device_id": device_id} for device_id in device_ids])
             .on_conflict_do_nothing(index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id])
             .returning(DeviceGroupMembership.device_id)
         )
@@ -145,14 +156,17 @@ class DeviceGroupsService:
             self._publisher.queue_for_session(
                 db,
                 "device_group.members_changed",
-                {"group_id": str(group_id), "added": added},
+                {"group_key": group.key, "added": added},
             )
         await db.commit()
         return added
 
-    async def remove_members(self, db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
+    async def remove_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
+        group = await _get_group_row(db, group_key, for_update=True)
+        if group is None:
+            return None
         stmt = delete(DeviceGroupMembership).where(
-            DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)
+            DeviceGroupMembership.group_id == group.id, DeviceGroupMembership.device_id.in_(device_ids)
         )
         result = await db.execute(stmt)
         removed = int(getattr(result, "rowcount", 0) or 0)
@@ -160,15 +174,13 @@ class DeviceGroupsService:
             self._publisher.queue_for_session(
                 db,
                 "device_group.members_changed",
-                {"group_id": str(group_id), "removed": removed},
+                {"group_key": group.key, "removed": removed},
             )
         await db.commit()
         return removed
 
-    async def get_group_device_ids(self, db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
-        stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
-        result = await db.execute(stmt)
-        group = result.scalar_one_or_none()
+    async def get_group_device_ids(self, db: AsyncSession, group_key: str) -> list[uuid.UUID]:
+        group = await _get_group_row(db, group_key)
         if group is None:
             return []
 
@@ -176,7 +188,7 @@ class DeviceGroupsService:
             devices = await _resolve_dynamic_members(db, group.filters or {}, crud=self._crud)
             return [d.id for d in devices]
         else:
-            mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group_id)
+            mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group.id)
             mem_result = await db.execute(mem_stmt)
             return [row[0] for row in mem_result.all()]
 
@@ -213,7 +225,7 @@ def _serialize_filters(filters_payload: dict[str, Any] | None) -> dict[str, Any]
 
 def _serialize_group(group: DeviceGroup, *, device_count: int) -> dict[str, Any]:
     return {
-        "id": group.id,
+        "key": group.key,
         "name": group.name,
         "description": group.description,
         "group_type": group.group_type.value,
@@ -222,3 +234,20 @@ def _serialize_group(group: DeviceGroup, *, device_count: int) -> dict[str, Any]
         "created_at": group.created_at,
         "updated_at": group.updated_at,
     }
+
+
+async def _get_group_row(db: AsyncSession, group_key: str, *, for_update: bool = False) -> DeviceGroup | None:
+    stmt = select(DeviceGroup).where(DeviceGroup.key == group_key)
+    if for_update:
+        stmt = stmt.with_for_update()
+    return cast("DeviceGroup | None", await db.scalar(stmt))
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    cause: BaseException | None = exc.orig
+    while cause is not None:
+        name = getattr(cause, "constraint_name", None)
+        if isinstance(name, str):
+            return name
+        cause = cause.__cause__
+    return None

@@ -34,14 +34,14 @@ async def test_create_group_queues_updated(
 ) -> None:
     group = await _svc().create_group(
         db_session,
-        DeviceGroupCreate(name="contract", description=None),
+        DeviceGroupCreate(key="contract", name="contract", description=None),
     )
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.updated"]
     assert len(events) == 1
     assert events[0]["action"] == "created"
-    assert events[0]["group_id"] == str(group.id)
+    assert events[0]["group_key"] == group.key
 
 
 async def test_update_group_queues_updated(
@@ -51,16 +51,16 @@ async def test_update_group_queues_updated(
     svc = _svc()
     group = await svc.create_group(
         db_session,
-        DeviceGroupCreate(name="update-me", description=None),
+        DeviceGroupCreate(key="update-me", name="update-me", description=None),
     )
     event_bus_capture.clear()
 
-    await svc.update_group(db_session, group.id, DeviceGroupUpdate(name="updated-name"))
+    await svc.update_group(db_session, group.key, DeviceGroupUpdate(name="updated-name"))
     await settle_after_commit_tasks()
 
-    events = [p for n, p in event_bus_capture if n == "device_group.updated"]
-    assert len(events) == 1
-    assert events[0]["action"] == "updated"
+    assert [payload for name, payload in event_bus_capture if name == "device_group.updated"] == [
+        {"group_key": "update-me", "action": "updated"}
+    ]
 
 
 async def test_delete_group_queues_updated_deleted(
@@ -70,11 +70,11 @@ async def test_delete_group_queues_updated_deleted(
     svc = _svc()
     group = await svc.create_group(
         db_session,
-        DeviceGroupCreate(name="to-delete", description=None),
+        DeviceGroupCreate(key="to-delete", name="to-delete", description=None),
     )
     event_bus_capture.clear()
 
-    await svc.delete_group(db_session, group.id)
+    await svc.delete_group(db_session, group.key)
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.updated"]
@@ -86,11 +86,11 @@ async def test_add_members_queues_members_changed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     svc = _svc()
-    group = await svc.create_group(db_session, DeviceGroupCreate(name="add-members"))
+    group = await svc.create_group(db_session, DeviceGroupCreate(key="add-members", name="add-members"))
     _, device = await seed_host_and_device(db_session, identity="group-add-1")
     event_bus_capture.clear()
 
-    await svc.add_members(db_session, group.id, [device.id])
+    await svc.add_members(db_session, group.key, [device.id])
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]
@@ -103,12 +103,12 @@ async def test_remove_members_queues_members_changed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     svc = _svc()
-    group = await svc.create_group(db_session, DeviceGroupCreate(name="remove-members"))
+    group = await svc.create_group(db_session, DeviceGroupCreate(key="remove-members", name="remove-members"))
     _, device = await seed_host_and_device(db_session, identity="group-remove-1")
-    await svc.add_members(db_session, group.id, [device.id])
+    await svc.add_members(db_session, group.key, [device.id])
     event_bus_capture.clear()
 
-    await svc.remove_members(db_session, group.id, [device.id])
+    await svc.remove_members(db_session, group.key, [device.id])
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]

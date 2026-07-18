@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.devices.group_keys import GroupKey
 from app.devices.models.group import GroupType
 from app.devices.schemas.device import DeviceRead
 from app.devices.schemas.filters import DeviceGroupFilters
@@ -11,6 +12,7 @@ from app.devices.schemas.filters import DeviceGroupFilters
 class DeviceGroupCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    key: GroupKey
     name: str
     description: str | None = None
     group_type: GroupType = GroupType.static
@@ -28,7 +30,7 @@ class DeviceGroupUpdate(BaseModel):
 class DeviceGroupRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID
+    key: str
     name: str
     description: str | None
     group_type: GroupType
