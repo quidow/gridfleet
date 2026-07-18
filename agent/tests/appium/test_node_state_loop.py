@@ -359,6 +359,7 @@ async def test_host_resolved_running_node_is_not_bounced_on_target_mismatch() ->
         "platform_id": "android_mobile",
         "port": 4728,
         "pack_id": "appium-uiautomator2",
+        "device_type": "emulator",
         "session_override": True,
         "accepting_new_sessions": True,
         "stop_pending": False,
@@ -398,6 +399,30 @@ async def test_target_change_still_restarts_node_without_host_resolution() -> No
     await loop.run_once()
 
     # A real target change (no host resolution) still restarts the node.
+    assert manager.stopped == [4723]
+    assert len(manager.started) == 1
+    assert manager.started[0]["connection_target"] == "new-serial"
+
+
+@pytest.mark.asyncio
+async def test_real_device_target_change_restarts_node_with_host_resolution() -> None:
+    real_launch = {
+        "connection_target": "new-serial",
+        "platform_id": "android_mobile",
+        "port": 4723,
+        "pack_id": "appium-uiautomator2",
+        "device_type": "real_device",
+        "session_override": True,
+        "accepting_new_sessions": True,
+        "stop_pending": False,
+        "grid_run_id": None,
+        "connection_behavior": {"host_resolution_action": "resolve"},
+    }
+    manager = _Manager([_Info(port=4723, connection_target="old-serial")])
+    loop = NodeStateLoop(client=_Client([_node(port=4723, launch=real_launch)]), manager=manager)
+
+    await loop.run_once()
+
     assert manager.stopped == [4723]
     assert len(manager.started) == 1
     assert manager.started[0]["connection_target"] == "new-serial"

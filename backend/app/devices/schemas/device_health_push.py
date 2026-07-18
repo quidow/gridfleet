@@ -18,7 +18,6 @@ class DeviceHealthItem:
     probe_status: str  # "observed" | "error"
     presence: str  # "present" | "absent" | "unknown"
     health: dict[str, Any] | None
-    lifecycle_state: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +42,6 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
         except ValueError, TypeError:
             continue
         health = item.get("health")
-        lifecycle = item.get("lifecycle_state")
         raw_probe_status = item.get("probe_status")
         probe_status = raw_probe_status if raw_probe_status in {"observed", "error"} else "error"
         raw_presence = item.get("presence")
@@ -53,7 +51,6 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
             probe_status=probe_status,
             presence=presence,
             health=health if isinstance(health, dict) else None,
-            lifecycle_state=lifecycle if isinstance(lifecycle, dict) else {},
         )
     return PushedDeviceHealth(
         is_v7=True,

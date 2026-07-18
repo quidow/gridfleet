@@ -1192,7 +1192,7 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
 
 async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> None:
     device_id = uuid.uuid4()
-    lifecycle_actions = [{"id": "reconnect"}, {"id": "state"}]
+    lifecycle_actions = [{"id": "reconnect"}]
     resolved = SimpleNamespace(lifecycle_actions=lifecycle_actions)
     device = _control_device(id=device_id)
     settings_services = _mock_settings_svc(FakeSettingsReader({}))

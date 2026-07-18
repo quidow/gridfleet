@@ -1293,7 +1293,7 @@ async def test_start_uses_adapter_resolve_when_connection_behavior_requests_it()
             connection_behavior=connection_behavior,
         )
 
-    assert adapter.calls == [("resolve", {}, "Pixel_8_API_35")]
+    assert adapter.calls == [("resolve", {"device_type": "emulator"}, "Pixel_8_API_35")]
     assert info.connection_target == "emulator-5554"
     args = create_proc.await_args_list[0].args
     caps = json.loads(args[args.index("--default-capabilities") + 1])
@@ -1368,8 +1368,47 @@ async def test_start_dispatches_resolve_based_on_connection_behavior_not_device_
         )
 
     assert info.connection_target == "device-serial"
-    assert adapter.calls == [("resolve", {}, "MyAVD")]
+    assert adapter.calls == [("resolve", {"device_type": "real_device"}, "MyAVD")]
     await manager.shutdown()
+
+
+async def test_start_defers_when_host_resolution_hook_is_missing() -> None:
+    class _PreSessionOnlyAdapter:
+        async def pre_session(self, spec: object) -> dict[str, object]:
+            return {}
+
+    manager = AppiumProcessManager()
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set(
+        "appium-uiautomator2",
+        "2026.04.0",
+        FakeWorkerHandle(_PreSessionOnlyAdapter()),  # type: ignore[arg-type]
+    )
+    manager.set_adapter_registry(adapter_registry)
+
+    with pytest.raises(StartDeferredError, match="host resolution"):
+        await manager.start(
+            connection_target="Pixel_8_API_35",
+            port=4765,
+            device_type="emulator",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            connection_behavior={"host_resolution_action": "resolve"},
+        )
+
+
+async def test_start_defers_when_host_resolution_registry_is_missing() -> None:
+    manager = AppiumProcessManager()
+
+    with pytest.raises(StartDeferredError, match="host resolution"):
+        await manager.start(
+            connection_target="Pixel_8_API_35",
+            port=4766,
+            device_type="emulator",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            connection_behavior={"host_resolution_action": "resolve"},
+        )
 
 
 async def test_start_raises_when_adapter_resolve_fails() -> None:

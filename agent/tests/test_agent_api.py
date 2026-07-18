@@ -264,18 +264,22 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
     assert adapter.lifecycle_calls == [("device-1", "reconnect", {"ip_address": "192.168.1.10", "port": 5555})]
 
 
-async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient) -> None:
+@pytest.mark.parametrize("action", ["unknown_action", "boot", "shutdown", "state"])
+async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient, action: str) -> None:
     desired_pack = _make_adb_desired_pack()
-    app.state.adapter_registry = AdapterRegistry()
+    adapter = _FakeAdapter()
+    registry = AdapterRegistry()
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
+    app.state.adapter_registry = registry
     with _latest_desired_override(desired_pack):
         resp = await client.post(
-            "/agent/pack/devices/device-1/lifecycle/unknown_action",
+            f"/agent/pack/devices/device-1/lifecycle/{action}",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
             json={},
         )
 
-    assert resp.status_code == 200
-    assert "Adapter not loaded" in resp.json()["detail"]
+    assert resp.status_code == 422
+    assert adapter.lifecycle_calls == []
 
 
 async def test_normalize_device_no_adapter(client: AsyncClient) -> None:

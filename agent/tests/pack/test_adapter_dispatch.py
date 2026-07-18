@@ -581,6 +581,29 @@ def test_missing_declared_hooks_sees_device_type_override_lifecycle_actions() ->
     assert missing_declared_hooks(pack, FakeWorkerHandle(_MinimalAdapter())) == ["lifecycle_action"]
 
 
+def test_missing_declared_hooks_sees_host_resolution_action() -> None:
+    pack = DesiredPack(
+        id="host-resolved",
+        release="1.0.0",
+        appium_server=_installable(),
+        appium_driver=_installable(),
+        platforms=[
+            DesiredPlatform(
+                id="p",
+                automation_name="a",
+                device_types=["emulator"],
+                connection_types=["virtual"],
+                identity_scheme="s",
+                identity_scope="host",
+                stereotype={},
+                connection_behavior={"host_resolution_action": "resolve"},
+            )
+        ],
+    )
+
+    assert missing_declared_hooks(pack, FakeWorkerHandle(_MinimalAdapter())) == ["lifecycle_action"]
+
+
 def test_missing_declared_hooks_empty_when_manifest_declares_nothing() -> None:
     pack = DesiredPack(
         id="core-only",

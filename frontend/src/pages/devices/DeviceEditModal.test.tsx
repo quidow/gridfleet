@@ -35,7 +35,7 @@ function xcuitestCatalog() {
             identity_scheme: 'apple_udid',
             identity_scope: 'global',
             discovery_kind: 'apple',
-            lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+            lifecycle_actions: [{ id: 'reconnect' }],
             device_fields_schema: [],
             capabilities: {},
             display_metadata: { icon_kind: 'tv' },

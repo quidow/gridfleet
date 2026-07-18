@@ -136,7 +136,7 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
     ineligible = _device(connection_type=ConnectionType.usb)
     db = AsyncMock()
 
-    _reconnect_actions = [{"id": "state"}, {"id": "reconnect"}]
+    _reconnect_actions = [{"id": "reconnect"}]
     _resolved = ResolvedPackPlatform(
         pack_id="appium-uiautomator2",
         release="1.0.0",

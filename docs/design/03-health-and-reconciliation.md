@@ -52,7 +52,7 @@ Consumers **must** branch on `result.status` explicitly, and `indeterminate` mus
 Loops can run repeatedly against the same device without ill effect, provided they obey:
 
 1. **Conditional writes only.** The edge detector emits only when the projected value differs from `operational_state_last_emitted`; `app.devices.services.health` only queues `device.health_changed` when the derived public summary's status snapshot changes.
-2. **Facts have one home.** Device checks, session viability, emulator state, node lifecycle, transient node-health detail, and node failure timestamps live in typed columns. Readers compose them on demand.
+2. **Facts have one home.** Device checks, session viability, node lifecycle, transient node-health detail, and node failure timestamps live in typed columns. Readers compose them on demand.
 3. **Failure windows live on the node row, not in memory.** `AppiumNode.health_failing_since` survives a scheduler restart, so an active episode is neither lost nor double-counted on replayed observations.
 
 ## Where health state lives

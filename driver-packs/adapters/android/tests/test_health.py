@@ -9,7 +9,6 @@ from adapter.health import health_check
 class _Ctx:
     def __init__(self, identity: str = "ABC123") -> None:
         self.device_identity_value = identity
-        self.allow_boot = False
         self.platform_id: str | None = None
         self.device_type: str | None = None
         self.connection_type: str | None = None

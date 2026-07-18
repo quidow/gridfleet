@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Query, Request, status
 
@@ -241,7 +241,7 @@ async def pack_device_health_route(
 async def pack_device_lifecycle_route(
     request: Request,
     connection_target: str,
-    action: str,
+    action: Literal["reconnect", "release_forwarded_ports", "resolve"],
     platform: DesiredPlatformDep,
     adapter_registry: OptionalAdapterRegistryDep,
     host_id: HostIdDep,

@@ -149,7 +149,7 @@ class DriverPackAdapter(Protocol):
     async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]: ...
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "release_forwarded_ports"],
+        action_id: Literal["reconnect", "release_forwarded_ports", "resolve"],
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> LifecycleActionResult: ...
@@ -178,6 +178,7 @@ If the manifest **declares** a capability, the adapter **must** carry its hook, 
 | Manifest declaration | Required adapter hook |
 |----------------------|-----------------------|
 | a platform `lifecycle_actions` entry | `lifecycle_action` |
+| `connection_behavior.host_resolution_action: resolve` | `lifecycle_action` |
 
 At adapter load the agent cross-checks these declarations against the loaded `Adapter` (`missing_declared_hooks`). A pack that declares a capability its adapter does not implement is reported `blocked`, with the missing hook named in `blocked_reason` — the same status pathway a runtime-resolution failure uses. (`health_check` has no manifest declaration, so it is never cross-checked: it is dispatched whenever an adapter is present and skipped when absent.)
 

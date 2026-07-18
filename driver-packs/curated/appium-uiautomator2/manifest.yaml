@@ -78,6 +78,8 @@ platforms:
           default_connection_type: virtual
           requires_ip_address: false
           requires_connection_target: true
+          allow_transport_identity_until_host_resolution: true
+          host_resolution_action: resolve
     parallel_resources:
       ports:
         - capability_name: "appium:systemPort"
@@ -139,6 +141,8 @@ platforms:
           default_connection_type: virtual
           requires_ip_address: false
           requires_connection_target: true
+          allow_transport_identity_until_host_resolution: true
+          host_resolution_action: resolve
     parallel_resources:
       ports:
         - capability_name: "appium:systemPort"

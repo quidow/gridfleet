@@ -35,7 +35,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           identity_scheme: 'android_serial',
           identity_scope: 'host',
           discovery_kind: 'adb',
-          lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+          lifecycle_actions: [{ id: 'reconnect' }],
           health_checks: [
             { id: 'adb_connected', label: 'ADB Connected' },
             { id: 'adb_responsive', label: 'ADB Responsive' },
@@ -73,7 +73,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           identity_scheme: 'apple_udid',
           identity_scope: 'global',
           discovery_kind: 'apple',
-          lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+          lifecycle_actions: [{ id: 'reconnect' }],
           health_checks: [
             { id: 'devicectl_visible', label: 'devicectl Visible' },
             { id: 'devicectl_paired', label: 'Device Paired' },
@@ -109,7 +109,7 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           identity_scheme: 'apple_udid',
           identity_scope: 'global',
           discovery_kind: 'apple',
-          lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+          lifecycle_actions: [{ id: 'reconnect' }],
           health_checks: [
             { id: 'devicectl_visible', label: 'devicectl Visible' },
             { id: 'devicectl_paired', label: 'Device Paired' },

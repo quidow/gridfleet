@@ -109,7 +109,9 @@ class NodeStateLoop:
         # force_restart (the watermark) below, which is not gated on resolution.
         # Real devices (no host-resolution action) keep the direct target_changed
         # match.
-        host_resolves_target = _requests_host_resolution(launch.connection_behavior)
+        host_resolves_target = launch.device_type != "real_device" and _requests_host_resolution(
+            launch.connection_behavior
+        )
         target_changed = local is not None and (
             local.connection_target != launch.connection_target or local.platform_id != launch.platform_id
         )

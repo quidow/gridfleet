@@ -35,12 +35,15 @@ def adapter_supports(handle: WorkerHandle, hook: str) -> bool:
 
 
 def _platform_declares_lifecycle(platform: DesiredPlatform) -> bool:
-    if platform.lifecycle_actions:
+    if platform.lifecycle_actions or platform.connection_behavior.get("host_resolution_action"):
         return True
-    # device_type_overrides may declare lifecycle_actions the base platform
-    # omits (e.g. an emulator override's release_forwarded_ports).
+    # Device-type overrides may require the hook even when the base platform does not.
     return any(
-        isinstance(override, dict) and override.get("lifecycle_actions")
+        isinstance(override, dict)
+        and (
+            override.get("lifecycle_actions")
+            or (override.get("connection_behavior") or {}).get("host_resolution_action")
+        )
         for override in platform.device_type_overrides.values()
     )
 

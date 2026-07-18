@@ -34,7 +34,7 @@ def test_parses_v7_list_section() -> None:
     assert item.presence == "present"
     assert item.probe_status == "observed"
     assert item.health == {"healthy": True, "checks": []}
-    assert item.lifecycle_state["value"] == "device"
+    assert not hasattr(item, "lifecycle_state")
 
 
 def test_legacy_dict_section_is_not_v7() -> None:

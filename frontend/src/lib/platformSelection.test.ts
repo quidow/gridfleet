@@ -19,7 +19,7 @@ const packs = [
         identity_scheme: 'android_serial',
         identity_scope: 'host',
         discovery_kind: 'adb',
-        lifecycle_actions: [{ id: 'state' }, { id: 'reconnect' }],
+        lifecycle_actions: [{ id: 'reconnect' }],
         device_fields_schema: [],
         capabilities: {},
         display_metadata: { icon_kind: 'mobile' },
@@ -98,6 +98,6 @@ describe('platformSelection', () => {
 
     expect(descriptor?.identityScheme).toBe('android_serial');
     expect(descriptor?.identityScope).toBe('host');
-    expect(descriptor?.lifecycleActions).toEqual(['state', 'reconnect']);
+    expect(descriptor?.lifecycleActions).toEqual(['reconnect']);
   });
 });

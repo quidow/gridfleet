@@ -54,7 +54,7 @@ class Adapter:
 
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "release_forwarded_ports"],
+        action_id: Literal["reconnect", "release_forwarded_ports", "resolve"],
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> LifecycleActionResult:

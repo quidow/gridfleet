@@ -238,7 +238,7 @@ async def test_pack_emulator_start_uses_adapter_resolve(monkeypatch: pytest.Monk
 
     args, _kwargs = lifecycle_action.await_args
     assert args[0] == "resolve"
-    assert args[1] == {}
+    assert args[1] == {"device_type": "emulator"}
     assert info.connection_target == "emulator-5554"
     cmd = captured["cmd"]
     assert isinstance(cmd, list)

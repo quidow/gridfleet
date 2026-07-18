@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
 
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DiscoveryContext,
     HealthCheckResult,
     HealthContext,
-    LifecycleActionResult,
-    LifecycleContext,
     NormalizedDevice,
     NormalizeDeviceContext,
 )
@@ -87,17 +84,6 @@ class Adapter:
             if identity is not None:
                 results.append(identity)
         return results
-
-    async def lifecycle_action(
-        self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state", "release_forwarded_ports"],
-        args: dict[str, Any],
-        ctx: LifecycleContext,
-    ) -> LifecycleActionResult:
-        if action_id == "state":
-            reachable = await tcp_reachable(ctx.device_identity_value, 8060, timeout=5.0)
-            return LifecycleActionResult(ok=True, state="reachable" if reachable else "unreachable")
-        return LifecycleActionResult(ok=False, detail=f"Unsupported: {action_id}")
 
     async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
         from .normalize import normalize_device

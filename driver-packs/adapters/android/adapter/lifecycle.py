@@ -22,7 +22,7 @@ async def lifecycle_action(
     if action_id == "release_forwarded_ports":
         return await _release_forwarded_ports(args, ctx)
     if action_id == "resolve":
-        return await _resolve_target(ctx.device_identity_value)
+        return await _resolve_target(ctx.device_identity_value, device_type=str(args.get("device_type") or ""))
     return LifecycleActionResult(ok=False, detail=f"Unknown action: {action_id}")
 
 
@@ -97,14 +97,14 @@ async def _reconnect(args: dict[str, Any]) -> LifecycleActionResult:
     return LifecycleActionResult(ok=True, state="reconnecting")
 
 
-async def _resolve_target(identity: str) -> LifecycleActionResult:
-    if not identity.startswith("avd:"):
-        return LifecycleActionResult(ok=True, state=identity)
+async def _resolve_target(identity: str, *, device_type: str = "") -> LifecycleActionResult:
+    if device_type != "emulator" and not identity.startswith("avd:"):
+        return LifecycleActionResult(ok=True, resolved_connection_target=identity)
     adb = find_adb()
     serial = await _running_serial_for_avd(adb, identity.removeprefix("avd:"))
     if not serial:
         return LifecycleActionResult(ok=False, detail=f"Unable to resolve {identity}")
-    return LifecycleActionResult(ok=True, state=serial)
+    return LifecycleActionResult(ok=True, resolved_connection_target=serial)
 
 
 async def _running_serial_for_avd(adb: str, avd_name: str) -> str:

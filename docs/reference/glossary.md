@@ -33,6 +33,7 @@ This glossary defines the product terms that show up across the API, UI, and ope
 - Appium-facing `appium:udid` is derived from the saved connection target or the running node's active target.
 - For network Android/Fire TV devices, the connection target is often an `ip:port` ADB target.
 - For Android emulators and Apple simulators, the registry persists `connection_type=virtual` instead of overloading USB or network semantics.
+- Virtual-device power is externally managed; GridFleet discovers booted devices and treats a stopped emulator or simulator as offline.
 - For Android emulators, the registry persists a stable `avd:<name>` identity and a host-local AVD-name connection target; uniqueness is enforced per host, while running Appium nodes track the current ADB serial separately.
 
 ## Readiness And Availability

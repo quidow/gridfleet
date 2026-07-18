@@ -162,6 +162,17 @@ def test_platform_connection_behavior_host_resolution_action() -> None:
     assert cb.host_resolution_action == "resolve"
 
 
+@pytest.mark.parametrize("action", ["boot", "shutdown", "state"])
+def test_platform_connection_behavior_rejects_removed_host_resolution_action(action: str) -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        _IDENTITY_LINE + f"\n    connection_behavior:\n      host_resolution_action: {action}\n",
+    )
+
+    with pytest.raises(ManifestValidationError, match="literal_error"):
+        load_manifest_yaml(yaml_text)
+
+
 def test_manifest_rejects_legacy_discovery_block() -> None:
     yaml_text = _base_yaml().replace(
         _IDENTITY_LINE,

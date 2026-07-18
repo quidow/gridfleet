@@ -861,27 +861,24 @@ class AppiumProcessManager:
             pack_worker_release, pack_worker = self._resolve_pack_worker(
                 self._adapter_registry, pack_id, requested_release=pack_release
             )
-        if self._adapter_registry is not None and _requests_host_resolution(connection_behavior):
-            if pack_worker is None or not adapter_supports(pack_worker, "lifecycle_action"):
-                result = None
+        if _requests_host_resolution(connection_behavior):
+            if (
+                self._adapter_registry is None
+                or pack_worker is None
+                or not adapter_supports(pack_worker, "lifecycle_action")
+            ):
+                raise StartDeferredError(f"driver-pack adapter for {pack_id!r} cannot perform host resolution")
+            lifecycle_result = await dispatch_lifecycle_action(
+                pack_worker,
+                "resolve",
+                {"device_type": device_type},
+                LifecycleCtx(host_id="", device_identity_value=connection_target),
+            )
+            if lifecycle_result.resolved_connection_target:
+                resolved_connection_target = lifecycle_result.resolved_connection_target
+            elif not lifecycle_result.ok:
+                raise DeviceNotFoundError(lifecycle_result.detail or f"{connection_target!r} could not be resolved")
             else:
-                lifecycle_result = await dispatch_lifecycle_action(
-                    pack_worker,
-                    "resolve",
-                    {},
-                    LifecycleCtx(host_id="", device_identity_value=connection_target),
-                )
-                result = {
-                    "success": lifecycle_result.ok,
-                    "state": lifecycle_result.state,
-                    "detail": lifecycle_result.detail,
-                    "resolved_connection_target": lifecycle_result.resolved_connection_target,
-                }
-            if result and result.get("resolved_connection_target"):
-                resolved_connection_target = str(result["resolved_connection_target"])
-            elif result and result.get("success") is False:
-                raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be resolved"))
-            elif result and result.get("success") is True:
                 raise DeviceNotFoundError(f"resolve for {connection_target!r} did not return a serial")
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
         if pack_worker is not None:

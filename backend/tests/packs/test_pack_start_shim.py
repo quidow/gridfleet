@@ -120,6 +120,7 @@ async def test_pack_start_payload_applies_device_type_override_for_emulator(db_s
     action_ids = {action["id"] for action in payload["lifecycle_actions"]}
     assert "release_forwarded_ports" in action_ids
     assert payload["connection_behavior"]["default_connection_type"] == "virtual"
+    assert payload["connection_behavior"]["host_resolution_action"] == "resolve"
 
 
 @pytest.mark.asyncio

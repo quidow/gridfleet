@@ -2122,7 +2122,7 @@ export interface components {
             /** Default Device Type */
             default_device_type?: ("real_device" | "emulator" | "simulator") | null;
             /** Host Resolution Action */
-            host_resolution_action?: string | null;
+            host_resolution_action?: "resolve" | null;
             /**
              * Requires Connection Target
              * @default true
