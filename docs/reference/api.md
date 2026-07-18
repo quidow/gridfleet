@@ -57,7 +57,7 @@ Current auth behavior:
 | `PATCH` | `/api/devices/{device_id}/test_data` | Deep-merge device test data | partial test-data object | `TestDataRead` |
 | `GET` | `/api/devices/{device_id}/test_data/history` | Read test-data audit history | `limit` | `TestDataAuditEntryRead[]` |
 | `GET` | `/api/devices/{device_id}/health` | Probe current device health through the assigned host | path `device_id` | health/status object |
-| `POST` | `/api/devices/{device_id}/lifecycle/{action}` | Run a declared pack action (`reconnect` or `release_forwarded_ports`); virtual-device power control is not supported | action args object | lifecycle action result |
+| `POST` | `/api/devices/{device_id}/lifecycle/{action}` | Run a declared pack action (`reconnect`, `release_forwarded_ports`, or `resolve`); virtual-device power control is not supported | action args object | lifecycle action result |
 | `GET` | `/api/devices/{device_id}/logs` | Read device/agent log view | `lines` | log payload |
 | `POST` | `/api/devices/{device_id}/node/start` | Start the managed Appium node | path `device_id` | node/device status payload |
 | `POST` | `/api/devices/{device_id}/node/stop` | Stop the managed Appium node | path `device_id` | node/device status payload |

@@ -31,7 +31,7 @@ def parse_device_health_items(section: dict[str, Any]) -> PushedDeviceHealth:
     raw = section.get("devices")
     if not isinstance(raw, list):
         # Legacy (pre-v7) section: a dict keyed by connection_target. The fold
-        # falls back to presence/lifecycle dials for this host.
+        # falls back to the legacy presence dials for this host.
         return PushedDeviceHealth(is_v7=False, complete_gather=False, by_device_id={})
     by_id: dict[uuid.UUID, DeviceHealthItem] = {}
     for item in raw:

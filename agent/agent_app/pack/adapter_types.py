@@ -52,6 +52,8 @@ class LifecycleActionResult:
     state: str = ""
     detail: str = ""
     resolved_connection_target: str | None = None
+    identity_value: str | None = None
+    connection_target: str | None = None
 
 
 @dataclass

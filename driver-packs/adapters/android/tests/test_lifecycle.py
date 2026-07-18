@@ -43,6 +43,8 @@ async def test_resolve_returns_live_serial_for_avd_identity(mock_avd_name: Async
     mock_avd_name.return_value = "Pixel_6"
     result = await lifecycle_action("resolve", {}, _CtxWithIdentity("avd:Pixel_6"))
     assert result.ok is True
+    assert result.identity_value == "avd:Pixel_6"
+    assert result.connection_target == "Pixel_6"
     assert result.resolved_connection_target == "emulator-5554"
 
 
@@ -51,7 +53,29 @@ async def test_resolve_returns_direct_identity_as_connection_target() -> None:
     result = await lifecycle_action("resolve", {"device_type": "real_device"}, _CtxWithIdentity("device-serial"))
 
     assert result.ok is True
+    assert result.identity_value == "device-serial"
+    assert result.connection_target == "device-serial"
     assert result.resolved_connection_target == "device-serial"
+
+
+@pytest.mark.asyncio
+@patch(
+    "adapter.lifecycle.get_android_properties",
+    new_callable=AsyncMock,
+    return_value={"serial_number": "stable-serial"},
+)
+async def test_resolve_returns_stable_identity_for_network_transport(mock_properties: AsyncMock) -> None:
+    result = await lifecycle_action(
+        "resolve",
+        {"device_type": "real_device", "connection_type": "network"},
+        _CtxWithIdentity("192.168.1.100:5555"),
+    )
+
+    assert result.ok is True
+    assert result.identity_value == "stable-serial"
+    assert result.connection_target == "192.168.1.100:5555"
+    assert result.resolved_connection_target == "192.168.1.100:5555"
+    mock_properties.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -67,6 +91,46 @@ async def test_resolve_treats_emulator_connection_target_as_avd_name(
     result = await lifecycle_action("resolve", {"device_type": "emulator"}, _CtxWithIdentity("Pixel_6"))
 
     assert result.ok is True
+    assert result.resolved_connection_target == "emulator-5554"
+
+
+@pytest.mark.asyncio
+@patch("adapter.lifecycle.get_running_emulator_avd_name", new_callable=AsyncMock, return_value="Pixel_6")
+async def test_resolve_accepts_live_emulator_serial_replayed_by_auto_restart(mock_avd_name: AsyncMock) -> None:
+    result = await lifecycle_action("resolve", {"device_type": "emulator"}, _CtxWithIdentity("emulator-5554"))
+
+    assert result.ok is True
+    assert result.identity_value == "avd:Pixel_6"
+    assert result.connection_target == "Pixel_6"
+    assert result.resolved_connection_target == "emulator-5554"
+    mock_avd_name.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("adapter.lifecycle.get_running_emulator_avd_name", new_callable=AsyncMock, return_value="")
+async def test_resolve_rejects_stale_emulator_serial_replayed_by_auto_restart(mock_avd_name: AsyncMock) -> None:
+    result = await lifecycle_action("resolve", {"device_type": "emulator"}, _CtxWithIdentity("emulator-5554"))
+
+    assert result.ok is False
+    assert result.resolved_connection_target is None
+    mock_avd_name.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("adapter.lifecycle.run_cmd", new_callable=AsyncMock)
+@patch("adapter.lifecycle.get_running_emulator_avd_name", new_callable=AsyncMock)
+async def test_resolve_treats_nonserial_emulator_prefix_as_avd_name(
+    mock_avd_name: AsyncMock,
+    mock_cmd: AsyncMock,
+) -> None:
+    mock_cmd.return_value = "List of devices attached\nemulator-5554\tdevice\n"
+    mock_avd_name.return_value = "emulator-pixel"
+
+    result = await lifecycle_action("resolve", {"device_type": "emulator"}, _CtxWithIdentity("emulator-pixel"))
+
+    assert result.ok is True
+    assert result.identity_value == "avd:emulator-pixel"
+    assert result.connection_target == "emulator-pixel"
     assert result.resolved_connection_target == "emulator-5554"
 
 

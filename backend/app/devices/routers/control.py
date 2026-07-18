@@ -318,6 +318,13 @@ async def device_lifecycle_action(
     if not device.connection_target:
         raise HTTPException(status_code=400, detail="Device has no connection target")
 
+    args = dict(body or {})
+    if action == "resolve":
+        args.update(
+            device_type=device.device_type.value if device.device_type else None,
+            connection_type=device.connection_type.value if device.connection_type else None,
+            ip_address=device.ip_address,
+        )
     result = await pack_device_lifecycle_action(
         device.host.ip,
         device.host.agent_port,
@@ -325,7 +332,7 @@ async def device_lifecycle_action(
         pack_id=device.pack_id,
         platform_id=device.platform_id,
         action=action,
-        args=body or {},
+        args=args,
         http_client_factory=httpx.AsyncClient,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,

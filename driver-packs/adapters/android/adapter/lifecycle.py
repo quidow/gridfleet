@@ -8,8 +8,8 @@ from typing import Any
 from agent_app.pack.adapter_types import LifecycleActionResult, LifecycleContext
 from agent_app.pack.adapter_utils import run_cmd, tcp_reachable
 
-from .health import _adb_shell_echo
-from .tools import find_adb, get_running_emulator_avd_name
+from .health import _EMULATOR_SERIAL_RE, _adb_shell_echo
+from .tools import find_adb, get_android_properties, get_running_emulator_avd_name
 
 
 async def lifecycle_action(
@@ -22,7 +22,11 @@ async def lifecycle_action(
     if action_id == "release_forwarded_ports":
         return await _release_forwarded_ports(args, ctx)
     if action_id == "resolve":
-        return await _resolve_target(ctx.device_identity_value, device_type=str(args.get("device_type") or ""))
+        return await _resolve_target(
+            ctx.device_identity_value,
+            device_type=str(args.get("device_type") or ""),
+            connection_type=str(args.get("connection_type") or ""),
+        )
     return LifecycleActionResult(ok=False, detail=f"Unknown action: {action_id}")
 
 
@@ -97,14 +101,51 @@ async def _reconnect(args: dict[str, Any]) -> LifecycleActionResult:
     return LifecycleActionResult(ok=True, state="reconnecting")
 
 
-async def _resolve_target(identity: str, *, device_type: str = "") -> LifecycleActionResult:
-    if device_type != "emulator" and not identity.startswith("avd:"):
-        return LifecycleActionResult(ok=True, resolved_connection_target=identity)
+async def _resolve_target(
+    identity: str,
+    *,
+    device_type: str = "",
+    connection_type: str = "",
+) -> LifecycleActionResult:
     adb = find_adb()
-    serial = await _running_serial_for_avd(adb, identity.removeprefix("avd:"))
-    if not serial:
-        return LifecycleActionResult(ok=False, detail=f"Unable to resolve {identity}")
-    return LifecycleActionResult(ok=True, resolved_connection_target=serial)
+    if _EMULATOR_SERIAL_RE.fullmatch(identity):
+        avd_name = await get_running_emulator_avd_name(adb, identity)
+        if not avd_name:
+            return LifecycleActionResult(ok=False, detail=f"Unable to resolve {identity}")
+        return LifecycleActionResult(
+            ok=True,
+            resolved_connection_target=identity,
+            identity_value=f"avd:{avd_name}",
+            connection_target=avd_name,
+        )
+    if device_type == "emulator" or identity.startswith("avd:"):
+        avd_name = identity.removeprefix("avd:")
+        serial = await _running_serial_for_avd(adb, avd_name)
+        if not serial:
+            return LifecycleActionResult(ok=False, detail=f"Unable to resolve {identity}")
+        return LifecycleActionResult(
+            ok=True,
+            resolved_connection_target=serial,
+            identity_value=f"avd:{avd_name}",
+            connection_target=avd_name,
+        )
+    if connection_type == "network":
+        properties = await get_android_properties(adb, identity)
+        stable_identity = properties.get("serial_number") or properties.get("boot_serial")
+        if not stable_identity:
+            return LifecycleActionResult(ok=False, detail=f"Unable to resolve a stable identity for {identity}")
+        return LifecycleActionResult(
+            ok=True,
+            resolved_connection_target=identity,
+            identity_value=stable_identity,
+            connection_target=identity,
+        )
+    return LifecycleActionResult(
+        ok=True,
+        resolved_connection_target=identity,
+        identity_value=identity,
+        connection_target=identity,
+    )
 
 
 async def _running_serial_for_avd(adb: str, avd_name: str) -> str:

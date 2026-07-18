@@ -933,8 +933,8 @@ class AppiumProcessManager:
             if self._adapter_registry is not None:
                 # Revalidate under the lock: a pack-loop reconcile may have
                 # published a different release while this start awaited
-                # resolve, pre_session, or the lock. The resolve side effects
-                # and merged caps belong to the snapshot resolved above;
+                # resolve, pre_session, or the lock. The resolved target and
+                # merged caps belong to the snapshot resolved above;
                 # spawning them onto a swapped runtime would persist a mixed
                 # node. Defer so the retry re-derives everything against the
                 # new release.

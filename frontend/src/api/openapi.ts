@@ -4088,7 +4088,7 @@ export interface components {
              * Id
              * @enum {string}
              */
-            id: "reconnect" | "release_forwarded_ports";
+            id: "reconnect" | "release_forwarded_ports" | "resolve";
         };
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {

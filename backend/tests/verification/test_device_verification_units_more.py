@@ -950,7 +950,15 @@ async def test_preparation_resolution_and_validation_error_paths(
 
     monkeypatch.setattr(
         "app.verification.services.preparation.pack_device_lifecycle_action",
-        AsyncMock(return_value={"identity_value": "stable", "connection_target": "10.0.0.1:5555", "name": "Resolved"}),
+        AsyncMock(
+            return_value={
+                "success": True,
+                "identity_value": "stable",
+                "connection_target": "10.0.0.1:5555",
+                "resolved_connection_target": "10.0.0.1:5555",
+                "name": "Resolved",
+            }
+        ),
     )
     assert (
         await _prep_svc.resolve_host_derived_payload(
@@ -963,6 +971,12 @@ async def test_preparation_resolution_and_validation_error_paths(
     )
     assert payload["identity_value"] == "stable"
     assert payload["name"] == "Resolved"
+    resolution_call = preparation.pack_device_lifecycle_action.await_args
+    assert resolution_call.kwargs["args"] == {
+        "device_type": "real_device",
+        "connection_type": "network",
+        "ip_address": None,
+    }
 
     bad_create = DeviceVerificationCreate(
         pack_id="appium-uiautomator2",

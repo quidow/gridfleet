@@ -73,6 +73,10 @@ def _adapter_lifecycle_payload(result: LifecycleActionResult) -> dict[str, Any]:
     payload: dict[str, Any] = {"success": result.ok, "state": result.state, "detail": result.detail}
     if result.resolved_connection_target is not None:
         payload["resolved_connection_target"] = result.resolved_connection_target
+    if result.identity_value is not None:
+        payload["identity_value"] = result.identity_value
+    if result.connection_target is not None:
+        payload["connection_target"] = result.connection_target
     return payload
 
 
@@ -261,7 +265,7 @@ async def pack_device_lifecycle_route(
         # A successful state-changing action (e.g. the backend's reconnect /
         # release_forwarded_ports link repair) should be re-observed promptly
         # rather than at the next fixed probe cadence.
-        if result.ok:
+        if result.ok and action != "resolve":
             probe_loop = getattr(request.app.state, "probe_loop", None)
             if probe_loop is not None:
                 probe_loop.request_immediate("device_health")

@@ -264,6 +264,46 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
     assert adapter.lifecycle_calls == [("device-1", "reconnect", {"ip_address": "192.168.1.10", "port": 5555})]
 
 
+async def test_pack_device_lifecycle_resolve_does_not_wake_health_probe(client: AsyncClient) -> None:
+    desired_pack = _make_adb_desired_pack()
+    adapter = _FakeAdapter()
+    adapter.lifecycle_action = AsyncMock(
+        return_value=LifecycleActionResult(
+            ok=True,
+            identity_value="avd:Pixel_6",
+            connection_target="Pixel_6",
+            resolved_connection_target="emulator-5554",
+        )
+    )
+    registry = AdapterRegistry()
+    registry.set(desired_pack.id, desired_pack.release, FakeWorkerHandle(adapter))  # type: ignore[arg-type]
+    app.state.adapter_registry = registry
+    probe_loop = MagicMock()
+    previous_probe_loop = getattr(app.state, "probe_loop", None)
+    app.state.probe_loop = probe_loop
+
+    try:
+        with _latest_desired_override(desired_pack):
+            resp = await client.post(
+                "/agent/pack/devices/device-1/lifecycle/resolve",
+                params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
+                json={},
+            )
+    finally:
+        app.state.probe_loop = previous_probe_loop
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "success": True,
+        "state": "",
+        "detail": "",
+        "identity_value": "avd:Pixel_6",
+        "connection_target": "Pixel_6",
+        "resolved_connection_target": "emulator-5554",
+    }
+    probe_loop.request_immediate.assert_not_called()
+
+
 @pytest.mark.parametrize("action", ["unknown_action", "boot", "shutdown", "state"])
 async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient, action: str) -> None:
     desired_pack = _make_adb_desired_pack()
