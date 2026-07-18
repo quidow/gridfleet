@@ -2,6 +2,23 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.38.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.37.0...gridfleet-agent-v0.38.0) (2026-07-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** replace boot dispatch with resolve; drop virtual-device vocabulary
+
+### Features
+
+* **agent:** replace boot dispatch with resolve; drop virtual-device vocabulary ([3fe335b](https://github.com/quidow/gridfleet/commit/3fe335b5459b6e330422688c71d679ef25a8f5cd))
+
+
+### Bug Fixes
+
+* **main:** align virtual device resolution contracts ([8c123fd](https://github.com/quidow/gridfleet/commit/8c123fdaf4e013360c126f1820cd66422c6a6bcc))
+* **main:** complete virtual device state removal ([d457be1](https://github.com/quidow/gridfleet/commit/d457be103b3b8d95e9549ae6aa93f7d4abb03a97))
+
 ## [0.37.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.36.3...gridfleet-agent-v0.37.0) (2026-07-17)
 
 
