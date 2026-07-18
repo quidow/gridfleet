@@ -60,7 +60,6 @@ platforms:
       - id: claimed_ports_free
         label: Driver Ports Free
     lifecycle_actions:
-      - id: state
       - id: reconnect
       - id: release_forwarded_ports
     connection_behavior:
@@ -73,9 +72,6 @@ platforms:
     device_type_overrides:
       emulator:
         lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
           - id: release_forwarded_ports
         connection_behavior:
           default_device_type: emulator
@@ -125,7 +121,6 @@ platforms:
       - id: claimed_ports_free
         label: Driver Ports Free
     lifecycle_actions:
-      - id: state
       - id: reconnect
       - id: release_forwarded_ports
     connection_behavior:
@@ -138,9 +133,6 @@ platforms:
     device_type_overrides:
       emulator:
         lifecycle_actions:
-          - id: state
-          - id: boot
-          - id: shutdown
           - id: release_forwarded_ports
         connection_behavior:
           default_device_type: emulator
@@ -190,7 +182,6 @@ platforms:
       - id: claimed_ports_free
         label: Driver Ports Free
     lifecycle_actions:
-      - id: state
       - id: reconnect
       - id: release_forwarded_ports
     connection_behavior:
