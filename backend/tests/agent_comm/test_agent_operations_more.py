@@ -268,7 +268,6 @@ async def test_pack_device_health_includes_optional_probe_params() -> None:
         platform_id="android_mobile",
         connection_type="network",
         ip_address="10.0.0.9",
-        headless=True,
         ip_ping_timeout_sec=1.5,
         ip_ping_count=3,
         http_client_factory=_strict_client_factory(client),
@@ -278,7 +277,6 @@ async def test_pack_device_health_includes_optional_probe_params() -> None:
     params = client.get_calls[0][1]["params"]
     assert params["connection_type"] == "network"
     assert params["ip_address"] == "10.0.0.9"
-    assert params["headless"] is True
     assert params["ip_ping_timeout_sec"] == 1.5
     assert params["ip_ping_count"] == 3
 

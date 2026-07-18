@@ -73,7 +73,6 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         is None
     )
     assert device.connection_target == "emulator-5554"
-    assert fetch.await_args.kwargs["headless"] is False
 
     fetch.side_effect = None
     fetch.return_value = {"healthy": False, "checks": [{"check_id": "boot_completed", "ok": False, "message": "no"}]}

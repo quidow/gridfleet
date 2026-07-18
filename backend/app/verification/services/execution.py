@@ -140,7 +140,6 @@ class VerificationExecutionService:
         is_virtual = device_type_str in ("emulator", "simulator")
         running_detail = "Booting virtual device — this may take a few minutes" if is_virtual else None
         await set_stage(job, "device_health", "running", detail=running_detail)
-        headless = (device.tags or {}).get("emulator_headless", "true") != "false"
         try:
             result = await fetch_pack_device_health(
                 device.host.ip,
@@ -151,8 +150,6 @@ class VerificationExecutionService:
                 device_type=str(device.device_type) if device.device_type else "real_device",
                 connection_type=str(device.connection_type) if device.connection_type else None,
                 ip_address=device.ip_address,
-                allow_boot=True,
-                headless=headless,
                 http_client_factory=http_client_factory,
                 timeout=_device_health_timeout(device, settings=self._agent.settings),
                 circuit_breaker=self._agent.circuit_breaker,

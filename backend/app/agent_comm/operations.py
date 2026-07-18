@@ -368,8 +368,6 @@ async def pack_device_health(
     device_type: str = "real_device",
     connection_type: str | None = None,
     ip_address: str | None = None,
-    allow_boot: bool = False,
-    headless: bool | None = None,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
     identity_value: str | None = None,
@@ -384,7 +382,6 @@ async def pack_device_health(
         "pack_id": pack_id,
         "platform_id": platform_id,
         "device_type": device_type,
-        "allow_boot": allow_boot,
     }
     if identity_value:
         params["identity_value"] = identity_value
@@ -392,8 +389,6 @@ async def pack_device_health(
         params["connection_type"] = connection_type
     if ip_address is not None:
         params["ip_address"] = ip_address
-    if headless is not None:
-        params["headless"] = headless
     if ip_ping_timeout_sec is not None:
         params["ip_ping_timeout_sec"] = ip_ping_timeout_sec
     if ip_ping_count is not None:

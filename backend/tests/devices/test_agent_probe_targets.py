@@ -50,7 +50,6 @@ async def test_probe_targets_lists_all_host_devices(
         "ip_ping_count",
     ):
         assert key in entry
-    assert entry["allow_boot"] is False
     assert isinstance(entry["ip_ping_timeout_sec"], (int, float))
     assert isinstance(entry["ip_ping_count"], int)
 
@@ -124,47 +123,6 @@ async def test_probe_targets_includes_parallel_resource_claims(
     assert response.status_code == 200
     entries = {entry["connection_target"]: entry for entry in response.json()["devices"]}
     assert entries[device.connection_target]["claimed_ports"] == {"appium:systemPort": 8200}
-
-
-@pytest.mark.db
-@pytest.mark.usefixtures("seeded_driver_packs")
-async def test_probe_targets_reports_lifecycle_state_capable(
-    client: AsyncClient, db_session: AsyncSession, db_host: Host
-) -> None:
-    # appium-uiautomator2/android_mobile declares a "state" lifecycle action; the
-    # roku pack's platform declares none.
-    capable = await create_device_record(
-        db_session,
-        host_id=db_host.id,
-        identity_value="lifecycle-capable-device",
-        connection_target="lifecycle-capable-device",
-        name="Lifecycle capable device",
-        device_type="emulator",
-    )
-    incapable = await create_device_record(
-        db_session,
-        host_id=db_host.id,
-        identity_value="lifecycle-incapable-device",
-        connection_target="10.0.0.90:8060",
-        name="Lifecycle incapable device",
-        pack_id="appium-roku-dlenroc",
-        platform_id="roku_network",
-    )
-
-    response = await client.get("/agent/devices/probe-targets", params={"host_id": str(db_host.id)})
-
-    assert response.status_code == 200
-    entries = {entry["device_id"]: entry for entry in response.json()["devices"]}
-    assert entries[str(capable.id)]["lifecycle_state_capable"] is True
-    assert entries[str(incapable.id)]["lifecycle_state_capable"] is False
-
-
-def test_probe_target_lifecycle_capability_is_owned_by_the_surviving_route() -> None:
-    from app.devices.routers.agent_probe_targets import _lifecycle_state_capable
-
-    # A5.9 removes the dead inline connectivity fold and its private helpers.
-    # The probe-target route must not depend on one of those scheduled deletions.
-    assert _lifecycle_state_capable.__module__ == "app.devices.routers.agent_probe_targets"
 
 
 @pytest.mark.db

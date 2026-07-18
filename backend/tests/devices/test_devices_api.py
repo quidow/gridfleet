@@ -1696,9 +1696,8 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
     device = await _create_device(
         db_session,
         default_host_id,
-        identity_value="avd:Pixel_6",
-        connection_target="Pixel_6",
-        device_type="emulator",
+        identity_value="real-android-001",
+        connection_target="real-android-001",
     )
 
     with patch(
@@ -1706,7 +1705,7 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
         new_callable=AsyncMock,
         return_value={"success": True, "state": "running"},
     ) as mock_lifecycle:
-        resp = await client.post(f"/api/devices/{device.id}/lifecycle/boot", json={"headless": True})
+        resp = await client.post(f"/api/devices/{device.id}/lifecycle/reconnect", json={})
 
     assert resp.status_code == 200
     assert resp.json()["state"] == "running"
@@ -1714,8 +1713,8 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
     _, kwargs = mock_lifecycle.call_args
     assert kwargs["pack_id"] == "appium-uiautomator2"
     assert kwargs["platform_id"] == "android_mobile"
-    assert kwargs["action"] == "boot"
-    assert kwargs["args"] == {"headless": True}
+    assert kwargs["action"] == "reconnect"
+    assert kwargs["args"] == {}
 
 
 @pytest.mark.asyncio
