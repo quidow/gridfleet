@@ -337,7 +337,6 @@ class DeviceRead(BaseModel):
     lifecycle_policy_summary: DeviceLifecyclePolicySummaryRead
     needs_attention: bool
     health_summary: DeviceHealthSummaryRead
-    emulator_state: str | None = None
     blocked_reason: str | None = None
     review_required: bool = False
     review_reason: str | None = None

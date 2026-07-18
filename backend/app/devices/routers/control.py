@@ -330,9 +330,6 @@ async def device_lifecycle_action(
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )
-    if action == "state" and isinstance(result.get("state"), str):
-        await device_services.health.update_emulator_state(db, device, result["state"])
-        await db.commit()
     return result
 
 

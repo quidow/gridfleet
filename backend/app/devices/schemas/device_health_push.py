@@ -1,8 +1,8 @@
 """Canonical parser for the pushed device_health section (contract v7).
 
-One shared representation used by the inline Phase-3 fold, the StatusFoldLoop
-device fold, and the synchronous emulator_state fold, so all three agree on
-membership, presence, and the v7-vs-legacy shape decision.
+One shared representation used by the inline Phase-3 fold and the StatusFoldLoop
+device fold, so both agree on membership, presence, and the v7-vs-legacy shape
+decision.
 """
 
 from __future__ import annotations

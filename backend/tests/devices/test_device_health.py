@@ -242,116 +242,6 @@ async def test_locked_device_handle_loads_scalar_graph_in_one_statement(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_emulator_state_m2_ordering(db_with_device: tuple[AsyncSession, Device]) -> None:
-    from app.core.timeutil import now_utc
-
-    db, device = db_with_device
-    service = DeviceHealthService(publisher=event_bus)
-    t0 = now_utc()
-    await service.update_emulator_state(db, device, "device", source_time=t0)
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state == "device"
-
-    # Older pushed observation must NOT overwrite.
-    await service.update_emulator_state(db, device, "booting", source_time=t0 - timedelta(seconds=5))
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state == "device"
-
-    # Operator refresh (source_time=None -> now-authority) always wins.
-    await service.update_emulator_state(db, device, "offline")
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state == "offline"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_emulator_state_unchanged_takes_no_write(
-    db_with_device: tuple[AsyncSession, Device], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.core.timeutil import now_utc
-
-    db, device = db_with_device
-    service = DeviceHealthService(publisher=event_bus)
-    pushed_at = now_utc()
-    await service.update_emulator_state(db, device, None, source_time=pushed_at)  # already None
-    # value unchanged -> early return before lock; assert no lock acquired
-    spy = AsyncMock(wraps=svc.device_locking.lock_device)
-    monkeypatch.setattr(svc.device_locking, "lock_device", spy)
-    await service.update_emulator_state(db, device, None, source_time=pushed_at)
-    spy.assert_not_called()
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_unchanged_operator_refresh_advances_emulator_state_authority(
-    db_with_device: tuple[AsyncSession, Device],
-) -> None:
-    from app.core.timeutil import now_utc
-
-    db, device = db_with_device
-    service = DeviceHealthService(publisher=event_bus)
-    old_observation = now_utc() - timedelta(minutes=5)
-    await service.update_emulator_state(db, device, "device", source_time=old_observation)
-    await db.commit()
-    await db.refresh(device)
-
-    # A live operator refresh confirms the same value. It still needs to advance
-    # the source watermark so a delayed, older different observation cannot win.
-    await service.update_emulator_state(db, device, "device")
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state_source_time is not None
-    assert device.emulator_state_source_time > old_observation
-
-    await service.update_emulator_state(
-        db,
-        device,
-        "booting",
-        source_time=old_observation + timedelta(minutes=1),
-    )
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state == "device"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_operator_refresh_never_moves_emulator_state_authority_backward(
-    db_with_device: tuple[AsyncSession, Device],
-) -> None:
-    from app.core.timeutil import now_utc
-
-    db, device = db_with_device
-    service = DeviceHealthService(publisher=event_bus)
-    future_observation = now_utc() + timedelta(minutes=5)
-    await service.update_emulator_state(db, device, "device", source_time=future_observation)
-    await db.commit()
-    await db.refresh(device)
-
-    # A skewed agent clock may put the current watermark ahead of manager time.
-    # A live refresh is authoritative, but must keep the ordering watermark
-    # monotonic so an older delayed pushed state cannot become eligible again.
-    await service.update_emulator_state(db, device, "device")
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state_source_time == future_observation
-
-    await service.update_emulator_state(
-        db,
-        device,
-        "booting",
-        source_time=future_observation - timedelta(minutes=1),
-    )
-    await db.commit()
-    await db.refresh(device)
-    assert device.emulator_state == "device"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
 async def test_update_session_viability_persists_columns(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
     await DeviceHealthService(publisher=event_bus).update_session_viability(
@@ -837,8 +727,7 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
 async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     """When lock_device raises NoResultFound, all health update methods must return early."""
     db = object()
-    # emulator_state is read by update_emulator_state's pre-lock write-on-diff check.
-    device = SimpleNamespace(id=__import__("uuid").uuid4(), emulator_state=None)
+    device = SimpleNamespace(id=__import__("uuid").uuid4())
     monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     assert await svc._lock(db, device) is None  # type: ignore[arg-type]
@@ -846,4 +735,3 @@ async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.Monke
     await _health.update_device_checks(db, device, healthy=True, summary="ok")  # type: ignore[arg-type]
     await _health.update_session_viability(db, device, status="failed", error="bad")  # type: ignore[arg-type]
     await _health.apply_node_state_transition(db, device)  # type: ignore[arg-type]
-    await _health.update_emulator_state(db, device, "booted")  # type: ignore[arg-type]

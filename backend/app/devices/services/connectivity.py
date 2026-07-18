@@ -472,36 +472,6 @@ class ConnectivityService:
         await self._lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
         await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)
 
-    async def apply_pushed_emulator_state(self, db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
-        """Synchronous push-path application of the pushed emulator_state. Stays
-        synchronous (spec) while the device-health verdict folds async. Lock-free at
-        steady state: update_emulator_state early-returns when unchanged, and M2
-        source-time ordering keeps an older observation from clobbering a newer write.
-        """
-        pushed = parse_device_health_items(section)
-        if not pushed.is_v7 or not pushed.by_device_id:
-            return
-        section_observed_at = parse_iso(section.get("reported_at"))
-        rows = (
-            (
-                await db.execute(
-                    select(Device).where(Device.host_id == host_id, Device.id.in_(pushed.by_device_id.keys()))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for device in rows:
-            item = pushed.by_device_id.get(device.id)
-            if item is None or item.lifecycle_state.get("status") != "observed":
-                continue
-            value = item.lifecycle_state.get("value")
-            if isinstance(value, str) and value:
-                item_observed_at = parse_iso(item.lifecycle_state.get("observed_at")) or section_observed_at
-                if item_observed_at is None:
-                    continue
-                await self._health.update_emulator_state(db, device, value, source_time=item_observed_at)
-
     async def fold_host_devices(
         self,
         db: AsyncSession,

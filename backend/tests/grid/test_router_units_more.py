@@ -1343,10 +1343,8 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"state": "running"})
         ),
     ):
-        _ds_health = AsyncMock()
-        _ds_health.update_emulator_state = AsyncMock()
         _ds_stub = AsyncMock()
-        _ds_stub.health = _ds_health
+        _ds_stub.health = AsyncMock()
         assert await devices_control.device_lifecycle_action(
             device_id,
             "state",
@@ -1355,7 +1353,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             agent_comm=_lifecycle_ac,
             device_services=_ds_stub,
         ) == {"state": "running"}
-    db.commit.assert_awaited_once()
 
     node = SimpleNamespace(port=4731, observed_running=True, health_running=None, health_state=None)
     health_device = _control_device(appium_node=node)
