@@ -127,11 +127,11 @@ Operators normally choose the host-visible device rather than typing low-level i
 
 ### Virtual Devices (Emulators & Simulators)
 
-Virtual devices have unique behaviors around their connection lanes, headless rendering, and boot lifecycle:
+Virtual devices are externally managed. GridFleet observes their presence and health the same way it does physical devices — it never boots, shuts down, or tracks a power state.
 
-- **Virtual connection lanes:** Emulators and simulators uniformly persist with their connection types constrained, requiring no manual IP input.
-- **Headless Mode:** For Android emulators (AVDs), headless rendering is controlled by the device-level `emulator_headless` tag, not by an intake or discovery toggle. The tag defaults to headless on; set it to `false` to render the display. The agent applies this setting in its emulator boot step before starting Appium.
-- **Auto-Boot Lifecycle:** Virtual devices natively expose their process state (e.g., `stopped`, `booting`, `running`). A `stopped` virtual device can be safely targeted; the agent is responsible for automatically launching the hardware artifact seamlessly before starting Appium.
+- **External lifecycle:** Boot and shut down emulators/simulators with your own tooling (CI scripts, host setup, manual `xcrun simctl boot` / `emulator -avd`). GridFleet does not manage power state.
+- **Booted-only discovery:** Apple simulators must be booted before GridFleet can discover them (a stopped simulator is invisible, same as a stopped Android emulator is invisible to ADB). Enroll a simulator only after booting it externally.
+- **Identity stays:** Android emulators keep their `avd:<name>` identity; GridFleet resolves the live ADB serial at node start via the `resolve` host-resolution action. Apple simulators keep their simulator UDID.
 
 ### Roku
 

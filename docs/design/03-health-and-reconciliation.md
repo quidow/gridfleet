@@ -61,7 +61,6 @@ Every public health fact has exactly one durable home:
 
 - `Device.device_checks_*`: the `host_sweep` device-health fold
 - `Device.session_viability_*`: the scheduled viability pass in `appium_sweep`
-- `Device.emulator_state`: the `host_sweep` device-health fold
 - `AppiumNode.desired_state`: `write_desired_state` (Doc 2)
 - `AppiumNode.health_running` / `AppiumNode.health_state`: `apply_node_state_transition`
 - `AppiumNode.health_failing_since`: the `status_fold_loop` node-health fold

@@ -54,7 +54,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. Every dial is a typed 
 | `get_pack_devices` | GET `/agent/pack/devices` | presence enumeration on probe-miss; intake/discovery |
 | `normalize_pack_device` | POST `/agent/pack/devices/normalize` | intake: normalise raw operator input to canonical device fields |
 | `pack_device_health` | GET `/agent/pack/devices/{ct}/health` | adapter-driven health probe (verification, link-repair) |
-| `pack_device_lifecycle_action` | POST `/agent/pack/devices/{ct}/lifecycle/{action}` | run a pack-defined lifecycle action (boot, shutdown, reconnect) |
+| `pack_device_lifecycle_action` | POST `/agent/pack/devices/{ct}/lifecycle/{action}` | run a pack-defined lifecycle action (reconnect, release_forwarded_ports) or resolve a transport identity (resolve) |
 | `pack_doctor` | POST `/agent/pack/{pack_id}/doctor` | pack adapter doctor checks during onboarding/diagnostics |
 
 One deliberate exception rides outside the wrapper module: pack feature dispatch (`POST /agent/pack/features/{feature}/actions/{action}`) is issued from `app/packs/services/feature_dispatch.py` via the shared `app.agent_comm.client.request`, so the circuit breaker and metrics still fire. Routers and services never call `httpx` directly — go through a wrapper or that shared `request`.
