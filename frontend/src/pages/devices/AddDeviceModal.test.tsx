@@ -54,7 +54,7 @@ function androidCatalog() {
             },
             device_type_overrides: {
               emulator: {
-                lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+                lifecycle_actions: [],
                 connection_behavior: {
                   default_device_type: 'emulator',
                   default_connection_type: 'virtual',
@@ -141,7 +141,7 @@ function xcuitestCatalog() {
               },
               simulator: {
                 identity: { scheme: 'simulator_udid', scope: 'host' },
-                lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+                lifecycle_actions: [],
                 connection_behavior: {
                   default_device_type: 'simulator',
                   default_connection_type: 'virtual',

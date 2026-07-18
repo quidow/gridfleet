@@ -91,13 +91,6 @@ export function updateOperationalState(
   });
 }
 
-export function updateEmulatorState(state: string): DeviceCacheUpdater {
-  return <T extends DeviceRead>(device: T): T => ({
-    ...device,
-    emulator_state: state,
-  });
-}
-
 export function updateNodeOperationalState(
   operationalState: DeviceRead['operational_state'],
   nodeState: DesiredNodeState,

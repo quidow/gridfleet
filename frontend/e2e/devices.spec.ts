@@ -216,7 +216,7 @@ async function mockDefaultDevicesSurface(page: Page) {
           connection_behavior: { default_device_type: 'real_device', default_connection_type: 'usb', requires_connection_target: true },
           device_type_overrides: {
             emulator: {
-              lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+              lifecycle_actions: [],
               connection_behavior: { default_device_type: 'emulator', default_connection_type: 'virtual', requires_connection_target: true },
             },
           },
@@ -247,7 +247,7 @@ async function mockDefaultDevicesSurface(page: Page) {
           device_type_overrides: {
             simulator: {
               identity: { scheme: 'simulator_udid', scope: 'host' },
-              lifecycle_actions: [{ id: 'state' }, { id: 'boot' }, { id: 'shutdown' }],
+              lifecycle_actions: [],
               connection_behavior: { default_device_type: 'simulator', default_connection_type: 'virtual', requires_connection_target: true },
             },
           },
@@ -1611,54 +1611,6 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('button', { name: /Enter Maintenance|Exit Maintenance/ })).toBeVisible();
   });
 
-  test('device detail shows Boot and Shutdown buttons for emulator', async ({ page }) => {
-    const EMULATOR_ID = 'emulator-device-001';
-    const emulatorDevice = {
-      ...DEFAULT_DEVICE,
-      id: EMULATOR_ID,
-      name: 'Pixel 6 Emulator',
-      platform_id: 'android_mobile',
-      platform_label: 'Android Emulator',
-      device_type: 'emulator',
-      connection_type: 'virtual',
-      identity_scheme: 'manager_generated',
-      identity_scope: 'host',
-      identity_value: 'avd:Pixel_6',
-      connection_target: 'Pixel_6',
-    };
-    const emulatorDeviceDetail = { ...emulatorDevice, appium_node: null, sessions: [] };
-
-    await page.route(
-      (url) => new URL(url).pathname === '/api/devices',
-      async (route) => {
-        if (route.request().method() !== 'GET') { await route.fallback(); return; }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(devicesResponseBody([emulatorDevice], new URL(route.request().url()))) });
-      },
-    );
-    await page.route(
-      (url) => new URL(url).pathname === `/api/devices/${EMULATOR_ID}`,
-      async (route) => {
-        if (route.request().method() !== 'GET') { await route.fallback(); return; }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(emulatorDeviceDetail) });
-      },
-    );
-    await page.route(
-      (url) => url.pathname.startsWith(`/api/devices/${EMULATOR_ID}/`),
-      async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-      },
-    );
-
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-    await firstDeviceRow(page).getByRole('link').first().click();
-    await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Lifecycle', exact: true })).toBeVisible({ timeout: 10_000 });
-
-    await expect(page.getByRole('button', { name: 'Boot' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Shutdown' })).toBeVisible();
-  });
-
   test('device detail does not infer headless controls for emulator', async ({ page }) => {
     const EMULATOR_ID = 'emulator-headless-001';
     const emulatorDevice = {
@@ -1800,55 +1752,6 @@ test.describe('Devices page', () => {
     await expect(page.getByLabel('Headless mode')).not.toBeVisible();
   });
 
-  test('device detail shows Boot and Shutdown buttons for simulator', async ({ page }) => {
-    const SIMULATOR_ID = 'simulator-device-001';
-    const simulatorDevice = {
-      ...DEFAULT_DEVICE,
-      id: SIMULATOR_ID,
-      name: 'iPhone 15 Simulator',
-      pack_id: 'appium-xcuitest',
-      platform_id: 'ios',
-      platform_label: 'iOS Simulator',
-      device_type: 'simulator',
-      connection_type: 'virtual',
-      identity_scheme: 'simulator_udid',
-      identity_scope: 'host',
-      identity_value: '00000000-0000-0000-0000-000000000001',
-      connection_target: '00000000-0000-0000-0000-000000000001',
-    };
-    const simulatorDeviceDetail = { ...simulatorDevice, appium_node: null, sessions: [] };
-
-    await page.route(
-      (url) => new URL(url).pathname === '/api/devices',
-      async (route) => {
-        if (route.request().method() !== 'GET') { await route.fallback(); return; }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(devicesResponseBody([simulatorDevice], new URL(route.request().url()))) });
-      },
-    );
-    await page.route(
-      (url) => new URL(url).pathname === `/api/devices/${SIMULATOR_ID}`,
-      async (route) => {
-        if (route.request().method() !== 'GET') { await route.fallback(); return; }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(simulatorDeviceDetail) });
-      },
-    );
-    await page.route(
-      (url) => url.pathname.startsWith(`/api/devices/${SIMULATOR_ID}/`),
-      async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-      },
-    );
-
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-    await firstDeviceRow(page).getByRole('link').first().click();
-    await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Lifecycle', exact: true })).toBeVisible({ timeout: 10_000 });
-
-    await expect(page.getByRole('button', { name: 'Boot' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Shutdown' })).toBeVisible();
-  });
-
   test('device detail hides Virtual Device section for real devices', async ({ page }) => {
     await page.goto('/devices');
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
@@ -1858,8 +1761,6 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Refresh State' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Boot' })).not.toBeVisible();
   });
 
   test('add flow shows verification failure and preserves form values', async ({ page }) => {
@@ -2284,56 +2185,6 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('link', { name: 'Attention Device' })).toBeVisible();
     // AvailabilityCell shows the status label
     await expect(page.getByRole('table').getByText('Offline')).toBeVisible();
-  });
-
-  test('does not show emulator state badge in the devices list status cell', async ({ page }) => {
-    const mockApi = await mockAddDeviceVerificationSurface(page);
-    mockApi.setDevices([
-      {
-        id: 'device-emu-badge',
-        identity_scheme: 'manager_generated',
-        identity_scope: 'host',
-        identity_value: 'avd-pixel-6',
-        connection_target: 'Pixel_6',
-        name: 'Pixel 6 Emulator',
-        pack_id: 'appium-uiautomator2',
-        platform_id: 'android_mobile',
-        platform_label: 'Android (real device)',
-        os_version: '14',
-        host_id: 'host-1',
-        operational_state: 'available',
-        hold: null,
-        tags: null,
-        device_type: 'emulator',
-        connection_type: 'virtual',
-        ip_address: null,
-        health_summary: mockHealthSummary(true, 'Healthy'),
-        readiness_state: 'verified',
-        missing_setup_fields: [],
-        verified_at: '2026-03-30T10:00:03Z',
-        reservation: null,
-        lifecycle_policy_summary: {
-          state: 'idle',
-          label: 'Idle',
-          detail: null,
-          backoff_until: null,
-        },
-        emulator_state: 'running',
-        created_at: '2026-03-30T10:00:03Z',
-        updated_at: '2026-03-30T10:00:03Z',
-      },
-    ]);
-
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole('link', { name: 'Pixel 6 Emulator' })).toBeVisible();
-    await expect(page.getByTestId('emulator-state-badge')).toHaveCount(0);
-  });
-
-  test('does not show emulator state badge for real devices', async ({ page }) => {
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('emulator-state-badge')).toHaveCount(0);
   });
 
   test('device detail exposes Edit button on Device Info panel', async ({ page }) => {

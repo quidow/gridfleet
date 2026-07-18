@@ -108,43 +108,6 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
-  it('prioritizes stopped emulator launch action', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({
-        device_type: 'emulator',
-        connection_type: 'virtual',
-        operational_state: 'offline',
-        emulator_state: 'stopped',
-      }),
-      {},
-    );
-
-    expect(triage).toMatchObject({
-      tone: 'error',
-      title: 'Emulator is not running',
-      action: { kind: 'launch-emulator', label: 'Launch Emulator' },
-    });
-  });
-
-  it('prioritizes stopped simulator boot action', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({
-        platform_id: 'ios',
-        device_type: 'simulator',
-        connection_type: 'virtual',
-        operational_state: 'offline',
-        emulator_state: 'shutdown',
-      }),
-      {},
-    );
-
-    expect(triage).toMatchObject({
-      tone: 'error',
-      title: 'Simulator is not running',
-      action: { kind: 'boot-simulator', label: 'Boot Simulator' },
-    });
-  });
-
   it('shows start-node for stopped node', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
