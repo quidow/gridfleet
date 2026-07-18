@@ -45,7 +45,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       viability: { status: 'unknown', detail: 'not run', checked_at: null },
       overall: 'ok',
     },
-    emulator_state: null,
     created_at: '2026-03-30T10:00:03Z',
     updated_at: '2026-03-30T10:00:03Z',
     appium_node: {

@@ -37,7 +37,6 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       charging_state: null,
       device_type: 'real_device',
       connection_type: 'network',
-      emulator_state: null,
       reservation: null,
     } as unknown as DeviceRead),
     ...overrides,

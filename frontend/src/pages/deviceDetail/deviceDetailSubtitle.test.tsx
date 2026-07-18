@@ -10,7 +10,6 @@ function baseDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     platform_label: null,
     os_version: 'API 37',
     host_id: 'host-01',
-    emulator_state: null,
     reservation: null,
     ...overrides,
   } as DeviceDetail;

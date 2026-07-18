@@ -100,7 +100,6 @@ const DEFAULT_DEVICE = {
     viability: { status: 'ok', detail: 'passed', checked_at: null },
     overall: 'ok',
   },
-  emulator_state: null,
   created_at: '2026-03-30T10:00:03Z',
   updated_at: '2026-03-30T10:00:03Z',
 } as const;
@@ -1652,7 +1651,7 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
     await firstDeviceRow(page).getByRole('link').first().click();
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Lifecycle', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByLabel('Headless mode')).not.toBeVisible();
     await expect(page.getByText(/Emulator runs/)).not.toBeVisible();
@@ -1699,7 +1698,7 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
     await firstDeviceRow(page).getByRole('link').first().click();
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Lifecycle', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByLabel('Headless mode')).not.toBeVisible();
     await expect(page.getByText(/Emulator runs/)).not.toBeVisible();
@@ -1747,7 +1746,7 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
     await firstDeviceRow(page).getByRole('link').first().click();
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Lifecycle', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByLabel('Headless mode')).not.toBeVisible();
   });

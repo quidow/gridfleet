@@ -117,7 +117,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
       viability: { status: 'ok', detail: 'passed', checked_at: null },
       overall: 'ok',
     },
-    emulator_state: null,
     created_at: '2026-04-16T12:00:00Z',
     updated_at: '2026-04-16T12:00:00Z',
     ...overrides,

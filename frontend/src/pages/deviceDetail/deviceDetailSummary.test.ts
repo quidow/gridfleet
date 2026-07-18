@@ -51,7 +51,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       backoff_until: null,
     },
     health_summary: healthSummary(),
-    emulator_state: null,
     created_at: '2026-03-30T10:00:03Z',
     updated_at: '2026-03-30T10:00:03Z',
     appium_node: null,

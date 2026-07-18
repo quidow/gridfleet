@@ -70,7 +70,6 @@ function makeDevice(): DeviceDetail {
       viability: { status: 'ok', detail: 'passed', checked_at: null },
       overall: 'ok',
     },
-    emulator_state: null,
     created_at: '2026-04-28T12:00:00Z',
     updated_at: '2026-04-28T12:00:00Z',
     appium_node: {
