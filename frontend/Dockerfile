@@ -17,4 +17,4 @@ COPY --chown=nginx:nginx nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 8080
 USER nginx
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -qO /dev/null http://localhost:8080/ || exit 1
+    CMD wget -qO /dev/null http://127.0.0.1:8080/ || exit 1
