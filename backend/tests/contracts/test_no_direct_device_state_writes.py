@@ -68,9 +68,6 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
     "device_checks_fold_applied_revision": frozenset({"app/devices/services/device_health_fold_context.py"}),
     "device_checks_fold_boot_id": frozenset({"app/devices/services/device_health_fold_context.py"}),
     "device_checks_fold_section_sequence": frozenset({"app/devices/services/device_health_fold_context.py"}),
-    # M2 ordering watermark for pushed emulator_state writes: written under the
-    # device row lock alongside emulator_state (the migration is out-of-band).
-    "emulator_state_source_time": frozenset({"app/devices/services/health.py"}),
     "started_at": frozenset(
         {
             "app/appium_nodes/services/reconciler_agent.py",
