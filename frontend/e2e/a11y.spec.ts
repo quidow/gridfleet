@@ -200,7 +200,7 @@ test.describe('Accessibility', () => {
     await page.route((url) => new URL(url).pathname === '/api/device-groups', async (route) => {
       await fulfillJson(route, [
         {
-          id: 'group-1',
+          key: 'group-1',
           name: 'QA Devices',
           description: 'Shared devices for QA workflows',
           group_type: 'static',
@@ -325,7 +325,7 @@ test.describe('Accessibility', () => {
     // Group detail
     await page.route((url) => new URL(url).pathname === '/api/device-groups/group-1', async (route) => {
       await fulfillJson(route, {
-        id: 'group-1',
+        key: 'group-1',
         name: 'QA Devices',
         description: 'Shared devices for QA workflows',
         group_type: 'static',
