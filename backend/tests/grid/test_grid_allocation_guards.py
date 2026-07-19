@@ -11,6 +11,8 @@ import pytest_asyncio
 from sqlalchemy import select
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +33,9 @@ def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
+async def _stereotype_stub(
+    db: AsyncSession, device: Device, *, template_cache: object | None = None, matching_group_keys: Collection[str] = ()
+) -> dict[str, Any]:
     return {"platformName": "Android"}
 
 
@@ -64,7 +68,12 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
     seeded_available_device.lifecycle_policy_state = {"maintenance_reason": "operator"}
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        device=seeded_available_device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -85,7 +94,12 @@ async def test_claim_rechecks_active_sessions_under_lock(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        device=seeded_available_device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
     )
     assert result is None
 
@@ -98,7 +112,14 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
-    result = await _service()._claim(db_session, ticket=ticket, device=device, candidate={}, run_id=None)
+    result = await _service()._claim(
+        db_session,
+        ticket=ticket,
+        device=device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
+    )
     assert result is None
 
 
@@ -122,7 +143,12 @@ async def test_claim_skips_device_with_live_probe_row(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        device=seeded_available_device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -150,7 +176,12 @@ async def test_claim_proceeds_over_terminal_probe_row(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        device=seeded_available_device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
     )
     assert result is not None
 
@@ -176,7 +207,12 @@ async def test_claim_declines_when_node_not_viable_under_lock(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        device=seeded_available_device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
     )
     assert result is None
 
@@ -534,7 +570,12 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
     await db_session.flush()
 
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        device=seeded_available_device,
+        candidate={},
+        run_id=None,
+        reservation_run_id=None,
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting

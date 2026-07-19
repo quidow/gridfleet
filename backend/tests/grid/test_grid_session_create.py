@@ -17,7 +17,7 @@ from app.sessions.models import Session, SessionStatus
 from tests.helpers import seed_host_and_running_node
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Collection
 
     from app.devices.models import Device
     from app.grid.allocation import AllocationResult
@@ -27,7 +27,9 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 W3C_OK = {"value": {"sessionId": "app-1", "capabilities": {"platformName": "x"}}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
+async def _stereotype_stub(
+    db: AsyncSession, device: Device, *, template_cache: object | None = None, matching_group_keys: Collection[str] = ()
+) -> dict[str, Any]:
     return {
         "platformName": "Android",
         "appium:udid": device.connection_target,

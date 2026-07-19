@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services.release_ordering import selected_release
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.packs.services.platform_resolver import ResolvedPackPlatform
@@ -49,6 +51,59 @@ class StereotypeTemplate:
         return rendered
 
 
+async def load_stereotype_templates(
+    session: AsyncSession,
+    keys: Collection[tuple[str, str]],
+) -> dict[tuple[str, str], StereotypeTemplate]:
+    """Fetch stereotype templates for a batch of ``(pack_id, platform_id)`` pairs.
+
+    Issues one explicit joined query over ``DriverPack``, the selected/current
+    ``DriverPackRelease`` for each pack, and that release's platforms. Builds a
+    dictionary keyed by ``(pack_id, platform_id)``; pairs whose pack has no
+    selectable release or whose platform is absent from the release are simply
+    absent from the result (callers translate a missing key into
+    ``LookupError``/metric behavior — there is no silent cross-platform
+    fallback). The single-key :func:`load_stereotype_template` wraps this for
+    call sites that have not migrated to the batch path.
+    """
+    if not keys:
+        return {}
+    pack_ids = sorted({pack_id for pack_id, _ in keys})
+    packs = (
+        (
+            await session.scalars(
+                select(DriverPack)
+                .where(DriverPack.id.in_(pack_ids))
+                .options(
+                    joinedload(DriverPack.releases),
+                    joinedload(DriverPack.releases).joinedload(DriverPackRelease.platforms),
+                )
+            )
+        )
+        .unique()
+        .all()
+    )
+    by_id = {pack.id: pack for pack in packs}
+    templates: dict[tuple[str, str], StereotypeTemplate] = {}
+    for pack_id, platform_id in keys:
+        pack = by_id.get(pack_id)
+        if pack is None:
+            continue
+        release = selected_release(pack.releases, pack.current_release)
+        if release is None:
+            continue
+        platform = next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
+        if platform is None:
+            continue
+        stereotype_base: dict[str, Any] = platform.data.get("capabilities", {}).get("stereotype", {})
+        templates[(pack_id, platform_id)] = StereotypeTemplate(
+            platform_name=platform.appium_platform_name,
+            automation_name=platform.automation_name,
+            stereotype_base=stereotype_base,
+        )
+    return templates
+
+
 async def load_stereotype_template(
     session: AsyncSession,
     *,
@@ -59,25 +114,18 @@ async def load_stereotype_template(
 
     The only DB-touching half of stereotype rendering — cacheable by
     ``(pack_id, platform_id)``. Raises ``LookupError`` when the pack has no
-    selectable release or the platform is absent from it.
+    selectable release or the platform is absent from it. One-key wrapper over
+    :func:`load_stereotype_templates` so the single- and batch-key paths share
+    one query shape.
     """
-    pack = await session.scalar(
-        select(DriverPack)
-        .where(DriverPack.id == pack_id)
-        .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
-    )
-    release = selected_release(pack.releases, pack.current_release) if pack is not None else None
-    if release is None:
-        raise LookupError(f"no releases for pack {pack_id}")
-    platform = next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
-    if platform is None:
-        raise LookupError(f"platform {platform_id!r} not in {pack_id} release {release.release}")
-    stereotype_base: dict[str, Any] = platform.data.get("capabilities", {}).get("stereotype", {})
-    return StereotypeTemplate(
-        platform_name=platform.appium_platform_name,
-        automation_name=platform.automation_name,
-        stereotype_base=stereotype_base,
-    )
+    templates = await load_stereotype_templates(session, {(pack_id, platform_id)})
+    try:
+        return templates[(pack_id, platform_id)]
+    except KeyError as exc:
+        pack = await session.scalar(select(DriverPack).where(DriverPack.id == pack_id))
+        if pack is None:
+            raise LookupError(f"no releases for pack {pack_id}") from exc
+        raise LookupError(f"platform {platform_id!r} not in {pack_id} release") from exc
 
 
 async def render_stereotype(

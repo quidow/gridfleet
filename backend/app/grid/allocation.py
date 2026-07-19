@@ -14,25 +14,36 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge, Histogram
-from sqlalchemy import or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, null, or_, select, update
+from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
 from app.appium_nodes.services.node_viability import (
-    device_node_accepting_new_sessions,
-    device_node_is_viable,
     node_accepting_new_sessions_predicate,
     node_viable_predicate,
 )
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import (
+    Device,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceOperationalState,
+    GroupType,
+)
+from app.devices.schemas.device import HardwareTelemetryState
+from app.devices.services import attention as device_attention
 from app.devices.services.claims import live_session_exists
+from app.devices.services.group_membership import (
+    DeviceGroupFacts,
+    GroupMembershipIndex,
+    evaluate_group_memberships,
+)
 from app.devices.services.intent import IntentService
-from app.devices.services.state import derive_operational_state, is_available_sql
+from app.devices.services.state import is_available_sql
 from app.grid import appium_direct
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
@@ -45,15 +56,18 @@ from app.grid.matching import (
     requested_group_keys,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
+from app.hosts import service_hardware_telemetry as hardware_telemetry
+from app.packs.services.capability import StereotypeTemplate, load_stereotype_template, load_stereotype_templates
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
-from app.runs import service as run_service
-from app.runs.models import TERMINAL_STATES
+from app.runs.models import TERMINAL_STATES, TestRun
+from app.runs.service_reservation import reservation_gating_owner_sql
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
+    from sqlalchemy.sql.elements import ColumnElement
+
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
@@ -160,6 +174,7 @@ class StereotypeProvider(Protocol):
         device: Device,
         *,
         template_cache: StereotypeTemplateCache | None = None,
+        matching_group_keys: Collection[str] = (),
     ) -> dict[str, Any]: ...
 
 
@@ -182,6 +197,99 @@ def _ticket_passes_reservation(ticket_run_id: uuid.UUID | None, reservation_run_
     ticket may take only devices reserved for its run; a free ticket may take
     only unreserved devices. No spillover in either direction."""
     return ticket_run_id == reservation_run_id
+
+
+@dataclass(frozen=True)
+class _EligibleRow:
+    """One row of the eligible-devices batch: the device plus the per-device facts
+    the group-membership evaluator consumes, projected in the same SQL statement
+    so the polling read budget stays constant at fleet scale."""
+
+    device: Device
+    reservation_run_id: uuid.UUID | None
+    static_group_keys: frozenset[str]
+
+
+def _static_group_keys_subquery(group_keys: Collection[str]) -> ColumnElement[object]:
+    """Correlated scalar subquery: the array of static group keys (filtered to
+    *group_keys*) this device is a member of, or NULL when none match."""
+    return cast(
+        "ColumnElement[object]",
+        (
+            select(func.array_agg(DeviceGroup.key))
+            .select_from(DeviceGroupMembership)
+            .join(DeviceGroup, DeviceGroup.id == DeviceGroupMembership.group_id)
+            .where(
+                DeviceGroupMembership.device_id == Device.id,
+                DeviceGroup.group_type == GroupType.static,
+                DeviceGroup.key.in_(list(group_keys)),
+            )
+            .correlate(Device)
+            .scalar_subquery()
+        ),
+    )
+
+
+def _null_array_subquery() -> ColumnElement[object]:
+    """A scalar subquery that always returns NULL — used as a placeholder for the
+    static-group-keys column when no group keys are requested so the eligible-
+    devices query keeps a fixed column shape (no branching row structure)."""
+    return cast("ColumnElement[object]", select(null()).scalar_subquery())
+
+
+def _pack_platform_keys(rows: Collection[_EligibleRow]) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    for row in rows:
+        resolved = resolve_pack_for_device(row.device)
+        if resolved is not None:
+            keys.add(resolved)
+    return keys
+
+
+def _facts_from_eligible_rows(
+    rows: Collection[_EligibleRow],
+    templates: dict[tuple[str, str], StereotypeTemplate],
+    settings: SettingsReader | None,
+) -> dict[uuid.UUID, DeviceGroupFacts]:
+    """Build the pure evaluator's fact inputs from the eligible batch + template
+    batch. No database IO: every fact the evaluator consumes is either a loaded
+    device/node/host column, a projected reservation owner, a projected static
+    key set, or a synchronous settings-derived telemetry value."""
+    facts: dict[uuid.UUID, DeviceGroupFacts] = {}
+    for row in rows:
+        device = row.device
+        if settings is None:
+            hardware_telemetry_state = HardwareTelemetryState.unknown
+        else:
+            hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
+        hardware_health_status = hardware_telemetry.current_hardware_health_status(device)
+        needs_attention = device_attention.compute_needs_attention(
+            DeviceOperationalState.available,
+            "verified",
+            hardware_health_status=hardware_health_status,
+            review_required=bool(device.review_required),
+        )
+        facts[device.id] = DeviceGroupFacts(
+            operational_state=DeviceOperationalState.available,
+            is_reserved=row.reservation_run_id is not None,
+            readiness_state="verified",
+            hardware_telemetry_state=hardware_telemetry_state,
+            needs_attention=needs_attention,
+            static_group_keys=row.static_group_keys,
+        )
+    _ = templates  # templates inform the match surface, not the membership facts
+    return facts
+
+
+def _matching_group_keys_for_device(
+    membership: GroupMembershipIndex,
+    device_id: uuid.UUID,
+    group_keys: Collection[str],
+) -> list[str]:
+    """Project the subset of *group_keys* the device belongs to (membership
+    AND over each key). The stereotype advertises only these keys as
+    ``gridfleet:group:<key>`` caps."""
+    return [key for key in group_keys if membership.matches_all(device_id, [key])]
 
 
 class AllocationService:
@@ -365,6 +473,47 @@ class AllocationService:
             "tickets_expired": tickets_expired,
         }
 
+    def _validate_candidates(
+        self,
+        ticket: GridSessionQueueTicket,
+        candidates: list[dict[str, Any]],
+    ) -> frozenset[str]:
+        """Tombstone every clean-break rejection (legacy caps, invalid group
+        selectors) and return the current ticket's direct group keys. Raises
+        ``CapabilityMergeError`` for any rejection so the API layer surfaces a
+        descriptive 400 body. Stamps the liveness heartbeat before any early
+        return so even an invalid-body ticket records that its client was
+        present this tick.
+        """
+        # Clean-break tombstone (spec §1): reject cap-era clients loudly.
+        if any(LEGACY_RUN_ID_CAP in c for c in candidates):
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="legacy_run_id_cap")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise CapabilityMergeError(
+                "the gridfleet:run_id capability is no longer supported; "
+                "create run sessions through the router's /run/{run_id} endpoint"
+            )
+        # Clean-break tombstone: the retired ``appium:gridfleet:`` cap namespace
+        # moved to the bare ``gridfleet:`` prefix. Reject the old prefix loudly so
+        # a stale pin fails fast instead of silently matching any device.
+        if any(k.startswith(LEGACY_APPIUM_GRIDFLEET_PREFIX) for c in candidates for k in c):
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="legacy_appium_gridfleet_cap")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise CapabilityMergeError(
+                "the appium:gridfleet:* capability namespace is no longer supported; "
+                "use the gridfleet:* prefix instead (e.g. gridfleet:deviceId)"
+            )
+        # Validate the routable device-group selectors (gridfleet:group:<key>) and
+        # tombstone the retired gridfleet:tag:* capability. Malformed syntax or a
+        # non-boolean-true value cancels this ticket with a descriptive 400 message.
+        try:
+            return requested_group_keys(candidates)
+        except CapabilityMergeError as e:
+            logger.warning("grid_allocation_invalid_group_selector ticket=%s detail=%s", ticket.id, e)
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="invalid_capabilities")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise
+
     async def try_allocate(
         self,
         db: DbSession,
@@ -386,10 +535,15 @@ class AllocationService:
         # Only a missing or already-terminal run is a hard reject. This same check
         # is the creation-time validation — the allocate endpoint calls try_allocate
         # in the request that creates the ticket.
+        #
+        # One scalar ``SELECT Run.state`` (no relationship loader) — a poll is hot
+        # and the per-attempt read budget is the central deliverable of this task.
         if ticket.run_id is not None:
-            run = await run_service.get_run(db, ticket.run_id)
-            if run is None or run.state in TERMINAL_STATES:
-                state = run.state.value if run is not None else "missing"
+            run_state = (
+                await db.execute(select(TestRun.state).where(TestRun.id == ticket.run_id))
+            ).scalar_one_or_none()
+            if run_state is None or run_state in TERMINAL_STATES:
+                state = run_state.value if run_state is not None else "missing"
                 transition_ticket(ticket, GridQueueStatus.cancelled, reason="run_not_active")
                 GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
                 raise RunNotActiveError(ticket.run_id, state)
@@ -404,59 +558,74 @@ class AllocationService:
             # instead of a generic text (wave-5 #26). The ticket is already
             # cancelled; the caller commits before responding.
             raise
-        # Clean-break tombstone (spec §1): reject cap-era clients loudly.
-        if any(LEGACY_RUN_ID_CAP in c for c in candidates):
-            transition_ticket(ticket, GridQueueStatus.cancelled, reason="legacy_run_id_cap")
-            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
-            raise CapabilityMergeError(
-                "the gridfleet:run_id capability is no longer supported; "
-                "create run sessions through the router's /run/{run_id} endpoint"
-            )
-        # Clean-break tombstone: the retired ``appium:gridfleet:`` cap namespace
-        # moved to the bare ``gridfleet:`` prefix. Reject the old prefix loudly so
-        # a stale pin fails fast instead of silently matching any device.
-        if any(k.startswith(LEGACY_APPIUM_GRIDFLEET_PREFIX) for c in candidates for k in c):
-            transition_ticket(ticket, GridQueueStatus.cancelled, reason="legacy_appium_gridfleet_cap")
-            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
-            raise CapabilityMergeError(
-                "the appium:gridfleet:* capability namespace is no longer supported; "
-                "use the gridfleet:* prefix instead (e.g. gridfleet:deviceId)"
-            )
-        # Validate the routable device-group selectors (gridfleet:group:<key>) and
-        # tombstone the retired gridfleet:tag:* capability. The membership index is
-        # wired in Task 4; here we only validate the selector syntax so malformed
-        # or legacy caps cancel this ticket with a descriptive 400 message.
-        try:
-            requested_group_keys(candidates)
-        except CapabilityMergeError as e:
-            logger.warning("grid_allocation_invalid_group_selector ticket=%s detail=%s", ticket.id, e)
-            transition_ticket(ticket, GridQueueStatus.cancelled, reason="invalid_capabilities")
-            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
-            raise
+        current_group_keys = self._validate_candidates(ticket, candidates)
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
-        eligible = await self._eligible_devices(db, exclude_device_ids=exclude_device_ids)
-        # Batch the reservation load for every eligible device once instead of one
-        # SELECT per device per long-poll tick (#11).
-        reservation_map = await run_service.get_device_reservation_map(db, [d.id for d in eligible])
-        # Memoize the per-device match surface within this attempt: building it may
-        # hit the DB per device, and the device loop below may re-touch a device. The
-        # surface is per-device — it carries the device's deviceId + tag fanout (plus
-        # any identity/tag keys an uploaded pack interpolates) — so it is NOT poolable
-        # across same-pack devices. The DB-touching half — the pack template — IS
-        # device-independent, so it is cached separately by (pack_id, platform_id)
-        # within this attempt, collapsing N same-pack DB lookups to one (#11). Both
-        # caches are per-attempt; templates follow pack releases so cross-tick caching
-        # is avoided (#13).
+        older_group_keys: set[str] = set()
+        for _, older_candidates in older_candidate_sets:
+            older_group_keys |= requested_group_keys(older_candidates)
+        group_keys = set(current_group_keys) | older_group_keys
+        # The group-definition load returns direct requested groups plus the static
+        # groups named by their JSON ``member_of`` arrays in one CTE/query so the
+        # evaluator can resolve dynamic groups that reference static groups by key.
+        groups = await self._load_groups_by_key(db, group_keys) if group_keys else []
+        loaded_group_keys = {group.key for group in groups}
+        # Reject the current ticket loudly when any of its direct group keys does
+        # not exist (the missing-key/unknown-key rejection Task 3 deferred). A
+        # missing key is a client error (HTTP 400), not a silent no-match.
+        missing_current = set(current_group_keys) - loaded_group_keys
+        if missing_current:
+            logger.warning(
+                "grid_allocation_unknown_group_key ticket=%s keys=%s",
+                ticket.id,
+                sorted(missing_current),
+            )
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="unknown_group_key")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise CapabilityMergeError(f"unknown device group key: {sorted(missing_current)[0]!r}")
+        # Drop older waiter candidate sets whose direct group keys are missing
+        # without invalidating the current ticket — a stale older waiter cannot
+        # block younger valid work; it cancels itself on its own next poll.
+        older_candidate_sets = [
+            (run_id, older_candidates)
+            for run_id, older_candidates in older_candidate_sets
+            if requested_group_keys(older_candidates) <= loaded_group_keys
+        ]
+        # One eligible-devices query projecting reservation owner and the static
+        # group-key aggregation for the direct/member_of keys, in the same SQL
+        # statement (read 3). The pack-template batch (read 4) folds the per-
+        # device pack/platform lookups into one SELECT so the read count is
+        # constant at fleet scale.
+        eligible_rows = await self._eligible_devices_with_facts(
+            db,
+            group_keys=loaded_group_keys,
+            exclude_device_ids=exclude_device_ids,
+        )
+        templates = await load_stereotype_templates(db, _pack_platform_keys(eligible_rows))
+        facts_by_device_id = _facts_from_eligible_rows(eligible_rows, templates, self._settings)
+        membership = evaluate_group_memberships(
+            groups=groups,
+            devices=[row.device for row in eligible_rows],
+            facts_by_device_id=facts_by_device_id,
+        )
+        # Pre-populate the template cache so device_match_surface finds every
+        # needed template without issuing an extra per-key read.
+        template_cache: StereotypeTemplateCache = dict(templates)
         stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
-        template_cache: StereotypeTemplateCache = {}
-        for device in eligible:
+        for row in eligible_rows:
+            device = row.device
             stereotype = stereotype_cache.get(device.id)
             if stereotype is None:
-                stereotype = await self._stereotype_provider(db, device, template_cache=template_cache)
+                matching_keys = _matching_group_keys_for_device(membership, device.id, group_keys)
+                stereotype = await self._stereotype_provider(
+                    db,
+                    device,
+                    template_cache=template_cache,
+                    matching_group_keys=matching_keys,
+                )
                 stereotype_cache[device.id] = stereotype
-            reservation_run_id = run_service.reservation_gating_run_id(reservation_map.get(device.id), device.id)
+            reservation_run_id = row.reservation_run_id
             for candidate in candidates:
                 if not (
                     candidate_matches_stereotype(candidate, stereotype)
@@ -468,7 +637,15 @@ class AllocationService:
                 # reservation gate and whose candidate matches the stereotype.
                 if self._older_waiter_blocks(older_candidate_sets, stereotype, reservation_run_id):
                     continue
-                result = await self._claim(db, ticket=ticket, device=device, candidate=candidate, run_id=ticket.run_id)
+                result = await self._claim(
+                    db,
+                    ticket=ticket,
+                    device=device,
+                    candidate=candidate,
+                    run_id=ticket.run_id,
+                    reservation_run_id=reservation_run_id,
+                    exclude_device_ids=exclude_device_ids,
+                )
                 if result is not None:
                     GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
                     return result
@@ -513,6 +690,88 @@ class AllocationService:
         devices = list((await db.execute(stmt)).scalars().all())
         GRID_ELIGIBLE_DEVICES.set(len(devices))
         return devices
+
+    async def _load_groups_by_key(self, db: DbSession, group_keys: Collection[str]) -> list[DeviceGroup]:
+        """One read: the requested groups plus the static groups their JSON
+        ``member_of`` arrays reference, so the pure evaluator can resolve dynamic
+        groups that reference static groups by key. Direct keys of any type are
+        returned verbatim; only static groups are pulled from ``member_of``
+        (dynamic-to-dynamic references resolve to empty membership by contract).
+        """
+        if not group_keys:
+            return []
+        keys = sorted(set(group_keys))
+        direct = list((await db.execute(select(DeviceGroup).where(DeviceGroup.key.in_(keys)))).scalars().all())
+        direct_by_key = {row.key: row for row in direct}
+        member_of_keys: set[str] = set()
+        for row in direct:
+            if row.group_type != GroupType.dynamic:
+                continue
+            filters_payload = row.filters or {}
+            raw = filters_payload.get("member_of")
+            if not isinstance(raw, list):
+                continue
+            for key in raw:
+                if isinstance(key, str) and key not in direct_by_key:
+                    member_of_keys.add(key)
+        if not member_of_keys:
+            return direct
+        extra = list(
+            (
+                await db.execute(
+                    select(DeviceGroup).where(
+                        DeviceGroup.key.in_(sorted(member_of_keys)),
+                        DeviceGroup.group_type == GroupType.static,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return direct + [row for row in extra if row.key not in direct_by_key]
+
+    async def _eligible_devices_with_facts(
+        self,
+        db: DbSession,
+        *,
+        group_keys: Collection[str],
+        exclude_device_ids: set[uuid.UUID] | None = None,
+    ) -> list[_EligibleRow]:
+        """One read: every eligible ``Device`` (joined to its AppiumNode + Host)
+        plus the reservation-gating owner run id and the per-device static group
+        keys for the direct/member_of keys, projected in the same SQL statement.
+        The pure membership evaluator consumes these facts without issuing any
+        further reads.
+        """
+        now = now_utc()
+        reservation_subq = reservation_gating_owner_sql(now=now)
+        static_keys_subq = _static_group_keys_subquery(group_keys) if group_keys else _null_array_subquery()
+        stmt = (
+            select(
+                Device,
+                static_keys_subq.label("static_group_keys"),
+                reservation_subq.label("reservation_run_id"),
+            )
+            .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
+            .where(is_available_sql(now=now))
+            .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
+            .where(node_accepting_new_sessions_predicate())
+            .where(~live_session_exists())
+        )
+        if exclude_device_ids:
+            stmt = stmt.where(~Device.id.in_(exclude_device_ids))
+        rows: list[_EligibleRow] = []
+        for device, static_keys, reservation_run_id in (await db.execute(stmt)).all():
+            key_set = frozenset() if static_keys is None else frozenset(str(k) for k in static_keys)
+            rows.append(
+                _EligibleRow(
+                    device=device,
+                    reservation_run_id=reservation_run_id,
+                    static_group_keys=key_set,
+                )
+            )
+        GRID_ELIGIBLE_DEVICES.set(len(rows))
+        return rows
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket
@@ -581,19 +840,46 @@ class AllocationService:
                     return True
         return False
 
-    async def _recheck_claimable_under_lock(self, db: DbSession, locked: Device) -> bool:
-        # Re-verify under the row lock: state, node viability, and absence of active
-        # sessions may have changed since _eligible_devices ran.
-        # Full evaluator closes the SQL readiness approximation, including pack-manifest fields.
-        locked_state = await derive_operational_state(db, locked, now=now_utc())
-        if locked_state != DeviceOperationalState.available:
-            return False
-        if not device_node_is_viable(locked, now=now_utc(), restart_window_sec=self._restart_window_sec()):
-            return False
-        if not device_node_accepting_new_sessions(locked):
-            return False
-        recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
-        return recheck.first() is None
+    def _claim_lock_predicates(
+        self,
+        *,
+        reservation_run_id: uuid.UUID | None,
+        exclude_device_ids: set[uuid.UUID] | None,
+        now: datetime,
+    ) -> list[Any]:
+        """SQL predicates appended to the joined ``SELECT ... FOR UPDATE OF devices``
+        so the lock-time recheck is folded into the lock query. A no-row result
+        means the candidate lost the race or failed a recheck (state, node
+        viability/acceptance, exclusion, reservation owner) — no separate
+        ``derive_operational_state`` under the lock.
+
+        The live-session absence check is intentionally NOT folded here:
+        ``FOR UPDATE OF devices`` waits on a device-row lock, but the waiting
+        transaction's WHERE clause is evaluated against its statement snapshot.
+        A concurrent claim that inserts a session (without updating the device
+        row) and commits does not trigger a WHERE re-evaluation, so the waiting
+        transaction would not see the new session and double-claim. A fresh
+        ``SELECT`` after the lock acquires a new snapshot and observes the
+        committed session — that is the one extra read the claim path issues
+        before the session INSERT (see ``test_concurrent_allocation_single_winner``).
+        """
+        predicates: list[Any] = [
+            is_available_sql(now=now),
+            node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()),
+            node_accepting_new_sessions_predicate(),
+        ]
+        if exclude_device_ids:
+            predicates.append(~Device.id.in_(exclude_device_ids))
+        # Reservation-owner predicate: the device's gating reservation run id
+        # must match the ticket's run id (NULL = NULL for a free ticket on a
+        # free device), so a run-bound ticket cannot land on an unreserved
+        # device and vice versa.
+        reservation_subq = reservation_gating_owner_sql(now=now)
+        if reservation_run_id is None:
+            predicates.append(reservation_subq.is_(None))
+        else:
+            predicates.append(reservation_subq == reservation_run_id)
+        return predicates
 
     async def _claim(
         self,
@@ -603,23 +889,41 @@ class AllocationService:
         device: Device,
         candidate: dict[str, Any],
         run_id: uuid.UUID | None,
+        reservation_run_id: uuid.UUID | None,
+        exclude_device_ids: set[uuid.UUID] | None = None,
     ) -> AllocationResult | None:
-        # A mid-flight viability probe claims its device with a live Session row
-        # from birth (WS-16.1): _eligible_devices' ~live_session_exists() and the
-        # locked recheck below both see it — no pre-lock probe gate needed.
-        locked = await device_locking.lock_device(db, device.id)
-        if not await self._recheck_claimable_under_lock(db, locked):
+        # Fold every lock-time recheck into the lock query: availability, node
+        # viability/acceptance, exclusion, and the reservation-owner gate. A
+        # no-row result means the candidate lost the race or failed a recheck —
+        # no separate ``derive_operational_state`` under the lock.
+        now = now_utc()
+        predicates = self._claim_lock_predicates(
+            reservation_run_id=reservation_run_id,
+            exclude_device_ids=exclude_device_ids,
+            now=now,
+        )
+        try:
+            locked = await device_locking.lock_device_handle(db, device.id, predicates=predicates)
+        except NoResultFound:
             return None
-        target = node_target(locked)
+        # Fresh-snapshot live-session recheck under the lock: a concurrent claim
+        # that inserted its session and committed while this transaction waited
+        # for the device row lock is now visible (READ COMMITTED), so this claim
+        # declines. One extra read before the INSERT — the concurrency safety
+        # the lock-query WHERE cannot provide (see ``_claim_lock_predicates``).
+        live_session = (await db.execute(select(Session.id).where(live_session_predicate(locked.device.id)))).first()
+        if live_session is not None:
+            return None
+        target = node_target(locked.device)
         if target is None:
             # An `available` device with no node/host association is broken host/agent
             # state: the ticket keeps waiting while the device looks claimable.
             logger.warning(
                 "grid_allocation_no_node_target device=%s ticket=%s (appium_node=%s host=%s)",
-                locked.id,
+                locked.device.id,
                 ticket.id,
-                locked.appium_node is not None,
-                locked.host is not None,
+                locked.device.appium_node is not None,
+                locked.device.host is not None,
             )
             return None
         # Surface the client's test label in the Session.test_name column (the Sessions UI
@@ -629,7 +933,7 @@ class AllocationService:
         row = Session(
             id=uuid.uuid4(),
             session_id=f"alloc-{uuid.uuid4()}",  # transient in-create marker; unique, never 'running'
-            device_id=locked.id,
+            device_id=locked.device.id,
             status=SessionStatus.pending,
             requested_capabilities=candidate,
             test_name=requested_test_name if isinstance(requested_test_name, str) else None,
@@ -646,9 +950,11 @@ class AllocationService:
         # status -- nothing ever reads a finished ticket again.
         await db.delete(ticket)
         await db.flush()
+        # Reuse the device lock held by ``locked`` so the inline ledger/desired-
+        # state convergence runs under the same row lock (no extra lock read).
         intent = self._intent_factory(db)
-        await intent.reconcile_now(locked.id, publisher=self._publisher)
-        return AllocationResult(allocation_id=row.id, target=target, device_id=locked.id)
+        await intent.reconcile_locked(locked, publisher=self._publisher)
+        return AllocationResult(allocation_id=row.id, target=target, device_id=locked.device.id)
 
 
 def _match_relevant_base(template: StereotypeTemplate, device: Device) -> dict[str, Any]:
