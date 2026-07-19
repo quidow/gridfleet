@@ -8,7 +8,7 @@ lock, the intent reconciler — and owns no writes to protected state columns:
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -42,6 +42,7 @@ from app.grid.matching import (
     candidate_matches_stereotype,
     is_match_relevant_key,
     merge_candidates,
+    requested_group_keys,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
@@ -421,6 +422,17 @@ class AllocationService:
                 "the appium:gridfleet:* capability namespace is no longer supported; "
                 "use the gridfleet:* prefix instead (e.g. gridfleet:deviceId)"
             )
+        # Validate the routable device-group selectors (gridfleet:group:<key>) and
+        # tombstone the retired gridfleet:tag:* capability. The membership index is
+        # wired in Task 4; here we only validate the selector syntax so malformed
+        # or legacy caps cancel this ticket with a descriptive 400 message.
+        try:
+            requested_group_keys(candidates)
+        except CapabilityMergeError as e:
+            logger.warning("grid_allocation_invalid_group_selector ticket=%s detail=%s", ticket.id, e)
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="invalid_capabilities")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
@@ -537,9 +549,17 @@ class AllocationService:
         sets: list[tuple[uuid.UUID | None, list[dict[str, Any]]]] = []
         for older in (await db.execute(stmt)).scalars():
             try:
-                sets.append((older.run_id, merge_candidates(older.requested_body)))
+                older_candidates = merge_candidates(older.requested_body)
             except CapabilityMergeError:
                 continue
+            try:
+                requested_group_keys(older_candidates)
+            except CapabilityMergeError:
+                # A stale older ticket (tombstoned tag cap, malformed group key,
+                # non-boolean-true group value) cannot block younger valid work.
+                # It cancels itself with HTTP 400 on its own next poll.
+                continue
+            sets.append((older.run_id, older_candidates))
         return sets
 
     @staticmethod
@@ -632,7 +652,7 @@ class AllocationService:
 
 
 def _match_relevant_base(template: StereotypeTemplate, device: Device) -> dict[str, Any]:
-    """Identity/tag/platform-routing keys a pack's stereotype base declares — the only
+    """Identity/group/platform-routing keys a pack's stereotype base declares — the only
     base keys the allocation matcher (``candidate_matches_stereotype``) consults. Every
     curated pack declares ``appium:platform``, so this renders and interpolates
     per-device on the common path too, not just for uploaded packs. When present, the
@@ -650,16 +670,17 @@ async def device_match_surface(
     device: Device,
     *,
     template_cache: StereotypeTemplateCache | None = None,
+    matching_group_keys: Collection[str] = (),
 ) -> dict[str, Any]:
     """The minimal routing surface the allocator matches a W3C request against.
 
     Only the keys ``candidate_matches_stereotype`` consults: ``platformName`` (the
     pack's advertised platform-name scalar), ``appium:platform`` (the pack's per-device
-    platform_id routing key) plus any other identity/tag keys a pack declares in its
-    stereotype base, and the manager-owned deviceId + tag fanout. The rest of the pack
-    stereotype (``appium:os_version``/``device_type``/``appium:automationName``) is
-    rendered only at node-start (``render_stereotype`` in ``reconciler_agent``), never
-    for matching.
+    platform_id routing key) plus any other identity keys a pack declares in its
+    stereotype base, the manager-owned deviceId, and the device-group caps for the
+    keys the membership index says match this device. The rest of the pack stereotype
+    (``appium:os_version``/``device_type``/``appium:automationName``) is rendered only at
+    node-start (``render_stereotype`` in ``reconciler_agent``), never for matching.
 
     When the device's pack/platform cannot be resolved (pack deleted, platform dropped
     from the release) the pack half falls back to empty so one broken pack cannot wedge
@@ -670,6 +691,11 @@ async def device_match_surface(
     *template_cache*, when supplied, memoizes the device-independent template by
     ``(pack_id, platform_id)`` so a fleet of same-pack devices issues one DB lookup per
     unique pack/platform instead of one per device (#11).
+
+    *matching_group_keys* is the set of device-group keys the membership index says
+    match this device; only those keys are advertised as ``gridfleet:group:<key>``
+    caps (boolean true). Task 4 wires the membership index; until then the default
+    empty collection means no group caps are advertised.
     """
     surface: dict[str, Any] = {}
     resolved = resolve_pack_for_device(device)
@@ -693,7 +719,7 @@ async def device_match_surface(
         else:
             surface["platformName"] = template.platform_name
             surface.update(_match_relevant_base(template, device))
-    surface.update(build_grid_stereotype_caps(device, pack_stereotype=None))
+    surface.update(build_grid_stereotype_caps(device, pack_stereotype=None, matching_group_keys=matching_group_keys))
     return surface
 
 

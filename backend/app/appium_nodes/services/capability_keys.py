@@ -14,6 +14,7 @@ _CORE_OWNED_CAP_KEYS = frozenset(
     }
 )
 _GRIDFLEET_TAG_CAP_PREFIX = "gridfleet:tag:"
+_GRIDFLEET_GROUP_CAP_PREFIX = "gridfleet:group:"
 
 
 def core_manager_owned_cap_keys() -> frozenset[str]:
@@ -25,7 +26,9 @@ def manager_owned_cap_keys(parallel_resource_keys: frozenset[str]) -> frozenset[
 
 
 def is_manager_owned_cap_key(key: str, *, manager_owned: frozenset[str]) -> bool:
-    return key in manager_owned or key.startswith(_GRIDFLEET_TAG_CAP_PREFIX)
+    return (
+        key in manager_owned or key.startswith(_GRIDFLEET_TAG_CAP_PREFIX) or key.startswith(_GRIDFLEET_GROUP_CAP_PREFIX)
+    )
 
 
 def sanitize_appium_caps(

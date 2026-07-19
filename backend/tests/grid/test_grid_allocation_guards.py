@@ -277,7 +277,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Report ⑤ safety net, revised: the pack stereotype base is an open dict[str, Any],
-    # so an uploaded pack could carry a constraining key. Identity/tag keys AND the
+    # so an uploaded pack could carry a constraining key. Identity/group keys AND the
     # pack's appium:platform routing key (the driver-pack platform_id — distinguishes
     # e.g. android_mobile/android_tv/firetv_real, which otherwise share platformName +
     # automationName) MUST survive into the match surface; non-matcher base keys
@@ -295,7 +295,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
             stereotype_base={
                 "appium:platform": "{device.platform_id}",  # constraining + templated -> kept, interpolated
                 "appium:os_version": "{device.os_version}",  # non-constraining -> dropped
-                "gridfleet:tag:pool": "ci",  # constraining literal -> kept verbatim
+                "gridfleet:group:ci": True,  # constraining group literal -> kept verbatim
                 "appium:udid": "{device.identity_value}",  # constraining + templated -> kept, interpolated
             },
         )
@@ -305,7 +305,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
 
     surface = await allocation_module.device_match_surface(db_session, device)
     assert surface["platformName"] == "Android"
-    assert surface["gridfleet:tag:pool"] == "ci"
+    assert surface["gridfleet:group:ci"] is True
     # A templated identity key must flow through the per-device interpolation path,
     # not merely survive key selection — pins that _interpolate actually substitutes.
     assert surface["appium:udid"] == device.identity_value

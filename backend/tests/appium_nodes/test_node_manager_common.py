@@ -30,16 +30,25 @@ def _device(**overrides: object) -> Device:
     return device
 
 
-def test_build_grid_stereotype_caps_includes_tag_caps() -> None:
+def test_build_grid_stereotype_caps_no_longer_emits_tag_fanout() -> None:
+    """The retired gridfleet:tag:* capability is no longer constructed; routing
+    membership flows through gridfleet:group:<key> via matching_group_keys."""
     device = _device(tags={"screen_type": "4k", "rack": "A1"})
 
     caps = build_grid_stereotype_caps(device)
 
-    assert caps["gridfleet:tag:screen_type"] == "4k"
-    assert caps["gridfleet:tag:rack"] == "A1"
+    assert not any(k.startswith("gridfleet:tag:") for k in caps)
 
 
-def test_build_grid_stereotype_caps_keeps_db_tags_authoritative() -> None:
+def test_build_grid_stereotype_caps_emits_matching_group_keys() -> None:
+    device = _device()
+
+    caps = build_grid_stereotype_caps(device, matching_group_keys={"east-lab"})
+
+    assert caps["gridfleet:group:east-lab"] is True
+
+
+def test_build_grid_stereotype_caps_ignores_db_tags_for_routing() -> None:
     device = _device(
         tags={"screen_type": "4k"},
         device_config={"appium_caps": {"gridfleet:tag:screen_type": "hd"}},
@@ -47,4 +56,4 @@ def test_build_grid_stereotype_caps_keeps_db_tags_authoritative() -> None:
 
     caps = build_grid_stereotype_caps(device)
 
-    assert caps["gridfleet:tag:screen_type"] == "4k"
+    assert "gridfleet:tag:screen_type" not in caps

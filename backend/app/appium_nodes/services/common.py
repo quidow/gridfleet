@@ -3,8 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app.appium_nodes.services.capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
+from app.grid.matching import GROUP_PREFIX
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from app.devices.models import Device
     from app.events.catalog import EventSeverity
 
@@ -40,6 +43,7 @@ def build_grid_stereotype_caps(
     device: Device,
     *,
     pack_stereotype: dict[str, Any] | None = None,
+    matching_group_keys: Collection[str] = (),
 ) -> dict[str, Any]:
     """Compose the slot stereotype for *device*.
 
@@ -48,13 +52,17 @@ def build_grid_stereotype_caps(
     to allocate a device. Appium-driver-side caps (manufacturer, model, ip,
     sanitized device_config caps) deliberately stay out — they flow to the
     driver via ``extra_caps`` instead.
+
+    ``matching_group_keys`` is the set of device-group keys the membership index
+    says match this device; only those keys are advertised as
+    ``gridfleet:group:<key>`` caps (boolean true). The caller never enumerates
+    the full group catalog. Task 4 wires the membership index; until then the
+    default empty collection means no group caps are advertised.
     """
     stereotype: dict[str, Any] = {}
     if pack_stereotype:
         stereotype.update(pack_stereotype)
     if device.id:
         stereotype["gridfleet:deviceId"] = str(device.id)
-    if device.tags:
-        for key, value in device.tags.items():
-            stereotype[f"gridfleet:tag:{key}"] = value
+    stereotype.update({f"{GROUP_PREFIX}{key}": True for key in matching_group_keys})
     return stereotype
