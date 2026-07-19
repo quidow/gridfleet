@@ -21,7 +21,15 @@ from app.devices.schemas.group import (
     DeviceGroupUpdate,
     GroupMembershipUpdate,
 )
-from app.devices.services.groups import GroupKeyConflictError
+from app.devices.services import health as device_health
+from app.devices.services import platform_label as platform_label_service
+from app.devices.services.groups import (
+    GroupKeyConflictError,
+    GroupReferencedError,
+    UnknownMemberOfError,
+)
+from app.lifecycle.services import remediation_log
+from app.runs import service as run_service
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -46,6 +54,8 @@ async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: Devi
         group = await device_services.groups.create_group(db, data)
     except GroupKeyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnknownMemberOfError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await device_services.groups.get_group(db, group.key) or {}
 
 
@@ -58,10 +68,46 @@ async def list_groups(db: DbDep, device_services: DeviceServicesDep) -> list[dic
 async def get_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
 
+    devices = list(group.get("devices", []))
     payload = dict(group)
-    payload["devices"] = [
-        await device_services.presenter.serialize_device(db, device) for device in group.get("devices", [])
-    ]
+    if not devices:
+        payload["devices"] = []
+        return payload
+
+    # Mirror the device-list batching: load reservation map, remediation
+    # ladders, platform labels, and presenter contexts once, then reuse them
+    # for every serialize_device call so per-member queries do not return.
+    device_ids = [device.id for device in devices]
+    # Eager-load appium_node for every device so build_public_summary and
+    # the presenter can read it synchronously without per-device IO.
+    serialization_contexts = await device_services.presenter.build_serialization_contexts(db, devices)
+    reservation_map = await run_service.get_device_reservation_map(db, device_ids)
+    ladders = await remediation_log.load_ladders(db, device_ids)
+    health_summary_map = {
+        str(device.id): device_health.build_public_summary(
+            device,
+            policy_view=remediation_log.build_policy_view(ladders[device.id], device.lifecycle_policy_state),
+        )
+        for device in devices
+    }
+    label_map = await platform_label_service.load_platform_label_map(
+        db,
+        ((device.pack_id, device.platform_id) for device in devices),
+    )
+    serialized: list[dict[str, Any]] = []
+    for device in devices:
+        reservation_context = run_service.get_reservation_context_for_device(reservation_map.get(device.id), device.id)
+        serialized.append(
+            await device_services.presenter.serialize_device(
+                db,
+                device,
+                reservation_context=reservation_context,
+                health_summary=health_summary_map.get(str(device.id)),
+                platform_label=label_map.get((device.pack_id, device.platform_id)),
+                precomputed=serialization_contexts[device.id],
+            )
+        )
+    payload["devices"] = serialized
     return payload
 
 
@@ -72,13 +118,19 @@ async def update_group(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    group = found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
+    try:
+        group = found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
+    except UnknownMemberOfError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await device_services.groups.get_group(db, group.key) or {}
 
 
 @router.delete("/{group_key}", status_code=204)
 async def delete_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> None:
-    deleted = await device_services.groups.delete_group(db, group_key)
+    try:
+        deleted = await device_services.groups.delete_group(db, group_key)
+    except GroupReferencedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Group not found")
 

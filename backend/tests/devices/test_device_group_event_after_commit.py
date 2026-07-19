@@ -25,6 +25,7 @@ def _svc() -> DeviceGroupsService:
     return DeviceGroupsService(
         publisher=event_bus,
         crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        settings=_settings,
     )
 
 

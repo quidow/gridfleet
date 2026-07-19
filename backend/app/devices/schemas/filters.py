@@ -1,8 +1,9 @@
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
+from app.devices.group_keys import GroupKey
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
 from app.devices.schemas.device import HardwareTelemetryState
 
@@ -41,6 +42,19 @@ class DeviceGroupFilters(BaseModel):
     hardware_telemetry_state: HardwareTelemetryState | None = None
     needs_attention: bool | None = None
     tags: dict[str, str] | None = None
+    member_of: list[GroupKey] = Field(default_factory=list)
+
+    @model_serializer(mode="plain")
+    def serialize(self) -> dict[str, object]:
+        data: dict[str, object] = {}
+        for field_name in type(self).model_fields:
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            if field_name == "member_of" and not value:
+                continue
+            data[field_name] = value
+        return data
 
 
 class DeviceQueryFilters(DeviceGroupFilters):

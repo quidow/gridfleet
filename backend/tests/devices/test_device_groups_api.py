@@ -456,3 +456,148 @@ async def test_group_bulk_set_status_route_removed(client: AsyncClient) -> None:
         json={"device_ids": [], "status": "available"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_anded_with_native_filters(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """member_of references static groups ANDed with native filters."""
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    await client.post("/api/device-groups", json={"key": "tv", "name": "TV", "group_type": "static"})
+
+    east_tv = await _create_device(db_session, "mem-tv-1", "TV1", default_host_id, device_type="real_device")
+    east_phone = await _create_device(db_session, "mem-phone-1", "Phone1", default_host_id, device_type="real_device")
+    # Put devices in static groups via the members API.
+    await client.post("/api/device-groups/east/members", json={"device_ids": [east_tv["id"], east_phone["id"]]})
+    await client.post("/api/device-groups/tv/members", json={"device_ids": [east_tv["id"]]})
+
+    resp = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "east-tvs",
+            "name": "East TVs",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["east", "tv"], "device_type": "real_device"},
+        },
+    )
+    assert resp.status_code == 201
+
+    detail = await client.get("/api/device-groups/east-tvs")
+    assert detail.status_code == 200
+    data = detail.json()
+    assert [d["id"] for d in data["devices"]] == [east_tv["id"]]
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_unknown_key_rejected(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "bad",
+            "name": "Bad",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["missing"]},
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_dynamic_key_rejected(client: AsyncClient) -> None:
+    await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dyn-a",
+            "name": "Dyn A",
+            "group_type": "dynamic",
+            "filters": {"device_type": "real_device"},
+        },
+    )
+    resp = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dyn-b",
+            "name": "Dyn B",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["dyn-a"]},
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.db
+async def test_delete_static_group_referenced_by_dynamic_returns_409(
+    client: AsyncClient,
+) -> None:
+    await client.post("/api/device-groups", json={"key": "ref-static", "name": "Ref", "group_type": "static"})
+    create = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "ref-dyn",
+            "name": "Ref Dyn",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["ref-static"]},
+        },
+    )
+    assert create.status_code == 201
+    resp = await client.delete("/api/device-groups/ref-static")
+    assert resp.status_code == 409
+
+
+@pytest.mark.db
+async def test_static_membership_mutation_preserves_device_state(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Group membership mutation is routing metadata only: no readiness/verified_at/node changes."""
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import readiness as device_readiness
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="preserve-1",
+        connection_target="preserve-1",
+        name="Preserve",
+        verified=True,
+        operational_state="available",
+    )
+    # Give it a node so we can assert desired_state/restart watermark are untouched.
+    node = AppiumNode(
+        device_id=device.id,
+        port=4730,
+        pid=9999,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4730,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device)
+    await db_session.refresh(node)
+
+    verified_before = device.verified_at
+    readiness_before = await device_readiness.assess_device_async(db_session, device)
+    desired_state_before = node.desired_state
+    restart_watermark_before = node.restart_requested_at
+
+    await client.post("/api/device-groups", json={"key": "preserve", "name": "Preserve", "group_type": "static"})
+    add = await client.post("/api/device-groups/preserve/members", json={"device_ids": [str(device.id)]})
+    assert add.status_code == 200
+    remove = await client.request(
+        "DELETE",
+        "/api/device-groups/preserve/members",
+        json={"device_ids": [str(device.id)]},
+    )
+    assert remove.status_code == 200
+
+    await db_session.refresh(device)
+    await db_session.refresh(node)
+    assert device.verified_at == verified_before
+    assert (await device_readiness.assess_device_async(db_session, device)) == readiness_before
+    assert node.desired_state == desired_state_before
+    assert node.restart_requested_at == restart_watermark_before

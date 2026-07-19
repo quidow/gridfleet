@@ -363,7 +363,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=test_event_bus, crud=_crud_svc),
+            groups=DeviceGroupsService(publisher=test_event_bus, crud=_crud_svc, settings=settings_service),
             maintenance=_maintenance_svc,
             bulk=BulkOperationsService(
                 publisher=test_event_bus,

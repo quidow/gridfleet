@@ -528,13 +528,22 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             return self._value
 
     group_db = AsyncMock()
-    group_db.execute = AsyncMock(
-        side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
+    group_db.execute = AsyncMock(return_value=GroupListResult([static_group]))
+
+    class _FakeIndex:
+        def device_ids(self, _key: str) -> frozenset[object]:
+            return frozenset({object(), object()})  # two members
+
+    monkeypatch.setattr(
+        device_group_service,
+        "load_group_membership_index",
+        AsyncMock(return_value=_FakeIndex()),
     )
     _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
         publisher=event_bus,
         crud=DeviceCrudService(settings=_gs1, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        settings=_gs1,
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
@@ -544,6 +553,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         await device_group_service.DeviceGroupsService(
             publisher=event_bus,
             crud=DeviceCrudService(settings=_gs2, identity=DeviceIdentityConflictService(), publisher=event_bus),
+            settings=_gs2,
         ).delete_group(missing_group_db, "missing-group")
         is False
     )
