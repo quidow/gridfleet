@@ -11,7 +11,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.devices.models import Device
 from app.devices.schemas import device as device_schemas
@@ -21,9 +21,11 @@ from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.readiness import READINESS_IMPACTING_FIELDS
 from app.portability.schemas import InventoryColumn
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
+from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def test_device_model_has_no_tags_column() -> None:
@@ -37,11 +39,26 @@ def test_device_read_and_filters_drop_tags() -> None:
     assert "tags" not in DeviceQueryFilters.model_fields
 
 
-@pytest.mark.parametrize("model", [DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate])
-def test_device_write_schemas_reject_tags(model: type[DevicePatch]) -> None:
+_HOST_ID = uuid.uuid4()
+
+# Every payload is valid for its model except for the ``tags`` key the test adds,
+# so the ValidationError is attributable to ``tags`` and not to a missing field.
+_VALID_WRITE_PAYLOADS: list[tuple[type[BaseModel], dict[str, object]]] = [
+    (DevicePatch, {"name": "device-a"}),
+    (
+        DeviceVerificationCreate,
+        {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "name": "device-a", "host_id": _HOST_ID},
+    ),
+    (DeviceVerificationUpdate, {"host_id": _HOST_ID}),
+]
+
+
+@pytest.mark.parametrize(("model", "payload"), _VALID_WRITE_PAYLOADS)
+def test_device_write_schemas_reject_tags(model: type[BaseModel], payload: dict[str, object]) -> None:
     assert "tags" not in model.model_fields
+    model.model_validate(payload)  # The payload alone is valid — only ``tags`` may break it.
     with pytest.raises(ValidationError):
-        model.model_validate({"host_id": uuid.uuid4(), "tags": {"team": "qa"}})
+        model.model_validate({**payload, "tags": {"team": "qa"}})
 
 
 def test_bulk_tag_schema_and_service_are_gone() -> None:
@@ -66,8 +83,23 @@ async def test_bulk_update_tags_endpoints_are_removed(client: AsyncClient) -> No
     assert (await client.post("/api/device-groups/any-key/bulk/update-tags", json=body)).status_code == 404
 
 
-async def test_tag_query_params_do_not_filter_devices(client: AsyncClient) -> None:
+async def test_tag_query_params_do_not_filter_devices(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """An unknown ``tags.*`` param is ignored, not honoured as a filter."""
+    for index in range(2):
+        await create_device_record(
+            db_session,
+            host_id=default_host_id,
+            identity_value=f"tagless-{index}",
+            name=f"tagless-{index}",
+        )
+
     unfiltered = await client.get("/api/devices")
     filtered = await client.get("/api/devices", params={"tags.team": "qa"})
     assert filtered.status_code == 200
+    assert len(unfiltered.json()) == 2
+    assert len(filtered.json()) == 2
     assert filtered.json() == unfiltered.json()

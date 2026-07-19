@@ -78,7 +78,11 @@ def _validate_device_tags(bind: sa.Connection) -> None:
 
 
 def _load_tag_filter_groups(bind: sa.Connection) -> list[tuple[uuid.UUID, dict[str, Any]]]:
-    """One read of every group whose filters still carry a ``tags`` map, validated in place."""
+    """One read of every group whose filters still carry a ``tags`` map, validated in place.
+
+    Both ``tags`` and ``member_of`` are rewritten below, so both shapes are
+    checked here — before any write and long before the destructive DDL.
+    """
     rows = bind.execute(
         sa.text("SELECT id, filters FROM device_groups WHERE jsonb_exists(filters, 'tags') ORDER BY id")
     ).all()
@@ -88,6 +92,11 @@ def _load_tag_filter_groups(bind: sa.Connection) -> list[tuple[uuid.UUID, dict[s
         tags = filters.get("tags") if isinstance(filters, dict) else None
         if not isinstance(tags, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):
             raise RuntimeError(f"device group {row.id} has a malformed tags filter: expected an object of strings")
+        member_of = filters.get("member_of")
+        if member_of is not None and (
+            not isinstance(member_of, list) or not all(isinstance(key, str) for key in member_of)
+        ):
+            raise RuntimeError(f"device group {row.id} has a malformed member_of filter: expected an array of strings")
         groups.append((row.id, filters))
     return groups
 

@@ -35,6 +35,16 @@ TAGS_TO_GROUPS_REVISION = "c1a7e4d9b620"
 
 _HOST_ID = "00000000-0000-0000-0000-0000000000ff"
 
+# Group keys are validated against this shape everywhere else in the app.
+_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+
+# ``tag-{key}-{value}`` runs to 81 chars for both pairs below and the first 64
+# chars are identical, so one pair exercises the ``[:64]`` truncation and the
+# other additionally exercises the truncated-base collision suffix.
+_LONG_KEY = "deployment-environment-classification"
+_LONG_VALUE_KEPT = "continuous-integration-smoke-lane-alpha"
+_LONG_VALUE_COLLIDING = "continuous-integration-smoke-lane-beta"
+
 
 def _slug(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
@@ -171,6 +181,8 @@ async def test_tag_pairs_become_static_groups_with_preserved_memberships() -> No
     device_c = "00000000-0000-0000-0000-00000000000c"
     device_d = "00000000-0000-0000-0000-00000000000d"
     device_e = "00000000-0000-0000-0000-00000000000e"
+    device_f = "00000000-0000-0000-0000-00000000000f"
+    device_g = "00000000-0000-0000-0000-000000000010"
 
     async with _harness("happy") as h:
         await h.seed_host()
@@ -181,6 +193,9 @@ async def test_tag_pairs_become_static_groups_with_preserved_memberships() -> No
         await h.seed_device(device_c, "dev-c", {"Team": "QA", "你好": ""})
         await h.seed_device(device_d, "dev-d", {})
         await h.seed_device(device_e, "dev-e", None)
+        # Over-long pairs that truncate onto the same 64-char base.
+        await h.seed_device(device_f, "dev-f", {_LONG_KEY: _LONG_VALUE_KEPT})
+        await h.seed_device(device_g, "dev-g", {_LONG_KEY: _LONG_VALUE_COLLIDING})
 
         # Pre-existing group occupies the base key ("lane", "smoke") would want.
         await h.seed_group(
@@ -220,9 +235,19 @@ async def test_tag_pairs_become_static_groups_with_preserved_memberships() -> No
         lane_key = _expected_collision_key("lane", "smoke")
         lower_team_key = _expected_collision_key("team", "qa")
         unicode_key = "tag-key-value"
+        long_key = _expected_base(_LONG_KEY, _LONG_VALUE_KEPT)
+        long_collision_key = _expected_collision_key(_LONG_KEY, _LONG_VALUE_COLLIDING)
+        assert len(long_key) == 64
+        assert len(long_collision_key) == 64
 
         rows = await h.fetch("SELECT key, name, group_type::text FROM device_groups ORDER BY key")
         by_key = {row[0]: (row[1], row[2]) for row in rows}
+        assert by_key[long_key] == (f"{_LONG_KEY}={_LONG_VALUE_KEPT}", "static")
+        assert by_key[long_collision_key] == (f"{_LONG_KEY}={_LONG_VALUE_COLLIDING}", "static")
+        # Truncation must never yield a key the rest of the app would reject, and
+        # never two rows sharing one key.
+        assert len(by_key) == len(rows)
+        assert [key for key in by_key if not _KEY_PATTERN.match(key)] == []
         assert by_key[creme_key] == ("Crème=brûlée", "static")
         assert by_key[upper_team_key] == ("Team=QA", "static")
         assert by_key[lane_key] == ("lane=smoke", "static")
@@ -241,6 +266,8 @@ async def test_tag_pairs_become_static_groups_with_preserved_memberships() -> No
             upper_team_key: {device_c},
             lower_team_key: {device_a, device_b},
             unicode_key: {device_c},
+            long_key: {device_f},
+            long_collision_key: {device_g},
         }
 
         filter_rows = await h.fetch("SELECT key, filters FROM device_groups WHERE group_type = 'dynamic' ORDER BY key")
@@ -316,3 +343,32 @@ async def test_malformed_dynamic_filter_tags_abort_the_migration() -> None:
             {"tags": {"lane": 3}},
         )
         await h.upgrade_expecting(TAGS_TO_GROUPS_REVISION, "malformed tags filter")
+
+
+@pytest.mark.db
+async def test_malformed_member_of_aborts_before_destructive_ddl() -> None:
+    """``member_of`` is the other half of the filter payload the rewrite consumes."""
+    async with _harness("memberofstr") as h:
+        await h.seed_group(
+            "00000000-0000-0000-0000-0000000001b1",
+            "dyn-member-str",
+            "Dynamic member string",
+            "dynamic",
+            {"tags": {"lane": "smoke"}, "member_of": "east-lab"},
+        )
+        await h.upgrade_expecting(TAGS_TO_GROUPS_REVISION, "malformed member_of filter")
+
+    async with _harness("memberofint") as h:
+        await h.seed_group(
+            "00000000-0000-0000-0000-0000000001b2",
+            "dyn-member-int",
+            "Dynamic member int",
+            "dynamic",
+            {"tags": {"lane": "smoke"}, "member_of": ["east-lab", 7]},
+        )
+        await h.upgrade_expecting(TAGS_TO_GROUPS_REVISION, "malformed member_of filter")
+        columns = await h.fetch(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'devices' AND column_name = 'tags'"
+        )
+        assert columns == [("tags",)]
