@@ -151,7 +151,7 @@ def _base_query(filters: DeviceQueryFilters | None) -> Select[tuple[Device, str]
 class InventoryExportService:
     """Container-held streaming inventory export."""
 
-    def __init__(self, *, settings: SettingsReader | None = None) -> None:
+    def __init__(self, *, settings: SettingsReader) -> None:
         self._settings = settings
 
     async def _resolve_group_filter(
@@ -163,7 +163,6 @@ class InventoryExportService:
         """
         if filters is None or not filters.groups:
             return None
-        assert self._settings is not None  # wired in composition; tests without groups skip this path
         keys = list(filters.groups)
         groups = await load_groups_by_keys(session, keys)
         loaded_keys = {group.key for group in groups}

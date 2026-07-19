@@ -20,12 +20,18 @@ from app.core.errors import (
 )
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
 from app.devices.services.claims import active_reservation_exists, reservation_active
 from app.devices.services.group_membership import (
+    DeviceGroupFacts,
     GroupMembershipIndex,
+    evaluate_group_memberships,
     load_group_membership_index,
     load_groups_by_keys,
+)
+from app.devices.services.group_membership import (
+    _load_static_group_keys_by_device_id as load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
@@ -37,6 +43,7 @@ from app.devices.services.readiness import (
 )
 from app.devices.services.service import UnknownGroupKeysError
 from app.devices.services.state import derive_operational_states, is_available_sql
+from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.packs.services.release_ordering import selected_release
 from app.runs.models import RunState, TestRun
@@ -517,7 +524,9 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     # viability, and reservation absence under the lock; drops any device that
     # lost a gate or was skipped. Readiness is re-evaluated synchronously against
     # the freshly locked row + the already-loaded pack catalog (no new read).
-    # Group membership is a pure lookup against the index built in step 6.
+    # Group membership is re-resolved against a fresh index rebuilt from a
+    # static-group-keys reload over the locked ids (the Device-row lock does not
+    # serialize DeviceGroupMembership edits).
     all_selected_ids = list(selected_ids)
     if not all_selected_ids:
         return per_requirement_candidates
@@ -534,6 +543,39 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         .execution_options(populate_existing=True)
     )
     locked_rows = {row.id: row for row in (await db.execute(locked_stmt)).scalars().all()}
+    # Reload the static-group-key map for the locked-id set and rebuild a fresh
+    # membership index under the lock: the Device-row lock does not serialize
+    # concurrent DeviceGroupMembership edits, so the step-6 index is a pre-lock
+    # snapshot. The reload is one joined SELECT over the locked ids (constant-
+    # size at this point — the picked candidates, not the whole eligible batch).
+    locked_group_index: GroupMembershipIndex | None = None
+    if groups:
+        locked_devices_list = list(locked_rows.values())
+        locked_static_keys = await load_static_group_keys_by_device_id(db, list(locked_rows))
+        locked_facts: dict[uuid.UUID, DeviceGroupFacts] = {}
+        for locked_device in locked_devices_list:
+            pack = pack_catalog.get(locked_device.pack_id)
+            readiness_state = _assess_device_with_pack(locked_device, pack).readiness_state
+            hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(
+                locked_device, settings=settings
+            )
+            hardware_health_status = hardware_telemetry.current_hardware_health_status(locked_device)
+            locked_facts[locked_device.id] = DeviceGroupFacts(
+                operational_state=DeviceOperationalState.available,
+                is_reserved=False,
+                readiness_state=readiness_state,
+                hardware_telemetry_state=hardware_telemetry_state,
+                needs_attention=device_attention.compute_needs_attention(
+                    DeviceOperationalState.available,
+                    readiness_state,
+                    hardware_health_status=hardware_health_status,
+                    review_required=False,
+                ),
+                static_group_keys=locked_static_keys.get(locked_device.id, frozenset()),
+            )
+        locked_group_index = evaluate_group_memberships(
+            groups=groups, devices=locked_devices_list, facts_by_device_id=locked_facts
+        )
     locked_ready: dict[uuid.UUID, Device] = {}
     for device in locked_rows.values():
         pack = pack_catalog.get(device.pack_id)
@@ -545,7 +587,11 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         req_index = device_to_requirement_idx.get(device.id)
         if req_index is not None:
             req = requirements[req_index]
-            if req.groups and group_index is not None and not group_index.matches_all(device.id, req.groups):
+            if (
+                req.groups
+                and locked_group_index is not None
+                and not locked_group_index.matches_all(device.id, req.groups)
+            ):
                 continue
         locked_ready[device.id] = device
 

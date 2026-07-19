@@ -8,11 +8,16 @@ from app.portability.schemas import (
     parse_columns_param,
 )
 from app.portability.services.inventory import InventoryExportService
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _inventory_service() -> InventoryExportService:
+    return InventoryExportService(settings=FakeSettingsReader({}))
 
 
 def test_inventory_column_enum_has_expected_dot_paths() -> None:
@@ -78,7 +83,7 @@ async def test_iter_inventory_json_emits_selected_columns(db_session: AsyncSessi
     host, device = await seed_host_and_device(db_session, identity="INV-1")
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_json(
+        async for chunk in _inventory_service().iter_inventory_json(
             db_session,
             columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME, InventoryColumn.IDENTITY_VALUE],
             filters=None,
@@ -99,7 +104,7 @@ async def test_iter_inventory_csv_emits_header_and_rows(db_session: AsyncSession
     host, _ = await seed_host_and_device(db_session, identity="INV-2")
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_csv(
+        async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
             columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME],
             filters=None,
@@ -119,7 +124,7 @@ async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: As
     await db_session.commit()
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_csv(
+        async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
             columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
             filters=None,
@@ -136,7 +141,7 @@ async def test_iter_inventory_json_serializes_uuid_id(db_session: AsyncSession) 
     _, device = await seed_host_and_device(db_session, identity="INV-4")
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_json(
+        async for chunk in _inventory_service().iter_inventory_json(
             db_session,
             columns=[InventoryColumn.ID],
             filters=None,
@@ -198,7 +203,7 @@ async def test_iter_inventory_csv_escapes_formula_injection(db_session: AsyncSes
 
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_csv(
+        async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
             columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
             filters=None,
