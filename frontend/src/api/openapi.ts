@@ -243,7 +243,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}": {
+    "/api/device-groups/{group_key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -251,18 +251,18 @@ export interface paths {
             cookie?: never;
         };
         /** Get Group */
-        get: operations["get_group_api_device_groups__group_id__get"];
+        get: operations["get_group_api_device_groups__group_key__get"];
         put?: never;
         post?: never;
         /** Delete Group */
-        delete: operations["delete_group_api_device_groups__group_id__delete"];
+        delete: operations["delete_group_api_device_groups__group_key__delete"];
         options?: never;
         head?: never;
         /** Update Group */
-        patch: operations["update_group_api_device_groups__group_id__patch"];
+        patch: operations["update_group_api_device_groups__group_key__patch"];
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/delete": {
+    "/api/device-groups/{group_key}/bulk/delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -272,14 +272,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Delete */
-        post: operations["group_bulk_delete_api_device_groups__group_id__bulk_delete_post"];
+        post: operations["group_bulk_delete_api_device_groups__group_key__bulk_delete_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/enter-maintenance": {
+    "/api/device-groups/{group_key}/bulk/enter-maintenance": {
         parameters: {
             query?: never;
             header?: never;
@@ -289,14 +289,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Enter Maintenance */
-        post: operations["group_bulk_enter_maintenance_api_device_groups__group_id__bulk_enter_maintenance_post"];
+        post: operations["group_bulk_enter_maintenance_api_device_groups__group_key__bulk_enter_maintenance_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/exit-maintenance": {
+    "/api/device-groups/{group_key}/bulk/exit-maintenance": {
         parameters: {
             query?: never;
             header?: never;
@@ -306,14 +306,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Exit Maintenance */
-        post: operations["group_bulk_exit_maintenance_api_device_groups__group_id__bulk_exit_maintenance_post"];
+        post: operations["group_bulk_exit_maintenance_api_device_groups__group_key__bulk_exit_maintenance_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/reconnect": {
+    "/api/device-groups/{group_key}/bulk/reconnect": {
         parameters: {
             query?: never;
             header?: never;
@@ -323,14 +323,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Reconnect */
-        post: operations["group_bulk_reconnect_api_device_groups__group_id__bulk_reconnect_post"];
+        post: operations["group_bulk_reconnect_api_device_groups__group_key__bulk_reconnect_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/restart-nodes": {
+    "/api/device-groups/{group_key}/bulk/restart-nodes": {
         parameters: {
             query?: never;
             header?: never;
@@ -340,14 +340,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Restart */
-        post: operations["group_bulk_restart_api_device_groups__group_id__bulk_restart_nodes_post"];
+        post: operations["group_bulk_restart_api_device_groups__group_key__bulk_restart_nodes_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/start-nodes": {
+    "/api/device-groups/{group_key}/bulk/start-nodes": {
         parameters: {
             query?: never;
             header?: never;
@@ -357,14 +357,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Start */
-        post: operations["group_bulk_start_api_device_groups__group_id__bulk_start_nodes_post"];
+        post: operations["group_bulk_start_api_device_groups__group_key__bulk_start_nodes_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/stop-nodes": {
+    "/api/device-groups/{group_key}/bulk/stop-nodes": {
         parameters: {
             query?: never;
             header?: never;
@@ -374,31 +374,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Group Bulk Stop */
-        post: operations["group_bulk_stop_api_device_groups__group_id__bulk_stop_nodes_post"];
+        post: operations["group_bulk_stop_api_device_groups__group_key__bulk_stop_nodes_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/device-groups/{group_id}/bulk/update-tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Group Bulk Update Tags */
-        post: operations["group_bulk_update_tags_api_device_groups__group_id__bulk_update_tags_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/device-groups/{group_id}/members": {
+    "/api/device-groups/{group_key}/members": {
         parameters: {
             query?: never;
             header?: never;
@@ -408,9 +391,9 @@ export interface paths {
         get?: never;
         put?: never;
         /** Add Members */
-        post: operations["add_members_api_device_groups__group_id__members_post"];
+        post: operations["add_members_api_device_groups__group_key__members_post"];
         /** Remove Members */
-        delete: operations["remove_members_api_device_groups__group_id__members_delete"];
+        delete: operations["remove_members_api_device_groups__group_key__members_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -546,23 +529,6 @@ export interface paths {
         put?: never;
         /** Bulk Stop Nodes */
         post: operations["bulk_stop_nodes_api_devices_bulk_stop_nodes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/devices/bulk/update-tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Bulk Update Tags */
-        post: operations["bulk_update_tags_api_devices_bulk_update_tags_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2073,20 +2039,6 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** BulkTagsUpdate */
-        BulkTagsUpdate: {
-            /** Device Ids */
-            device_ids: string[];
-            /**
-             * Merge
-             * @default true
-             */
-            merge: boolean;
-            /** Tags */
-            tags: {
-                [key: string]: string;
-            };
-        };
         /** ConfigAuditEntryRead */
         ConfigAuditEntryRead: {
             /**
@@ -2250,10 +2202,6 @@ export interface components {
             software_versions: {
                 [key: string]: unknown;
             } | null;
-            /** Tags */
-            tags: {
-                [key: string]: string;
-            } | null;
             unavailable_reason?: components["schemas"]["UnavailableReason"] | null;
             /**
              * Updated At
@@ -2272,7 +2220,7 @@ export interface components {
         DeviceGroupCreate: {
             /** Description */
             description?: string | null;
-            filters?: components["schemas"]["DeviceGroupFilters"] | null;
+            filters?: components["schemas"]["DeviceGroupFilters-Input"] | null;
             /** @default static */
             group_type: components["schemas"]["GroupType"];
             /** Key */
@@ -2296,7 +2244,7 @@ export interface components {
             device_count: number;
             /** Devices */
             devices?: components["schemas"]["DeviceRead"][];
-            filters: components["schemas"]["DeviceGroupFilters"] | null;
+            filters: components["schemas"]["DeviceGroupFilters-Output"] | null;
             group_type: components["schemas"]["GroupType"];
             /** Key */
             key: string;
@@ -2309,7 +2257,7 @@ export interface components {
             updated_at: string;
         };
         /** DeviceGroupFilters */
-        DeviceGroupFilters: {
+        "DeviceGroupFilters-Input": {
             /** Connection Target */
             connection_target?: string | null;
             connection_type?: components["schemas"]["ConnectionType"] | null;
@@ -2320,6 +2268,8 @@ export interface components {
             host_id?: string | null;
             /** Identity Value */
             identity_value?: string | null;
+            /** Member Of */
+            member_of?: string[];
             /** Needs Attention */
             needs_attention?: boolean | null;
             /** Os Version */
@@ -2334,8 +2284,9 @@ export interface components {
             reserved?: boolean | null;
             /** Status */
             status?: ("available" | "busy" | "offline" | "maintenance" | "verifying") | null;
-            /** Member Of */
-            member_of?: string[] | null;
+        };
+        "DeviceGroupFilters-Output": {
+            [key: string]: unknown;
         };
         /** DeviceGroupRead */
         DeviceGroupRead: {
@@ -2351,7 +2302,7 @@ export interface components {
              * @default 0
              */
             device_count: number;
-            filters: components["schemas"]["DeviceGroupFilters"] | null;
+            filters: components["schemas"]["DeviceGroupFilters-Output"] | null;
             group_type: components["schemas"]["GroupType"];
             /** Key */
             key: string;
@@ -2367,7 +2318,7 @@ export interface components {
         DeviceGroupUpdate: {
             /** Description */
             description?: string | null;
-            filters?: components["schemas"]["DeviceGroupFilters"] | null;
+            filters?: components["schemas"]["DeviceGroupFilters-Input"] | null;
             /** Name */
             name?: string | null;
         };
@@ -2491,10 +2442,6 @@ export interface components {
             software_versions?: {
                 [key: string]: unknown;
             } | null;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
-            } | null;
         };
         /** DeviceRead */
         DeviceRead: {
@@ -2591,10 +2538,6 @@ export interface components {
             software_versions: {
                 [key: string]: unknown;
             } | null;
-            /** Tags */
-            tags: {
-                [key: string]: string;
-            } | null;
             unavailable_reason?: components["schemas"]["UnavailableReason"] | null;
             /**
              * Updated At
@@ -2627,6 +2570,8 @@ export interface components {
             allocation?: "all_available" | null;
             /** Count */
             count?: number | null;
+            /** Groups */
+            groups?: string[];
             /** Min Count */
             min_count?: number | null;
             /** Os Version */
@@ -2635,10 +2580,6 @@ export interface components {
             pack_id: string;
             /** Platform Id */
             platform_id: string;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
-            } | null;
         };
         /** DeviceReservationRead */
         DeviceReservationRead: {
@@ -2741,10 +2682,6 @@ export interface components {
             software_versions?: {
                 [key: string]: unknown;
             } | null;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
-            } | null;
         };
         /** DeviceVerificationJobRead */
         DeviceVerificationJobRead: {
@@ -2814,10 +2751,6 @@ export interface components {
             /** Software Versions */
             software_versions?: {
                 [key: string]: unknown;
-            } | null;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
             } | null;
         };
         /** DiscoveredDevice */
@@ -3043,7 +2976,7 @@ export interface components {
             events: components["schemas"]["EventCatalogEntryRead"][];
         };
         /** ExportBundle */
-        ExportBundle: {
+        "ExportBundle-Input": {
             /** Devices */
             devices: components["schemas"]["ExportedDevice"][];
             /**
@@ -3051,11 +2984,26 @@ export interface components {
              * Format: date-time
              */
             exported_at: string;
+            /** Groups */
+            groups?: components["schemas"]["ExportedDeviceGroup-Input"][];
+            /** Schema Version */
+            schema_version: number;
+            /** Source Instance */
+            source_instance?: string | null;
+        };
+        /** ExportBundle */
+        "ExportBundle-Output": {
+            /** Devices */
+            devices: components["schemas"]["ExportedDevice"][];
             /**
-             * Schema Version
-             * @constant
+             * Exported At
+             * Format: date-time
              */
-            schema_version: 1;
+            exported_at: string;
+            /** Groups */
+            groups?: components["schemas"]["ExportedDeviceGroup-Output"][];
+            /** Schema Version */
+            schema_version: number;
             /** Source Instance */
             source_instance?: string | null;
         };
@@ -3085,14 +3033,34 @@ export interface components {
             pack_id: string;
             /** Platform Id */
             platform_id: string;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
-            };
+            /** Static Groups */
+            static_groups?: string[];
             /** Test Data */
             test_data?: {
                 [key: string]: unknown;
             };
+        };
+        /** ExportedDeviceGroup */
+        "ExportedDeviceGroup-Input": {
+            /** Description */
+            description?: string | null;
+            filters?: components["schemas"]["DeviceGroupFilters-Input"] | null;
+            group_type: components["schemas"]["GroupType"];
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+        };
+        /** ExportedDeviceGroup */
+        "ExportedDeviceGroup-Output": {
+            /** Description */
+            description?: string | null;
+            filters?: components["schemas"]["DeviceGroupFilters-Output"] | null;
+            group_type: components["schemas"]["GroupType"];
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
         };
         /** FieldSchemaOut */
         FieldSchemaOut: {
@@ -3948,7 +3916,7 @@ export interface components {
         };
         /** ImportCommitRequest */
         ImportCommitRequest: {
-            bundle: components["schemas"]["ExportBundle"];
+            bundle: components["schemas"]["ExportBundle-Input"];
             /** Bundle Hash */
             bundle_hash: string;
             /** Mappings */
@@ -3993,11 +3961,8 @@ export interface components {
             exported_at: string;
             /** Rows */
             rows: components["schemas"]["ImportPreviewRow"][];
-            /**
-             * Schema Version
-             * @constant
-             */
-            schema_version: 1;
+            /** Schema Version */
+            schema_version: number;
             /** Source Instance */
             source_instance?: string | null;
         };
@@ -4452,10 +4417,6 @@ export interface components {
             platform_id: string;
             /** Platform Label */
             platform_label?: string | null;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
-            } | null;
         };
         /** RunCooldownEscalatedResponse */
         RunCooldownEscalatedResponse: {
@@ -5548,12 +5509,12 @@ export interface operations {
             };
         };
     };
-    get_group_api_device_groups__group_id__get: {
+    get_group_api_device_groups__group_key__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -5615,12 +5576,12 @@ export interface operations {
             };
         };
     };
-    delete_group_api_device_groups__group_id__delete: {
+    delete_group_api_device_groups__group_key__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -5680,12 +5641,12 @@ export interface operations {
             };
         };
     };
-    update_group_api_device_groups__group_id__patch: {
+    update_group_api_device_groups__group_key__patch: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -5751,12 +5712,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_delete_api_device_groups__group_id__bulk_delete_post: {
+    group_bulk_delete_api_device_groups__group_key__bulk_delete_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -5818,12 +5779,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_enter_maintenance_api_device_groups__group_id__bulk_enter_maintenance_post: {
+    group_bulk_enter_maintenance_api_device_groups__group_key__bulk_enter_maintenance_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -5889,12 +5850,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_exit_maintenance_api_device_groups__group_id__bulk_exit_maintenance_post: {
+    group_bulk_exit_maintenance_api_device_groups__group_key__bulk_exit_maintenance_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -5956,12 +5917,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_reconnect_api_device_groups__group_id__bulk_reconnect_post: {
+    group_bulk_reconnect_api_device_groups__group_key__bulk_reconnect_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -6023,12 +5984,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_restart_api_device_groups__group_id__bulk_restart_nodes_post: {
+    group_bulk_restart_api_device_groups__group_key__bulk_restart_nodes_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -6090,12 +6051,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_start_api_device_groups__group_id__bulk_start_nodes_post: {
+    group_bulk_start_api_device_groups__group_key__bulk_start_nodes_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -6157,12 +6118,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_stop_api_device_groups__group_id__bulk_stop_nodes_post: {
+    group_bulk_stop_api_device_groups__group_key__bulk_stop_nodes_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -6224,83 +6185,12 @@ export interface operations {
             };
         };
     };
-    group_bulk_update_tags_api_device_groups__group_id__bulk_update_tags_post: {
+    add_members_api_device_groups__group_key__members_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BulkTagsUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BulkOperationResult"];
-                };
-            };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    add_members_api_device_groups__group_id__members_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -6368,12 +6258,12 @@ export interface operations {
             };
         };
     };
-    remove_members_api_device_groups__group_id__members_delete: {
+    remove_members_api_device_groups__group_key__members_delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                group_id: string;
+                group_key: string;
             };
             cookie?: never;
         };
@@ -6466,6 +6356,7 @@ export interface operations {
                 viability?: ("ok" | "warn" | "failed" | "unknown") | null;
                 sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
                 sort_dir?: "asc" | "desc";
+                group?: string[] | null;
             };
             header?: never;
             path?: never;
@@ -6953,75 +6844,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BulkDeviceIds"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BulkOperationResult"];
-                };
-            };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    bulk_update_tags_api_devices_bulk_update_tags_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BulkTagsUpdate"];
             };
         };
         responses: {
@@ -10284,7 +10106,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExportBundle"];
+                    "application/json": components["schemas"]["ExportBundle-Output"];
                 };
             };
             /** @description Validation error */
@@ -10403,7 +10225,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ExportBundle"];
+                "application/json": components["schemas"]["ExportBundle-Input"];
             };
         };
         responses: {
@@ -10488,6 +10310,7 @@ export interface operations {
                 viability?: ("ok" | "warn" | "failed" | "unknown") | null;
                 sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
                 sort_dir?: "asc" | "desc";
+                group?: string[] | null;
             };
             header?: never;
             path?: never;
