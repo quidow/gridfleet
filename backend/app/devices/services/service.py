@@ -29,6 +29,7 @@ from app.devices.services.connectivity import (
     PROBE_FAILED_NAMESPACE,
     PROBE_UNANSWERED_NAMESPACE,
 )
+from app.devices.services.group_membership import load_group_membership_index, load_groups_by_keys
 from app.devices.services.state import (
     derive_operational_state,
     is_available_sql,
@@ -55,6 +56,14 @@ if TYPE_CHECKING:
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]
 DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
+
+
+class UnknownGroupKeysError(ValueError):
+    """Raised when a device query references device group keys that do not exist."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+        super().__init__(f"unknown device groups: {', '.join(keys)}")
 
 
 class DeviceCrudService:
@@ -97,6 +106,8 @@ class DeviceCrudService:
         stmt = _build_device_list_stmt(filters)
         result = await db.execute(stmt)
         devices = list(result.scalars().all())
+        if filters.groups:
+            devices = await self._apply_groups_filter(db, filters, devices)
         if filters.needs_attention is not None:
             wanted = filters.needs_attention
             kept: list[Device] = []
@@ -139,6 +150,24 @@ class DeviceCrudService:
                 == filters.hardware_telemetry_state
             ]
         return devices
+
+    async def _apply_groups_filter(
+        self, db: AsyncSession, filters: DeviceQueryFilters, devices: list[Device]
+    ) -> list[Device]:
+        """AND membership: a device must belong to every group key in ``filters.groups``.
+
+        Validates group keys once and raises :class:`UnknownGroupKeysError` for any
+        missing key so the router surfaces HTTP 422. Loads the membership index once
+        for the batch and filters in memory.
+        """
+        keys = list(filters.groups)
+        groups = await load_groups_by_keys(db, keys)
+        loaded_keys = {group.key for group in groups}
+        missing = [key for key in keys if key not in loaded_keys]
+        if missing:
+            raise UnknownGroupKeysError(missing)
+        index = await load_group_membership_index(db, groups=groups, devices=devices, settings=self._settings)
+        return [device for device in devices if index.matches_all(device.id, keys)]
 
     async def list_devices_paginated(
         self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
@@ -239,6 +268,7 @@ def _has_post_filters(filters: DeviceQueryFilters) -> bool:
         or filters.device_health is not None
         or filters.node_health is not None
         or filters.viability is not None
+        or bool(filters.groups)
     )
 
 

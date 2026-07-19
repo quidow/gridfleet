@@ -135,7 +135,7 @@ def compose_app(
     presenter_svc = DevicePresenterService(settings=settings_svc)
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
-    inventory_export_svc = InventoryExportService()
+    inventory_export_svc = InventoryExportService(settings=settings_svc)
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)

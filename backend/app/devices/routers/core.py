@@ -13,6 +13,7 @@ from app.devices.dependencies import DeviceServicesDep
 # build_device_query_filters is a FastAPI dependency (not a route handler, so it is not
 # covered by runtime-evaluated-decorators); FastAPI resolves its Query-param enum
 # annotations at runtime via get_type_hints, so these must stay at module scope.
+from app.devices.group_keys import GroupKey  # noqa: TC001
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus  # noqa: TC001
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.device import (
@@ -39,6 +40,7 @@ from app.devices.services import (
 from app.devices.services import (
     platform_label as platform_label_service,
 )
+from app.devices.services.service import UnknownGroupKeysError
 from app.lifecycle.services import remediation_log
 from app.runs import service as run_service
 from app.sessions.dependencies import SessionServicesDep
@@ -81,6 +83,7 @@ def build_device_query_filters(
     viability: Annotated[HealthVerdictFilter | None, Query()] = None,
     sort_by: Annotated[DeviceSortBy, Query()] = "created_at",
     sort_dir: Annotated[DeviceSortDir, Query()] = "desc",
+    group: Annotated[list[GroupKey] | None, Query()] = None,
 ) -> DeviceQueryFilters:
     return DeviceQueryFilters(
         pack_id=pack_id,
@@ -104,6 +107,7 @@ def build_device_query_filters(
         sort_by=sort_by,
         sort_dir=sort_dir,
         tags=_extract_tag_filters(request),
+        groups=group or [],
     )
 
 
@@ -118,12 +122,15 @@ async def list_devices(
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     offset: Annotated[int | None, Query(ge=0)] = None,
 ) -> list[dict[str, Any]] | dict[str, Any]:
-    if limit is not None:
-        effective_offset = offset if offset is not None else 0
-        devices, total = await device_services.crud.list_devices_paginated(db, filters, limit, effective_offset)
-    else:
-        devices = await device_services.crud.list_devices_by_filters(db, filters)
-        total = None
+    try:
+        if limit is not None:
+            effective_offset = offset if offset is not None else 0
+            devices, total = await device_services.crud.list_devices_paginated(db, filters, limit, effective_offset)
+        else:
+            devices = await device_services.crud.list_devices_by_filters(db, filters)
+            total = None
+    except UnknownGroupKeysError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
     ladders = await remediation_log.load_ladders(db, [device.id for device in devices])

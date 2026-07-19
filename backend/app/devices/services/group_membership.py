@@ -17,14 +17,11 @@ Membership semantics:
 
 from __future__ import annotations
 
-# The dynamic-filter matcher is one return per axis by design; the axis set is
-# the public filter contract and collapsing them would obscure the AND semantics.
-# ruff: noqa: PLR0911, PLR0912
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import func, select, true
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
@@ -35,6 +32,10 @@ from app.devices.services.state import derive_operational_states
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.runs.service_reservation import get_device_reservation_map
 
+# The dynamic-filter matcher is one return per axis by design; the axis set is
+# the public filter contract and collapsing them would obscure the AND semantics.
+# ruff: noqa: PLR0911, PLR0912
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Collection, Mapping, Sequence
@@ -44,6 +45,46 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.devices.schemas.device import HardwareTelemetryState
     from app.packs.models import DriverPack
+
+
+async def load_groups_by_keys(db: AsyncSession, group_keys: Collection[str]) -> list[DeviceGroup]:
+    """One read: the requested groups plus the static groups their JSON
+    ``member_of`` arrays reference, so the pure evaluator can resolve dynamic
+    groups that reference static groups by key. Direct keys of any type are
+    returned verbatim; only static groups are pulled from ``member_of``
+    (dynamic-to-dynamic references resolve to empty membership by contract).
+
+    Implemented as a single recursive CTE. Postgres requires the recursive
+    ``group_closure`` reference to appear in the FROM clause of the recursive
+    arm (it may not live in a subquery), so the arm joins the closure to the
+    set-returning ``jsonb_array_elements_text(filters->'member_of')`` and then
+    to ``device_groups`` on the resulting key. Static groups have no
+    ``member_of`` (and dynamic groups are not valid ``member_of`` targets),
+    so the recursion terminates at static groups; ``jsonb_array_elements_text``
+    on a NULL/missing ``member_of`` yields zero rows, also terminating the
+    recursion for groups without a ``member_of`` reference.
+    """
+    keys = sorted({key for key in group_keys if key})
+    if not keys:
+        return []
+    seed = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.key.in_(keys))
+    closure = seed.cte("group_closure", recursive=True)
+    closure_alias = closure.alias()
+    member_of_keys = (
+        func.jsonb_array_elements_text(closure_alias.c.filters["member_of"])
+        .table_valued("member_of_key")
+        .render_derived()
+    )
+    arm = (
+        select(DeviceGroup.key, DeviceGroup.filters)
+        .select_from(closure_alias)
+        .join(member_of_keys, true())
+        .join(DeviceGroup, DeviceGroup.key == member_of_keys.c.member_of_key)
+        .where(DeviceGroup.group_type == GroupType.static)
+    )
+    closure = closure.union_all(arm)
+    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(select(closure.c.key)))
+    return list((await db.execute(stmt)).scalars().all())
 
 
 @dataclass(frozen=True)

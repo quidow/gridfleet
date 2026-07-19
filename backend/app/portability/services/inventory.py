@@ -18,7 +18,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device
-from app.devices.services.service import _apply_device_filters
+from app.devices.services.group_membership import load_group_membership_index, load_groups_by_keys
+from app.devices.services.service import UnknownGroupKeysError, _apply_device_filters
 from app.devices.services.state import operational_state_sql
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.services.service import DeviceListStatement
     from app.portability.schemas import InventoryColumn
@@ -149,6 +151,32 @@ def _base_query(filters: DeviceQueryFilters | None) -> Select[tuple[Device, str]
 class InventoryExportService:
     """Container-held streaming inventory export."""
 
+    def __init__(self, *, settings: SettingsReader | None = None) -> None:
+        self._settings = settings
+
+    async def _resolve_group_filter(
+        self, session: AsyncSession, filters: DeviceQueryFilters | None
+    ) -> set[uuid.UUID] | None:
+        """Validate group keys once and return the matching device-id set, or
+        ``None`` when no group filter is applied (caller streams without membership
+        gating). Raises :class:`UnknownGroupKeysError` for missing keys.
+        """
+        if filters is None or not filters.groups:
+            return None
+        assert self._settings is not None  # wired in composition; tests without groups skip this path
+        keys = list(filters.groups)
+        groups = await load_groups_by_keys(session, keys)
+        loaded_keys = {group.key for group in groups}
+        missing = [key for key in keys if key not in loaded_keys]
+        if missing:
+            raise UnknownGroupKeysError(missing)
+        candidate_stmt = cast("DeviceListStatement", _apply_device_filters(select(Device), filters)).options(
+            selectinload(Device.host)
+        )
+        candidates = list((await session.execute(candidate_stmt)).scalars().all())
+        index = await load_group_membership_index(session, groups=groups, devices=candidates, settings=self._settings)
+        return {device.id for device in candidates if index.matches_all(device.id, keys)}
+
     async def iter_inventory_json(
         self,
         session: AsyncSession,
@@ -156,12 +184,15 @@ class InventoryExportService:
         columns: list[InventoryColumn],
         filters: DeviceQueryFilters | None,
     ) -> AsyncIterator[str]:
+        matching_ids = await self._resolve_group_filter(session, filters)
         stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
         result = await session.stream(stmt)
         yield "["
         first = True
         async for partition in result.partitions(_CHUNK):
             for device, operational_state in partition:
+                if matching_ids is not None and device.id not in matching_ids:
+                    continue
                 payload = _row_to_json_dict(device, columns, operational_state)
                 chunk = json.dumps(payload, ensure_ascii=False)
                 yield ("" if first else ",") + chunk
@@ -182,10 +213,13 @@ class InventoryExportService:
         buffer.seek(0)
         buffer.truncate(0)
 
+        matching_ids = await self._resolve_group_filter(session, filters)
         stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
         result = await session.stream(stmt)
         async for partition in result.partitions(_CHUNK):
             for device, operational_state in partition:
+                if matching_ids is not None and device.id not in matching_ids:
+                    continue
                 writer.writerow(_row_to_csv_values(device, columns, operational_state))
             yield buffer.getvalue()
             buffer.seek(0)

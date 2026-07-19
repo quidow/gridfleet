@@ -451,7 +451,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return PortabilityServices(
             export=PortabilityExportService(),
             import_=PortabilityImportService(verification_enqueuer=VerificationService()),
-            inventory=InventoryExportService(),
+            inventory=InventoryExportService(settings=settings_service),
         )
 
     def override_get_host_services() -> HostServices:

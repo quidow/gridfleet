@@ -15,7 +15,8 @@ from app.devices.services.health import DeviceHealthService
 from app.packs.models import DriverPack
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
-from app.runs.service_allocator import RunAllocatorService, _find_matching_devices, _readiness_for_match
+from app.runs.service_allocator import RunAllocatorService, _find_matching_devices
+from app.runs.service_allocator import assess_devices_async as run_allocator_assess_devices_async
 from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service, test_circuit_breaker
@@ -285,6 +286,7 @@ async def test_create_run_all_available_reserves_every_eligible_device(
             "platform_id": "android_mobile",
             "allocation": "all_available",
             "min_count": 1,
+            "groups": [],
         }
     ]
 
@@ -1124,6 +1126,7 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.devices.services.readiness import DeviceReadiness
     from tests.helpers import create_device
 
     devices = [
@@ -1138,12 +1141,19 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     ]
     await db_session.commit()
 
-    async def flaky(db: AsyncSession, device: Device) -> bool:
-        if device.id == devices[0].id:
-            return False
-        return await _readiness_for_match(db, device)
+    real_assess = run_allocator_assess_devices_async
 
-    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", flaky)
+    async def flaky_assess(
+        session: AsyncSession,
+        device_iter: object,
+        *,
+        packs: dict[str, DriverPack] | None = None,
+    ) -> dict[uuid.UUID, DeviceReadiness]:
+        result = await real_assess(session, device_iter, packs=packs)
+        result[devices[0].id] = DeviceReadiness(readiness_state="setup_required", missing_setup_fields=["x"])
+        return result
+
+    monkeypatch.setattr("app.runs.service_allocator.assess_devices_async", flaky_assess)
 
     resp = await client.post(
         "/api/runs",

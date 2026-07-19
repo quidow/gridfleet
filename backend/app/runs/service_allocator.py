@@ -6,21 +6,34 @@ from collections import Counter
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.node_poke import poke_node_refresh
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
+from app.core.errors import (
+    PackDisabledError,
+    PackDrainingError,
+    PackUnavailableError,
+    PlatformRemovedError,
+)
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.claims import active_reservation_exists, reservation_active
+from app.devices.services.group_membership import (
+    GroupMembershipIndex,
+    load_group_membership_index,
+    load_groups_by_keys,
+)
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
-from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.readiness import _assess_device_with_pack, assess_devices_async, is_ready_for_use_async
+from app.devices.services.service import UnknownGroupKeysError
 from app.devices.services.state import derive_operational_state, is_available_sql
-from app.packs.services.platform_resolver import assert_runnable
+from app.packs.models import DriverPack, DriverPackRelease, PackState
+from app.packs.services.release_ordering import selected_release
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
     DeviceRequirement,
@@ -274,6 +287,222 @@ def _format_requirement_count(requirement: DeviceRequirement) -> str:
     return f"count={requirement.count}"
 
 
+def _resolve_pack_platform_pairs(requirements: list[DeviceRequirement]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str]] = []
+    for req in requirements:
+        key = (req.pack_id, req.platform_id)
+        if key not in seen:
+            seen.add(key)
+            pairs.append(key)
+    return pairs
+
+
+def _device_matches_requirement_static(
+    device: Device,
+    req: DeviceRequirement,
+    *,
+    readiness_lookup: dict[uuid.UUID, bool],
+    group_index: GroupMembershipIndex | None,
+) -> bool:
+    if device.pack_id != req.pack_id or device.platform_id != req.platform_id:
+        return False
+    if req.os_version and device.os_version != req.os_version:
+        return False
+    if not _device_matches_requirement_tags(device, req.tags):
+        return False
+    if req.groups and group_index is not None and not group_index.matches_all(device.id, req.groups):
+        return False
+    return readiness_lookup.get(device.id, False)
+
+
+async def _batch_select_devices(  # noqa: PLR0912, PLR0915
+    db: AsyncSession,
+    requirements: list[DeviceRequirement],
+    *,
+    restart_window_sec: int,
+    settings: SettingsReader,
+) -> list[list[Device]]:
+    """One batch pass: load every fact the run-allocator needs in a bounded number
+    of reads, then select devices per requirement in request order excluding
+    already-selected ids. Returns one device list per requirement (parallel to
+    ``requirements``).
+
+    Read budget (candidate-selection phase, before the run INSERT):
+
+    1. recursive CTE load of group definitions (only when any requirement pins groups),
+    2. one batched pack-row lock + state check across all distinct pack_ids,
+    3. one batched stereotype-template / pack load for all (pack_id, platform_id) pairs,
+    4. one candidate-devices SELECT joined to host + appium_node across every
+       requirement's (pack_id, platform_id) pair,
+    5. one batched readiness assessment over the candidate set (reuses the pack
+       catalog from step 3),
+    6. one static-group-keys read (folded into the membership index loader) when
+       any requirement pins groups,
+    7. one locked recheck SELECT ... FOR UPDATE OF devices SKIP LOCKED over the
+       selected device ids.
+
+    Steps 1-7 are constant in the candidate and requirement counts: the candidate
+    SELECT projects every matching row in one statement, the readiness assessment
+    reuses the batched pack catalog, and the locked recheck is a single id-list
+    query.
+    """
+    # Step 1: validate group keys once, before any device lock. Raises
+    # UnknownGroupKeysError -> HTTP 422 if any key is missing.
+    all_group_keys: set[str] = set()
+    for req in requirements:
+        all_group_keys.update(req.groups)
+    groups = await load_groups_by_keys(db, all_group_keys) if all_group_keys else []
+    loaded_group_keys = {group.key for group in groups}
+    missing_groups = sorted(all_group_keys - loaded_group_keys)
+    if missing_groups:
+        raise UnknownGroupKeysError(missing_groups)
+
+    # Step 2: batch-lock all distinct pack rows once (FOR SHARE) and validate
+    # state. Replaces the per-requirement assert_runnable(..., pack_lock=True).
+    pack_ids = sorted({req.pack_id for req in requirements})
+    pack_rows = (
+        (
+            await db.execute(
+                select(DriverPack)
+                .where(DriverPack.id.in_(pack_ids))
+                .with_for_update(read=True)
+                .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pack_by_id = {pack.id: pack for pack in pack_rows}
+    for req in requirements:
+        pack = pack_by_id.get(req.pack_id)
+        if pack is None:
+            raise PackUnavailableError(req.pack_id)
+        if pack.state == PackState.disabled:
+            raise PackDisabledError(req.pack_id)
+        if pack.state == PackState.draining:
+            raise PackDrainingError(req.pack_id)
+        if pack.state != PackState.enabled:
+            raise PackDisabledError(req.pack_id)
+        release = selected_release(pack.releases, pack.current_release)
+        platform = (
+            next((row for row in release.platforms if row.manifest_platform_id == req.platform_id), None)
+            if release is not None
+            else None
+        )
+        if release is None or platform is None:
+            raise PlatformRemovedError(req.pack_id, req.platform_id)
+
+    # Step 3: the pack catalog loaded in step 2 already carries releases + platforms
+    # for every pack; reuse it for readiness assessment (no extra read).
+    pack_catalog = pack_by_id
+
+    # Step 4: one candidate-devices SELECT across every (pack_id, platform_id)
+    # pair. Joined to host + appium_node, gated by availability / review / node
+    # viability / no active reservation, ordered by created_at for deterministic
+    # FIFO selection.
+    now = now_utc()
+    pairs = _resolve_pack_platform_pairs(requirements)
+    pair_clauses = or_(*[(Device.pack_id == pid) & (Device.platform_id == plid) for pid, plid in pairs])
+    candidate_stmt = (
+        select(Device)
+        .options(selectinload(Device.host), selectinload(Device.appium_node))
+        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
+        .where(is_available_sql(now=now))
+        .where(Device.review_required.is_(False))
+        .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
+        .where(~active_reservation_exists())
+        .where(pair_clauses)
+        .order_by(Device.created_at, Device.id)
+    )
+    candidates = list((await db.execute(candidate_stmt)).scalars().all())
+
+    # Step 5: one batched readiness assessment over the candidate set, reusing
+    # the pack catalog. Maps device_id -> bool (ready and health-allowing).
+    readiness_map = await assess_devices_async(db, candidates, packs=pack_catalog)
+    readiness_lookup: dict[uuid.UUID, bool] = {
+        device.id: (
+            readiness_map[device.id].readiness_state == "verified" and device_health.device_allows_allocation(device)
+        )
+        for device in candidates
+    }
+
+    # Step 6: build the group membership index once over the candidate set when
+    # any requirement pins groups. Static-only groups fold to a single
+    # static-group-keys read; dynamic groups add the reservation/operational-state
+    # batch reads (still constant in candidate count).
+    group_index: GroupMembershipIndex | None = None
+    if groups:
+        group_index = await load_group_membership_index(
+            db, groups=groups, devices=candidates, settings=settings, pack_catalog=pack_catalog
+        )
+
+    # Step 7a: in-memory selection per requirement in request order, excluding
+    # already-selected device ids. The locked recheck follows.
+    selected_ids: set[uuid.UUID] = set()
+    per_requirement_candidates: list[list[Device]] = []
+    device_to_requirement_idx: dict[uuid.UUID, int] = {}
+    for req_idx, req in enumerate(requirements):
+        picked: list[Device] = []
+        for device in candidates:
+            if device.id in selected_ids:
+                continue
+            if _device_matches_requirement_static(
+                device, req, readiness_lookup=readiness_lookup, group_index=group_index
+            ):
+                picked.append(device)
+                device_to_requirement_idx[device.id] = req_idx
+                if req.allocation != "all_available":
+                    assert req.count is not None
+                    if len(picked) >= req.count:
+                        break
+        per_requirement_candidates.append(picked)
+        selected_ids.update(device.id for device in picked)
+
+    # Step 7b: one locked recheck SELECT ... FOR UPDATE OF devices SKIP LOCKED
+    # over the full selected-id set. Revalidates availability, review, node
+    # viability, and reservation absence under the lock; drops any device that
+    # lost a gate or was skipped. Readiness is re-evaluated synchronously against
+    # the freshly locked row + the already-loaded pack catalog (no new read).
+    # Group membership is a pure lookup against the index built in step 6.
+    all_selected_ids = list(selected_ids)
+    if not all_selected_ids:
+        return per_requirement_candidates
+    locked_stmt = (
+        select(Device)
+        .options(selectinload(Device.host), selectinload(Device.appium_node))
+        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
+        .where(Device.id.in_(all_selected_ids))
+        .where(is_available_sql(now=now))
+        .where(Device.review_required.is_(False))
+        .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
+        .where(~active_reservation_exists())
+        .with_for_update(of=Device, skip_locked=True)
+        .execution_options(populate_existing=True)
+    )
+    locked_rows = {row.id: row for row in (await db.execute(locked_stmt)).scalars().all()}
+    locked_ready: dict[uuid.UUID, Device] = {}
+    for device in locked_rows.values():
+        pack = pack_catalog.get(device.pack_id)
+        readiness = _assess_device_with_pack(device, pack)
+        if readiness.readiness_state != "verified":
+            continue
+        if not device_health.device_allows_allocation(device):
+            continue
+        req_index = device_to_requirement_idx.get(device.id)
+        if req_index is not None:
+            req = requirements[req_index]
+            if req.groups and group_index is not None and not group_index.matches_all(device.id, req.groups):
+                continue
+        locked_ready[device.id] = device
+
+    reconciled: list[list[Device]] = []
+    for picked in per_requirement_candidates:
+        kept = [locked_ready[device.id] for device in picked if device.id in locked_ready]
+        reconciled.append(kept)
+    return reconciled
+
+
 class RunAllocatorService:
     def __init__(
         self,
@@ -389,21 +618,18 @@ class RunAllocatorService:
         heartbeat_timeout_sec: int,
     ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
         now = now_utc()
+        selection = await _batch_select_devices(
+            db,
+            data.requirements,
+            restart_window_sec=self._restart_window_sec(),
+            settings=self._settings,
+        )
         all_matched: list[Device] = []
-
-        for req in data.requirements:
-            await assert_runnable(db, pack_id=req.pack_id, platform_id=req.platform_id, pack_lock=True)
-            already_ids = {device.id for device in all_matched}
-            available = await _find_matching_devices(
-                db,
-                req,
-                restart_window_sec=self._restart_window_sec(),
-                excluded_device_ids=already_ids,
-            )
+        for req, devices in zip(data.requirements, selection, strict=True):
             required_count = _minimum_required_count(req)
-            if len(available) < required_count:
-                raise _UnmetRequirementError(req, len(available))
-            all_matched.extend(_select_matching_devices(req, available))
+            if len(devices) < required_count:
+                raise _UnmetRequirementError(req, len(devices))
+            all_matched.extend(_select_matching_devices(req, devices))
 
         label_map = await load_platform_label_map(
             db,

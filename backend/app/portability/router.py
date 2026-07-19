@@ -1,4 +1,6 @@
-from typing import Annotated
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from starlette.responses import StreamingResponse
@@ -8,6 +10,7 @@ from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.timeutil import now_utc
 from app.devices.routers.core import build_device_query_filters
 from app.devices.schemas.filters import DeviceQueryFilters
+from app.devices.services.service import UnknownGroupKeysError
 from app.portability.dependencies import PortabilityServicesDep
 from app.portability.schemas import (
     ExportBundle,
@@ -19,6 +22,9 @@ from app.portability.schemas import (
     parse_columns_param,
 )
 from app.portability.services.import_bundle import BundleHashMismatchError
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 router = APIRouter(
     prefix="/api/portability",
@@ -83,8 +89,18 @@ async def inventory(
         media = "application/json"
         filename = f"gridfleet-inventory-{stamp}.json"
         iterator = portability_services.inventory.iter_inventory_json(db, columns=columns, filters=filters)
+    try:
+        first_chunk = await iterator.__anext__()
+    except UnknownGroupKeysError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    async def chained() -> AsyncIterator[str]:
+        yield first_chunk
+        async for chunk in iterator:
+            yield chunk
+
     return StreamingResponse(
-        iterator,
+        chained(),
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

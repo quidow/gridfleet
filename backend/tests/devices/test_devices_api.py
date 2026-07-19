@@ -10,7 +10,15 @@ import pytest_asyncio
 from sqlalchemy import event
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import (
+    ConnectionType,
+    Device,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceOperationalState,
+    DeviceType,
+    GroupType,
+)
 from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -548,6 +556,55 @@ async def test_list_devices_filter_tags(client: AsyncClient, db_session: AsyncSe
     resp = await client.get("/api/devices", params={"tags.team": "qa", "tags.lane": "smoke"})
     assert resp.status_code == 200
     assert [item["name"] for item in resp.json()] == ["Tagged QA"]
+
+
+@pytest.mark.asyncio
+async def test_devices_group_query_is_and(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Repeated ?group= params are ANDed: only devices in every named group match."""
+    east_tv = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="east-tv",
+        connection_target="east-tv",
+        name="east-tv",
+    )
+    east_phone = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="east-phone",
+        connection_target="east-phone",
+        name="east-phone",
+    )
+
+    async def _add_static_group(key: str, device_ids: list[uuid.UUID]) -> None:
+        group = DeviceGroup(key=key, name=key, group_type=GroupType.static)
+        db_session.add(group)
+        await db_session.flush()
+        for device_id in device_ids:
+            db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device_id))
+        await db_session.commit()
+
+    await _add_static_group("east", [east_tv.id, east_phone.id])
+    await _add_static_group("tv", [east_tv.id])
+
+    response = await client.get("/api/devices", params=[("group", "east"), ("group", "tv"), ("limit", 50)])
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["items"]] == [str(east_tv.id)]
+
+
+@pytest.mark.asyncio
+async def test_devices_group_query_unknown_key_is_422(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    response = await client.get("/api/devices", params=[("group", "missing")])
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == "unknown device groups: missing"
 
 
 async def test_list_devices_filter_status(

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge, Histogram
-from sqlalchemy import func, null, or_, select, true, update
+from sqlalchemy import func, null, or_, select, update
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
@@ -41,6 +41,7 @@ from app.devices.services.group_membership import (
     DeviceGroupFacts,
     GroupMembershipIndex,
     evaluate_group_memberships,
+    load_groups_by_keys,
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.state import is_available_sql
@@ -698,37 +699,11 @@ class AllocationService:
         returned verbatim; only static groups are pulled from ``member_of``
         (dynamic-to-dynamic references resolve to empty membership by contract).
 
-        Implemented as a single recursive CTE. Postgres requires the recursive
-        ``group_closure`` reference to appear in the FROM clause of the recursive
-        arm (it may not live in a subquery), so the arm joins the closure to the
-        set-returning ``jsonb_array_elements_text(filters->'member_of')`` and then
-        to ``device_groups`` on the resulting key. Static groups have no
-        ``member_of`` (and dynamic groups are not valid ``member_of`` targets),
-        so the recursion terminates at static groups; ``jsonb_array_elements_text``
-        on a NULL/missing ``member_of`` yields zero rows, also terminating the
-        recursion for groups without a ``member_of`` reference.
+        Delegates to the shared recursive-CTE helper in
+        :mod:`app.devices.services.group_membership` so the closure logic lives
+        in one place.
         """
-        if not group_keys:
-            return []
-        keys = sorted(set(group_keys))
-        seed = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.key.in_(keys))
-        closure = seed.cte("group_closure", recursive=True)
-        closure_alias = closure.alias()
-        member_of_keys = (
-            func.jsonb_array_elements_text(closure_alias.c.filters["member_of"])
-            .table_valued("member_of_key")
-            .render_derived()
-        )
-        arm = (
-            select(DeviceGroup.key, DeviceGroup.filters)
-            .select_from(closure_alias)
-            .join(member_of_keys, true())
-            .join(DeviceGroup, DeviceGroup.key == member_of_keys.c.member_of_key)
-            .where(DeviceGroup.group_type == GroupType.static)
-        )
-        closure = closure.union_all(arm)
-        stmt = select(DeviceGroup).where(DeviceGroup.key.in_(select(closure.c.key)))
-        return list((await db.execute(stmt)).scalars().all())
+        return await load_groups_by_keys(db, group_keys)
 
     async def _eligible_devices_with_facts(
         self,

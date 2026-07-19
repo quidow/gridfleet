@@ -64,3 +64,4 @@ class DeviceQueryFilters(DeviceGroupFilters):
     viability: HealthVerdictFilter | None = None
     sort_by: DeviceSortBy = "created_at"
     sort_dir: DeviceSortDir = "desc"
+    groups: list[GroupKey] = Field(default_factory=list)
