@@ -29,9 +29,14 @@ from app.devices.services.group_membership import (
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
-from app.devices.services.readiness import _assess_device_with_pack, assess_devices_async, is_ready_for_use_async
+from app.devices.services.readiness import (
+    _assess_device_with_pack,
+    assess_devices_async,
+    is_ready_for_use_async,
+    load_packs_by_ids,
+)
 from app.devices.services.service import UnknownGroupKeysError
-from app.devices.services.state import derive_operational_state, is_available_sql
+from app.devices.services.state import derive_operational_states, is_available_sql
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.packs.services.release_ordering import selected_release
 from app.runs.models import RunState, TestRun
@@ -146,29 +151,67 @@ async def _classify_shortfall_gates(
     reserved_run_by_device: dict[uuid.UUID, uuid.UUID],
     *,
     restart_window_sec: int,
+    settings: SettingsReader,
 ) -> tuple[Counter[str], Counter[str], set[uuid.UUID]]:
     """Bucket each device by the first allocator gate it fails.
 
-    Classification mirrors the gate order of ``_find_matching_devices``. Returns
-    ``(state_counts, gate_counts, blocking_runs)``.
+    Classification mirrors the gate order of the batch allocator
+    (``_batch_select_devices``). Returns ``(state_counts, gate_counts,
+    blocking_runs)``. Loads one device/reservation/readiness/group batch and
+    consumes pure maps per device instead of querying per device.
     """
     state_counts: Counter[str] = Counter()
     gate_counts: Counter[str] = Counter()
     blocking_runs: set[uuid.UUID] = set()
+    if not devices:
+        return state_counts, gate_counts, blocking_runs
+
+    now = now_utc()
+
+    # One batch: operational states, readiness, group membership index (when
+    # the requirement pins groups). The pack catalog is loaded once and reused
+    # by both the operational-state batch and the readiness batch.
+    pack_catalog = await load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
+    op_states = await derive_operational_states(db, devices, now=now, packs=pack_catalog)
+    readiness_map = await assess_devices_async(db, devices, packs=pack_catalog)
+
+    group_index: GroupMembershipIndex | None = None
+    if requirement.groups:
+        groups = await load_groups_by_keys(db, requirement.groups)
+        group_index = await load_group_membership_index(
+            db,
+            groups=groups,
+            devices=devices,
+            settings=settings,
+            pack_catalog=pack_catalog,
+            operational_states=op_states,
+            reservation_owner_by_device_id=reserved_run_by_device,
+        )
+
     for device in devices:
-        operational_state = await derive_operational_state(db, device, now=now_utc())
+        operational_state = op_states.get(device.id, DeviceOperationalState.offline)
         if operational_state != DeviceOperationalState.available:
             state_counts[operational_state.value] += 1
         elif device.review_required:
             gate_counts["review"] += 1
-        elif not device_node_is_viable(device, now=now_utc(), restart_window_sec=restart_window_sec):
+        elif not device_node_is_viable(device, now=now, restart_window_sec=restart_window_sec):
             gate_counts["node"] += 1
         elif device.id in reserved_run_by_device:
             gate_counts["reserved"] += 1
             blocking_runs.add(reserved_run_by_device[device.id])
         elif not _device_matches_requirement_tags(device, requirement.tags):
             gate_counts["tags"] += 1
-        elif not await _readiness_for_match(db, device):
+        elif (
+            requirement.groups
+            and group_index is not None
+            and not group_index.matches_all(device.id, requirement.groups)
+        ):
+            gate_counts["groups"] += 1
+        elif not (
+            readiness_map.get(device.id) is not None
+            and readiness_map[device.id].readiness_state == "verified"
+            and device_health.device_allows_allocation(device)
+        ):
             gate_counts["readiness"] += 1
         else:
             gate_counts["eligible"] += 1
@@ -195,6 +238,8 @@ def _format_shortfall_parts(
         parts.append(f"{gate_counts['review']} flagged review_required")
     if gate_counts["tags"]:
         parts.append(f"{gate_counts['tags']} not matching requested tags")
+    if gate_counts["groups"]:
+        parts.append(f"{gate_counts['groups']} not matching requested groups")
     if gate_counts["readiness"]:
         parts.append(f"{gate_counts['readiness']} not ready or health-blocked")
     if gate_counts["eligible"]:
@@ -203,7 +248,12 @@ def _format_shortfall_parts(
     return f"{device_count} candidate device{plural}: " + ", ".join(parts)
 
 
-async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceRequirement) -> str:
+async def _describe_requirement_shortfall(
+    db: AsyncSession,
+    requirement: DeviceRequirement,
+    *,
+    settings: SettingsReader,
+) -> str:
     """Per-gate breakdown of why the requirement's candidates were excluded.
 
     Two allocator gates — active reservations and Appium-node viability — are
@@ -211,8 +261,8 @@ async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceR
     on the device list ("the dashboard says the devices are available"). Name
     the failing gate, and for reservations the blocking run, so the 409 is
     actionable without DB spelunking. Classification mirrors the gate order of
-    ``_find_matching_devices``. Runs on the rolled-back session after matching
-    already failed — plain SELECTs, no locks.
+    the batch allocator (``_batch_select_devices``). Runs on the rolled-back
+    session after matching already failed — plain SELECTs, no locks.
     """
     stmt = (
         select(Device)
@@ -240,7 +290,12 @@ async def _describe_requirement_shortfall(db: AsyncSession, requirement: DeviceR
     )
 
     state_counts, gate_counts, blocking_runs = await _classify_shortfall_gates(
-        db, requirement, devices, reserved_run_by_device, restart_window_sec=_RESTART_WINDOW_FALLBACK_SEC
+        db,
+        requirement,
+        devices,
+        reserved_run_by_device,
+        restart_window_sec=_RESTART_WINDOW_FALLBACK_SEC,
+        settings=settings,
     )
     return _format_shortfall_parts(len(devices), state_counts, gate_counts, blocking_runs)
 
@@ -308,8 +363,6 @@ def _device_matches_requirement_static(
     if device.pack_id != req.pack_id or device.platform_id != req.platform_id:
         return False
     if req.os_version and device.os_version != req.os_version:
-        return False
-    if not _device_matches_requirement_tags(device, req.tags):
         return False
     if req.groups and group_index is not None and not group_index.matches_all(device.id, req.groups):
         return False
@@ -555,7 +608,7 @@ class RunAllocatorService:
                 await db.rollback()
                 attempt += 1
                 if attempt >= _MATCH_RETRY_ATTEMPTS:
-                    shortfall = await _describe_requirement_shortfall(db, exc.requirement)
+                    shortfall = await _describe_requirement_shortfall(db, exc.requirement, settings=self._settings)
                     raise ValueError(
                         "Not enough devices for requirement: "
                         f"pack_id={exc.requirement.pack_id}, "

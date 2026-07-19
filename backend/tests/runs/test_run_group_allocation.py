@@ -100,6 +100,17 @@ async def _seed_static_group(
     await db_session.commit()
 
 
+async def _seed_dynamic_group(
+    db_session: AsyncSession,
+    *,
+    key: str,
+    filters: dict[str, Any],
+) -> None:
+    group = DeviceGroup(key=key, name=key, group_type=GroupType.dynamic, filters=filters)
+    db_session.add(group)
+    await db_session.commit()
+
+
 def _run_payload(
     *,
     groups: list[str] | None = None,
@@ -267,3 +278,39 @@ async def test_run_allocation_read_count_constant_at_requirement_scale(
     one_reads = await _run_with_n_requirements(1)
     ten_reads = await _run_with_n_requirements(10)
     assert ten_reads == one_reads, f"candidate-selection reads grew with requirement count: {one_reads} -> {ten_reads}"
+
+
+@pytest.mark.db
+async def test_dynamic_requirement_group_parity_with_direct_routing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A dynamic group used as a requirement group selects the same devices the
+    group-membership index (exposed by the device-groups detail endpoint)
+    reports as members — i.e. run routing agrees with direct group routing.
+    """
+    member_a = await _seed_available_device(db_session, default_host_id, "parity-a", "Parity A")
+    member_b = await _seed_available_device(db_session, default_host_id, "parity-b", "Parity B")
+    outsider = await _seed_available_device(db_session, default_host_id, "parity-out", "Parity Out")
+    _ = outsider
+
+    await _seed_static_group(db_session, key="parity-pool", device_ids=[member_a.id, member_b.id])
+    await _seed_dynamic_group(
+        db_session,
+        key="parity-dyn",
+        filters={"member_of": ["parity-pool"]},
+    )
+
+    detail = await client.get("/api/device-groups/parity-dyn")
+    assert detail.status_code == 200
+    expected_ids = {device["id"] for device in detail.json()["devices"]}
+    assert expected_ids == {str(member_a.id), str(member_b.id)}
+
+    response = await client.post(
+        "/api/runs",
+        json=_run_payload(groups=["parity-dyn"], count=2),
+    )
+    assert response.status_code == 201
+    reserved_ids = {device["device_id"] for device in response.json()["devices"]}
+    assert reserved_ids == expected_ids
