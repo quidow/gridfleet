@@ -220,10 +220,56 @@ Each device's stereotype is the **routing surface**. The backend allocation API 
 - `platformName`, `appium:automationName` — derived from the active pack/platform manifest.
 - `gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity.
 - Run routing — sessions bound to a run are created through the run-scoped router endpoint (`/run/{run_id}`); the router extracts the run id from the URL path. Reserved devices admit only sessions from their run; unreserved devices admit only free (non-run) sessions. The legacy `gridfleet:run_id` capability is no longer supported and is rejected with an explicit error.
-- `gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
+- `gridfleet:group:<key>` — boolean `true` for each group key **the incoming request asked for** that this device currently matches. The stereotype is built per allocation attempt and is not a full listing of the device's groups; keys nobody requested are never projected. See [Device group routing](#device-group-routing) below.
 - Any other keys the pack manifest declares in its `capabilities.stereotype` block. String values support `{device.<attr>}` placeholders, evaluated per device against the live row (e.g. `appium:os_version: "{device.os_version}"`).
 
 Keys that describe the device for Appium's benefit (`appium:ip` and sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` covers the routing-suppression cases.
+
+### Device group routing
+
+A client routes to a device group with a single vendor capability:
+
+```json
+{"gridfleet:group:east-lab": true}
+```
+
+`<key>` is the group's public key: `^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$` (lowercase alphanumerics and inner hyphens, 1–64 characters). Keys are immutable and are the only public identifier for a group — a group's internal UUID never appears in a capability, route, event, or bundle. Static and dynamic groups are requested identically; the client cannot tell which kind it named.
+
+The value must be the JSON boolean `true`.
+
+**Composition follows the W3C merge.** The router merges each `firstMatch` entry with `alwaysMatch` into one candidate:
+
+- group capabilities within a **single merged candidate** are **ANDed** — a device must belong to all of them
+- distinct **`firstMatch` candidates** stay **OR** alternatives
+
+```json
+{
+  "capabilities": {
+    "alwaysMatch": {"platformName": "Android", "gridfleet:group:east-lab": true},
+    "firstMatch": [
+      {"gridfleet:group:screen-type-4k": true},
+      {"gridfleet:group:screen-type-8k": true}
+    ]
+  }
+}
+```
+
+That request means `east-lab AND (screen-type-4k OR screen-type-8k)`.
+
+**Rejections.** Each of these cancels the queue ticket and returns HTTP `400` with a descriptive message, rather than degrading into a broader match:
+
+- a key that does not satisfy the key format
+- a value that is not the boolean `true`, including `false` and the string `"true"`
+- a key that names no existing group, including one deleted after the client was written
+- any `gridfleet:tag:*` capability (see the tombstone below)
+
+A well-formed key that no free device currently matches is not an error; the ticket queues normally.
+
+**Membership is live.** A device's group capabilities are projected from current fleet facts each time allocation evaluates it, for the keys that request asked for. Dynamic membership is never materialized into a table and never cached, so a membership or filter edit is visible to the next allocation poll.
+
+`GET /api/devices/{device_id}/capabilities` returns the Appium session capabilities for a device and does **not** include `gridfleet:group:*` — group keys are a routing input the allocator consumes, not something a client passes through to Appium.
+
+**Retired: `gridfleet:tag:*`.** Device tags were replaced by device groups; the `devices.tags` column and every tag route, filter, and capability were removed. `gridfleet:tag:*` is kept as an explicit tombstone: a request still carrying one is rejected with a pointer to `gridfleet:group:<key>`, instead of being silently ignored as an unknown vendor capability — which would have matched any device. Replace each tag selector with the group key the tag migrated to.
 
 ## Manager-Owned Session Caps
 

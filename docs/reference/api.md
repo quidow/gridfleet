@@ -38,7 +38,7 @@ Current auth behavior:
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `reserved`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, `tags.<key>` | `DeviceRead[]` |
+| `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `reserved`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, repeated `group` | `DeviceRead[]` |
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
@@ -66,17 +66,31 @@ Current auth behavior:
 | `GET` | `/api/devices/{device_id}/session-outcome-heatmap` | Read recent session outcome points | `days` | `SessionOutcomeHeatmapRow[]` |
 | `POST` | `/api/devices/{device_id}/session-test` | Run a session viability probe | path `device_id` | session-test result |
 
+The device list `group` filter takes a device-group key and may be repeated; repeats are ANDed, so `?group=east-lab&group=screen-type-4k` returns only devices in both groups. Static and dynamic groups are both accepted, and dynamic membership is evaluated live against the same instant as the rest of the query. A key that does not satisfy the key format, or that names no group, returns `422` — an unknown group is never treated as an empty filter.
+
 Device list `search` uses PostgreSQL full-text syntax over `name`, identity and connection target fields, manufacturer/model fields, OS version, pack ID, and platform ID. Punctuation in identifiers is tokenized, so `usb-pixel-8-pro` matches searches such as `pixel pro`; quoted phrases, negation, and `OR` follow PostgreSQL `websearch_to_tsquery` behavior. Results still use the requested list ordering rather than relevance ranking.
 
 ### Devices — Portability
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/portability/export` | Export the full registered fleet as a versioned JSON bundle | none | portability bundle (`schema_version=1`) |
+| `GET` | `/api/portability/export` | Export the full registered fleet as a versioned JSON bundle | none | portability bundle (`schema_version=2`) |
 | `POST` | `/api/portability/import/validate` | Preview an uploaded bundle without writing to the DB | bundle body | per-row classification, host suggestions, `bundle_hash` |
 | `POST` | `/api/portability/import` | Commit a previously-validated bundle | `{ bundle, bundle_hash, mappings: [{ index, target_host_id }] }` | `{ created, skipped, failed }` arrays |
 
-`GET /api/portability/export` returns the full registered fleet as a `schema_version=1` JSON bundle. Intended to seed a fresh GridFleet install after a DB wipe or migration. Runtime state is excluded (operational_state, telemetry, lifecycle policy state, verification stamps). The bundle preserves identity, name, tags, device_config, test_data, and the original host hostname.
+`GET /api/portability/export` returns the full registered fleet as a `schema_version=2` JSON bundle. Intended to seed a fresh GridFleet install after a DB wipe or migration. Runtime state is excluded (operational_state, telemetry, lifecycle policy state, verification stamps). The bundle preserves identity, name, device group membership, device_config, test_data, and the original host hostname.
+
+Schema v2 carries device groups:
+
+- a top-level `groups` array of group definitions — `key`, `name`, `description`, `group_type`, and `filters` (including `member_of`) for dynamic groups
+- a per-device `static_groups` array of the static group keys the device belongs to
+
+Groups are addressed by key throughout the bundle; no group UUID is exported, so a bundle is portable across installs. Import validates group references before writing anything:
+
+- every device `static_groups` entry and every dynamic `member_of` entry must reference a static group defined in the same bundle
+- no bundle group key may collide with a group key that already exists on the target install — because keys are immutable, resolve a collision by editing the bundle or removing the existing group, not by renaming it
+
+`schema_version=1` bundles are **not** accepted. A v1 bundle fails with `unsupported portability schema version; expected 2`. There is no in-place upgrade path for a v1 file: re-export from the source install after it has been migrated to groups.
 
 `POST /api/portability/import/validate` accepts a bundle and returns a preview with no DB writes:
 
@@ -96,7 +110,7 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 
 - `format` — `csv` or `json`. CSV serializes JSONB columns as JSON strings; `json` returns a JSON array of nested objects.
 - `columns` — comma-separated allowlist of dot-path column names (see `app/portability/schemas.py` for the enum). Omitting or leaving empty returns all columns.
-- List filters — `pack_id`, `platform_id`, `status`, `host_id`, `tags.*`, and others mirroring the devices list endpoint.
+- List filters — `pack_id`, `platform_id`, `status`, `host_id`, repeated `group`, and others mirroring the devices list endpoint.
 
 ## Bulk Device Actions
 
@@ -105,7 +119,6 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | `POST` | `/api/devices/bulk/start-nodes` | Start nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/stop-nodes` | Stop nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/restart-nodes` | Restart nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
-| `POST` | `/api/devices/bulk/update-tags` | Merge or replace tags in bulk | `BulkTagsUpdate` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/delete` | Delete many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/enter-maintenance` | Enter maintenance in bulk | `BulkMaintenanceEnter` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/exit-maintenance` | Exit maintenance in bulk | `BulkDeviceIds` | `BulkOperationResult` |
@@ -229,6 +242,21 @@ Stamps `Host.last_heartbeat` (recency drives liveness at read time, see `general
 | `POST` | `/api/runs/{run_id}/complete` | Complete a run and release devices | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/cancel` | Cancel a run and release devices | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/force-release` | Force release reserved devices | path `run_id` | `RunRead` |
+
+Each entry in `RunCreate.requirements` (`DeviceRequirement`) accepts an optional `groups` list of device-group keys alongside `pack_id`, `platform_id`, `os_version`, and the count fields. The keys are ANDed with each other and with the rest of the requirement, so the run reserves only devices that belong to every listed group:
+
+```json
+{
+  "requirements": [
+    {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 2,
+     "groups": ["east-lab", "screen-type-4k"]}
+  ]
+}
+```
+
+Omitting `groups` (or passing `[]`) places no group constraint on the requirement. Static and dynamic groups are both accepted, and dynamic membership is evaluated live at reservation time. A key naming no existing group fails run creation with `422`; a well-formed key that simply matches too few devices right now is a capacity problem and returns the usual `409`.
+
+Note the deliberate status split for an unknown group key: REST endpoints (`POST /api/runs`, `GET /api/devices`, `GET /api/portability/inventory`) return `422`, while the router's session-allocation path returns `400` and cancels the queue ticket. Both refuse to degrade an unknown key into "no constraint".
 
 `RunPreparationFailureReport` currently accepts:
 
@@ -374,23 +402,24 @@ They also return the latest hardware telemetry snapshot fields:
 
 ## Device Groups
 
+Groups are addressed by their **key**, not by a UUID. A key matches `^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$` (lowercase alphanumerics and inner hyphens, 1–64 characters), is unique across all group types, and is **immutable** — `DeviceGroupUpdate` accepts `name`, `description`, and `filters` only. The group's internal UUID is never exposed in a route, response schema, event payload, or export bundle. A `{group_key}` path parameter that does not satisfy the key format returns `422`; a well-formed key naming no group returns `404`.
+
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/device-groups` | List static and dynamic groups | none | `DeviceGroupRead[]` |
 | `POST` | `/api/device-groups` | Create a group | `DeviceGroupCreate` | `DeviceGroupRead` (`201`) |
-| `GET` | `/api/device-groups/{group_id}` | Read group detail and resolved devices | path `group_id` | `DeviceGroupDetail` |
-| `PATCH` | `/api/device-groups/{group_id}` | Update group metadata or filter rules | `DeviceGroupUpdate` | `DeviceGroupRead` |
-| `DELETE` | `/api/device-groups/{group_id}` | Delete a group | path `group_id` | empty `204` |
-| `POST` | `/api/device-groups/{group_id}/members` | Add static-group members | `GroupMembershipUpdate` | added-count object |
-| `DELETE` | `/api/device-groups/{group_id}/members` | Remove static-group members | `GroupMembershipUpdate` | removed-count object |
-| `POST` | `/api/device-groups/{group_id}/bulk/start-nodes` | Run group-scoped bulk start | none | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/stop-nodes` | Run group-scoped bulk stop | none | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/restart-nodes` | Run group-scoped bulk restart | none | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/enter-maintenance` | Run group-scoped maintenance enter | `BulkMaintenanceEnter` | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/exit-maintenance` | Run group-scoped maintenance exit | none | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/reconnect` | Run group-scoped reconnect | none | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/update-tags` | Run group-scoped tag update | `BulkTagsUpdate` | `BulkOperationResult` |
-| `POST` | `/api/device-groups/{group_id}/bulk/delete` | Run group-scoped delete | none | `BulkOperationResult` |
+| `GET` | `/api/device-groups/{group_key}` | Read group detail and resolved devices | path `group_key` | `DeviceGroupDetail` |
+| `PATCH` | `/api/device-groups/{group_key}` | Update group metadata or filter rules | `DeviceGroupUpdate` | `DeviceGroupRead` |
+| `DELETE` | `/api/device-groups/{group_key}` | Delete a group | path `group_key` | empty `204` |
+| `POST` | `/api/device-groups/{group_key}/members` | Add static-group members | `GroupMembershipUpdate` | added-count object |
+| `DELETE` | `/api/device-groups/{group_key}/members` | Remove static-group members | `GroupMembershipUpdate` | removed-count object |
+| `POST` | `/api/device-groups/{group_key}/bulk/start-nodes` | Run group-scoped bulk start | none | `BulkOperationResult` |
+| `POST` | `/api/device-groups/{group_key}/bulk/stop-nodes` | Run group-scoped bulk stop | none | `BulkOperationResult` |
+| `POST` | `/api/device-groups/{group_key}/bulk/restart-nodes` | Run group-scoped bulk restart | none | `BulkOperationResult` |
+| `POST` | `/api/device-groups/{group_key}/bulk/enter-maintenance` | Run group-scoped maintenance enter | `BulkMaintenanceEnter` | `BulkOperationResult` |
+| `POST` | `/api/device-groups/{group_key}/bulk/exit-maintenance` | Run group-scoped maintenance exit | none | `BulkOperationResult` |
+| `POST` | `/api/device-groups/{group_key}/bulk/reconnect` | Run group-scoped reconnect | none | `BulkOperationResult` |
+| `POST` | `/api/device-groups/{group_key}/bulk/delete` | Run group-scoped delete | none | `BulkOperationResult` |
 
 Dynamic group request bodies now use `filters`, not `filter_rules`.
 
@@ -406,10 +435,25 @@ Supported dynamic group filters:
 - `connection_type`
 - `os_version`
 - `os_version_display`
+- `reserved`
 - `hardware_health_status`
 - `hardware_telemetry_state`
 - `needs_attention`
-- `tags` as a key/value object
+- `member_of` — a list of **static** group keys
+
+Every pinned axis is ANDed, `member_of` included: a device is a member only if it matches every filter *and* belongs to every static group named in `member_of`. `member_of` may reference static groups only; a dynamic or unknown key is rejected with `422` on create and update. Deleting a static group still referenced by a dynamic group's `member_of` returns `409`. Static groups cannot define filters.
+
+Dynamic membership is evaluated live on every read; it is never materialized into a membership table and never cached.
+
+Error responses specific to groups:
+
+| Condition | Status |
+| --- | --- |
+| key does not satisfy the key format | `422` |
+| `member_of` names a dynamic or unknown group | `422` |
+| group key already exists | `409` |
+| deleting a static group a dynamic group references | `409` |
+| `{group_key}` names no group | `404` |
 
 ## Grid, Analytics, And Lifecycle
 

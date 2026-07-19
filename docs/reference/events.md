@@ -124,11 +124,13 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 
 | Event | Typical `data` fields | Default severity | Allowed severities | Source |
 | --- | --- | --- | --- | --- |
-| `device_group.updated` | `group_id`, `action` | `neutral` | `neutral`, `info` | group create/update/delete |
-| `device_group.members_changed` | `group_id`, `added`, `removed` | `neutral` | `neutral`, `info` | static group membership writes |
+| `device_group.updated` | `group_key`, `action` | `neutral` | `neutral`, `info` | group create/update/delete |
+| `device_group.members_changed` | `group_key`, `added`, `removed` | `neutral` | `neutral`, `info` | static group membership writes |
 | `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | `success` | `success`, `warning`, `critical` | device and group bulk actions |
 | `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | `neutral` | `neutral`, `info` | settings writes |
 | `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted`, `duration_seconds` | `neutral` | `neutral`, `warning` | retention cleanup loop |
+
+Both `device_group.*` events identify the group by its public `group_key`, never by the internal group UUID. `action` on `device_group.updated` is `created`, `updated`, or `deleted`. `device_group.members_changed` carries `added` **or** `removed` — whichever count the write produced — and is not emitted when a membership write changes nothing (for example re-adding a device that is already a member). Because the key is immutable, a subscriber can use it as a stable correlation id for a group's whole lifetime; a `deleted` action is the only end to that identity.
 
 ## Event Delivery Semantics
 

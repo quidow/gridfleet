@@ -10,7 +10,23 @@ While the old instance is still running:
 2. Click **Export Config** in the **Export configuration** card. The browser downloads `gridfleet-devices-<timestamp>.json`.
 3. Keep this file alongside any other ops artifacts you preserve across the install.
 
-The bundle is human-readable. You can hand-edit it before importing: strip rows, fix tags, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data only — runtime state (operational_state, telemetry, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
+The bundle is human-readable. You can hand-edit it before importing: strip rows, adjust a device's `static_groups`, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data + device groups only — runtime state (operational_state, telemetry, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
+
+### Bundle schema version
+
+Exports are `schema_version: 2`. A v2 bundle carries device groups:
+
+- a top-level `groups` array of group definitions (`key`, `name`, `description`, `group_type`, and `filters` including `member_of` for dynamic groups)
+- a per-device `static_groups` array of static group keys
+
+Groups are referenced by key throughout; no group UUID is exported, so a bundle moves cleanly between installs.
+
+> **`schema_version: 1` bundles are rejected.** Import fails with `unsupported portability schema version; expected 2`. There is no converter. A v1 bundle predates device groups and its device `tags` cannot be reconstructed into groups after the fact — the tag-to-group migration is one-way and ran against the source database, not against exported files. If you are holding a v1 bundle, restore the source instance, run `alembic upgrade head` so its tags migrate into static groups, then re-export.
+
+If you hand-edit the groups section, keep these rules or the import is rejected before anything is written:
+
+- every device `static_groups` key and every dynamic `member_of` key must name a **static** group defined in the same bundle
+- no bundle group key may collide with a group already on the target install — keys are immutable, so resolve a collision by editing the bundle or deleting the existing group, never by renaming
 
 > **Sensitive content.** The exported bundle includes per-device `test_data` and `device_config`. These may contain credentials, secrets, or other sensitive material your devices need at test time. Treat the bundle as a sensitive artifact — store it the same way you store other operator secrets, do not commit it to git, and rotate any embedded credentials if the file leaves operator hands.
 
@@ -42,6 +58,9 @@ Each created device is queued for verification on commit. Devices transition `of
 
 - **409 on commit:** the bundle hash didn't match. Re-run the validate step (re-upload the bundle); something changed between validate and commit, or the browser tab was reloaded after validate.
 - **A row "failed: identity conflict":** another import (or hand-add) inserted the same identity between validate and commit. Re-validate the leftover rows and try again.
+- **"unsupported portability schema version; expected 2":** the bundle is a v1 export. See [Bundle schema version](#bundle-schema-version) — re-export from a migrated source instance.
+- **Import rejected for an unknown group reference:** a device's `static_groups` entry, or a dynamic group's `member_of` entry, names a static group that is not defined in the bundle. Add the missing group definition or drop the reference.
+- **Import rejected for a group key collision:** a group key in the bundle already exists on this install. Keys are immutable — edit the bundle to use a different key, or delete the existing group first.
 - **A row "failed: verification enqueue failed":** the device insert was rolled back. The row needs no cleanup; investigate the underlying job queue, then re-upload that subset.
 
 ## Inventory snapshot (separate feature)
@@ -53,5 +72,5 @@ Choose between CSV or JSON via the modal's format toggle. The column picker reme
 ## Out of scope
 
 - Re-importing hosts. Hosts come back through the standard agent registration flow.
-- Re-importing reservations, sessions, groups, or lifecycle policy state.
+- Re-importing reservations, sessions, or lifecycle policy state. (Device groups **are** in the bundle as of `schema_version: 2`.)
 - Bundle signing or supply-chain integrity verification beyond the canonical hash that defends against in-flight tampering.

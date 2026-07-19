@@ -38,7 +38,7 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
 - `guides/hosts-and-host-detail-operations.md`
   - Daily host operations after onboarding, including discovery and driver sync.
 - `guides/groups-and-bulk-actions.md`
-  - Static/dynamic groups, ad hoc bulk actions, and maintenance/template/tag workflows.
+  - Static/dynamic groups, group keys and session routing, ad hoc bulk actions, and maintenance workflows.
 - `guides/deployment.md`
   - Local development, production compose deployment, backup/restore, and verification.
 - `guides/ci-integration.md`

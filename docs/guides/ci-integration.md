@@ -45,7 +45,7 @@ When auth is disabled (`GRIDFLEET_AUTH_ENABLED=false`), leave the two env vars u
   "name": "firetv-regression-12345",
   "requirements": [
     {"pack_id": "appium-uiautomator2", "platform_id": "firetv_real", "os_version": "8", "count": 3},
-    {"pack_id": "appium-roku-dlenroc", "platform_id": "roku_network", "count": 1, "tags": {"model": "Roku Ultra"}}
+    {"pack_id": "appium-roku-dlenroc", "platform_id": "roku_network", "count": 1, "groups": ["streaming-lab"]}
   ],
   "ttl_minutes": 60,
   "heartbeat_timeout_sec": 120,
@@ -53,7 +53,8 @@ When auth is disabled (`GRIDFLEET_AUTH_ENABLED=false`), leave the two env vars u
 }
 ```
 
-- **requirements**: List of device groups to reserve. Each specifies `pack_id`, `platform_id`, optional os_version/tags, and either an exact `count` or `allocation: "all_available"`.
+- **requirements**: List of device slices to reserve. Each specifies `pack_id`, `platform_id`, an optional `os_version`, an optional `groups` list of device-group keys, and either an exact `count` or `allocation: "all_available"`.
+- **requirements[].groups**: Device-group keys, ANDed with each other and with the rest of the requirement — the run reserves only devices belonging to every listed group. Omit it (or pass `[]`) for no group constraint. Keys are the immutable public group identifiers shown on the Device Groups page; see [Groups And Bulk Actions](groups-and-bulk-actions.md).
 - **ttl_minutes**: Maximum run duration before auto-expiry (default: 60).
 - **heartbeat_timeout_sec**: How long before a missed heartbeat expires the run (default: 120).
 
@@ -78,6 +79,37 @@ When CI should run on every currently eligible matching device, use explicit all
 Roku is not installed by default; import the curated Roku driver or upload a Roku driver pack before using the Roku example.
 
 `POST /api/runs` is immediate. If matching devices are not currently available, the manager returns `409` instead of waiting inside the request. Use `GET /api/availability` for a quick platform-capacity check or retry later.
+
+## Targeting Device Groups Without A Run
+
+A free (unreserved) session picks its device with a W3C capability instead of a run requirement:
+
+```json
+{
+  "capabilities": {
+    "alwaysMatch": {
+      "platformName": "Android",
+      "gridfleet:group:east-lab": true
+    }
+  }
+}
+```
+
+The value must be the JSON boolean `true`. Group capabilities in one merged candidate are ANDed; separate `firstMatch` candidates are OR alternatives, so a job that can run in either of two labs sends:
+
+```json
+{
+  "capabilities": {
+    "alwaysMatch": {"platformName": "Android"},
+    "firstMatch": [
+      {"gridfleet:group:east-lab": true},
+      {"gridfleet:group:west-lab": true}
+    ]
+  }
+}
+```
+
+A misspelled key, a deleted group, a non-boolean value, or a retired `gridfleet:tag:*` capability fails the session with `400` rather than quietly widening the match — a CI job pinned to the wrong group fails fast instead of running on unintended hardware. Pin group keys in your CI config the way you pin an image tag: keys are immutable, so a key that stops resolving means the group was deleted, not renamed.
 
 ## Reservation Response
 
