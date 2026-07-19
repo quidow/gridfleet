@@ -12,8 +12,6 @@ import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, resolvePlatformLabel } fr
 import {
   buildUpdatePayload,
   getGeneratedDefaultsPreview,
-  operatorTags,
-  parseDeviceTagsInput,
   type VerificationRequest,
 } from './devicePageHelpers';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
@@ -59,8 +57,7 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
     ip_address: device.ip_address,
     device_config: (device.device_config ?? {}) as Record<string, unknown>,
   }));
-  const [editTagsText, setEditTagsText] = useState(() => JSON.stringify(operatorTags(device.tags), null, 2));
-  const [editTagsError, setEditTagsError] = useState<string | null>(null);
+
   const hostName = hostMap.get(device.host_id) ?? device.host_id;
   const status = deviceChipStatus(device);
 
@@ -87,16 +84,7 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
         id="device-edit-form"
         onSubmit={async (event) => {
           event.preventDefault();
-          let parsedTags: Record<string, string>;
-          try {
-            parsedTags = parseDeviceTagsInput(editTagsText);
-            setEditTagsError(null);
-          } catch (error) {
-            setEditTagsError(getErrorMessage(error, 'Invalid JSON'));
-            return;
-          }
-
-          const nextBody = buildUpdatePayload(editForm, device, parsedTags);
+          const nextBody = buildUpdatePayload(editForm, device);
           const readinessFieldIds = descriptor?.deviceFieldsSchema.map((field) => field.id) ?? [];
           if (deviceUpdateRequiresReverification(device, nextBody, readinessFieldIds)) {
             onRequestVerification({
@@ -181,19 +169,6 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
           />
         )}
 
-        <Field label="Tags JSON" htmlFor="edit-device-tags-json" error={editTagsError}>
-          <Textarea
-            id="edit-device-tags-json"
-            value={editTagsText}
-            onChange={(value) => {
-              setEditTagsText(value);
-              setEditTagsError(null);
-            }}
-            monospace
-            invalid={!!editTagsError}
-            rows={6}
-          />
-        </Field>
 
         {generatedDefaults.length > 0 ? (
           <div className="rounded-md border border-accent/25 bg-accent-soft p-3 text-sm text-text-1">

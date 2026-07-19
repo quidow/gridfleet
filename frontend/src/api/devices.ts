@@ -21,6 +21,7 @@ import type { PaginatedResponse } from '../types/shared';
 export async function fetchDevices(params?: {
   pack_id?: string;
   platform_id?: string;
+  group?: string[];
   status?: DeviceFilterStatus;
   reserved?: boolean;
   host_id?: string;
@@ -55,6 +56,7 @@ export type DeviceSortDir = 'asc' | 'desc';
 export async function fetchDevicesPaginated(params: {
   pack_id?: string;
   platform_id?: string;
+  group?: string[];
   status?: DeviceFilterStatus;
   reserved?: boolean;
   host_id?: string;

@@ -19,7 +19,6 @@ const deviceFixture: Partial<DeviceDetail> = {
   os_version: 'API 37',
   operational_state: 'offline',
   host_id: 'host-uuid-abc',
-  tags: {},
   manufacturer: null,
   model: null,
   reservation: null,
@@ -86,34 +85,4 @@ describe('DeviceInfoPanel host row', () => {
     expect(screen.getByText('AP1A.240405.002')).toBeInTheDocument();
   });
 
-  it('renders user-defined tags as compact device info', () => {
-    render(
-      <MemoryRouter>
-        <DeviceInfoPanel
-          device={
-            {
-              ...deviceFixture,
-              tags: { owner: 'qa', room: 'lab-1' },
-            } as DeviceDetail
-          }
-        />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Tags')).toBeInTheDocument();
-    expect(screen.getByText('owner: qa')).toBeInTheDocument();
-    expect(screen.getByText('room: lab-1')).toBeInTheDocument();
-  });
-
-  it('renders an empty tags row without routing label copy', () => {
-    render(
-      <MemoryRouter>
-        <DeviceInfoPanel device={deviceFixture as DeviceDetail} />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Tags')).toBeInTheDocument();
-    expect(screen.queryByText('Routing labels')).not.toBeInTheDocument();
-    expect(screen.queryByText(/No routing labels/i)).not.toBeInTheDocument();
-  });
 });

@@ -66,6 +66,7 @@ function hasAuthBypassHeader(config?: InternalAxiosRequestConfig): boolean {
 
 const api = axios.create({
   baseURL: '/api',
+  paramsSerializer: { indexes: null },
 });
 
 api.interceptors.request.use((config) => {

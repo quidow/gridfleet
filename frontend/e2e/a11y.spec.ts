@@ -17,7 +17,6 @@ const DEVICE = {
   host_id: 'host-1',
   operational_state: 'available',
   hold: null,
-  tags: { team: 'qa' },
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.50',

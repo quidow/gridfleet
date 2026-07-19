@@ -26,7 +26,6 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       readiness_state: 'verified',
       host_id: 'h1',
       identity_value: '192.168.1.2',
-      tags: {},
       sessions: [],
       health_summary: healthSummary(),
       lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null },

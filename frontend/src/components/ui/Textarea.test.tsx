@@ -7,22 +7,22 @@ describe('Textarea', () => {
   it('forwards value changes', async () => {
     const onChange = vi.fn();
 
-    render(<Textarea value="" onChange={onChange} aria-label="Tags" />);
+    render(<Textarea value="" onChange={onChange} aria-label="Notes" />);
 
-    await userEvent.type(screen.getByLabelText('Tags'), 'x');
+    await userEvent.type(screen.getByLabelText('Notes'), 'x');
 
     expect(onChange).toHaveBeenCalledWith('x');
   });
 
   it('applies mono font when monospace prop is set', () => {
-    render(<Textarea value="{}" onChange={() => {}} monospace aria-label="Tags" />);
+    render(<Textarea value="{}" onChange={() => {}} monospace aria-label="Notes" />);
 
-    expect(screen.getByLabelText('Tags').className).toMatch(/font-mono/);
+    expect(screen.getByLabelText('Notes').className).toMatch(/font-mono/);
   });
 
   it('supports invalid state', () => {
-    render(<Textarea value="" onChange={() => {}} invalid aria-label="Tags" />);
+    render(<Textarea value="" onChange={() => {}} invalid aria-label="Notes" />);
 
-    expect(screen.getByLabelText('Tags')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Notes')).toHaveAttribute('aria-invalid', 'true');
   });
 });

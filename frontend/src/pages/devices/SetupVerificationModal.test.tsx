@@ -117,7 +117,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     operational_state: 'available',
     needs_attention: false,
     is_reserved: false,
-    tags: null,
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,

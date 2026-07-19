@@ -16,7 +16,6 @@ const device = {
   host_id: 'host-1',
   operational_state: 'available',
   needs_attention: false,
-  tags: {},
   manufacturer: 'Roku',
   model: 'Ultra',
   device_type: 'real_device',
