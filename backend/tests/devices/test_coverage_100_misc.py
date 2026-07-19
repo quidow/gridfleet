@@ -505,6 +505,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
 async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     static_group = SimpleNamespace(
         id=uuid.uuid4(),
+        key="static",
         name="static",
         description=None,
         group_type=device_group_service.GroupType.static,
@@ -537,13 +538,13 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
-    missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
+    missing_group_db.scalar = AsyncMock(return_value=None)
     _gs2 = FakeSettingsReader({})
     assert (
         await device_group_service.DeviceGroupsService(
             publisher=event_bus,
             crud=DeviceCrudService(settings=_gs2, identity=DeviceIdentityConflictService(), publisher=event_bus),
-        ).delete_group(missing_group_db, uuid.uuid4())
+        ).delete_group(missing_group_db, "missing-group")
         is False
     )
 
