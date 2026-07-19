@@ -31,7 +31,7 @@ export type CursorDirection = 'older' | 'newer';
 export type DeviceChipStatus = DeviceOperationalState;
 // Device-list status filter: the operational states. Reservation is an
 // orthogonal boolean filter, not a status value.
-export type DeviceFilterStatus = NonNullable<Schemas['DeviceGroupFilters']['status']>;
+export type DeviceFilterStatus = NonNullable<Schemas['DeviceGroupFilters-Input']['status']>;
 
 export type PaginatedResponse<T> = {
   items: T[];
