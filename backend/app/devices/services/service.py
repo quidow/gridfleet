@@ -307,8 +307,6 @@ def _apply_version_and_text_filters(stmt: DeviceQueryStatement, filters: DeviceQ
         stmt = stmt.where(func.coalesce(Device.os_version_display, Device.os_version) == filters.os_version_display)
     if filters.hardware_health_status is not None:
         stmt = stmt.where(Device.hardware_health_status == filters.hardware_health_status)
-    if filters.tags:
-        stmt = stmt.where(Device.tags.contains(filters.tags))
     if filters.search:
         query = func.websearch_to_tsquery("simple", filters.search)
         stmt = stmt.where(device_search_vector_expression().op("@@")(query))

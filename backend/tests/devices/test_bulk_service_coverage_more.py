@@ -35,7 +35,6 @@ def _device(**overrides: object) -> SimpleNamespace:
         "id": uuid.uuid4(),
         "host_id": uuid.uuid4(),
         "appium_node": None,
-        "tags": {"old": "yes"},
         "pack_id": "pack",
         "platform_id": "platform",
         "device_type": SimpleNamespace(value="mobile"),
@@ -115,17 +114,12 @@ async def test_node_action_helpers_delegate_to_operator_service() -> None:
     assert mock_operator.request_restart.call_args.kwargs["reason"] == "operator restart requested"
 
 
-async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bulk_collection_operations_cover_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     first = _device()
     second = _device()
     db = _db()
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[first, second]))
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", MagicMock())
-
-    result = await _svc().bulk_update_tags(db, [first.id, second.id], {"new": "tag"}, merge=False)
-    assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
-    assert first.tags == {"new": "tag"}
-    assert db.commit.await_count == 1
 
     delete_calls = {first.id: False, second.id: RuntimeError("delete boom")}
 

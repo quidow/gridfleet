@@ -104,29 +104,6 @@ def test_payload_requires_reverification_for_readiness_impacting_change() -> Non
     assert not device_readiness.payload_requires_reverification(device, {"name": "Renamed Device"})
 
 
-def test_readiness_impacting_fields_includes_tags() -> None:
-    assert "tags" in device_readiness.READINESS_IMPACTING_FIELDS
-
-
-def test_payload_requires_reverification_when_tags_change() -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="tag-test-1",
-        connection_target="tag-test-1",
-        name="Tag Test Device",
-        os_version="14",
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    device.tags = {"screen_type": "hd"}
-
-    assert device_readiness.payload_requires_reverification(device, {"tags": {"screen_type": "4k"}})
-    assert not device_readiness.payload_requires_reverification(device, {"tags": {"screen_type": "hd"}})
-
-
 async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
     release = SimpleNamespace(platforms=[platform])

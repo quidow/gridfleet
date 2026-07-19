@@ -8,7 +8,6 @@ from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     BulkDeviceIds,
     BulkOperationResult,
-    BulkTagsUpdate,
 )
 
 DEVICE_BULK_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
@@ -29,11 +28,6 @@ async def bulk_stop_nodes(body: BulkDeviceIds, db: DbDep, device_services: Devic
 @router.post("/restart-nodes", response_model=BulkOperationResult)
 async def bulk_restart_nodes(body: BulkDeviceIds, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     return await device_services.bulk.bulk_restart_nodes(db, body.device_ids)
-
-
-@router.post("/update-tags", response_model=BulkOperationResult)
-async def bulk_update_tags(body: BulkTagsUpdate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    return await device_services.bulk.bulk_update_tags(db, body.device_ids, body.tags, body.merge)
 
 
 @router.post("/delete", response_model=BulkOperationResult)

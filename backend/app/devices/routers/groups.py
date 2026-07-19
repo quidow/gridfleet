@@ -12,7 +12,6 @@ from app.devices.group_keys import GroupKey
 from app.devices.schemas.device import (
     BulkDeviceIds,
     BulkOperationResult,
-    BulkTagsUpdate,
 )
 from app.devices.schemas.group import (
     DeviceGroupCreate,
@@ -210,17 +209,6 @@ async def group_bulk_reconnect(
 ) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
     return await device_services.bulk.bulk_reconnect(db, device_ids, caller="group")
-
-
-@router.post("/{group_key}/bulk/update-tags", response_model=BulkOperationResult)
-async def group_bulk_update_tags(
-    group_key: GroupKey,
-    body: BulkTagsUpdate,
-    db: DbDep,
-    device_services: DeviceServicesDep,
-) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_key, device_services)
-    return await device_services.bulk.bulk_update_tags(db, device_ids, body.tags, body.merge)
 
 
 @router.post("/{group_key}/bulk/delete", response_model=BulkOperationResult)

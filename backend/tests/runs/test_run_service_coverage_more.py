@@ -68,7 +68,7 @@ _failure_svc = RunFailureService(
 )
 
 
-async def test_find_matching_devices_filters_os_tags_and_allocation(
+async def test_find_matching_devices_filters_os_and_allocation(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -80,7 +80,6 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
         identity_value="run-match-001",
         os_version="14",
         operational_state=DeviceOperationalState.available,
-        tags={"pool": "smoke"},
     )
     await create_device(
         db_session,
@@ -89,16 +88,6 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
         identity_value="run-match-002",
         os_version="13",
         operational_state=DeviceOperationalState.available,
-        tags={"pool": "smoke"},
-    )
-    await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="Wrong Tag Device",
-        identity_value="run-match-003",
-        os_version="14",
-        operational_state=DeviceOperationalState.available,
-        tags={"pool": "regression"},
     )
     monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", AsyncMock(return_value=True))
 
@@ -108,7 +97,6 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
         os_version="14",
         allocation="all_available",
         min_count=1,
-        tags={"pool": "smoke"},
     )
 
     matches = await _find_matching_devices(db_session, req)

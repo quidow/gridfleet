@@ -87,13 +87,6 @@ async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
     return await is_ready_for_use_async(db, device) and device_health.device_allows_allocation(device)
 
 
-def _device_matches_requirement_tags(device: Device, tags: dict[str, str] | None) -> bool:
-    if not tags:
-        return True
-    device_tags = device.tags or {}
-    return all(device_tags.get(key) == value for key, value in tags.items())
-
-
 async def _find_matching_devices(
     db: AsyncSession,
     requirement: DeviceRequirement,
@@ -120,7 +113,6 @@ async def _find_matching_devices(
         candidate_stmt = candidate_stmt.where(Device.id.not_in(excluded_device_ids))
 
     candidates = list((await db.execute(candidate_stmt)).scalars().all())
-    candidates = [device for device in candidates if _device_matches_requirement_tags(device, requirement.tags)]
 
     ready_candidates: list[Device] = [device for device in candidates if await _readiness_for_match(db, device)]
 
@@ -144,8 +136,6 @@ async def _find_matching_devices(
     locked_rows = list((await db.execute(locked_stmt)).scalars().all())
     locked_ready_by_id: dict[uuid.UUID, Device] = {}
     for locked_device in locked_rows:
-        if not _device_matches_requirement_tags(locked_device, requirement.tags):
-            continue
         if await _readiness_for_match(db, locked_device):
             locked_ready_by_id[locked_device.id] = locked_device
     return [locked_ready_by_id[device.id] for device in ready_candidates if device.id in locked_ready_by_id]
@@ -206,8 +196,6 @@ async def _classify_shortfall_gates(
         elif device.id in reserved_run_by_device:
             gate_counts["reserved"] += 1
             blocking_runs.add(reserved_run_by_device[device.id])
-        elif not _device_matches_requirement_tags(device, requirement.tags):
-            gate_counts["tags"] += 1
         elif (
             requirement.groups
             and group_index is not None
@@ -243,8 +231,6 @@ def _format_shortfall_parts(
         parts.append(f"{gate_counts['node']} with Appium node not viable (stopped or mid-transition)")
     if gate_counts["review"]:
         parts.append(f"{gate_counts['review']} flagged review_required")
-    if gate_counts["tags"]:
-        parts.append(f"{gate_counts['tags']} not matching requested tags")
     if gate_counts["groups"]:
         parts.append(f"{gate_counts['groups']} not matching requested groups")
     if gate_counts["readiness"]:
@@ -324,7 +310,6 @@ def _build_device_info(device: Device, *, platform_label: str | None) -> Reserve
         manufacturer=device.manufacturer,
         model=device.model,
         excluded=False,
-        tags=device.tags or None,
     )
 
 

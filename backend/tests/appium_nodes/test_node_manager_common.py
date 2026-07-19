@@ -18,7 +18,6 @@ def _device(**overrides: object) -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         ip_address=None,
-        tags={"owner": "qa"},
         device_config=None,
         identity_value="serial-1",
         connection_target="serial-1",
@@ -33,7 +32,7 @@ def _device(**overrides: object) -> Device:
 def test_build_grid_stereotype_caps_no_longer_emits_tag_fanout() -> None:
     """The retired gridfleet:tag:* capability is no longer constructed; routing
     membership flows through gridfleet:group:<key> via matching_group_keys."""
-    device = _device(tags={"screen_type": "4k", "rack": "A1"})
+    device = _device()
 
     caps = build_grid_stereotype_caps(device)
 
@@ -48,12 +47,10 @@ def test_build_grid_stereotype_caps_emits_matching_group_keys() -> None:
     assert caps["gridfleet:group:east-lab"] is True
 
 
-def test_build_grid_stereotype_caps_ignores_db_tags_for_routing() -> None:
-    device = _device(
-        tags={"screen_type": "4k"},
-        device_config={"appium_caps": {"gridfleet:tag:screen_type": "hd"}},
-    )
+def test_build_grid_stereotype_caps_strips_operator_supplied_group_caps() -> None:
+    """Group routing keys are manager-owned; device_config may not forge them."""
+    device = _device(device_config={"appium_caps": {"gridfleet:group:east-lab": True}})
 
     caps = build_grid_stereotype_caps(device)
 
-    assert "gridfleet:tag:screen_type" not in caps
+    assert "gridfleet:group:east-lab" not in caps

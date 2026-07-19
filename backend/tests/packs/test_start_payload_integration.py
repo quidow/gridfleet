@@ -38,7 +38,6 @@ def _android_real_device() -> MagicMock:
     device.model = "Pixel 6"
     device.manufacturer = "Google"
     device.os_version = "14"
-    device.tags = {}
     return device
 
 

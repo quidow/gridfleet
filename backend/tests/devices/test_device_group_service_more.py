@@ -72,24 +72,26 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
 
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
     _host, device = await seed_host_and_device(db_session, identity="group-dynamic-1")
-    filters = DeviceGroupFilters(platform_id="android_mobile", tags={"tier": "smoke"})
     svc = _svc()
+    # Classification now lives in a static group the dynamic filter references.
+    await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="tier-smoke", name="tier smoke", group_type="static"),
+    )
+    await svc.add_members(db_session, "tier-smoke", [device.id])
+    filters = DeviceGroupFilters(platform_id="android_mobile", member_of=["tier-smoke"])
     group = await svc.create_group(
         db_session,
         DeviceGroupCreate(key="dynamic-smoke", name="dynamic smoke", group_type="dynamic", filters=filters),
     )
     await settle_after_commit_tasks()
 
-    # Mark the device with the matching tag so the dynamic filter resolves to it.
-    device.tags = {"tier": "smoke"}
-    await db_session.commit()
-
     groups = await svc.list_groups(db_session)
     detail = await svc.get_group(db_session, group.key)
     device_ids = await svc.get_group_device_ids(db_session, group.key)
 
     assert groups[0]["group_type"] == "dynamic"
-    assert groups[0]["filters"] == {"platform_id": "android_mobile", "tags": {"tier": "smoke"}}
+    assert groups[0]["filters"] == {"platform_id": "android_mobile", "member_of": ["tier-smoke"]}
     assert groups[0]["device_count"] == 1
     assert detail is not None
     assert detail["device_count"] == 1

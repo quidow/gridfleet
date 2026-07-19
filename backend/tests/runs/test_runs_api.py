@@ -110,7 +110,7 @@ async def test_create_run(client: AsyncClient, db_session: AsyncSession, default
     assert data["devices"][0]["platform_label"] == "Android"
 
 
-async def test_find_matching_devices_filters_tags_before_readiness(
+async def test_find_matching_devices_filters_os_version_before_readiness(
     db_session: AsyncSession,
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -118,20 +118,20 @@ async def test_find_matching_devices_filters_tags_before_readiness(
     matching = await create_device_record(
         db_session,
         host_id=default_host_id,
-        identity_value="tag-match",
-        connection_target="tag-match",
-        name="Tag Match",
+        identity_value="os-match",
+        connection_target="os-match",
+        name="OS Match",
         operational_state="available",
-        tags={"pool": "smoke"},
+        os_version="14",
     )
     nonmatching = await create_device_record(
         db_session,
         host_id=default_host_id,
-        identity_value="tag-miss",
-        connection_target="tag-miss",
-        name="Tag Miss",
+        identity_value="os-miss",
+        connection_target="os-miss",
+        name="OS Miss",
         operational_state="available",
-        tags={"pool": "full"},
+        os_version="13",
     )
     readiness_checked: list[uuid.UUID] = []
 
@@ -143,7 +143,7 @@ async def test_find_matching_devices_filters_tags_before_readiness(
 
     devices = await _find_matching_devices(
         db_session,
-        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", tags={"pool": "smoke"}),
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", os_version="14"),
     )
 
     assert [device.id for device in devices] == [matching.id]

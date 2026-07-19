@@ -152,10 +152,6 @@ def _device_matches_dynamic_filters(device: Device, facts: DeviceGroupFacts, fil
         return False
     if filters.needs_attention is not None and facts.needs_attention != filters.needs_attention:
         return False
-    if filters.tags:
-        device_tags = device.tags or {}
-        if not all(device_tags.get(k) == v for k, v in filters.tags.items()):
-            return False
     # member_of: AND over static-group keys. Dynamic or unknown keys contribute
     # no devices (set membership fails), matching the spec's "references to
     # static groups only" contract.

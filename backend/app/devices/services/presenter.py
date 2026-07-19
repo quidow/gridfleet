@@ -168,7 +168,6 @@ class DevicePresenterService:
             "is_reserved": is_reserved,
             "allocatable": allocatability_reason is None,
             "unavailable_reason": allocatability_reason,
-            "tags": device.tags,
             "device_type": device.device_type,
             "connection_type": device.connection_type,
             "ip_address": device.ip_address,

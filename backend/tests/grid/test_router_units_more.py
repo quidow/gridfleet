@@ -40,7 +40,6 @@ from app.devices.routers import (
 )
 from app.devices.schemas.device import (
     BulkDeviceIds,
-    BulkTagsUpdate,
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
@@ -655,7 +654,6 @@ def _run_read(run: SimpleNamespace) -> RunRead:
 async def test_bulk_router_delegates_all_operations() -> None:
     device_ids = [uuid.uuid4()]
     body = SimpleNamespace(device_ids=device_ids)
-    tags_body = SimpleNamespace(device_ids=device_ids, tags={"lab": "east"}, merge=True)
 
     for call, service_name, payload in (
         (bulk.bulk_start_nodes, "bulk_start_nodes", body),
@@ -665,7 +663,6 @@ async def test_bulk_router_delegates_all_operations() -> None:
         (bulk.bulk_enter_maintenance, "bulk_enter_maintenance", body),
         (bulk.bulk_exit_maintenance, "bulk_exit_maintenance", body),
         (bulk.bulk_reconnect, "bulk_reconnect", body),
-        (bulk.bulk_update_tags, "bulk_update_tags", tags_body),
     ):
         mock_bulk = AsyncMock(**{service_name: AsyncMock(return_value={"ok": service_name})})
         device_services = SimpleNamespace(bulk=mock_bulk)
@@ -1916,11 +1913,6 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
         bulk=mock_bulk_reconnect,
     )
     assert await device_groups.group_bulk_reconnect(group_key, db=object(), device_services=ds_reconnect) == {"ok": 1}
-    await assert_bulk(
-        device_groups.group_bulk_update_tags,
-        "bulk_update_tags",
-        BulkTagsUpdate(device_ids=device_ids, tags={"lab": "east"}, merge=True),
-    )
     await assert_bulk(device_groups.group_bulk_delete, "bulk_delete")
 
 
@@ -2300,11 +2292,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
 
 
 async def test_devices_core_router_branches() -> None:
-    request = SimpleNamespace(
-        query_params=SimpleNamespace(multi_items=Mock(return_value=[("tags.lab", "east"), ("tags.", "bad")]))
-    )
     filters = devices_core.build_device_query_filters(
-        request,
         pack_id=None,
         platform_id="android_mobile",
         status=None,
@@ -2326,7 +2314,7 @@ async def test_devices_core_router_branches() -> None:
         sort_by="created_at",
         sort_dir="desc",
     )
-    assert filters.tags == {"lab": "east"}
+    assert filters.platform_id == "android_mobile"
 
     device_id = uuid.uuid4()
     device = SimpleNamespace(

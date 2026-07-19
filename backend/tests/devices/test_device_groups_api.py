@@ -139,7 +139,6 @@ async def test_group_key_conflicts_and_unknown_keys_are_not_found(client: AsyncC
         ("POST", "/api/device-groups/East/bulk/enter-maintenance", {"device_ids": []}),
         ("POST", "/api/device-groups/East/bulk/exit-maintenance", None),
         ("POST", "/api/device-groups/East/bulk/reconnect", None),
-        ("POST", "/api/device-groups/East/bulk/update-tags", {"device_ids": [], "tags": {}, "merge": False}),
         ("POST", "/api/device-groups/East/bulk/delete", None),
     ],
 )
@@ -316,7 +315,7 @@ async def test_create_group_rejects_legacy_filter_rules_field(client: AsyncClien
     assert resp.status_code == 422
 
 
-async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
+async def test_dynamic_group_resolves_identity_target_and_lifecycle(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     matching = await create_device_record(
@@ -327,7 +326,6 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
         connection_target="10.10.0.1:5555",
         device_type="real_device",
         connection_type="network",
-        tags={"team": "qa", "lane": "smoke"},
         verified=False,
     )
     non_matching_lifecycle = await create_device_record(
@@ -338,7 +336,6 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
         connection_target="10.10.0.2:5555",
         device_type="real_device",
         connection_type="network",
-        tags={"team": "qa", "lane": "smoke"},
     )
 
     matching.lifecycle_policy_state = {
@@ -366,7 +363,6 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
             "device_type": "real_device",
             "connection_type": "network",
             "status": "offline",
-            "tags": {"team": "qa", "lane": "smoke"},
         },
     )
 
@@ -374,7 +370,7 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
     assert detail.status_code == 200
     data = detail.json()
     assert [device["id"] for device in data["devices"]] == [str(matching.id)]
-    assert data["filters"]["tags"] == {"team": "qa", "lane": "smoke"}
+    assert data["filters"]["identity_value"] == "dyn-shared-001"
 
 
 async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -389,22 +385,6 @@ async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSe
 
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
-
-
-async def test_group_bulk_update_tags(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
-    device = await _create_device(db_session, "grp-tags-001", "Tags Me", default_host_id)
-    await client.post(f"/api/device-groups/{group['key']}/members", json={"device_ids": [device["id"]]})
-
-    resp = await client.post(
-        f"/api/device-groups/{group['key']}/bulk/update-tags",
-        json={"device_ids": [], "tags": {"team": "qa"}, "merge": True},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["succeeded"] == 1
-
-    detail = await client.get(f"/api/devices/{device['id']}")
-    assert detail.json()["tags"]["team"] == "qa"
 
 
 async def test_group_bulk_delete_devices(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:

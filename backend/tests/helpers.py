@@ -86,7 +86,6 @@ async def create_device_record(
     verified: bool = True,
     manufacturer: str | None = None,
     model: str | None = None,
-    tags: dict[str, Any] | None = None,
     ip_address: str | None = None,
     roku_password: str | None = None,
     test_data: dict[str, Any] | None = None,
@@ -145,7 +144,6 @@ async def create_device_record(
         ip_address=resolved_ip_address,
         manufacturer=manufacturer,
         model=model,
-        tags=tags,
         device_config=device_config,
         test_data=resolved_test_data,
     )

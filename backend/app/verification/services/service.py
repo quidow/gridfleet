@@ -99,7 +99,6 @@ class VerificationService:
             host_id=device.host_id,
             device_type=device.device_type,
             connection_type=device.connection_type,
-            tags=device.tags or None,
         )
         await job_queue.create_job(
             db,

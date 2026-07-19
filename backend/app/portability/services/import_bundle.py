@@ -185,7 +185,6 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
         "operational_state_last_emitted": DeviceOperationalState.offline,
         "device_type": device.device_type,
         "connection_type": device.connection_type,
-        "tags": {},
         "device_config": dict(device.device_config),
         "test_data": dict(device.test_data),
     }

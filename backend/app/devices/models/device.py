@@ -98,7 +98,6 @@ class Device(Base):
             postgresql_where=text("identity_scope = 'host'"),
         ),
         Index("ix_devices_pack_platform", "pack_id", "platform_id"),
-        Index("ix_devices_tags_gin", "tags", postgresql_using="gin"),
         Index("ix_devices_device_config_gin", "device_config", postgresql_using="gin"),
         Index("ix_devices_test_data_gin", "test_data", postgresql_using="gin"),
         Index(
@@ -144,7 +143,6 @@ class Device(Base):
         default=DeviceOperationalState.offline,
         nullable=False,
     )
-    tags: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True, default=dict)
     manufacturer: Mapped[str | None] = mapped_column(String, nullable=True)
     model: Mapped[str | None] = mapped_column(String, nullable=True)
     model_number: Mapped[str | None] = mapped_column(String, nullable=True)

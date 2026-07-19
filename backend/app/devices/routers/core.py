@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
@@ -52,17 +52,7 @@ DEVICE_CORE_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 router = APIRouter(responses=DEVICE_CORE_ERROR_RESPONSES)
 
 
-def _extract_tag_filters(request: Request) -> dict[str, str] | None:
-    tags = {
-        key.removeprefix("tags."): value
-        for key, value in request.query_params.multi_items()
-        if key.startswith("tags.") and key != "tags."
-    }
-    return tags or None
-
-
 def build_device_query_filters(
-    request: Request,
     pack_id: Annotated[str | None, Query()] = None,
     platform_id: Annotated[str | None, Query()] = None,
     status: Annotated[ChipStatus | None, Query()] = None,
@@ -106,7 +96,6 @@ def build_device_query_filters(
         viability=viability,
         sort_by=sort_by,
         sort_dir=sort_dir,
-        tags=_extract_tag_filters(request),
         groups=group or [],
     )
 

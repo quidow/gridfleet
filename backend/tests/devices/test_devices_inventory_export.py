@@ -43,7 +43,6 @@ def test_inventory_column_enum_has_expected_dot_paths() -> None:
         "model_number",
         "software_versions",
         "operational_state",
-        "tags",
         "device_config",
         "test_data",
         "hardware.battery_level_percent",
@@ -120,13 +119,13 @@ async def test_iter_inventory_csv_emits_header_and_rows(db_session: AsyncSession
 @pytest.mark.db
 async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: AsyncSession) -> None:
     _, device = await seed_host_and_device(db_session, identity="INV-3")
-    device.tags = {"team": "qa"}
+    device.software_versions = {"team": "qa"}
     await db_session.commit()
     chunks: list[str] = [
         chunk
         async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
-            columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+            columns=[InventoryColumn.NAME, InventoryColumn.SOFTWARE_VERSIONS],
             filters=None,
         )
     ]
@@ -198,14 +197,13 @@ async def test_inventory_endpoint_filter_pack_id(client: AsyncClient, db_session
 async def test_iter_inventory_csv_escapes_formula_injection(db_session: AsyncSession) -> None:
     _, device = await seed_host_and_device(db_session, identity="INV-FORMULA")
     device.name = "=CMD()"
-    device.tags = {"k": "=evil"}
     await db_session.commit()
 
     chunks: list[str] = [
         chunk
         async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
-            columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+            columns=[InventoryColumn.NAME],
             filters=None,
         )
     ]

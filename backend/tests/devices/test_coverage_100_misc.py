@@ -226,7 +226,6 @@ async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.
         manufacturer=None,
         model=None,
         device_config={},
-        tags=None,
     )
     # Pack stereotype is the only source for routing keys; the builder no longer
     # injects browserName defaults of its own. The pack manifest decides whether

@@ -18,7 +18,6 @@ def _device(**overrides: object) -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network,
         ip_address="192.168.1.254",
-        tags=None,
         device_config=None,
         identity_value="G070VM2011740KW1",
         connection_target="192.168.1.254:5555",
@@ -100,15 +99,7 @@ def test_minimal_stereotype_emits_no_group_caps_by_default() -> None:
 def test_minimal_stereotype_no_longer_emits_tag_fanout() -> None:
     """The retired gridfleet:tag:* capability is no longer constructed here; routing
     membership flows through gridfleet:group:<key> via matching_group_keys."""
-    device = _device(tags={"rack": "A1", "screen_type": "4k"})
-
-    caps = build_grid_stereotype_caps(device, pack_stereotype={})
-
-    assert not any(k.startswith("gridfleet:tag:") for k in caps)
-
-
-def test_minimal_stereotype_handles_none_tags() -> None:
-    device = _device(tags=None)
+    device = _device()
 
     caps = build_grid_stereotype_caps(device, pack_stereotype={})
 

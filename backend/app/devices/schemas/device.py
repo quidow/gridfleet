@@ -21,7 +21,6 @@ from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
-DeviceTags = dict[str, str]
 DEFAULT_RESTART_WINDOW_SEC = 120
 
 
@@ -63,7 +62,6 @@ class DeviceVerificationCreate(BaseModel):
     os_version: str = "unknown"
     os_version_display: str | None = None
     host_id: uuid.UUID
-    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -87,7 +85,6 @@ class DeviceVerificationUpdate(BaseModel):
     os_version: str | None = None
     os_version_display: str | None = None
     host_id: uuid.UUID
-    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -103,7 +100,6 @@ class DevicePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
-    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -315,7 +311,6 @@ class DeviceRead(BaseModel):
     is_reserved: bool = False
     allocatable: bool
     unavailable_reason: UnavailableReason | None = None
-    tags: DeviceTags | None
     manufacturer: str | None
     model: str | None
     model_number: str | None
@@ -413,12 +408,6 @@ class SessionKillResult(BaseModel):
 
 class BulkDeviceIds(BaseModel):
     device_ids: list[uuid.UUID]
-
-
-class BulkTagsUpdate(BaseModel):
-    device_ids: list[uuid.UUID]
-    tags: DeviceTags
-    merge: bool = True
 
 
 class BulkOperationResult(BaseModel):

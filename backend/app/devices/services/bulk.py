@@ -196,21 +196,6 @@ class BulkOperationsService:
             publisher=self._publisher,
         )
 
-    async def bulk_update_tags(
-        self, db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
-    ) -> dict[str, Any]:
-        devices = await _load_devices(db, device_ids)
-        for device in devices:
-            if merge:
-                merged = {**(device.tags or {}), **tags}
-                device.tags = merged
-            else:
-                device.tags = tags
-        data, severity = _completion_payload("update_tags", len(devices), len(devices), 0)
-        self._publisher.queue_for_session(db, "bulk.operation_completed", data, severity=severity)
-        await db.commit()
-        return _result(len(devices), len(devices), {})
-
     async def bulk_delete(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
         errors: dict[str, str] = {}
         for device_id in device_ids:

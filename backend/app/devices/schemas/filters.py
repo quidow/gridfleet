@@ -41,7 +41,6 @@ class DeviceGroupFilters(BaseModel):
     hardware_health_status: HardwareHealthStatus | None = None
     hardware_telemetry_state: HardwareTelemetryState | None = None
     needs_attention: bool | None = None
-    tags: dict[str, str] | None = None
     member_of: list[GroupKey] = Field(default_factory=list)
 
     @model_serializer(mode="plain")

@@ -378,7 +378,6 @@ async def test_confirm_discovery_updates_existing_device_properties(
         identity_scheme="apple_udid",
         identity_scope="global",
         os_version="17.0",
-        tags={"owner": "qa"},
         verified=True,
     )
 
@@ -418,7 +417,6 @@ async def test_confirm_discovery_updates_existing_device_properties(
     assert body["os_version"] == "17.4"
     assert body["connection_target"] == "ABC-123"
     assert body["verified_at"] is not None
-    assert body["tags"]["owner"] == "qa"
     assert body["manufacturer"] is None
     assert body["model"] is None
 

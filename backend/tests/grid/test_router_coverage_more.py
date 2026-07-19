@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from starlette.datastructures import QueryParams
 
 from app.core.errors import PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
@@ -384,9 +383,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     db = MagicMock()
     device_id = uuid.uuid4()
     device = SimpleNamespace(id=device_id, pack_id="pack", platform_id="platform", lifecycle_policy_state=None)
-    request = SimpleNamespace(query_params=QueryParams("tags.pool=smoke&tags.=ignored"))
     filters = devices_core.build_device_query_filters(
-        request,
         pack_id=None,
         platform_id=None,
         status=None,
@@ -408,7 +405,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         sort_by="created_at",
         sort_dir="desc",
     )
-    assert filters.tags == {"pool": "smoke"}
+    assert filters.pack_id is None
 
     _mock_crud = AsyncMock()
     _mock_crud.list_devices_paginated = AsyncMock(return_value=([device], 1))

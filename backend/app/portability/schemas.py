@@ -158,7 +158,6 @@ class InventoryColumn(enum.StrEnum):
     MODEL_NUMBER = "model_number"
     SOFTWARE_VERSIONS = "software_versions"
     OPERATIONAL_STATE = "operational_state"
-    TAGS = "tags"
     DEVICE_CONFIG = "device_config"
     TEST_DATA = "test_data"
     HARDWARE_BATTERY_LEVEL = "hardware.battery_level_percent"
