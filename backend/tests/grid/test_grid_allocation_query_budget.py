@@ -174,6 +174,68 @@ async def seed_no_match_poll(
     return ticket
 
 
+async def seed_member_of_poll(
+    db_session: AsyncSession,
+    *,
+    devices: int,
+    groups: int,
+    platforms: int,
+) -> GridSessionQueueTicket:
+    """Seed a fleet and a ticket that requests a dynamic group whose
+    ``filters.member_of`` references one or more static groups.
+
+    The requested dynamic group's filters combine ``member_of`` (pointing at static
+    groups with no members) with a ``platform_id`` constraint that no seeded device
+    satisfies, so the poll is a free no-match (the group is valid but matches no
+    eligible device). This exercises the ``member_of`` closure path in the
+    group-definition loader — the recursive CTE must fold the requested dynamic
+    group and its static targets into a single read.
+    """
+    await seed_test_packs(db_session)
+    host_id: uuid.UUID | None = None
+    for i in range(devices):
+        host, _, _ = await seed_host_and_running_node(db_session, identity=f"budget-mof-{uuid.uuid4().hex[:8]}")
+        host_id = host.id
+        pack_id, platform_id = _PACK_PLATFORMS[i % len(_PACK_PLATFORMS)]
+        if (pack_id, platform_id) != ("appium-uiautomator2", "android_mobile"):
+            await db_session.execute(
+                update(Device).where(Device.host_id == host_id).values(pack_id=pack_id, platform_id=platform_id)
+            )
+            await db_session.flush()
+    assert host_id is not None
+
+    # Seed a chain of static groups (the ``member_of`` targets) and a single
+    # dynamic group that references all of them. ``groups`` controls closure
+    # width so the test scales the member_of fan-out, not just fleet size.
+    static_keys: list[str] = []
+    for _i in range(max(1, groups)):
+        key = f"pool-{uuid.uuid4().hex[:8]}"
+        db_session.add(DeviceGroup(key=key, name=key, group_type=GroupType.static))
+        static_keys.append(key)
+    await db_session.flush()
+
+    # A platform_id no seeded device can have — guarantees a no-match free poll
+    # regardless of fleet composition, so the read count is observable.
+    miss_platform = "no-such-platform"
+    dyn_key = f"dyn-{uuid.uuid4().hex[:8]}"
+    db_session.add(
+        DeviceGroup(
+            key=dyn_key,
+            name=dyn_key,
+            group_type=GroupType.dynamic,
+            filters={"member_of": static_keys, "platform_id": miss_platform},
+        )
+    )
+    await db_session.flush()
+
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{f"gridfleet:group:{dyn_key}": True})
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    return ticket
+
+
 @pytest.mark.parametrize(
     ("devices", "groups", "platforms"),
     [(1, 1, 1), (25, 12, 8)],
@@ -192,6 +254,34 @@ async def test_group_routed_free_poll_has_constant_read_budget(
     assert result is None
     assert len(_reads(statements)) == 4, (
         f"group free poll reads grew with scale: {_reads(statements)} (devices={devices}, groups={groups})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("devices", "groups", "platforms"),
+    [(1, 1, 1), (25, 12, 8)],
+)
+@pytest.mark.db
+async def test_member_of_dynamic_group_free_poll_has_constant_read_budget(
+    db_session: AsyncSession,
+    devices: int,
+    groups: int,
+    platforms: int,
+) -> None:
+    """A free poll that *requests* a dynamic group whose ``filters.member_of``
+    references static groups must still cost 4 reads: the recursive CTE folds the
+    requested dynamic group and its static ``member_of`` targets into a single
+    group-definition read. The closure is over ``member_of`` edges from any loaded
+    group back to its static targets, so a multi-hop closure (dynamic -> static)
+    resolves in the same one statement."""
+    ticket = await seed_member_of_poll(db_session, devices=devices, groups=groups, platforms=platforms)
+    service = _service()
+    with _capture_statements(db_session) as statements:
+        result = await service.try_allocate(db_session, ticket=ticket)
+    assert result is None
+    reads = _reads(statements)
+    assert len(reads) == 4, (
+        f"member_of dynamic-group free poll reads grew with scale: {reads} (devices={devices}, groups={groups})"
     )
 
 

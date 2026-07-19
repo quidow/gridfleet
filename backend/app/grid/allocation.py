@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge, Histogram
-from sqlalchemy import func, null, or_, select, update
+from sqlalchemy import func, null, or_, select, true, update
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
@@ -697,38 +697,38 @@ class AllocationService:
         groups that reference static groups by key. Direct keys of any type are
         returned verbatim; only static groups are pulled from ``member_of``
         (dynamic-to-dynamic references resolve to empty membership by contract).
+
+        Implemented as a single recursive CTE. Postgres requires the recursive
+        ``group_closure`` reference to appear in the FROM clause of the recursive
+        arm (it may not live in a subquery), so the arm joins the closure to the
+        set-returning ``jsonb_array_elements_text(filters->'member_of')`` and then
+        to ``device_groups`` on the resulting key. Static groups have no
+        ``member_of`` (and dynamic groups are not valid ``member_of`` targets),
+        so the recursion terminates at static groups; ``jsonb_array_elements_text``
+        on a NULL/missing ``member_of`` yields zero rows, also terminating the
+        recursion for groups without a ``member_of`` reference.
         """
         if not group_keys:
             return []
         keys = sorted(set(group_keys))
-        direct = list((await db.execute(select(DeviceGroup).where(DeviceGroup.key.in_(keys)))).scalars().all())
-        direct_by_key = {row.key: row for row in direct}
-        member_of_keys: set[str] = set()
-        for row in direct:
-            if row.group_type != GroupType.dynamic:
-                continue
-            filters_payload = row.filters or {}
-            raw = filters_payload.get("member_of")
-            if not isinstance(raw, list):
-                continue
-            for key in raw:
-                if isinstance(key, str) and key not in direct_by_key:
-                    member_of_keys.add(key)
-        if not member_of_keys:
-            return direct
-        extra = list(
-            (
-                await db.execute(
-                    select(DeviceGroup).where(
-                        DeviceGroup.key.in_(sorted(member_of_keys)),
-                        DeviceGroup.group_type == GroupType.static,
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        seed = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.key.in_(keys))
+        closure = seed.cte("group_closure", recursive=True)
+        closure_alias = closure.alias()
+        member_of_keys = (
+            func.jsonb_array_elements_text(closure_alias.c.filters["member_of"])
+            .table_valued("member_of_key")
+            .render_derived()
         )
-        return direct + [row for row in extra if row.key not in direct_by_key]
+        arm = (
+            select(DeviceGroup.key, DeviceGroup.filters)
+            .select_from(closure_alias)
+            .join(member_of_keys, true())
+            .join(DeviceGroup, DeviceGroup.key == member_of_keys.c.member_of_key)
+            .where(DeviceGroup.group_type == GroupType.static)
+        )
+        closure = closure.union_all(arm)
+        stmt = select(DeviceGroup).where(DeviceGroup.key.in_(select(closure.c.key)))
+        return list((await db.execute(stmt)).scalars().all())
 
     async def _eligible_devices_with_facts(
         self,
