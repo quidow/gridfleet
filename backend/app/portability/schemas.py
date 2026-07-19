@@ -5,9 +5,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.devices.models import ConnectionType, DeviceType
+from app.devices.group_keys import GroupKey
+from app.devices.models import ConnectionType, DeviceType, GroupType
+from app.devices.schemas.filters import DeviceGroupFilters
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class OriginalHost(BaseModel):
@@ -15,6 +17,16 @@ class OriginalHost(BaseModel):
 
     hostname: str
     host_id: uuid.UUID | None = None
+
+
+class ExportedDeviceGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: GroupKey
+    name: str
+    description: str | None = None
+    group_type: GroupType
+    filters: DeviceGroupFilters | None = None
 
 
 class ExportedDevice(BaseModel):
@@ -29,7 +41,7 @@ class ExportedDevice(BaseModel):
     device_type: DeviceType
     connection_type: ConnectionType
     connection_target: str | None = None
-    tags: dict[str, str] = Field(default_factory=dict)
+    static_groups: list[GroupKey] = Field(default_factory=list)
     device_config: dict[str, Any] = Field(default_factory=dict)
     test_data: dict[str, Any] = Field(default_factory=dict)
     original_host: OriginalHost
@@ -38,9 +50,10 @@ class ExportedDevice(BaseModel):
 class ExportBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     exported_at: datetime
     source_instance: str | None = None
+    groups: list[ExportedDeviceGroup] = Field(default_factory=list)
     devices: list[ExportedDevice]
 
 
@@ -71,7 +84,7 @@ class ImportPreviewRow(BaseModel):
 class ImportPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     source_instance: str | None = None
     exported_at: datetime
     bundle_hash: str

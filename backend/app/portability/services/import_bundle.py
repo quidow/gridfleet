@@ -15,7 +15,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import (
+    Device,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceOperationalState,
+    GroupType,
+)
 from app.devices.services import write as device_write
 from app.hosts.models import Host
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -23,6 +29,7 @@ from app.portability.schemas import (
     SCHEMA_VERSION,
     ExportBundle,
     ExportedDevice,
+    ExportedDeviceGroup,
     HostSuggestion,
     ImportCommitCreatedRow,
     ImportCommitFailedRow,
@@ -47,8 +54,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_UNSUPPORTED_SCHEMA_VERSION_MESSAGE = "unsupported portability schema version; expected 2"
+
+
 class BundleHashMismatchError(ValueError):
     """Raised when the supplied bundle_hash does not match the recomputed canonical hash."""
+
+
+class GroupKeyCollisionError(ValueError):
+    """Raised when a bundle group key already exists in the target database."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+        super().__init__(f"device group keys already exist in target: {', '.join(sorted(keys))}")
+
+
+class UnknownGroupReferenceError(ValueError):
+    """Raised when a bundle references a group key not defined in the bundle."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+        super().__init__(f"unknown device group references: {', '.join(sorted(keys))}")
 
 
 def _identity_key(device: ExportedDevice) -> tuple[str, str, str]:
@@ -128,7 +154,11 @@ async def _classify_row(
     device: ExportedDevice,
     hosts: Sequence[Host],
     duplicate_keys: set[tuple[str, str, str]],
+    static_group_keys: set[str],
 ) -> tuple[ImportRowStatus, list[str]]:
+    unknown_static = sorted(set(device.static_groups) - static_group_keys)
+    if unknown_static:
+        return (ImportRowStatus.INVALID, [f"unknown static group keys: {', '.join(unknown_static)}"])
     pack_invalid = await _classify_pack_runnable(session, device)
     if pack_invalid is not None:
         return pack_invalid
@@ -155,10 +185,64 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
         "operational_state_last_emitted": DeviceOperationalState.offline,
         "device_type": device.device_type,
         "connection_type": device.connection_type,
-        "tags": dict(device.tags),
+        "tags": {},
         "device_config": dict(device.device_config),
         "test_data": dict(device.test_data),
     }
+
+
+def _group_filters_payload(group: ExportedDeviceGroup) -> dict[str, Any] | None:
+    if group.filters is None:
+        return None
+    dumped = group.filters.model_dump(mode="json", exclude_none=True)
+    if not dumped.get("member_of"):
+        dumped.pop("member_of", None)
+    return dumped or None
+
+
+async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
+    if not keys:
+        return set()
+    result = await session.execute(select(DeviceGroup.key).where(DeviceGroup.key.in_(keys)))
+    return {row[0] for row in result.all()}
+
+
+async def _validate_group_references(session: AsyncSession, bundle: ExportBundle) -> set[str]:
+    """Validate bundle group definitions and references.
+
+    Returns the set of static group keys defined in the bundle after verifying:
+    - no bundle group key collides with an existing DB group;
+    - every dynamic group's ``member_of`` references a static group in the bundle;
+    - every device ``static_groups`` key references a static group in the bundle.
+
+    Raises:
+        GroupKeyCollisionError: if any bundle group key already exists in the DB.
+        UnknownGroupReferenceError: if any ``member_of`` or device ``static_groups``
+            reference is not a static group defined in the bundle.
+    """
+    bundle_keys = {g.key for g in bundle.groups}
+    existing = await _load_existing_group_keys(session, bundle_keys)
+    if existing:
+        raise GroupKeyCollisionError(sorted(existing))
+
+    static_group_keys = {g.key for g in bundle.groups if g.group_type == GroupType.static}
+    dynamic_groups = [g for g in bundle.groups if g.group_type == GroupType.dynamic]
+
+    unknown_refs: set[str] = set()
+    for group in dynamic_groups:
+        if group.filters is None:
+            continue
+        for key in group.filters.member_of:
+            if key not in static_group_keys:
+                unknown_refs.add(key)
+    for device in bundle.devices:
+        for key in device.static_groups:
+            if key not in static_group_keys:
+                unknown_refs.add(key)
+    if unknown_refs:
+        raise UnknownGroupReferenceError(sorted(unknown_refs))
+
+    return static_group_keys
 
 
 class PortabilityImportService:
@@ -174,9 +258,13 @@ class PortabilityImportService:
 
         Raises:
             ValueError: if ``bundle.schema_version`` is not supported.
+            GroupKeyCollisionError: if any bundle group key already exists in the target.
+            UnknownGroupReferenceError: if any group/device reference is unresolvable.
         """
         if bundle.schema_version != SCHEMA_VERSION:
-            raise ValueError(f"unsupported schema_version: {bundle.schema_version}")
+            raise ValueError(_UNSUPPORTED_SCHEMA_VERSION_MESSAGE)
+
+        static_group_keys = await _validate_group_references(session, bundle)
 
         hosts = await _load_available_hosts(session)
 
@@ -185,7 +273,7 @@ class PortabilityImportService:
 
         rows: list[ImportPreviewRow] = []
         for idx, device in enumerate(bundle.devices):
-            status, issues = await _classify_row(session, device, hosts, duplicate_keys)
+            status, issues = await _classify_row(session, device, hosts, duplicate_keys, static_group_keys)
             suggestion = _pick_host_suggestion(device, hosts)
             rows.append(
                 ImportPreviewRow(
@@ -207,19 +295,29 @@ class PortabilityImportService:
         )
 
     async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
-        """Commit a validated import bundle: insert devices row-by-row with per-row savepoints.
-
-        Each row is committed atomically together with its verification job enqueue.
-        If the verification enqueue fails, the savepoint rollback unwinds the device insert.
+        """Commit a validated import bundle in dependency order within one transaction:
+        static group definitions, devices (with verification enqueue), static memberships
+        for created devices, dynamic group definitions.
 
         Raises:
             BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
+            ValueError: if the bundle schema version is unsupported.
+            GroupKeyCollisionError: if a bundle group key already exists in the target.
+            UnknownGroupReferenceError: if any group/device reference is unresolvable.
         """
         expected_hash = compute_bundle_hash(request.bundle)
         if expected_hash != request.bundle_hash:
             raise BundleHashMismatchError("bundle_hash mismatch")
 
+        # Validate (read-only) before any writes so group references resolve against
+        # the pre-import DB state rather than the rows this commit is about to insert.
         preview = await self.validate_bundle(session, request.bundle)
+
+        static_groups = [g for g in request.bundle.groups if g.group_type == GroupType.static]
+        dynamic_groups = [g for g in request.bundle.groups if g.group_type == GroupType.dynamic]
+
+        group_id_by_key = await self._insert_group_definitions(session, static_groups)
+
         by_index = {row.index: row for row in preview.rows}
         mappings_by_index = {m.index: m for m in request.mappings}
 
@@ -227,6 +325,7 @@ class PortabilityImportService:
         skipped: list[ImportCommitSkippedRow] = []
         failed: list[ImportCommitFailedRow] = []
 
+        device_id_by_index: dict[int, uuid.UUID] = {}
         for idx, row in by_index.items():
             if row.status == ImportRowStatus.DUPLICATE_IN_BUNDLE:
                 skipped.append(ImportCommitSkippedRow(index=idx, reason="duplicate in bundle"))
@@ -251,10 +350,83 @@ class PortabilityImportService:
             result = await self._insert_row_with_savepoint(session, idx, row, mapping)
             if isinstance(result, ImportCommitCreatedRow):
                 created.append(result)
+                device_id_by_index[idx] = result.device_id
             else:
                 failed.append(result)
 
+        self._insert_static_memberships(
+            session,
+            static_group_keys={g.key for g in static_groups},
+            by_index=by_index,
+            device_id_by_index=device_id_by_index,
+            group_id_by_key=group_id_by_key,
+        )
+
+        await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
+
+        # Commit any pending static memberships when no dynamic-group commit fired above.
+        if static_groups and not dynamic_groups and device_id_by_index:
+            await session.commit()
+
         return ImportCommitResult(created=created, skipped=skipped, failed=failed)
+
+    async def _insert_group_definitions(
+        self,
+        session: AsyncSession,
+        static_groups: list[ExportedDeviceGroup],
+    ) -> dict[str, uuid.UUID]:
+        group_id_by_key: dict[str, uuid.UUID] = {}
+        for group_def in static_groups:
+            group = DeviceGroup(
+                key=group_def.key,
+                name=group_def.name,
+                description=group_def.description,
+                group_type=GroupType.static,
+                filters=None,
+            )
+            session.add(group)
+            await session.flush()
+            group_id_by_key[group_def.key] = group.id
+        return group_id_by_key
+
+    def _insert_static_memberships(
+        self,
+        session: AsyncSession,
+        static_group_keys: set[str],
+        by_index: dict[int, ImportPreviewRow],
+        device_id_by_index: dict[int, uuid.UUID],
+        group_id_by_key: dict[str, uuid.UUID],
+    ) -> None:
+        if not static_group_keys:
+            return
+        for idx, device_id in device_id_by_index.items():
+            row = by_index[idx]
+            for key in row.device.static_groups:
+                group_id = group_id_by_key.get(key)
+                if group_id is None:
+                    continue
+                session.add(DeviceGroupMembership(group_id=group_id, device_id=device_id))
+
+    async def _insert_dynamic_group_definitions(
+        self,
+        session: AsyncSession,
+        dynamic_groups: list[ExportedDeviceGroup],
+        group_id_by_key: dict[str, uuid.UUID],
+    ) -> None:
+        if not dynamic_groups:
+            return
+        for group_def in dynamic_groups:
+            group = DeviceGroup(
+                key=group_def.key,
+                name=group_def.name,
+                description=group_def.description,
+                group_type=GroupType.dynamic,
+                filters=_group_filters_payload(group_def),
+            )
+            session.add(group)
+            await session.flush()
+            group_id_by_key[group_def.key] = group.id
+        await session.commit()
 
     async def _insert_row_with_savepoint(
         self,

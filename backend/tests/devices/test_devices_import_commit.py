@@ -29,9 +29,10 @@ if TYPE_CHECKING:
 
 def _bundle(devices: list[ExportedDevice]) -> ExportBundle:
     return ExportBundle(
-        schema_version=1,
+        schema_version=2,
         exported_at=datetime.now(UTC),
         source_instance="alpha",
+        groups=[],
         devices=devices,
     )
 
@@ -206,8 +207,9 @@ async def test_import_endpoint_returns_409_on_hash_mismatch(
     host = await seed_host_named(db_session, "lab-04")
     body = {
         "bundle": {
-            "schema_version": 1,
+            "schema_version": 2,
             "exported_at": "2026-05-23T00:00:00+00:00",
+            "groups": [],
             "devices": [
                 {
                     "pack_id": "appium-uiautomator2",
@@ -218,7 +220,7 @@ async def test_import_endpoint_returns_409_on_hash_mismatch(
                     "name": "Pixel",
                     "device_type": "real_device",
                     "connection_type": "usb",
-                    "tags": {},
+                    "static_groups": [],
                     "device_config": {},
                     "test_data": {},
                     "original_host": {"hostname": "lab-04"},
@@ -239,8 +241,9 @@ async def test_import_endpoint_commits_valid_row(
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle_body = {
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": "2026-05-23T00:00:00+00:00",
+        "groups": [],
         "devices": [
             {
                 "pack_id": "appium-uiautomator2",
@@ -251,7 +254,7 @@ async def test_import_endpoint_commits_valid_row(
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "tags": {},
+                "static_groups": [],
                 "device_config": {},
                 "test_data": {},
                 "original_host": {"hostname": "lab-04"},

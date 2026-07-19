@@ -17,9 +17,10 @@ if TYPE_CHECKING:
 
 def _bundle(devices: list[ExportedDevice]) -> ExportBundle:
     return ExportBundle(
-        schema_version=1,
+        schema_version=2,
         exported_at=datetime.now(UTC),
         source_instance="alpha",
+        groups=[],
         devices=devices,
     )
 
@@ -117,9 +118,10 @@ async def test_validate_endpoint_returns_preview(
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
     body = {
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": "2026-05-23T00:00:00+00:00",
         "source_instance": "alpha",
+        "groups": [],
         "devices": [
             {
                 "pack_id": "appium-uiautomator2",
@@ -130,7 +132,7 @@ async def test_validate_endpoint_returns_preview(
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "tags": {},
+                "static_groups": [],
                 "device_config": {},
                 "test_data": {},
                 "original_host": {"hostname": "lab-04"},
@@ -149,8 +151,9 @@ async def test_validate_endpoint_returns_preview(
 @pytest.mark.db
 async def test_validate_endpoint_rejects_unknown_fields(client: AsyncClient) -> None:
     body = {
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": "2026-05-23T00:00:00+00:00",
+        "groups": [],
         "devices": [],
         "unexpected": True,
     }
@@ -164,6 +167,7 @@ async def test_validate_endpoint_rejects_unsupported_schema_version(client: Asyn
     body = {
         "schema_version": 99,
         "exported_at": "2026-05-23T00:00:00+00:00",
+        "groups": [],
         "devices": [],
     }
     response = await client.post("/api/portability/import/validate", json=body)

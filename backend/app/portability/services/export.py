@@ -12,11 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
-from app.devices.models import Device
+from app.devices.models import Device, DeviceGroup, GroupType
+from app.devices.services.group_membership import _load_static_group_keys_by_device_id
 from app.portability.schemas import (
     SCHEMA_VERSION,
     ExportBundle,
     ExportedDevice,
+    ExportedDeviceGroup,
     OriginalHost,
 )
 
@@ -28,17 +30,42 @@ class PortabilityExportService:
     async def build_export_bundle(self, db: AsyncSession) -> ExportBundle:
         stmt = select(Device).options(selectinload(Device.host)).order_by(Device.created_at.asc())
         result = await db.execute(stmt)
-        devices = result.scalars().all()
-        exported = [_exported_device(d) for d in devices]
+        devices = list(result.scalars().all())
+
+        groups_stmt = select(DeviceGroup).order_by(DeviceGroup.key.asc())
+        groups_result = await db.execute(groups_stmt)
+        groups = list(groups_result.scalars().all())
+        exported_groups = [_exported_group(g) for g in groups]
+
+        device_ids = [d.id for d in devices]
+        static_keys_by_device = await _load_static_group_keys_by_device_id(db, device_ids)
+
+        exported = [_exported_device(d, sorted(static_keys_by_device.get(d.id, frozenset()))) for d in devices]
         return ExportBundle(
             schema_version=SCHEMA_VERSION,
             exported_at=now_utc(),
             source_instance=None,
+            groups=exported_groups,
             devices=exported,
         )
 
 
-def _exported_device(d: Device) -> ExportedDevice:
+def _exported_group(group: DeviceGroup) -> ExportedDeviceGroup:
+    filters = None
+    if group.group_type == GroupType.dynamic and group.filters:
+        from app.devices.schemas.filters import DeviceGroupFilters  # noqa: PLC0415
+
+        filters = DeviceGroupFilters.model_validate(group.filters)
+    return ExportedDeviceGroup(
+        key=group.key,
+        name=group.name,
+        description=group.description,
+        group_type=group.group_type,
+        filters=filters,
+    )
+
+
+def _exported_device(d: Device, static_group_keys: list[str]) -> ExportedDevice:
     host = d.host
     if host is None:
         raise RuntimeError(f"Device {d.id} has no associated host loaded — check selectinload")
@@ -55,7 +82,7 @@ def _exported_device(d: Device) -> ExportedDevice:
         device_type=d.device_type,
         connection_type=d.connection_type,
         connection_target=d.connection_target,
-        tags=dict(d.tags or {}),
+        static_groups=static_group_keys,
         device_config=dict(d.device_config or {}),
         test_data=dict(d.test_data or {}),
         original_host=OriginalHost(hostname=host.hostname, host_id=host.id),
