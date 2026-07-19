@@ -171,7 +171,8 @@ async def test_validate_endpoint_rejects_unsupported_schema_version(client: Asyn
         "devices": [],
     }
     response = await client.post("/api/portability/import/validate", json=body)
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "unsupported portability schema version; expected 2"
 
 
 @pytest.mark.asyncio

@@ -50,7 +50,7 @@ class ExportedDevice(BaseModel):
 class ExportBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[2]
+    schema_version: int
     exported_at: datetime
     source_instance: str | None = None
     groups: list[ExportedDeviceGroup] = Field(default_factory=list)
@@ -84,7 +84,7 @@ class ImportPreviewRow(BaseModel):
 class ImportPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[2]
+    schema_version: int
     source_instance: str | None = None
     exported_at: datetime
     bundle_hash: str

@@ -203,7 +203,9 @@ def _group_filters_payload(group: ExportedDeviceGroup) -> dict[str, Any] | None:
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
     if not keys:
         return set()
-    result = await session.execute(select(DeviceGroup.key).where(DeviceGroup.key.in_(keys)))
+    result = await session.execute(
+        select(DeviceGroup.key).where(DeviceGroup.key.in_(keys)).order_by(DeviceGroup.key).with_for_update()
+    )
     return {row[0] for row in result.all()}
 
 
@@ -375,19 +377,19 @@ class PortabilityImportService:
         session: AsyncSession,
         static_groups: list[ExportedDeviceGroup],
     ) -> dict[str, uuid.UUID]:
-        group_id_by_key: dict[str, uuid.UUID] = {}
-        for group_def in static_groups:
-            group = DeviceGroup(
+        groups = [
+            DeviceGroup(
                 key=group_def.key,
                 name=group_def.name,
                 description=group_def.description,
                 group_type=GroupType.static,
                 filters=None,
             )
-            session.add(group)
-            await session.flush()
-            group_id_by_key[group_def.key] = group.id
-        return group_id_by_key
+            for group_def in static_groups
+        ]
+        session.add_all(groups)
+        await session.flush()
+        return {group.key: group.id for group in groups}
 
     def _insert_static_memberships(
         self,
@@ -415,17 +417,20 @@ class PortabilityImportService:
     ) -> None:
         if not dynamic_groups:
             return
-        for group_def in dynamic_groups:
-            group = DeviceGroup(
+        groups = [
+            DeviceGroup(
                 key=group_def.key,
                 name=group_def.name,
                 description=group_def.description,
                 group_type=GroupType.dynamic,
                 filters=_group_filters_payload(group_def),
             )
-            session.add(group)
-            await session.flush()
-            group_id_by_key[group_def.key] = group.id
+            for group_def in dynamic_groups
+        ]
+        session.add_all(groups)
+        await session.flush()
+        for group in groups:
+            group_id_by_key[group.key] = group.id
         await session.commit()
 
     async def _insert_row_with_savepoint(

@@ -21,7 +21,11 @@ from app.portability.schemas import (
     InventoryFormat,
     parse_columns_param,
 )
-from app.portability.services.import_bundle import BundleHashMismatchError
+from app.portability.services.import_bundle import (
+    BundleHashMismatchError,
+    GroupKeyCollisionError,
+    UnknownGroupReferenceError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -51,6 +55,10 @@ async def import_validate(
 ) -> ImportPreview:
     try:
         return await portability_services.import_.validate_bundle(db, bundle)
+    except GroupKeyCollisionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnknownGroupReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -63,6 +71,12 @@ async def import_commit(
         return await portability_services.import_.commit_import(db, request)
     except BundleHashMismatchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except GroupKeyCollisionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnknownGroupReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _parse_columns(columns: str | None = Query(default=None)) -> list[InventoryColumn]:
