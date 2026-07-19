@@ -22,9 +22,6 @@ export type HealthStatus = Omit<Schemas['HealthStatusRead'], 'checks'> & {
 };
 
 export type BulkDeviceIds = Schemas['BulkDeviceIds'];
-export type BulkTagsUpdate = Omit<Schemas['BulkTagsUpdate'], 'merge'> & {
-  merge?: boolean;
-};
 export type BulkOperationResult = Omit<Schemas['BulkOperationResult'], 'errors'> & {
   errors: Record<string, string>;
 };

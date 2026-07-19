@@ -12,14 +12,12 @@ import {
   groupRestartNodes,
   groupStartNodes,
   groupStopNodes,
-  groupUpdateTags,
   removeGroupMembers,
   updateDeviceGroup,
 } from '../api/deviceGroups';
 import type {
   BulkDeviceIds,
   BulkOperationResult,
-  BulkTagsUpdate,
   DeviceGroupCreate,
   DeviceGroupUpdate,
 } from '../types';
@@ -36,12 +34,12 @@ export function useDeviceGroups() {
   });
 }
 
-export function useDeviceGroup(id: string) {
+export function useDeviceGroup(key: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: qk.deviceGroup.detail(id),
-    queryFn: () => fetchDeviceGroup(id),
-    enabled: !!id,
+    queryKey: qk.deviceGroup.detail(key),
+    queryFn: () => fetchDeviceGroup(key),
+    enabled: !!key,
     ...sseAdaptivePolling(connected, POLL_RELAXED_MS),
   });
 }
@@ -57,7 +55,7 @@ export function useCreateDeviceGroup() {
 export function useUpdateDeviceGroup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: DeviceGroupUpdate }) => updateDeviceGroup(id, data),
+    mutationFn: ({ key, data }: { key: string; data: DeviceGroupUpdate }) => updateDeviceGroup(key, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
       qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
@@ -68,7 +66,7 @@ export function useUpdateDeviceGroup() {
 export function useDeleteDeviceGroup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deleteDeviceGroup(id),
+    mutationFn: (key: string) => deleteDeviceGroup(key),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.deviceGroups.root }),
   });
 }
@@ -76,8 +74,8 @@ export function useDeleteDeviceGroup() {
 export function useAddGroupMembers() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ groupId, deviceIds }: { groupId: string; deviceIds: string[] }) =>
-      addGroupMembers(groupId, deviceIds),
+    mutationFn: ({ groupKey, deviceIds }: { groupKey: string; deviceIds: string[] }) =>
+      addGroupMembers(groupKey, deviceIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
       qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
@@ -88,8 +86,8 @@ export function useAddGroupMembers() {
 export function useRemoveGroupMembers() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ groupId, deviceIds }: { groupId: string; deviceIds: string[] }) =>
-      removeGroupMembers(groupId, deviceIds),
+    mutationFn: ({ groupKey, deviceIds }: { groupKey: string; deviceIds: string[] }) =>
+      removeGroupMembers(groupKey, deviceIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
       qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
@@ -117,8 +115,5 @@ export const useGroupReconnect = () => useGroupBulkMutation(groupReconnect);
 export const useGroupExitMaintenance = () => useGroupBulkMutation(groupExitMaintenance);
 export const useGroupDeleteDevices = () => useGroupBulkMutation(groupDeleteDevices);
 export const useGroupEnterMaintenance = () =>
-  useGroupBulkMutation(({ groupId, body }: { groupId: string; body: BulkDeviceIds }) =>
-    groupEnterMaintenance(groupId, body));
-export const useGroupUpdateTags = () =>
-  useGroupBulkMutation(({ groupId, body }: { groupId: string; body: BulkTagsUpdate }) =>
-    groupUpdateTags(groupId, body));
+  useGroupBulkMutation(({ groupKey, body }: { groupKey: string; body: BulkDeviceIds }) =>
+    groupEnterMaintenance(groupKey, body));

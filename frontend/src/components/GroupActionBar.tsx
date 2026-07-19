@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Play, Square, RefreshCw, Trash2, Wrench, Power, Wifi, Tags } from 'lucide-react';
+import { Play, Square, RefreshCw, Trash2, Wrench, Power, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
-import { getErrorMessage } from '../lib/errors';
 import {
   useGroupDeleteDevices,
   useGroupEnterMaintenance,
@@ -10,19 +9,14 @@ import {
   useGroupRestartNodes,
   useGroupStartNodes,
   useGroupStopNodes,
-  useGroupUpdateTags,
 } from '../hooks/useDeviceGroups';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { Card } from './ui/Card';
 import type { BulkOperationResult, DeviceRead } from '../types';
-import {
-  DeviceActionErrorsDialog,
-  TagsActionDialog,
-} from '../pages/devices/deviceActionDialogs';
-import { parseDeviceActionTags } from '../pages/devices/deviceActionUtils';
+import { DeviceActionErrorsDialog } from '../pages/devices/deviceActionDialogs';
 
 interface Props {
-  groupId: string;
+  groupKey: string;
   devices: DeviceRead[];
 }
 
@@ -41,13 +35,9 @@ function formatFailureLines(result: BulkOperationResult, devices: DeviceRead[]) 
   }));
 }
 
-export function GroupActionBar({ groupId, devices }: Props) {
+export function GroupActionBar({ groupKey, devices }: Props) {
   const [confirmAction, setConfirmAction] = useState<PendingAction | null>(null);
-  const [showTagsModal, setShowTagsModal] = useState(false);
   const [showErrorsModal, setShowErrorsModal] = useState(false);
-  const [tagsText, setTagsText] = useState('{\n  "team": "qa"\n}');
-  const [mergeTags, setMergeTags] = useState(true);
-  const [tagsError, setTagsError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<{ operation: string; result: BulkOperationResult } | null>(null);
 
   const startNodes = useGroupStartNodes();
@@ -56,7 +46,6 @@ export function GroupActionBar({ groupId, devices }: Props) {
   const enterMaintenance = useGroupEnterMaintenance();
   const exitMaintenance = useGroupExitMaintenance();
   const reconnect = useGroupReconnect();
-  const updateTags = useGroupUpdateTags();
   const deleteDevices = useGroupDeleteDevices();
 
   const errorLines = lastResult ? formatFailureLines(lastResult.result, devices) : [];
@@ -101,29 +90,26 @@ export function GroupActionBar({ groupId, devices }: Props) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => confirm('Start Nodes', `Start nodes for all ${count} group devices?`, () => runOperation('Start Nodes', () => startNodes.mutateAsync(groupId)))} className={btnDefault}>
+          <button onClick={() => confirm('Start Nodes', `Start nodes for all ${count} group devices?`, () => runOperation('Start Nodes', () => startNodes.mutateAsync(groupKey)))} className={btnDefault}>
             <Play size={14} /> Start
           </button>
-          <button onClick={() => confirm('Stop Nodes', `Stop nodes for all ${count} group devices?`, () => runOperation('Stop Nodes', () => stopNodes.mutateAsync(groupId)))} className={btnDefault}>
+          <button onClick={() => confirm('Stop Nodes', `Stop nodes for all ${count} group devices?`, () => runOperation('Stop Nodes', () => stopNodes.mutateAsync(groupKey)))} className={btnDefault}>
             <Square size={14} /> Stop
           </button>
-          <button onClick={() => confirm('Restart Nodes', `Restart nodes for all ${count} group devices?`, () => runOperation('Restart Nodes', () => restartNodes.mutateAsync(groupId)))} className={btnDefault}>
+          <button onClick={() => confirm('Restart Nodes', `Restart nodes for all ${count} group devices?`, () => runOperation('Restart Nodes', () => restartNodes.mutateAsync(groupKey)))} className={btnDefault}>
             <RefreshCw size={14} /> Restart
           </button>
-          <button onClick={() => confirm('Reconnect', 'Reconnect supported devices in this group?', () => runOperation('Reconnect', () => reconnect.mutateAsync(groupId)))} className={btnDefault}>
+          <button onClick={() => confirm('Reconnect', 'Reconnect supported devices in this group?', () => runOperation('Reconnect', () => reconnect.mutateAsync(groupKey)))} className={btnDefault}>
             <Wifi size={14} /> Reconnect
           </button>
 
-          <button onClick={() => confirm('Enter Maintenance', `Put all ${count} group devices into maintenance mode?`, () => runOperation('Enter Maintenance', () => enterMaintenance.mutateAsync({ groupId, body: { device_ids: [] } })))} className={btnDefault}>
+          <button onClick={() => confirm('Enter Maintenance', `Put all ${count} group devices into maintenance mode?`, () => runOperation('Enter Maintenance', () => enterMaintenance.mutateAsync({ groupKey, body: { device_ids: [] } })))} className={btnDefault}>
             <Wrench size={14} /> Maintenance
           </button>
-          <button onClick={() => confirm('Exit Maintenance', `Exit maintenance for all ${count} group devices?`, () => runOperation('Exit Maintenance', () => exitMaintenance.mutateAsync(groupId)))} className={btnDefault}>
+          <button onClick={() => confirm('Exit Maintenance', `Exit maintenance for all ${count} group devices?`, () => runOperation('Exit Maintenance', () => exitMaintenance.mutateAsync(groupKey)))} className={btnDefault}>
             <Power size={14} /> Exit Maint.
           </button>
-          <button onClick={() => setShowTagsModal(true)} className={btnDefault}>
-            <Tags size={14} /> Update Tags
-          </button>
-          <button onClick={() => confirm('Delete Devices', `Delete all ${count} devices currently in this group? This cannot be undone.`, () => runOperation('Delete Devices', () => deleteDevices.mutateAsync(groupId)))} className={btnDanger}>
+          <button onClick={() => confirm('Delete Devices', `Delete all ${count} devices currently in this group? This cannot be undone.`, () => runOperation('Delete Devices', () => deleteDevices.mutateAsync(groupKey)))} className={btnDanger}>
             <Trash2 size={14} /> Delete Devices
           </button>
         </div>
@@ -143,34 +129,7 @@ export function GroupActionBar({ groupId, devices }: Props) {
         variant="danger"
       />
 
-      <TagsActionDialog
-        isOpen={showTagsModal}
-        onClose={() => setShowTagsModal(false)}
-        title="Update Group Tags"
-        tagsText={tagsText}
-        merge={mergeTags}
-        mergeLabel="Merge with existing tags"
-        tagsError={tagsError}
-        onTagsTextChange={(value) => {
-          setTagsText(value);
-          setTagsError(null);
-        }}
-        onMergeChange={setMergeTags}
-        onConfirm={async () => {
-          try {
-            const tags = parseDeviceActionTags(tagsText);
-            await runOperation('Update Tags', () =>
-              updateTags.mutateAsync({
-                groupId,
-                body: { device_ids: devices.map((device) => device.id), tags, merge: mergeTags },
-              }),
-            );
-            setShowTagsModal(false);
-          } catch (error) {
-            setTagsError(getErrorMessage(error, 'Invalid JSON'));
-          }
-        }}
-      />
+
 
       <DeviceActionErrorsDialog
         isOpen={showErrorsModal}

@@ -2275,6 +2275,8 @@ export interface components {
             filters?: components["schemas"]["DeviceGroupFilters"] | null;
             /** @default static */
             group_type: components["schemas"]["GroupType"];
+            /** Key */
+            key: string;
             /** Name */
             name: string;
         };
@@ -2296,11 +2298,8 @@ export interface components {
             devices?: components["schemas"]["DeviceRead"][];
             filters: components["schemas"]["DeviceGroupFilters"] | null;
             group_type: components["schemas"]["GroupType"];
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
+            /** Key */
+            key: string;
             /** Name */
             name: string;
             /**
@@ -2335,10 +2334,8 @@ export interface components {
             reserved?: boolean | null;
             /** Status */
             status?: ("available" | "busy" | "offline" | "maintenance" | "verifying") | null;
-            /** Tags */
-            tags?: {
-                [key: string]: string;
-            } | null;
+            /** Member Of */
+            member_of?: string[] | null;
         };
         /** DeviceGroupRead */
         DeviceGroupRead: {
@@ -2356,11 +2353,8 @@ export interface components {
             device_count: number;
             filters: components["schemas"]["DeviceGroupFilters"] | null;
             group_type: components["schemas"]["GroupType"];
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
+            /** Key */
+            key: string;
             /** Name */
             name: string;
             /**

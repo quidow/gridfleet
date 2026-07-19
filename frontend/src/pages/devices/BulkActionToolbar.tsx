@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Play, Square, RefreshCw, Trash2, Wrench, X, Power, Wifi, Tags } from 'lucide-react';
+import { Play, Square, RefreshCw, Trash2, Wrench, X, Power, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
-import { getErrorMessage } from '../../lib/errors';
 import {
   useBulkStartNodes,
   useBulkStopNodes,
@@ -10,16 +9,11 @@ import {
   useBulkEnterMaintenance,
   useBulkExitMaintenance,
   useBulkReconnect,
-  useBulkUpdateTags,
 } from '../../hooks/useBulk';
 import { Button } from '../../components/ui';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import type { BulkOperationResult, DeviceRead } from '../../types';
-import {
-  DeviceActionErrorsDialog,
-  TagsActionDialog,
-} from './deviceActionDialogs';
-import { parseDeviceActionTags } from './deviceActionUtils';
+import { DeviceActionErrorsDialog } from './deviceActionDialogs';
 
 interface Props {
   selectedIds: Set<string>;
@@ -33,28 +27,23 @@ function Divider() {
 
 export function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelection }: Props) {
   const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; action: () => Promise<void> } | null>(null);
-  const [showTagsModal, setShowTagsModal] = useState(false);
   const [showErrorsModal, setShowErrorsModal] = useState(false);
-  const [tagsText, setTagsText] = useState('{\n  "team": "qa"\n}');
-  const [mergeTags, setMergeTags] = useState(true);
-  const [tagsError, setTagsError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<{ operation: string; result: BulkOperationResult } | null>(null);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
-      if (confirmAction || showTagsModal || showErrorsModal) return;
+      if (confirmAction || showErrorsModal) return;
       onClearSelection();
     }
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClearSelection, confirmAction, showTagsModal, showErrorsModal]);
+  }, [onClearSelection, confirmAction, showErrorsModal]);
 
   const startNodes = useBulkStartNodes();
   const stopNodes = useBulkStopNodes();
   const restartNodes = useBulkRestartNodes();
-  const updateTags = useBulkUpdateTags();
   const deleteMut = useBulkDelete();
   const enterMaintenance = useBulkEnterMaintenance();
   const exitMaintenance = useBulkExitMaintenance();
@@ -173,15 +162,6 @@ export function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelecti
         >
           Exit Maint.
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          leadingIcon={<Tags size={14} />}
-          title="Update Tags"
-          onClick={() => setShowTagsModal(true)}
-        >
-          Tags
-        </Button>
 
         <Divider />
 
@@ -224,31 +204,7 @@ export function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelecti
         variant="danger"
       />
 
-      <TagsActionDialog
-        isOpen={showTagsModal}
-        onClose={() => setShowTagsModal(false)}
-        title="Update Tags"
-        tagsText={tagsText}
-        merge={mergeTags}
-        mergeLabel="Merge with existing tags"
-        tagsError={tagsError}
-        onTagsTextChange={(value) => {
-          setTagsText(value);
-          setTagsError(null);
-        }}
-        onMergeChange={setMergeTags}
-        onConfirm={async () => {
-          try {
-            const tags = parseDeviceActionTags(tagsText);
-            await runBulk('Update Tags', () =>
-              updateTags.mutateAsync({ device_ids: ids, tags, merge: mergeTags }),
-            );
-            setShowTagsModal(false);
-          } catch (error) {
-            setTagsError(getErrorMessage(error, 'Invalid JSON'));
-          }
-        }}
-      />
+
 
       <DeviceActionErrorsDialog
         isOpen={showErrorsModal}
