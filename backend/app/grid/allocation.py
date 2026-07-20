@@ -777,7 +777,13 @@ class AllocationService:
         row without another read.
         """
         pack_platform_keys = _pack_platform_keys(rows)
-        pack_catalog = await load_pack_catalog(db, {pack_id for pack_id, _ in pack_platform_keys})
+        # Key the catalog off every row's pack_id, exactly as
+        # ``load_group_membership_index`` does. Deriving it from
+        # ``pack_platform_keys`` instead would drop any device whose
+        # (pack_id, platform_id) pair fails to resolve, and readiness would then
+        # assess that device against a missing pack — a divergence between the
+        # allocator's needs_attention verdict and the Devices page's.
+        pack_catalog = await load_pack_catalog(db, {row.device.pack_id for row in rows if row.device.pack_id})
         templates = stereotype_templates_from_packs(pack_catalog, pack_platform_keys)
         readiness = await assess_devices_async(db, [row.device for row in rows], packs=pack_catalog)
         return templates, _facts_from_eligible_rows(rows, readiness, self._settings), pack_catalog
