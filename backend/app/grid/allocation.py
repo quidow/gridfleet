@@ -168,7 +168,12 @@ IntentFactory = Callable[[DbSession], IntentService]
 # A per-attempt cache of pack-rendered stereotype templates keyed by (pack_id,
 # platform_id). The template half is device-independent (#11), so a fleet of
 # same-pack devices renders one DB lookup per unique pack/platform per attempt.
-StereotypeTemplateCache = dict[tuple[str, str], StereotypeTemplate]
+# A ``None`` value is a cached *negative*: this pack/platform is known to be
+# unresolvable (pack deleted, platform dropped from the release) for the rest of
+# the attempt. Without it every device on a broken pack re-issued the failing
+# lookup — and that lookup costs two reads, since its LookupError path queries
+# again just to choose between "no releases" and "platform not in release".
+StereotypeTemplateCache = dict[tuple[str, str], StereotypeTemplate | None]
 
 
 class StereotypeProvider(Protocol):
@@ -1032,22 +1037,32 @@ async def device_match_surface(
     resolved = resolve_pack_for_device(device)
     if resolved is not None:
         pack_id, platform_id = resolved
-        try:
-            template = template_cache.get(resolved) if template_cache is not None else None
+        failure: LookupError | None = None
+        if template_cache is not None and resolved in template_cache:
+            template = template_cache[resolved]
             if template is None:
+                failure = LookupError(f"{pack_id}/{platform_id} unresolvable (cached this attempt)")
+        else:
+            try:
                 template = await load_stereotype_template(db, pack_id=pack_id, platform_id=platform_id)
-                if template_cache is not None:
-                    template_cache[resolved] = template
-        except LookupError as exc:
+            except LookupError as exc:
+                template, failure = None, exc
+            if template_cache is not None:
+                # Cache the negative too, so a fleet on a deleted pack costs one
+                # failing lookup per pack/platform per attempt, not one per device.
+                template_cache[resolved] = template
+        if failure is not None:
+            # Counted and logged per affected device (not per unique pair) so the
+            # metric keeps meaning "devices rendered unmatchable right now".
             GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL.inc()
             logger.warning(
                 "grid_stereotype_lookup_error device=%s pack=%s platform=%s: %s",
                 device.id,
                 pack_id,
                 platform_id,
-                exc,
+                failure,
             )
-        else:
+        elif template is not None:
             surface["platformName"] = template.platform_name
             surface.update(_match_relevant_base(template, device))
     surface.update(build_grid_stereotype_caps(device, pack_stereotype=None, matching_group_keys=matching_group_keys))

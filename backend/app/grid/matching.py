@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.devices.group_keys import is_valid_group_key
+from app.devices.group_keys import GROUP_PREFIX, is_valid_group_key
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -40,7 +40,6 @@ IDENTITY_KEYS = frozenset(
         "appium:platform",
     }
 )
-GROUP_PREFIX = "gridfleet:group:"
 # Tombstone for the retired ``gridfleet:tag:*`` capability namespace. Routing
 # membership is now expressed via ``gridfleet:group:<key>`` caps (boolean true).
 # Bodies still carrying the old tag caps are REJECTED at allocation with a pointer

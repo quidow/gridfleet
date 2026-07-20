@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app.appium_nodes.services.capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
-from app.grid.matching import GROUP_PREFIX
+from app.devices.group_keys import GROUP_PREFIX
 
 if TYPE_CHECKING:
     from collections.abc import Collection
