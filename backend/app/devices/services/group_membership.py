@@ -18,7 +18,7 @@ Membership semantics:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select, true
 from sqlalchemy import inspect as sa_inspect
@@ -30,7 +30,7 @@ from app.devices.services import attention as device_attention
 from app.devices.services import readiness as device_readiness
 from app.devices.services.state import derive_operational_states
 from app.hosts import service_hardware_telemetry as hardware_telemetry
-from app.runs.service_reservation import get_device_reservation_map
+from app.runs.service_reservation import get_device_reservation_map, reservation_gating_run_id
 
 # The dynamic-filter matcher is one return per axis by design; the axis set is
 # the public filter contract and collapsing them would obscure the AND semantics.
@@ -82,7 +82,13 @@ async def load_groups_by_keys(db: AsyncSession, group_keys: Collection[str]) -> 
         .join(DeviceGroup, DeviceGroup.key == member_of_keys.c.member_of_key)
         .where(DeviceGroup.group_type == GroupType.static)
     )
-    closure = closure.union_all(arm)
+    # ``union`` (not ``union_all``): termination must be structural, not an
+    # assumption about the data. Static groups are not supposed to carry a
+    # ``member_of``, but nothing enforces that — the tag migration rewrote
+    # ``filters`` for any group with a ``tags`` key regardless of type — so a
+    # static group carrying one could cycle a UNION ALL recursion forever.
+    # Deduplicating rows makes the recursion terminate on any graph.
+    closure = closure.union(arm)
     stmt = select(DeviceGroup).where(DeviceGroup.key.in_(select(closure.c.key)))
     return list((await db.execute(stmt)).scalars().all())
 
@@ -232,8 +238,8 @@ async def load_group_membership_index(
     - one batch ``derive_operational_states`` (which itself issues one live-
       session lookup, one verification-lease lookup, and a pack-catalog load
       when no catalog is supplied),
-    - one batch reservation map (only when ``reservation_owner_by_device_id``
-      is absent),
+    - one batch reservation map, projected through ``reservation_gating_run_id``
+      (only when ``reservation_owner_by_device_id`` is absent),
     - one joined static-membership read (only when
       ``static_group_keys_by_device_id`` is absent).
     """
@@ -275,11 +281,20 @@ async def load_group_membership_index(
     else:
         op_map = operational_states or {}
 
-    reservation_map: Mapping[uuid.UUID, Any] = reservation_owner_by_device_id or {}
+    gating_owner_map: Mapping[uuid.UUID, uuid.UUID | None] = reservation_owner_by_device_id or {}
     if needs_native_facts and reservation_owner_by_device_id is None:
-        # The reservation API returns ``dict[device_id, TestRun]``; we only need
-        # the gating-owner truth (is there an active reservation for this device).
+        # Project the gating owner, not "any active reservation row".
+        # ``reservation_gating_run_id`` is the single source for the allocator's
+        # gate and the read-side badge — it drops terminal-state runs and
+        # effectively-excluded entries — and the grid allocator's SQL twin
+        # (``reservation_gating_owner_sql``) feeds the same fact into the same
+        # evaluator. Populating ``is_reserved`` any other way would make a
+        # dynamic group's ``reserved`` axis disagree with what the allocator
+        # actually refuses.
         reservation_map = await get_device_reservation_map(db, device_ids)
+        gating_owner_map = {
+            device_id: reservation_gating_run_id(run, device_id) for device_id, run in reservation_map.items()
+        }
 
     static_keys_map: Mapping[uuid.UUID, frozenset[str]]
     if static_group_keys_by_device_id is None:
@@ -295,7 +310,7 @@ async def load_group_membership_index(
     facts_by_device_id: dict[uuid.UUID, DeviceGroupFacts] = {}
     for device in device_list:
         op_state = op_map.get(device.id, DeviceOperationalState.offline)
-        is_reserved = device.id in reservation_map
+        is_reserved = gating_owner_map.get(device.id) is not None
         readiness = readiness_map.get(device.id)
         readiness_state = readiness.readiness_state if readiness is not None else "setup_required"
         hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)

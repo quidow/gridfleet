@@ -113,6 +113,12 @@ async def _classify_shortfall_gates(
     op_states = await derive_operational_states(db, devices, now=now, packs=pack_catalog)
     readiness_map = await assess_devices_async(db, devices, packs=pack_catalog)
 
+    # ``reserved_run_by_device`` is the run allocator's own gate ("any active
+    # reservation row"), which is deliberately stricter than the ``reserved``
+    # group-filter axis ("a reservation that actually gates this device").
+    # Do not inject it as the membership index's reservation facts — the loader
+    # projects ``reservation_gating_run_id`` so the axis means the same thing
+    # here, on the device list, and in the grid allocator.
     group_index: GroupMembershipIndex | None = None
     if requirement.groups:
         groups = await load_groups_by_keys(db, requirement.groups)
@@ -123,7 +129,6 @@ async def _classify_shortfall_gates(
             settings=settings,
             pack_catalog=pack_catalog,
             operational_states=op_states,
-            reservation_owner_by_device_id=reserved_run_by_device,
         )
 
     for device in devices:
