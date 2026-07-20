@@ -48,7 +48,7 @@ Current reconnect rules:
 - the device must be on a network-connected lane (`connection_type=network`)
 - it must have an IP address, plus an assigned host and connection target
 
-In practice only the Android (uiautomator2) adapter implements reconnect successfully — the Apple (xcuitest) platforms declare the action in their manifest but the adapter rejects it — so reconnect is effectively an Android-only operation today.
+In practice only the Android (uiautomator2) adapter implements reconnect — the Apple (xcuitest) platforms do not declare the action in their manifest — so reconnect is an Android-only operation today.
 
 If reconnect succeeds and the device has a known node, the manager attempts a best-effort node restart afterward.
 
