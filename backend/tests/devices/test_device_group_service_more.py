@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
@@ -127,3 +129,57 @@ async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: 
     await db_session.commit()
 
     assert await _svc().get_group_device_ids(db_session, group.key) == []
+
+
+async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: AsyncSession) -> None:
+    """The reference scan runs for every group type and must not over-reject.
+
+    ``delete_group`` no longer gates ``_assert_no_references`` on the target being
+    static, so a dynamic group with no dependents must still delete cleanly.
+    """
+    svc = _svc()
+    await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="del-static", name="del static", group_type="static"),
+    )
+    dynamic = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(
+            key="del-dynamic",
+            name="del dynamic",
+            group_type="dynamic",
+            filters=DeviceGroupFilters(member_of=["del-static"]),
+        ),
+    )
+    await settle_after_commit_tasks()
+
+    assert await svc.delete_group(db_session, dynamic.key) is True
+    assert await svc.get_group(db_session, dynamic.key) is None
+
+
+async def test_delete_dynamic_group_rejects_dangling_reference(db_session: AsyncSession) -> None:
+    """A ``member_of`` naming a dynamic group is unreachable through the API
+    (``_assert_member_of_resolves`` rejects it), but nothing structural stops the
+    row from existing — a hand-written row or a data migration can mint one. The
+    delete path scans references unconditionally so such a row cannot be orphaned.
+    """
+    svc = _svc()
+    target = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="dangling-target", name="dangling target", group_type="dynamic"),
+    )
+    await settle_after_commit_tasks()
+    # Bypass the service so the otherwise-rejected reference reaches the table.
+    db_session.add(
+        DeviceGroup(
+            key="dangling-ref",
+            name="dangling ref",
+            group_type=GroupType.dynamic,
+            filters={"member_of": [target.key]},
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(device_group_service.GroupReferencedError) as exc:
+        await svc.delete_group(db_session, target.key)
+    assert exc.value.dependents == ["dangling-ref"]

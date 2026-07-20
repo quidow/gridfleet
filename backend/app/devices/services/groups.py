@@ -29,7 +29,7 @@ class GroupKeyConflictError(ValueError):
 
 
 class GroupReferencedError(ValueError):
-    """Raised when deleting a static group that dynamic groups still reference."""
+    """Raised when deleting a group that another group's ``member_of`` references."""
 
     def __init__(self, dependents: list[str]) -> None:
         self.dependents = dependents
@@ -186,8 +186,11 @@ class DeviceGroupsService:
         group = next((row for row in rows if row.key == group_key), None)
         if group is None:
             return False
-        if group.group_type == GroupType.static:
-            _assert_no_references(group_key, rows)
+        # Unconditional: ``_assert_no_references`` scans every group carrying a
+        # ``member_of`` precisely because nothing structurally guarantees only
+        # dynamic groups have one, so gating on the *target*'s type would
+        # contradict that reasoning. The rows are already locked and scanned.
+        _assert_no_references(group_key, rows)
         await db.delete(group)
         self._publisher.queue_for_session(
             db,
