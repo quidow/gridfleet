@@ -34,12 +34,11 @@ from app.devices.models import (
     DeviceOperationalState,
     GroupType,
 )
-from app.devices.schemas.device import HardwareTelemetryState
-from app.devices.services import attention as device_attention
 from app.devices.services.claims import live_session_exists
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
     GroupMembershipIndex,
+    build_device_group_facts,
     evaluate_group_memberships,
     load_groups_by_keys,
     load_static_group_keys_by_device_id,
@@ -59,7 +58,6 @@ from app.grid.matching import (
     requested_group_keys,
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services.capability import (
     StereotypeTemplate,
     load_pack_catalog,
@@ -286,26 +284,14 @@ def _facts_from_eligible_rows(
     facts: dict[uuid.UUID, DeviceGroupFacts] = {}
     for row in rows:
         device = row.device
-        if settings is None:
-            hardware_telemetry_state = HardwareTelemetryState.unknown
-        else:
-            hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
-        hardware_health_status = hardware_telemetry.current_hardware_health_status(device)
         readiness = readiness_by_device_id.get(device.id)
-        readiness_state = readiness.readiness_state if readiness is not None else "setup_required"
-        needs_attention = device_attention.compute_needs_attention(
-            DeviceOperationalState.available,
-            readiness_state,
-            hardware_health_status=hardware_health_status,
-            review_required=bool(device.review_required),
-        )
-        facts[device.id] = DeviceGroupFacts(
+        facts[device.id] = build_device_group_facts(
+            device,
             operational_state=DeviceOperationalState.available,
             is_reserved=row.reservation_run_id is not None,
-            readiness_state=readiness_state,
-            hardware_telemetry_state=hardware_telemetry_state,
-            needs_attention=needs_attention,
+            readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
             static_group_keys=row.static_group_keys,
+            settings=settings,
         )
     return facts
 

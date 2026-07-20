@@ -7,12 +7,24 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event
 
+from app.core.timeutil import now_utc
 from app.devices.group_keys import is_valid_group_key
-from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
+from app.devices.models import (
+    Device,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceOperationalState,
+    GroupType,
+    HardwareHealthStatus,
+    HardwareTelemetrySupportStatus,
+)
+from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
+    build_device_group_facts,
     evaluate_group_memberships,
 )
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -502,3 +514,94 @@ async def test_group_bulk_route_contract_for_empty_and_missing_groups(
 
     missing = await client.post("/api/device-groups/no-such-group/bulk/exit-maintenance")
     assert missing.status_code == 404
+
+
+def _needs_attention_device() -> Device:
+    """A real device whose hardware health is ``critical`` and whose review flag is
+    clear — the shape that exposed the earlier drift, where the grid allocator
+    hardcoded ``readiness_state="verified"`` and a ``needs_attention`` dynamic
+    group silently never matched there.
+    """
+    device = _device("attention-parity")
+    device.review_required = False
+    device.hardware_health_status = HardwareHealthStatus.critical
+    device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.supported
+    device.hardware_telemetry_reported_at = now_utc()
+    return device
+
+
+def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> None:
+    """``build_device_group_facts`` is the single derivation for every fact-gathering
+    site, so the same device and the same inputs must produce byte-identical facts
+    however the caller happens to source them.
+
+    Each call below is shaped exactly like its production site: the canonical
+    loader in ``load_group_membership_index`` (operational state and reservation
+    from batch maps, review flag read from the row), the grid allocator's
+    ``_facts_from_eligible_rows`` (``available`` by construction from
+    ``is_available_sql``, reservation from the projected owner column), and the
+    run allocator's locked step-7b rebuild (``is_reserved``/``review_required``
+    ``False`` by construction from the gates its locked rows passed).
+    """
+    device = _needs_attention_device()
+    settings = FakeSettingsReader({"general.hardware_telemetry_stale_timeout_sec": 600})
+    shared = {
+        "readiness_state": "setup_required",
+        "static_group_keys": frozenset({"east"}),
+        "settings": settings,
+    }
+
+    # Canonical loader: reservation via the gating-owner map lookup.
+    gating_owner_map: dict[uuid.UUID, uuid.UUID | None] = {}
+    canonical = build_device_group_facts(
+        device,
+        operational_state=DeviceOperationalState.available,
+        is_reserved=gating_owner_map.get(device.id) is not None,
+        **shared,
+    )
+    # Grid allocator: reservation via the projected ``reservation_gating_owner_sql``
+    # column on the eligible row — the same fact by a different access path.
+    row_reservation_run_id: uuid.UUID | None = None
+    grid = build_device_group_facts(
+        device,
+        operational_state=DeviceOperationalState.available,
+        is_reserved=row_reservation_run_id is not None,
+        **shared,
+    )
+    run = build_device_group_facts(
+        device,
+        operational_state=DeviceOperationalState.available,
+        is_reserved=False,
+        review_required=False,
+        **shared,
+    )
+
+    assert canonical == grid == run
+    # setup_required + critical hardware health must flag attention on every path.
+    assert canonical.needs_attention is True
+    assert canonical.hardware_telemetry_state == HardwareTelemetryState.fresh
+
+
+def test_build_device_group_facts_reports_unknown_telemetry_without_settings() -> None:
+    """The grid allocator's settings-free polls pass ``settings=None``. The fallback
+    lives in the helper, so telemetry reports ``unknown`` rather than being guessed,
+    and no other axis shifts.
+    """
+    device = _needs_attention_device()
+    common: dict[str, Any] = {
+        "operational_state": DeviceOperationalState.available,
+        "is_reserved": False,
+        "readiness_state": "setup_required",
+        "static_group_keys": frozenset(),
+    }
+
+    without = build_device_group_facts(device, settings=None, **common)
+    with_settings = build_device_group_facts(
+        device,
+        settings=FakeSettingsReader({"general.hardware_telemetry_stale_timeout_sec": 600}),
+        **common,
+    )
+
+    assert without.hardware_telemetry_state == HardwareTelemetryState.unknown
+    assert with_settings.hardware_telemetry_state == HardwareTelemetryState.fresh
+    assert without.needs_attention == with_settings.needs_attention is True

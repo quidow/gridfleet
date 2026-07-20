@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
+from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import readiness as device_readiness
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.devices.schemas.device import HardwareTelemetryState
     from app.packs.models import DriverPack
 
 
@@ -126,6 +126,54 @@ class DeviceGroupFacts:
     hardware_telemetry_state: HardwareTelemetryState
     needs_attention: bool
     static_group_keys: frozenset[str]
+
+
+def build_device_group_facts(
+    device: Device,
+    *,
+    operational_state: DeviceOperationalState,
+    is_reserved: bool,
+    readiness_state: str,
+    static_group_keys: frozenset[str],
+    settings: SettingsReader | None,
+    review_required: bool | None = None,
+) -> DeviceGroupFacts:
+    """Derive one device's evaluator facts. Pure: no IO, no session.
+
+    The three fact-gathering call sites (``load_group_membership_index``, the
+    grid allocator's ``_facts_from_eligible_rows``, and the run allocator's
+    locked step-7b rebuild) legitimately *source* their inputs differently —
+    some axes are known by construction from the SQL gate that produced the
+    row — but the derivation from those inputs is identical. Keeping it here
+    means ``needs_attention`` in particular cannot drift between the paths.
+
+    ``settings`` may be ``None`` when the caller has no settings reader (the
+    grid allocator's settings-free polls); telemetry then reports ``unknown``
+    rather than being guessed from raw columns.
+
+    ``review_required`` defaults to the device row. Callers whose rows provably
+    cleared the review gate under a lock pass ``False`` explicitly.
+    """
+    hardware_telemetry_state = (
+        HardwareTelemetryState.unknown
+        if settings is None
+        else hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
+    )
+    effective_review_required = bool(device.review_required) if review_required is None else review_required
+    needs_attention = device_attention.compute_needs_attention(
+        operational_state,
+        readiness_state,
+        hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
+        review_required=effective_review_required,
+    )
+    return DeviceGroupFacts(
+        operational_state=operational_state,
+        is_reserved=is_reserved,
+        readiness_state=readiness_state,
+        hardware_telemetry_state=hardware_telemetry_state,
+        needs_attention=needs_attention,
+        static_group_keys=static_group_keys,
+    )
 
 
 @dataclass(frozen=True)
@@ -329,25 +377,14 @@ async def load_group_membership_index(
 
     facts_by_device_id: dict[uuid.UUID, DeviceGroupFacts] = {}
     for device in device_list:
-        op_state = op_map.get(device.id, DeviceOperationalState.offline)
-        is_reserved = gating_owner_map.get(device.id) is not None
         readiness = readiness_map.get(device.id)
-        readiness_state = readiness.readiness_state if readiness is not None else "setup_required"
-        hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
-        hardware_health_status = hardware_telemetry.current_hardware_health_status(device)
-        needs_attention = device_attention.compute_needs_attention(
-            op_state,
-            readiness_state,
-            hardware_health_status=hardware_health_status,
-            review_required=bool(device.review_required),
-        )
-        facts_by_device_id[device.id] = DeviceGroupFacts(
-            operational_state=op_state,
-            is_reserved=is_reserved,
-            readiness_state=readiness_state,
-            hardware_telemetry_state=hardware_telemetry_state,
-            needs_attention=needs_attention,
+        facts_by_device_id[device.id] = build_device_group_facts(
+            device,
+            operational_state=op_map.get(device.id, DeviceOperationalState.offline),
+            is_reserved=gating_owner_map.get(device.id) is not None,
+            readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
             static_group_keys=static_keys_map.get(device.id, frozenset()),
+            settings=settings,
         )
 
     return evaluate_group_memberships(groups=groups, devices=device_list, facts_by_device_id=facts_by_device_id)

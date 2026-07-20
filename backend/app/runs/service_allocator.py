@@ -20,12 +20,12 @@ from app.core.errors import (
 )
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
-from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
 from app.devices.services.claims import active_reservation_exists, reservation_active
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
     GroupMembershipIndex,
+    build_device_group_facts,
     evaluate_group_memberships,
     load_group_membership_index,
     load_groups_by_keys,
@@ -40,7 +40,6 @@ from app.devices.services.readiness import (
 )
 from app.devices.services.service import UnknownGroupKeysError
 from app.devices.services.state import derive_operational_states, is_available_sql
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services.platform_resolver import evaluate_runnable
 from app.runs.models import RunState, TestRun
@@ -532,23 +531,14 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         locked_facts: dict[uuid.UUID, DeviceGroupFacts] = {}
         for locked_device in locked_devices_list:
             pack = pack_catalog.get(locked_device.pack_id)
-            readiness_state = assess_device_with_pack(locked_device, pack).readiness_state
-            hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(
-                locked_device, settings=settings
-            )
-            hardware_health_status = hardware_telemetry.current_hardware_health_status(locked_device)
-            locked_facts[locked_device.id] = DeviceGroupFacts(
+            locked_facts[locked_device.id] = build_device_group_facts(
+                locked_device,
                 operational_state=DeviceOperationalState.available,
                 is_reserved=False,
-                readiness_state=readiness_state,
-                hardware_telemetry_state=hardware_telemetry_state,
-                needs_attention=device_attention.compute_needs_attention(
-                    DeviceOperationalState.available,
-                    readiness_state,
-                    hardware_health_status=hardware_health_status,
-                    review_required=False,
-                ),
+                readiness_state=assess_device_with_pack(locked_device, pack).readiness_state,
                 static_group_keys=locked_static_keys.get(locked_device.id, frozenset()),
+                settings=settings,
+                review_required=False,
             )
         locked_group_index = evaluate_group_memberships(
             groups=groups, devices=locked_devices_list, facts_by_device_id=locked_facts
