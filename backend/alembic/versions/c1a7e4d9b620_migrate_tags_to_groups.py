@@ -61,7 +61,16 @@ def _tag_group_key(tag_key: str, tag_value: str, occupied: set[str]) -> str:
 
 
 def _validate_device_tags(bind: sa.Connection) -> None:
-    """Two bounded probes: non-object payloads, then non-string tag values."""
+    """Two bounded probes: non-object payloads, then non-string tag values.
+
+    A JSONB ``null`` literal is semantically "no tags" — distinct from SQL NULL
+    but treated equivalently here. We first normalize JSONB ``null`` to SQL NULL
+    so the downstream ``COALESCE(d.tags, '{}'::jsonb)`` and ``jsonb_each`` calls
+    (which both raise on a non-object input) see an empty map for these rows.
+    Only genuine non-object shapes (arrays, scalars) and non-string values are
+    rejected as malformed.
+    """
+    bind.execute(sa.text("UPDATE devices SET tags = NULL WHERE jsonb_typeof(tags) = 'null'"))
     bad_shape = bind.execute(
         sa.text("SELECT id FROM devices WHERE tags IS NOT NULL AND jsonb_typeof(tags) <> 'object' LIMIT 1")
     ).scalar_one_or_none()

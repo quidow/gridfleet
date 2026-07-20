@@ -323,6 +323,40 @@ async def test_malformed_device_tags_abort_before_destructive_ddl() -> None:
 
 
 @pytest.mark.db
+async def test_jsonb_null_tags_are_treated_as_no_tags() -> None:
+    """A JSONB ``null`` literal is semantically "no tags" (distinct from SQL NULL)
+    and must not trip the malformed-payload guard. Regression for the container
+    that failed to start because a device row carried ``tags = 'null'::jsonb``."""
+    null_device = "00000000-0000-0000-0000-0000000000a4"
+    tagged_device = "00000000-0000-0000-0000-0000000000a5"
+    async with _harness("jsonbnull") as h:
+        await h.seed_host()
+        await h.seed_device(null_device, "dev-null", None)
+        await h.execute(
+            "UPDATE devices SET tags = CAST('null' AS JSONB) WHERE id = :id",
+            {"id": null_device},
+        )
+        await h.seed_device(tagged_device, "dev-tagged", {"team": "qa"})
+
+        await h.upgrade(TAGS_TO_GROUPS_REVISION)
+
+        membership_rows = await h.fetch(
+            "SELECT g.key, m.device_id::text FROM device_group_memberships m "
+            "JOIN device_groups g ON g.id = m.group_id ORDER BY g.key, m.device_id"
+        )
+        memberships: dict[str, set[str]] = {}
+        for key, device_id in membership_rows:
+            memberships.setdefault(key, set()).add(device_id)
+        assert memberships == {"tag-team-qa": {tagged_device}}
+
+        columns = await h.fetch(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'devices' AND column_name = 'tags'"
+        )
+        assert columns == []
+
+
+@pytest.mark.db
 async def test_malformed_dynamic_filter_tags_abort_the_migration() -> None:
     async with _harness("badfilter") as h:
         await h.seed_group(
