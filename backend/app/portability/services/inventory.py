@@ -45,16 +45,7 @@ def _csv_safe(value: str) -> str:
 
 
 def _prefixed_attr_value(device: Device, v: str) -> object:
-    """Resolve dotted hardware.*/verification.* columns via their model-attribute mapping."""
-    if v.startswith("hardware."):
-        attr = {
-            "hardware.battery_level_percent": "battery_level_percent",
-            "hardware.battery_temperature_c": "battery_temperature_c",
-            "hardware.charging_state": "charging_state",
-            "hardware.health_status": "hardware_health_status",
-            "hardware.telemetry_reported_at": "hardware_telemetry_reported_at",
-        }[v]
-        return getattr(device, attr)
+    """Resolve dotted verification.* columns via their model-attribute mapping."""
     attr = {
         "verification.verified_at": "verified_at",
         "verification.session_viability_status": "session_viability_status",
@@ -85,7 +76,7 @@ def _column_value(device: Device, column: InventoryColumn, operational_state: st
         return device.identity_scope
     if v == "identity.value":
         return device.identity_value
-    if v.startswith(("hardware.", "verification.")):
+    if v.startswith("verification."):
         return _prefixed_attr_value(device, v)
     return getattr(device, v)
 
