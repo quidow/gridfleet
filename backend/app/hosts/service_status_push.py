@@ -123,7 +123,6 @@ def push_sections(push: HostStatusPush) -> dict[str, Any]:
         "host_telemetry": push.host_telemetry,
         "node_health": push.node_health,
         "device_health": push.device_health,
-        "device_telemetry": push.device_telemetry,
         "device_properties": push.device_properties,
     }
 
