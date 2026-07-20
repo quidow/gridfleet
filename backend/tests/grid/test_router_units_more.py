@@ -19,7 +19,7 @@ from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.routers import nodes as nodes_router
 from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
-from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType, GroupType
 from app.devices.routers import (
     bulk,
 )
@@ -282,7 +282,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         device_services=ds_update_ok,
     ) == {"key": group_key}
 
-    ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
+    ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
         await device_groups.add_members(
             group_key,
@@ -1849,12 +1849,12 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     group_key = "group"
     device_ids = [uuid.uuid4()]
 
-    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
+    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
         await device_groups._group_device_ids_or_404(object(), group_key, ds_empty)
     assert exc.value.status_code == 404
 
-    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value={"group_type": "dynamic"})))
+    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=GroupType.dynamic)))
     with pytest.raises(HTTPException) as exc:
         await device_groups.add_members(
             group_key,
@@ -1880,12 +1880,8 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
         mock_bulk = AsyncMock(**{bulk_method: AsyncMock(return_value={"ok": 1})})
         ds = SimpleNamespace(
             groups=SimpleNamespace(
-                get_group=AsyncMock(
-                    return_value={
-                        "group_type": "static",
-                        "devices": [SimpleNamespace(id=device_ids[0])],
-                    }
-                )
+                get_group_type=AsyncMock(return_value=GroupType.static),
+                get_group_device_ids=AsyncMock(return_value=[device_ids[0]]),
             ),
             bulk=mock_bulk,
         )
@@ -1903,12 +1899,8 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     mock_bulk_reconnect = AsyncMock(bulk_reconnect=AsyncMock(return_value={"ok": 1}))
     ds_reconnect = SimpleNamespace(
         groups=SimpleNamespace(
-            get_group=AsyncMock(
-                return_value={
-                    "group_type": "static",
-                    "devices": [SimpleNamespace(id=device_ids[0])],
-                }
-            )
+            get_group_type=AsyncMock(return_value=GroupType.static),
+            get_group_device_ids=AsyncMock(return_value=[device_ids[0]]),
         ),
         bulk=mock_bulk_reconnect,
     )

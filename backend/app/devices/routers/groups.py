@@ -9,6 +9,7 @@ from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.group_keys import GroupKey
+from app.devices.models import GroupType
 from app.devices.schemas.device import (
     BulkDeviceIds,
     BulkOperationResult,
@@ -44,8 +45,17 @@ router = APIRouter(prefix="/api/device-groups", tags=["device-groups"], response
 async def _group_device_ids_or_404(
     db: AsyncSession, group_key: GroupKey, device_services: DeviceServicesDep
 ) -> list[UUID]:
-    group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
-    return [device.id for device in group["devices"]]
+    """The group's member ids, or 404 when the key is unknown.
+
+    Two cheap keyed reads instead of ``get_group``: the bulk routes need ids,
+    not serialized members, and for a dynamic group ``get_group`` would gather
+    operational state, readiness and reservations for the devices in scope
+    before discarding all of it. Existence is checked separately because an
+    existing group with no members must still return 200 with a zero count,
+    which an empty id list alone cannot distinguish from a missing group.
+    """
+    found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
+    return await device_services.groups.get_group_device_ids(db, group_key)
 
 
 @router.post("", response_model=DeviceGroupRead, response_model_exclude_none=True, status_code=201)
@@ -142,8 +152,8 @@ async def add_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
-    group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
-    if group["group_type"] == "dynamic":
+    group_type = found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
+    if group_type == GroupType.dynamic:
         raise HTTPException(status_code=400, detail="Cannot manually add members to a dynamic group")
     added = found_or_404(await device_services.groups.add_members(db, group_key, body.device_ids), "Group not found")
     return {"added": added}
@@ -156,8 +166,8 @@ async def remove_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
-    group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
-    if group["group_type"] == "dynamic":
+    group_type = found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
+    if group_type == GroupType.dynamic:
         raise HTTPException(status_code=400, detail="Cannot manually remove members from a dynamic group")
     removed = found_or_404(
         await device_services.groups.remove_members(db, group_key, body.device_ids), "Group not found"
