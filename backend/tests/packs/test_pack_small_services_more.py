@@ -323,7 +323,9 @@ async def test_pack_capability_rendering_edges() -> None:
         return_value=MagicMock(unique=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
     )
     session.scalar = AsyncMock(return_value=None)
-    with pytest.raises(LookupError, match="no releases"):
+    # Empty catalog means the pack row itself is absent; the message must say so
+    # rather than claiming the pack exists with no releases.
+    with pytest.raises(LookupError, match="unknown pack missing"):
         await pack_capability_service.render_stereotype(session, pack_id="missing", platform_id="android")
 
     assert (
