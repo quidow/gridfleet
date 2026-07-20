@@ -19,11 +19,13 @@ from app.devices.models import (
     HardwareTelemetrySupportStatus,
 )
 from app.devices.schemas.device import HardwareTelemetryState
+from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
     build_device_group_facts,
     evaluate_group_memberships,
 )
+from app.devices.services.service import device_scope_conditions
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
@@ -605,3 +607,69 @@ def test_build_device_group_facts_reports_unknown_telemetry_without_settings() -
     assert without.hardware_telemetry_state == HardwareTelemetryState.unknown
     assert with_settings.hardware_telemetry_state == HardwareTelemetryState.fresh
     assert without.needs_attention == with_settings.needs_attention is True
+
+
+@pytest.mark.db
+async def test_narrow_group_scopes_stay_bounded_and_unbounded_ones_are_reported(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The all-narrow case must load only in-scope devices; an unbounded group is named.
+
+    ``_load_devices_in_scope`` ORs one scope per dynamic group into a single batch.
+    A group pinning no column-scope axis is unbounded — ``status``, ``reserved``,
+    ``hardware_telemetry_state`` and ``needs_attention`` are deliberately excluded
+    from the column scope, so a group filtered only on ``status`` reaches it easily.
+    The union with an unbounded arm is inherently the whole fleet (that group really
+    does span it), so this pins the two things that are actually in our control: the
+    common all-narrow case stays bounded, and the degenerate case is visible in the
+    log instead of silently widening every co-listed group's batch.
+    """
+    from app.devices.services.groups import _load_devices_in_scope
+
+    in_scope = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"scope-in-{uuid.uuid4().hex[:8]}",
+        connection_target="scope-in",
+        name="In scope",
+        os_version="14",
+        host_id=db_host.id,
+        device_type="real_device",
+        connection_type="usb",
+    )
+    out_of_scope = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"scope-out-{uuid.uuid4().hex[:8]}",
+        connection_target="scope-out",
+        name="Out of scope",
+        os_version="14",
+        host_id=db_host.id,
+        device_type="emulator",
+        connection_type="usb",
+    )
+    db_session.add_all([in_scope, out_of_scope])
+    await db_session.commit()
+
+    narrow = _dynamic("narrow-real", filters={"device_type": "real_device"})
+    loaded = await _load_devices_in_scope(db_session, [narrow])
+    ids = {d.id for d in loaded}
+    assert in_scope.id in ids
+    assert out_of_scope.id not in ids, "a narrow group's batch loaded a device outside its scope"
+
+    # A group filtered only on an excluded axis pins nothing a query can narrow on.
+    unbounded = _dynamic("unbounded-status", filters={"status": "available"})
+    assert device_scope_conditions(DeviceGroupFilters.model_validate(unbounded.filters)) == []
+
+    with caplog.at_level("WARNING", logger="app.devices.services.groups"):
+        await _load_devices_in_scope(db_session, [narrow, unbounded])
+    assert any(
+        "device_group_scope_unbounded" in r.message and "unbounded-status" in str(r.args) for r in caplog.records
+    )
