@@ -28,7 +28,6 @@ from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.manifest import resolve_desired_platform
 from agent_app.pack.router import (
     run_device_health_probe,
-    run_device_telemetry_probe,
 )
 from agent_app.pack.runtime import AppiumRuntimeManager
 from agent_app.pack.runtime_registry import RuntimeRegistry
@@ -342,20 +341,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 **probe_kwargs,
             )
 
-        async def _telemetry_probe(**kwargs: object) -> dict[str, Any] | None:
-            probe_kwargs = cast("dict[str, Any]", kwargs)
-            context = await _resolve_probe_context(probe_kwargs["pack_id"], probe_kwargs["platform_id"])
-            if context is None:
-                return None
-            _platform, release = context
-            return await run_device_telemetry_probe(
-                adapter_registry=adapter_registry,
-                pack_id=probe_kwargs["pack_id"],
-                release=release,
-                identity_value=probe_kwargs["identity_value"],
-                connection_target=probe_kwargs["connection_target"],
-            )
-
         async def _properties_probe(**kwargs: object) -> dict[str, Any] | None:
             probe_kwargs = cast("dict[str, Any]", kwargs)
             desired = app.state.pack_state_loop.latest_desired_packs if app.state.pack_state_loop else None
@@ -373,7 +358,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             manager=appium_mgr,
             host_identity=host_identity,
             health_probe=_health_probe,
-            telemetry_probe=_telemetry_probe,
             properties_probe=_properties_probe,
             on_results=status_loop.wake,
         )
