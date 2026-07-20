@@ -1237,7 +1237,12 @@ test.describe('Devices page', () => {
     await expect(firstDeviceRow(page).getByLabel('Node ok')).toBeVisible();
     await expect(firstDeviceRow(page).getByLabel('Viability ok')).toBeVisible();
     await firstDeviceRow(page).getByRole('button', { name: /Health details/ }).click();
-    await expect(page.getByRole('dialog', { name: /Health details/ })).toBeVisible();
+    // Assert on the popover body, not just that it opened: each verdict row
+    // renders its label plus the detail string from health_summary.
+    const details = page.getByRole('dialog', { name: /Health details/ });
+    await expect(details.getByText('Device', { exact: true })).toBeVisible();
+    await expect(details.getByText('running')).toBeVisible();
+    await expect(details.getByText('passed')).toBeVisible();
   });
 
   test('device detail shows triage, setup, and logs content', async ({ page }) => {

@@ -39,6 +39,11 @@ _DROPPED_SETTINGS = (
     "general.hardware_temperature_critical_c",
 )
 
+# Dynamic-group filter axes that no longer exist on ``DeviceGroupFilters``.
+# That model is ``extra="forbid"`` and is validated straight from this JSONB
+# column, so a leftover key would raise on every membership evaluation.
+_DROPPED_GROUP_FILTER_KEYS = ("hardware_health_status", "hardware_telemetry_state")
+
 
 def upgrade() -> None:
     for column in _TELEMETRY_COLUMNS:
@@ -48,6 +53,14 @@ def upgrade() -> None:
     for key in _DROPPED_SETTINGS:
         op.execute(
             sa.text("DELETE FROM settings WHERE key = :key").bindparams(key=key)
+        )
+    # ``-`` is a no-op when the key is absent, so this needs no key-existence
+    # predicate (whose ``?`` operator would collide with param placeholders).
+    for filter_key in _DROPPED_GROUP_FILTER_KEYS:
+        op.execute(
+            sa.text("UPDATE device_groups SET filters = filters - :key WHERE filters IS NOT NULL").bindparams(
+                key=filter_key
+            )
         )
     # The deleted hysteresis path (service_hardware_telemetry) kept a pending
     # warning/critical streak per device here; nothing reads the namespace now.

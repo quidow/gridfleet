@@ -562,6 +562,5 @@ async def select_devices_for_requirement(
         db,
         [requirement],
         restart_window_sec=restart_window_sec,
-        settings=FakeSettingsReader({}),
     )
     return selection[0]
