@@ -42,6 +42,42 @@ cd docker
 docker compose --env-file .env -f docker-compose.prod.yml restart backend
 ```
 
+### Releases that drop a database column
+
+Some releases run a migration that **drops** a column. The current example is the device-tags-to-groups release, whose migration `c1a7e4d9b620` removes `devices.tags` in a single step. There is no deprecate-then-drop window: the moment the migration lands, any backend process still running the previous image fails on **every** device query, because SQLAlchemy emits the full column list for `select(Device)`.
+
+This matters because production splits the backend into two services. `backend` owns alembic; `backend-scheduler` sets `GRIDFLEET_RUN_MIGRATIONS_ON_START: "false"` and declares `depends_on: backend: service_healthy`. **`depends_on` orders starts, not stops.** A partial update — `docker compose up -d backend`, or any deploy that recreates `backend` without recreating `backend-scheduler` — leaves the old scheduler running against the new schema. Every background loop that touches a device throws, the stall watchdog `os._exit(70)`s the process, and the supervisor restarts it into the same broken image, indefinitely.
+
+So for these releases:
+
+1. Take a backup first (`bash scripts/backup.sh`). A column drop is not reversible from application code, and the migration's `downgrade` refuses to run.
+2. **Recreate `backend` and `backend-scheduler` together.** Use the full-stack command in [Deploy or restart the stack](#2-deploy-or-restart-the-stack), or name both services explicitly:
+
+   ```bash
+   cd docker
+   docker compose --env-file .env -f docker-compose.prod.yml up --build -d backend backend-scheduler
+   ```
+
+   Never deploy one of the pair alone. The same applies to the rollback command in [section 4](#4-roll-back-application-code-without-restoring-the-database) — rolling `backend` back to a pre-migration image against a migrated database reproduces the failure from the other direction, so a rollback across a column-drop release needs a database restore ([section 5](#5-roll-back-data-from-backup)), not a code-only rollback.
+3. Confirm the scheduler came back clean, not crash-looping:
+
+   ```bash
+   cd docker
+   docker compose --env-file .env -f docker-compose.prod.yml ps backend-scheduler
+   docker compose --env-file .env -f docker-compose.prod.yml logs --tail=200 backend-scheduler
+   ```
+
+   A restart count that keeps climbing, or repeated `UndefinedColumn` errors in the log, means the old image is still running.
+
+#### Drain in-flight jobs that carry a dropped field
+
+Durable jobs enqueued **before** the deploy keep the old payload shape in the database, and a payload is replayed through the current code's Pydantic models. For the tags release, `device_verification` jobs enqueued pre-migration carry `tags` inside `payload["data"]`; `DeviceVerificationCreate` / `DeviceVerificationUpdate` are `extra="forbid"`, so validation raises on replay. Those jobs run with `max_attempts=1`, so they do not retry — they fail once and stay dead, and the devices they were queued for never get verified.
+
+Handle this alongside the migration:
+
+- **Before** the deploy, let the queue drain: check `pending_jobs` on `/metrics` and wait for `device_verification` to reach zero, or stop whatever is enqueuing them.
+- **After** the deploy, if any pre-deploy jobs are still queued, expect them to fail permanently. Identify the affected devices and re-trigger verification from the Devices page (or re-import the affected rows) rather than waiting for a retry that will never come.
+
 ## 3. Post-deploy verification
 
 ```bash

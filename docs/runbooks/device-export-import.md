@@ -23,6 +23,8 @@ Groups are referenced by key throughout; no group UUID is exported, so a bundle 
 
 > **`schema_version: 1` bundles are rejected.** Import fails with `unsupported portability schema version; expected 2`. There is no converter. A v1 bundle predates device groups and its device `tags` cannot be reconstructed into groups after the fact — the tag-to-group migration is one-way and ran against the source database, not against exported files. If you are holding a v1 bundle, restore the source instance, run `alembic upgrade head` so its tags migrate into static groups, then re-export.
 
+> **Deploying the release that introduced v2.** The same release drops the `devices.tags` column in one migration step, with no compatibility window, and it strands `device_verification` jobs that were queued before the deploy. `backend` and `backend-scheduler` must be recreated together or the old scheduler crash-loops against the new schema. See [Releases that drop a database column](backend-deploy-restart-rollback.md#releases-that-drop-a-database-column) before upgrading a live install.
+
 If you hand-edit the groups section, keep these rules or the import is rejected before anything is written:
 
 - every device `static_groups` key and every dynamic `member_of` key must name a **static** group defined in the same bundle
