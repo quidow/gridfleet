@@ -445,6 +445,8 @@ Every pinned axis is ANDed, `member_of` included: a device is a member only if i
 
 Dynamic membership is evaluated live on every read; it is never materialized into a membership table and never cached.
 
+A bulk action on a group that **exists but resolves to no devices** returns `200` with a zero-count `BulkOperationResult` (`{"total": 0, ...}`) — an empty group is a valid group with nothing to act on, not a missing one. `404` on a bulk route means the group key names no group at all.
+
 Error responses specific to groups:
 
 | Condition | Status |
@@ -453,6 +455,7 @@ Error responses specific to groups:
 | `member_of` names a dynamic or unknown group | `422` |
 | group key already exists | `409` |
 | deleting a static group a dynamic group references | `409` |
+| adding or removing members on a dynamic group | `400` |
 | `{group_key}` names no group | `404` |
 
 ## Grid, Analytics, And Lifecycle
