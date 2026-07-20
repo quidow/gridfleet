@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Collection, Mapping, Sequence
 
+    from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
@@ -92,6 +93,27 @@ async def load_groups_by_keys(db: AsyncSession, group_keys: Collection[str]) -> 
     closure = closure.union(arm)
     stmt = select(DeviceGroup).where(DeviceGroup.key.in_(select(closure.c.key)))
     return list((await db.execute(stmt)).scalars().all())
+
+
+def static_group_membership_exists(group_key: str) -> ColumnElement[bool]:
+    """SQL twin of ``group_key in DeviceGroupFacts.static_group_keys``.
+
+    Correlates on ``Device.id``, so it composes as a WHERE predicate on any
+    statement selecting from ``devices``. Restricted to static groups for the
+    same reason :func:`load_static_group_keys_by_device_id` is: a dynamic key
+    contributes no static membership, so referencing one yields no devices.
+    """
+    return (
+        select(1)
+        .select_from(DeviceGroupMembership)
+        .join(DeviceGroup, DeviceGroup.id == DeviceGroupMembership.group_id)
+        .where(
+            DeviceGroupMembership.device_id == Device.id,
+            DeviceGroup.key == group_key,
+            DeviceGroup.group_type == GroupType.static,
+        )
+        .exists()
+    )
 
 
 @dataclass(frozen=True)
