@@ -161,6 +161,58 @@ async def test_validate_endpoint_rejects_unknown_fields(client: AsyncClient) -> 
     assert response.status_code == 422
 
 
+def _v1_bundle_body() -> dict[str, object]:
+    """A realistic ``schema_version: 1`` bundle as the pre-groups exporter wrote it.
+
+    Every v1 device carried a ``tags`` map, which v2's ``extra="forbid"`` models
+    reject. The version gate must fire before body validation so the operator
+    gets the documented message instead of a per-device "extra inputs" 422.
+    """
+    return {
+        "schema_version": 1,
+        "exported_at": "2026-05-23T00:00:00+00:00",
+        "source_instance": "alpha",
+        "devices": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "identity_scheme": "android_serial",
+                "identity_scope": "host",
+                "identity_value": "R58",
+                "name": "Pixel",
+                "device_type": "real_device",
+                "connection_type": "usb",
+                "connection_target": None,
+                "tags": {"shelf": "a"},
+                "device_config": {},
+                "test_data": {},
+                "original_host": {"hostname": "lab-04"},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_validate_endpoint_rejects_v1_bundle_with_documented_message(client: AsyncClient) -> None:
+    response = await client.post("/api/portability/import/validate", json=_v1_bundle_body())
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "unsupported portability schema version; expected 2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_endpoint_rejects_v1_bundle_with_documented_message(client: AsyncClient) -> None:
+    body = {
+        "bundle": _v1_bundle_body(),
+        "bundle_hash": "sha256:" + "0" * 64,
+        "mappings": [],
+    }
+    response = await client.post("/api/portability/import", json=body)
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "unsupported portability schema version; expected 2"
+
+
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_validate_endpoint_rejects_unsupported_schema_version(client: AsyncClient) -> None:

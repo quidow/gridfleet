@@ -1,15 +1,35 @@
 import enum
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.errors import AppError
 from app.devices.group_keys import GroupKey
 from app.devices.models import ConnectionType, DeviceType, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 
 SCHEMA_VERSION = 2
+
+UNSUPPORTED_SCHEMA_VERSION_MESSAGE = f"unsupported portability schema version; expected {SCHEMA_VERSION}"
+
+
+class UnsupportedSchemaVersionError(AppError):
+    """Raised while parsing a bundle whose ``schema_version`` this build cannot read.
+
+    Deliberately not a ``ValueError``: Pydantic converts ``ValueError`` into a field
+    error, which would bury the version verdict inside a 422 alongside unrelated
+    complaints about retired keys. Propagating an ``AppError`` instead lets the
+    version gate answer first, with the documented message and status.
+    """
+
+    status_code = 400
+    code = "UNSUPPORTED_SCHEMA_VERSION"
+
+    def __init__(self) -> None:
+        super().__init__(UNSUPPORTED_SCHEMA_VERSION_MESSAGE)
 
 
 class OriginalHost(BaseModel):
@@ -55,6 +75,29 @@ class ExportBundle(BaseModel):
     source_instance: str | None = None
     groups: list[ExportedDeviceGroup] = Field(default_factory=list)
     devices: list[ExportedDevice]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _gate_schema_version(cls, data: object) -> object:
+        """Reject a foreign schema version before field validation runs.
+
+        A real v1 bundle carries a ``tags`` map on every device, which this model's
+        ``extra="forbid"`` would otherwise report as a pile of per-device extra-input
+        errors — never mentioning the version, which is the only thing the operator
+        can act on. Running in ``before`` mode puts the version verdict first.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        raw = data.get("schema_version")
+        if raw is None:
+            return data
+        try:
+            version = int(raw)
+        except TypeError, ValueError:
+            return data  # Let field validation report the type error.
+        if version != SCHEMA_VERSION:
+            raise UnsupportedSchemaVersionError
+        return data
 
 
 class ImportRowStatus(enum.StrEnum):

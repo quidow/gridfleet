@@ -27,6 +27,7 @@ from app.hosts.models import Host
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.portability.schemas import (
     SCHEMA_VERSION,
+    UNSUPPORTED_SCHEMA_VERSION_MESSAGE,
     ExportBundle,
     ExportedDevice,
     ExportedDeviceGroup,
@@ -52,9 +53,6 @@ if TYPE_CHECKING:
     from app.portability.protocols import VerificationEnqueuer
 
 logger = logging.getLogger(__name__)
-
-
-_UNSUPPORTED_SCHEMA_VERSION_MESSAGE = "unsupported portability schema version; expected 2"
 
 
 class BundleHashMismatchError(ValueError):
@@ -262,8 +260,10 @@ class PortabilityImportService:
             GroupKeyCollisionError: if any bundle group key already exists in the target.
             UnknownGroupReferenceError: if any group/device reference is unresolvable.
         """
+        # ExportBundle's own gate already rejects a foreign version at parse time; this
+        # backstops a bundle whose version was mutated after construction.
         if bundle.schema_version != SCHEMA_VERSION:
-            raise ValueError(_UNSUPPORTED_SCHEMA_VERSION_MESSAGE)
+            raise ValueError(UNSUPPORTED_SCHEMA_VERSION_MESSAGE)
 
         static_group_keys = await _validate_group_references(session, bundle)
 
