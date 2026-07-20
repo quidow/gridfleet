@@ -138,19 +138,6 @@ class NormalizedDevice:
     software_versions: dict[str, str] = field(default_factory=dict)
 
 
-class TelemetryContext(Protocol):
-    device_identity_value: str
-    connection_target: str
-
-
-@dataclass
-class HardwareTelemetry:
-    supported: bool
-    battery_level_percent: int | None = None
-    battery_temperature_c: float | None = None
-    charging_state: str | None = None
-
-
 class DriverPackAdapter(Protocol):
     """The full surface a driver-pack adapter *may* implement.
 
@@ -174,7 +161,6 @@ class DriverPackAdapter(Protocol):
       - health:            ``health_check``, ``doctor``
       - lifecycle:         ``lifecycle_action``
       - sessions:          ``pre_session``, ``post_session``
-      - telemetry:         ``telemetry``
       - environment:       ``subprocess_env``, ``tool_versions``
     """
 
@@ -209,10 +195,6 @@ class DriverPackAdapter(Protocol):
         raise NotImplementedError
 
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
-        raise NotImplementedError
-
-    # --- Optional: telemetry ----------------------------------------------
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
         raise NotImplementedError
 
     # --- Optional: environment --------------------------------------------

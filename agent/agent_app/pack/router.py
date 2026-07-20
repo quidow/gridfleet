@@ -16,10 +16,9 @@ from agent_app.pack.adapter_dispatch import (
     dispatch_health_check,
     dispatch_lifecycle_action,
     dispatch_normalize_device,
-    dispatch_telemetry,
 )
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
-from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx, NormalizeCtx, TelemetryCtx
+from agent_app.pack.contexts import DoctorCtx, HealthCtx, LifecycleCtx, NormalizeCtx
 from agent_app.pack.dependencies import (
     DesiredPlatformDep,
     HostIdDep,
@@ -38,7 +37,7 @@ from agent_app.pack.schemas import (
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
-    from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
+    from agent_app.pack.adapter_types import HealthCheckResult, LifecycleActionResult
     from agent_app.pack.manifest import DesiredPlatform
     from agent_app.pack.worker_supervisor import WorkerHandle
 
@@ -126,34 +125,6 @@ async def run_device_health_probe(
                 "message": f"Adapter not loaded for pack {pack_id}:{platform_id}",
             }
         ],
-    }
-
-
-async def run_device_telemetry_probe(
-    *,
-    adapter_registry: AdapterRegistry | None,
-    pack_id: str,
-    release: str,
-    identity_value: str,
-    connection_target: str,
-) -> dict[str, Any] | None:
-    """Run the pack telemetry hook with the same dispatch as the HTTP route."""
-    if adapter_registry is None:
-        return None
-    handle = worker_or_none(adapter_registry, pack_id, release)
-    if handle is None or not adapter_supports(handle, "telemetry"):
-        return None
-    result: HardwareTelemetry = await dispatch_telemetry(
-        handle,
-        TelemetryCtx(device_identity_value=identity_value, connection_target=connection_target),
-    )
-    if not result.supported:
-        return {"support_status": "unsupported"}
-    return {
-        "support_status": "supported",
-        "battery_level_percent": result.battery_level_percent,
-        "battery_temperature_c": result.battery_temperature_c,
-        "charging_state": result.charging_state,
     }
 
 
