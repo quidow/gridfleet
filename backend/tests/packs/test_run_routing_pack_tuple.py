@@ -5,7 +5,7 @@ import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.runs.schemas import DeviceRequirement
-from app.runs.service_allocator import _find_matching_devices
+from tests.helpers import select_devices_for_requirement
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
-async def test_find_matching_devices_matches_pack_tuple(db_session: AsyncSession, db_host: Host) -> None:
+async def test_batch_select_devices_matches_pack_tuple(db_session: AsyncSession, db_host: Host) -> None:
     now = datetime.now(UTC)
     android = Device(
         pack_id="appium-uiautomator2",
@@ -51,7 +51,7 @@ async def test_find_matching_devices_matches_pack_tuple(db_session: AsyncSession
     db_session.add_all([android, ios])
     await db_session.flush()
 
-    matches = await _find_matching_devices(
+    matches = await select_devices_for_requirement(
         db_session,
         DeviceRequirement(pack_id="appium-xcuitest", platform_id="ios", count=1),
     )

@@ -386,7 +386,7 @@ async def check_availability(
     platform_id: Annotated[str, Query()],
     count: Annotated[int, Query(ge=1)] = 1,
 ) -> dict[str, Any]:
-    # Mirror the run allocator's eligibility gates (``_find_matching_devices``):
+    # Mirror the run allocator's eligibility gates (``_batch_select_devices``):
     # reserved devices and non-viable nodes never match an allocation, and both
     # are orthogonal to ``operational_state`` — counting them here would report
     # capacity the allocator cannot use.

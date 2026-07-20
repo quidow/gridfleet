@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.type_defs import SessionFactory
+    from app.runs.schemas import DeviceRequirement
 
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
 # All test files should import this instead of the old ``from app.events import event_bus``.
@@ -541,3 +542,26 @@ async def run_one_heartbeat_cycle(db: AsyncSession, heartbeat: object) -> None:
         settings=heartbeat._settings,  # type: ignore[attr-defined]
         session_factory=heartbeat._session_factory,  # type: ignore[attr-defined]
     )
+
+
+async def select_devices_for_requirement(
+    db: AsyncSession,
+    requirement: DeviceRequirement,
+    *,
+    restart_window_sec: int = 120,
+) -> list[Device]:
+    """Run the run-allocator's batch candidate pass for a single requirement.
+
+    Thin wrapper over ``_batch_select_devices`` — the live allocation path — so
+    single-requirement allocator tests exercise production code instead of a
+    parallel helper. Returns the device list selected for *requirement*.
+    """
+    from app.runs.service_allocator import _batch_select_devices
+
+    selection = await _batch_select_devices(
+        db,
+        [requirement],
+        restart_window_sec=restart_window_sec,
+        settings=FakeSettingsReader({}),
+    )
+    return selection[0]

@@ -38,7 +38,6 @@ from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import (
     _assess_device_with_pack,
     assess_devices_async,
-    is_ready_for_use_async,
     load_packs_by_ids,
 )
 from app.devices.services.service import UnknownGroupKeysError
@@ -81,64 +80,6 @@ class _UnmetRequirementError(Exception):
         self.requirement = requirement
         self.matched_count = matched_count
         super().__init__(f"{requirement.pack_id}/{requirement.platform_id}")
-
-
-async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
-    return await is_ready_for_use_async(db, device) and device_health.device_allows_allocation(device)
-
-
-async def _find_matching_devices(
-    db: AsyncSession,
-    requirement: DeviceRequirement,
-    *,
-    restart_window_sec: int = _RESTART_WINDOW_FALLBACK_SEC,
-    excluded_device_ids: set[uuid.UUID] | None = None,
-) -> list[Device]:
-    now = now_utc()
-    candidate_stmt = (
-        select(Device)
-        .options(selectinload(Device.host), selectinload(Device.appium_node))
-        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(is_available_sql(now=now))
-        .where(Device.review_required.is_(False))
-        .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
-        .where(Device.pack_id == requirement.pack_id)
-        .where(Device.platform_id == requirement.platform_id)
-        .where(~active_reservation_exists())
-        .order_by(Device.created_at, Device.id)
-    )
-    if requirement.os_version:
-        candidate_stmt = candidate_stmt.where(Device.os_version == requirement.os_version)
-    if excluded_device_ids:
-        candidate_stmt = candidate_stmt.where(Device.id.not_in(excluded_device_ids))
-
-    candidates = list((await db.execute(candidate_stmt)).scalars().all())
-
-    ready_candidates: list[Device] = [device for device in candidates if await _readiness_for_match(db, device)]
-
-    if not ready_candidates:
-        return []
-
-    candidate_ids = [device.id for device in ready_candidates]
-    locked_stmt = (
-        select(Device)
-        .options(selectinload(Device.host), selectinload(Device.appium_node))
-        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(Device.id.in_(candidate_ids))
-        .where(is_available_sql(now=now))
-        .where(Device.review_required.is_(False))
-        .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
-        .where(~active_reservation_exists())
-        .order_by(Device.created_at, Device.id)
-        .with_for_update(of=Device, skip_locked=True)
-        .execution_options(populate_existing=True)
-    )
-    locked_rows = list((await db.execute(locked_stmt)).scalars().all())
-    locked_ready_by_id: dict[uuid.UUID, Device] = {}
-    for locked_device in locked_rows:
-        if await _readiness_for_match(db, locked_device):
-            locked_ready_by_id[locked_device.id] = locked_device
-    return [locked_ready_by_id[device.id] for device in ready_candidates if device.id in locked_ready_by_id]
 
 
 async def _classify_shortfall_gates(

@@ -3,8 +3,10 @@
 Asserts the database read count of a free group-routed poll is constant (four
 SELECT/CTE reads) regardless of fleet size, plus companion assertions for the
 no-group free poll (three reads), the run-scoped no-match poll (five reads),
-and the successful claim (one additional joined lock read before the first
-``INSERT INTO sessions``).
+and the successful claim (five reads before the first ``INSERT INTO
+sessions``: the three free-poll reads, the joined lock read, and the
+live-session recheck that closes the concurrent-claim race under READ
+COMMITTED).
 """
 
 from __future__ import annotations

@@ -15,13 +15,13 @@ from app.devices.services.health import DeviceHealthService
 from app.packs.models import DriverPack
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
-from app.runs.service_allocator import RunAllocatorService, _find_matching_devices
+from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_allocator import assess_devices_async as run_allocator_assess_devices_async
 from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service, test_circuit_breaker
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, select_devices_for_requirement
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
@@ -110,11 +110,18 @@ async def test_create_run(client: AsyncClient, db_session: AsyncSession, default
     assert data["devices"][0]["platform_label"] == "Android"
 
 
-async def test_find_matching_devices_filters_os_version_before_readiness(
+async def test_batch_select_devices_filters_os_version(
     db_session: AsyncSession,
     default_host_id: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The os_version gate excludes non-matching devices from the candidate set.
+
+    The predecessor of this test also asserted that the os_version filter ran
+    *before* the readiness check, to pin the absence of per-device readiness IO.
+    ``_batch_select_devices`` assesses readiness once for the whole candidate
+    batch, so that ordering is no longer a property of the code; the surviving
+    invariant is the exclusion itself.
+    """
     matching = await create_device_record(
         db_session,
         host_id=default_host_id,
@@ -133,24 +140,21 @@ async def test_find_matching_devices_filters_os_version_before_readiness(
         operational_state="available",
         os_version="13",
     )
-    readiness_checked: list[uuid.UUID] = []
-
-    async def fake_readiness(_db: AsyncSession, device: Device) -> bool:
-        readiness_checked.append(device.id)
-        return True
-
-    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", fake_readiness)
-
-    devices = await _find_matching_devices(
+    devices = await select_devices_for_requirement(
         db_session,
-        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", os_version="14"),
+        DeviceRequirement(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            os_version="14",
+            allocation="all_available",
+        ),
     )
 
     assert [device.id for device in devices] == [matching.id]
-    assert nonmatching.id not in readiness_checked
+    assert nonmatching.id not in {device.id for device in devices}
 
 
-async def test_find_matching_devices_excludes_review_required(
+async def test_batch_select_devices_excludes_review_required(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
@@ -173,9 +177,9 @@ async def test_find_matching_devices_excludes_review_required(
         review_required=True,
     )
 
-    devices = await _find_matching_devices(
+    devices = await select_devices_for_requirement(
         db_session,
-        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", allocation="all_available"),
     )
 
     ids = {d.id for d in devices}
@@ -185,7 +189,7 @@ async def test_find_matching_devices_excludes_review_required(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_find_matching_devices_excludes_reserved_device_with_null_hold(
+async def test_batch_select_devices_excludes_reserved_device_with_null_hold(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
@@ -228,9 +232,9 @@ async def test_find_matching_devices_excludes_reserved_device_with_null_hold(
     )
     await db_session.flush()
 
-    devices = await _find_matching_devices(
+    devices = await select_devices_for_requirement(
         db_session,
-        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", allocation="all_available"),
     )
 
     assert reserved.id not in {d.id for d in devices}, (
