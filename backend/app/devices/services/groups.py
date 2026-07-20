@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.events.protocols import EventPublisher
+
+logger = logging.getLogger(__name__)
 
 
 class GroupKeyConflictError(ValueError):
@@ -88,7 +91,7 @@ class DeviceGroupsService:
             await db.flush()
         except IntegrityError as exc:
             await db.rollback()
-            if _constraint_name(exc) == "ix_device_groups_key":
+            if constraint_name(exc) == "ix_device_groups_key":
                 raise GroupKeyConflictError(f"Device group key '{data.key}' already exists") from exc
             raise
         self._publisher.queue_for_session(
@@ -309,20 +312,38 @@ async def _load_static_members(db: AsyncSession, group: DeviceGroup) -> list[Dev
 async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGroup]) -> list[Device]:
     """One device read bounding the candidates for every supplied dynamic group.
 
-    The per-group scopes are ORed so a single batch serves the whole list, and
-    a group whose filters pin nothing a query can narrow on widens the scope to
-    the fleet — which is what that group genuinely spans. Membership itself is
-    still decided live by the evaluator; this only bounds what it must consider.
+    The per-group scopes are ORed so a single batch serves the whole list.
+    Membership itself is still decided live by the evaluator; this only bounds
+    what it must consider.
+
+    A group whose filters pin nothing a query can narrow on is *unbounded*: it
+    genuinely spans the fleet, so the union with it is the fleet and no arm can
+    reduce it. That is inherent, not a bug — but it is worth seeing, because the
+    axes that produce it (``status``, ``reserved``, ``hardware_telemetry_state``,
+    ``needs_attention``) are cheap to filter on in the UI and easy to reach by
+    accident. Those axes are deliberately excluded from the column scope: their
+    SQL twins evaluate at a different instant than the evaluator's facts, so
+    narrowing on them could drop a real member. Unbounded groups are therefore
+    named in a warning rather than silently widening every co-listed group's
+    batch, and the all-narrow case (the common one) stays bounded.
     """
     scopes: list[ColumnElement[bool]] = []
+    unbounded: list[str] = []
     for group in dynamic_groups:
         conditions = device_scope_conditions(_validate_filters(group.filters))
-        if not conditions:
-            scopes = []
-            break
-        scopes.append(and_(*conditions))
+        if conditions:
+            scopes.append(and_(*conditions))
+        else:
+            unbounded.append(group.key)
     stmt = select(Device).options(selectinload(Device.appium_node))
-    if scopes:
+    if unbounded:
+        logger.warning(
+            "device_group_scope_unbounded groups=%s co_listed_narrow_groups=%d "
+            "(batch widened to the whole fleet; these groups pin no column-scope axis)",
+            sorted(unbounded),
+            len(scopes),
+        )
+    elif scopes:
         stmt = stmt.where(or_(*scopes))
     return list((await db.execute(stmt)).scalars().all())
 
@@ -437,7 +458,12 @@ async def _get_group_row(db: AsyncSession, group_key: str, *, for_update: bool =
     return cast("DeviceGroup | None", await db.scalar(stmt))
 
 
-def _constraint_name(exc: IntegrityError) -> str | None:
+def constraint_name(exc: IntegrityError) -> str | None:
+    """The DB constraint an IntegrityError violated, unwrapping the driver cause chain.
+
+    Shared with the portability importer, which needs the same key-collision
+    discrimination on its own group insert.
+    """
     cause: BaseException | None = exc.orig
     while cause is not None:
         name = getattr(cause, "constraint_name", None)

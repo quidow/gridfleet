@@ -542,3 +542,39 @@ async def test_commit_partial_failure_mixed_results(db_session: AsyncSession, se
     assert result.skipped[0].index == 1
     assert len(result.failed) == 1
     assert result.failed[0].index == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurrently(
+    client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
+    """A group key that appears between validation and the insert is a 409, not a 500.
+
+    ``_load_existing_group_keys`` takes ``FOR UPDATE``, but row locks cannot reserve
+    keys that are not yet in the table — on the normal path (all keys new) it locks
+    nothing, so two operators committing the same bundle both pass validation. Patch
+    the pre-check to return empty, which is exactly what the loser of that race sees,
+    and assert the unique-index violation surfaces as the documented 409.
+    """
+    await seed_host_named(db_session, "lab-04")
+    db_session.add(DeviceGroup(key="lab-fleet", name="lab fleet", group_type=GroupType.static))
+    await db_session.commit()
+
+    bundle_body = {
+        "schema_version": 2,
+        "exported_at": "2026-05-23T00:00:00+00:00",
+        "groups": [{"key": "lab-fleet", "name": "lab fleet", "group_type": "static", "filters": None}],
+        "devices": [],
+    }
+    bundle = ExportBundle.model_validate(bundle_body)
+    body = {"bundle": bundle_body, "bundle_hash": compute_bundle_hash(bundle), "mappings": []}
+
+    async def _sees_no_existing_keys(*args: object, **kwargs: object) -> set[str]:
+        return set()
+
+    with patch("app.portability.services.import_bundle._load_existing_group_keys", _sees_no_existing_keys):
+        response = await client.post("/api/portability/import", json=body)
+
+    assert response.status_code == 409, response.text
+    assert "lab-fleet" in response.text

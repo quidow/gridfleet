@@ -23,6 +23,7 @@ from app.devices.models import (
     GroupType,
 )
 from app.devices.services import write as device_write
+from app.devices.services.groups import constraint_name
 from app.hosts.models import Host
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.portability.schemas import (
@@ -195,6 +196,29 @@ def _group_filters_payload(group: ExportedDeviceGroup) -> dict[str, Any] | None:
     if not dumped.get("member_of"):
         dumped.pop("member_of", None)
     return dumped or None
+
+
+async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> None:
+    """Flush staged ``device_groups`` rows, turning a key collision into a typed error.
+
+    ``_load_existing_group_keys`` takes ``FOR UPDATE``, but a row lock cannot reserve
+    a key that is not yet in the table — on the normal path (every bundle key new) it
+    locks nothing and provides no mutual exclusion. Two operators committing the same
+    bundle therefore both pass validation, and the loser's flush violates
+    ``ix_device_groups_key``. The unique index is the real guarantee; this translates
+    it into the ``GroupKeyCollisionError`` the route already maps to 409, so the loser
+    gets the documented conflict rather than an unhandled 500 on a dead transaction.
+    """
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        if constraint_name(exc) != "ix_device_groups_key":
+            raise
+        # The transaction is gone, so re-read to name the keys that actually landed
+        # rather than blaming every key the bundle carried.
+        collided = await _load_existing_group_keys(session, set(keys))
+        raise GroupKeyCollisionError(sorted(collided or keys)) from exc
 
 
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
@@ -396,7 +420,7 @@ class PortabilityImportService:
             for group_def in static_groups
         ]
         session.add_all(groups)
-        await session.flush()
+        await _flush_groups_or_collide(session, [g.key for g in groups])
         return {group.key: group.id for group in groups}
 
     def _insert_static_memberships(
@@ -436,7 +460,7 @@ class PortabilityImportService:
             for group_def in dynamic_groups
         ]
         session.add_all(groups)
-        await session.flush()
+        await _flush_groups_or_collide(session, [g.key for g in groups])
         for group in groups:
             group_id_by_key[group.key] = group.id
 
