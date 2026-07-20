@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
-from app.grid.allocation import AllocationService
+from app.grid.allocation import AllocationService, _EligibleRow
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -60,6 +60,11 @@ async def test_reap_expired_requires_settings(db_session: AsyncSession) -> None:
         await _service().reap_expired(db_session)
 
 
+def _eligible_row(device: Device) -> _EligibleRow:
+    """An unreserved eligible-batch row for a device, as ``try_allocate`` builds it."""
+    return _EligibleRow(device=device, reservation_run_id=None, static_group_keys=frozenset())
+
+
 @pytest.mark.db
 async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_available_device: Device) -> None:
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
@@ -70,10 +75,9 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=seeded_available_device,
+        row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -96,10 +100,9 @@ async def test_claim_rechecks_active_sessions_under_lock(
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=seeded_available_device,
+        row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is None
 
@@ -115,10 +118,9 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=device,
+        row=_eligible_row(device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is None
 
@@ -145,10 +147,9 @@ async def test_claim_skips_device_with_live_probe_row(
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=seeded_available_device,
+        row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -178,10 +179,9 @@ async def test_claim_proceeds_over_terminal_probe_row(
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=seeded_available_device,
+        row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is not None
 
@@ -209,10 +209,9 @@ async def test_claim_declines_when_node_not_viable_under_lock(
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=seeded_available_device,
+        row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is None
 
@@ -572,10 +571,9 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
     result = await _service()._claim(
         db_session,
         ticket=ticket,
-        device=seeded_available_device,
+        row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
-        reservation_run_id=None,
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting

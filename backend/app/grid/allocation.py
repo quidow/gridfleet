@@ -8,7 +8,7 @@ lock, the intent reconciler — and owns no writes to protected state columns:
 import json
 import logging
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -42,6 +42,9 @@ from app.devices.services.group_membership import (
     GroupMembershipIndex,
     evaluate_group_memberships,
     load_groups_by_keys,
+)
+from app.devices.services.group_membership import (
+    _load_static_group_keys_by_device_id as load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.state import is_available_sql
@@ -641,11 +644,11 @@ class AllocationService:
                 result = await self._claim(
                     db,
                     ticket=ticket,
-                    device=device,
+                    row=row,
                     candidate=candidate,
                     run_id=ticket.run_id,
-                    reservation_run_id=reservation_run_id,
                     exclude_device_ids=exclude_device_ids,
+                    groups=groups,
                 )
                 if result is not None:
                     GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
@@ -856,21 +859,58 @@ class AllocationService:
             predicates.append(reservation_subq == reservation_run_id)
         return predicates
 
+    async def _locked_membership_holds(
+        self,
+        db: DbSession,
+        *,
+        locked_device: Device,
+        groups: Sequence[DeviceGroup],
+        candidate_group_keys: Collection[str],
+        reservation_run_id: uuid.UUID | None,
+    ) -> bool:
+        """Re-evaluate the candidate's requested group keys against the locked row.
+
+        Membership was decided against the pre-lock eligible batch, and the
+        ``Device`` row lock does not serialize ``DeviceGroupMembership`` edits,
+        so a membership DELETE can commit between that read and the ``Session``
+        INSERT. Mirrors the run allocator's post-lock rebuild
+        (``app.runs.service_allocator._batch_select_devices`` step 7b): one
+        scalar static-group-keys read, on the claim path only — the free-poll
+        read budget is untouched. Dynamic-filter axes re-evaluate for free
+        against the freshly locked device row.
+        """
+        if not candidate_group_keys:
+            return True
+        static_keys = await load_static_group_keys_by_device_id(db, [locked_device.id])
+        row = _EligibleRow(
+            device=locked_device,
+            reservation_run_id=reservation_run_id,
+            static_group_keys=static_keys.get(locked_device.id, frozenset()),
+        )
+        membership = evaluate_group_memberships(
+            groups=groups,
+            devices=[locked_device],
+            facts_by_device_id=_facts_from_eligible_rows([row], {}, self._settings),
+        )
+        return membership.matches_all(locked_device.id, candidate_group_keys)
+
     async def _claim(
         self,
         db: DbSession,
         *,
         ticket: GridSessionQueueTicket,
-        device: Device,
+        row: _EligibleRow,
         candidate: dict[str, Any],
         run_id: uuid.UUID | None,
-        reservation_run_id: uuid.UUID | None,
         exclude_device_ids: set[uuid.UUID] | None = None,
+        groups: Sequence[DeviceGroup] = (),
     ) -> AllocationResult | None:
         # Fold every lock-time recheck into the lock query: availability, node
         # viability/acceptance, exclusion, and the reservation-owner gate. A
         # no-row result means the candidate lost the race or failed a recheck —
         # no separate ``derive_operational_state`` under the lock.
+        device = row.device
+        reservation_run_id = row.reservation_run_id
         now = now_utc()
         predicates = self._claim_lock_predicates(
             reservation_run_id=reservation_run_id,
@@ -880,6 +920,16 @@ class AllocationService:
         try:
             locked = await device_locking.lock_device_handle(db, device.id, predicates=predicates)
         except NoResultFound:
+            return None
+        # Group membership is the one gate the lock query cannot fold in: it
+        # lives in a separate table the device-row lock does not serialize.
+        if not await self._locked_membership_holds(
+            db,
+            locked_device=locked.device,
+            groups=groups,
+            candidate_group_keys=requested_group_keys([candidate]),
+            reservation_run_id=reservation_run_id,
+        ):
             return None
         # Fresh-snapshot live-session recheck under the lock: a concurrent claim
         # that inserted its session and committed while this transaction waited
@@ -905,7 +955,7 @@ class AllocationService:
         # reads it). The legacy register_session API took it as an explicit field; the
         # router/grid flow that replaced it must lift it from the requested caps here.
         requested_test_name = candidate.get("gridfleet:testName")
-        row = Session(
+        session_row = Session(
             id=uuid.uuid4(),
             session_id=f"alloc-{uuid.uuid4()}",  # transient in-create marker; unique, never 'running'
             device_id=locked.device.id,
@@ -918,7 +968,7 @@ class AllocationService:
             # device's node port is transiently stale-cleared later (#6).
             router_target=target,
         )
-        db.add(row)
+        db.add(session_row)
         await db.flush()
         # The ticket's job ends here: the Session row is the allocation ledger
         # (ticket_id is the router's resume key). Deleting beats a terminal
@@ -929,7 +979,7 @@ class AllocationService:
         # state convergence runs under the same row lock (no extra lock read).
         intent = self._intent_factory(db)
         await intent.reconcile_locked(locked, publisher=self._publisher)
-        return AllocationResult(allocation_id=row.id, target=target, device_id=locked.device.id)
+        return AllocationResult(allocation_id=session_row.id, target=target, device_id=locked.device.id)
 
 
 def _match_relevant_base(template: StereotypeTemplate, device: Device) -> dict[str, Any]:

@@ -3,10 +3,17 @@
 Asserts the database read count of a free group-routed poll is constant (four
 SELECT/CTE reads) regardless of fleet size, plus companion assertions for the
 no-group free poll (three reads), the run-scoped no-match poll (five reads),
-and the successful claim (five reads before the first ``INSERT INTO
-sessions``: the three free-poll reads, the joined lock read, and the
-live-session recheck that closes the concurrent-claim race under READ
-COMMITTED).
+and the successful claim.
+
+A claim's pre-``INSERT INTO sessions`` budget depends on whether the ticket
+requests groups. A no-group claim costs five reads: the three free-poll reads,
+the joined lock read, and the live-session recheck that closes the
+concurrent-claim race under READ COMMITTED. A group-routed claim costs seven:
+the four group free-poll reads plus those same lock and live-session reads,
+plus one static-group-keys read that re-checks membership under the lock (the
+device row lock does not serialize ``DeviceGroupMembership`` edits). The
+membership read is on the claim path only — the free-poll budgets above are
+unchanged.
 """
 
 from __future__ import annotations
@@ -357,8 +364,43 @@ async def test_successful_claim_adds_one_joined_lock_read_before_session_insert(
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is not None
     pre_insert_reads = _reads_before_first_session_insert(statements)
-    # 3 (no-group free poll reads) + 1 (joined lock read) + 1 (live-session recheck) = 5
+    # 3 (no-group free poll reads) + 1 (joined lock read) + 1 (live-session recheck) = 5.
+    # The under-lock membership recheck is skipped: this ticket requests no groups.
     assert len(pre_insert_reads) == 5, pre_insert_reads
+
+
+@pytest.mark.db
+async def test_group_routed_claim_adds_one_membership_recheck_read(db_session: AsyncSession) -> None:
+    """A group-routed claim pays one extra read over the no-group claim: the
+    static-group-keys reload that re-checks membership under the device row lock.
+
+    Group membership lives in ``device_group_memberships``, which the
+    ``FOR UPDATE OF devices`` lock does not serialize, so a membership DELETE
+    committed between the eligible batch and the session INSERT would otherwise
+    route a non-member device. Run allocation already pays this cost
+    (``_batch_select_devices`` step 7b); this is the same guard on the claim
+    path. The free-poll budgets are unaffected — the recheck runs only after a
+    candidate has been locked."""
+    await seed_test_packs(db_session)
+    _host, device, _ = await seed_host_and_running_node(db_session, identity=f"budget-gclaim-{uuid.uuid4().hex[:8]}")
+    group = DeviceGroup(key="claim-budget", name="claim-budget", group_type=GroupType.static)
+    db_session.add(group)
+    await db_session.flush()
+    db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device.id))
+    await db_session.flush()
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{"gridfleet:group:claim-budget": True})
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    service = _service()
+    with _capture_statements(db_session) as statements:
+        result = await service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    pre_insert_reads = _reads_before_first_session_insert(statements)
+    # 4 (group free poll reads) + 1 (joined lock read) + 1 (live-session recheck)
+    # + 1 (under-lock static-group-keys recheck) = 7
+    assert len(pre_insert_reads) == 7, pre_insert_reads
 
 
 @pytest.mark.db
