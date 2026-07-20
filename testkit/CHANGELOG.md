@@ -2,6 +2,22 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.15.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.14.6...gridfleet-testkit-v0.15.0) (2026-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** target devices with group keys
+
+### Features
+
+* **testkit:** target devices with group keys ([d094681](https://github.com/quidow/gridfleet/commit/d0946817f6bbd5a2707bf07877d30d9a6de1de9d))
+
+
+### Documentation
+
+* **docs:** rewrite virtual-device sections for externally-managed, booted-only posture ([7f8b1c0](https://github.com/quidow/gridfleet/commit/7f8b1c01b9634efc01f70d900df74a33190c3791))
+
 ## [0.14.6](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.14.5...gridfleet-testkit-v0.14.6) (2026-07-17)
 
 
