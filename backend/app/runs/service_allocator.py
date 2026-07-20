@@ -41,8 +41,8 @@ from app.devices.services.readiness import (
 from app.devices.services.service import UnknownGroupKeysError
 from app.devices.services.state import derive_operational_states, is_available_sql
 from app.hosts import service_hardware_telemetry as hardware_telemetry
-from app.packs.models import DriverPack, DriverPackRelease, PackState
-from app.packs.services.release_ordering import selected_release
+from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.services.platform_resolver import evaluate_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
     DeviceRequirement,
@@ -52,6 +52,8 @@ from app.runs.schemas import (
 from app.runs.service_reservation import get_run
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.http_pool import AgentHttpPool
@@ -82,6 +84,17 @@ _RESTART_WINDOW_FALLBACK_SEC = 120
 # past this many extra rows per requirement, so the single
 # ``SELECT ... FOR UPDATE`` never approaches locking the eligible fleet.
 _MAX_SPARE_CANDIDATES_PER_REQUIREMENT = 8
+
+
+# ``evaluate_runnable`` returns the blocking error code; the batch allocator
+# raises, so map each code back to the exception ``assert_runnable`` would have
+# raised for the same requirement.
+_RUNNABLE_ERRORS: dict[str, Callable[[DeviceRequirement], LookupError]] = {
+    PackUnavailableError.code: lambda req: PackUnavailableError(req.pack_id),
+    PackDisabledError.code: lambda req: PackDisabledError(req.pack_id),
+    PackDrainingError.code: lambda req: PackDrainingError(req.pack_id),
+    PlatformRemovedError.code: lambda req: PlatformRemovedError(req.pack_id, req.platform_id),
+}
 
 
 class _UnmetRequirementError(Exception):
@@ -376,23 +389,14 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     )
     pack_by_id = {pack.id: pack for pack in pack_rows}
     for req in requirements:
-        pack = pack_by_id.get(req.pack_id)
-        if pack is None:
-            raise PackUnavailableError(req.pack_id)
-        if pack.state == PackState.disabled:
-            raise PackDisabledError(req.pack_id)
-        if pack.state == PackState.draining:
-            raise PackDrainingError(req.pack_id)
-        if pack.state != PackState.enabled:
-            raise PackDisabledError(req.pack_id)
-        release = selected_release(pack.releases, pack.current_release)
-        platform = (
-            next((row for row in release.platforms if row.manifest_platform_id == req.platform_id), None)
-            if release is not None
-            else None
-        )
-        if release is None or platform is None:
-            raise PlatformRemovedError(req.pack_id, req.platform_id)
+        # ``evaluate_runnable`` is the pure, no-DB equivalent of
+        # ``assert_runnable``'s reachability checks — the same pack-state and
+        # release/platform ladder, returning a code where ``assert_runnable``
+        # raises. Map the code back to the exception the per-requirement
+        # ``assert_runnable(..., pack_lock=True)`` used to raise here.
+        code = evaluate_runnable(pack_by_id.get(req.pack_id), platform_id=req.platform_id)
+        if code is not None:
+            raise _RUNNABLE_ERRORS[code](req)
 
     # Step 3: the pack catalog loaded in step 2 already carries releases + platforms
     # for every pack; reuse it for readiness assessment (no extra read).
