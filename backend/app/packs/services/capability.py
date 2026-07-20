@@ -51,27 +51,6 @@ class StereotypeTemplate:
         return rendered
 
 
-async def load_stereotype_templates(
-    session: AsyncSession,
-    keys: Collection[tuple[str, str]],
-) -> dict[tuple[str, str], StereotypeTemplate]:
-    """Fetch stereotype templates for a batch of ``(pack_id, platform_id)`` pairs.
-
-    Issues one explicit joined query over ``DriverPack``, the selected/current
-    ``DriverPackRelease`` for each pack, and that release's platforms. Builds a
-    dictionary keyed by ``(pack_id, platform_id)``; pairs whose pack has no
-    selectable release or whose platform is absent from the release are simply
-    absent from the result (callers translate a missing key into
-    ``LookupError``/metric behavior — there is no silent cross-platform
-    fallback). The single-key :func:`load_stereotype_template` wraps this for
-    call sites that have not migrated to the batch path.
-    """
-    if not keys:
-        return {}
-    packs = await load_pack_catalog(session, {pack_id for pack_id, _ in keys})
-    return stereotype_templates_from_packs(packs, keys)
-
-
 async def load_pack_catalog(session: AsyncSession, pack_ids: Collection[str]) -> dict[str, DriverPack]:
     """One read: the named packs with their releases and platforms eager-loaded.
 
@@ -108,11 +87,15 @@ def stereotype_templates_from_packs(
     """Pure projection of an already-loaded pack catalog into stereotype templates.
 
     The catalog must carry ``releases`` and their ``platforms`` eager-loaded (as
-    :func:`load_stereotype_templates` and
-    ``app.devices.services.readiness.load_packs_by_ids`` both produce). Lets a
-    caller that needs the catalog for something else — the grid allocator, which
-    also assesses readiness against it — render templates without paying a second
-    read, while keeping the pack/release/platform walk in one place.
+    :func:`load_pack_catalog` and ``app.devices.services.readiness.load_packs_by_ids``
+    both produce). Lets a caller that needs the catalog for something else — the
+    grid allocator, which also assesses readiness against it — render templates
+    without paying a second read, while keeping the pack/release/platform walk in
+    one place.
+
+    Pairs whose pack has no selectable release, or whose platform is absent from
+    that release, are simply missing from the result; callers translate a missing
+    key into ``LookupError``/metric behavior. There is no cross-platform fallback.
     """
     templates: dict[tuple[str, str], StereotypeTemplate] = {}
     for pack_id, platform_id in keys:
@@ -146,9 +129,9 @@ async def load_stereotype_template(
     ``(pack_id, platform_id)``. Raises ``LookupError`` naming which of the three
     real conditions was hit: the pack row is absent, the pack carries no
     selectable release, or the platform is absent from the selected release.
-    Loads the catalog itself (rather than wrapping
-    :func:`load_stereotype_templates`) so the diagnosis reads the same rows the
-    projection walked — one query for both the hit and the miss path.
+    Composes :func:`load_pack_catalog` with :func:`stereotype_templates_from_packs`
+    so the diagnosis re-reads the same in-memory rows the projection walked — one
+    query for both the hit and the miss path.
     """
     packs = await load_pack_catalog(session, {pack_id})
     templates = stereotype_templates_from_packs(packs, {(pack_id, platform_id)})

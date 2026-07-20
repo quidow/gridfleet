@@ -791,14 +791,17 @@ class AllocationService:
         both the stereotype templates the matcher needs and the readiness verdicts
         the group evaluator needs.
 
-        This is the poll's fourth and last read. It replaces the former
-        ``load_stereotype_templates`` call rather than joining it — that helper
-        loaded the same catalog and discarded everything but the templates, which
-        is why readiness had to be hardcoded here. Readiness is assessed from the
-        catalog synchronously (``assess_devices_async`` issues no read when the
-        caller supplies ``packs``), so the free group-routed poll stays at four
-        reads. The catalog is returned so the claim path can re-assess a locked
-        row without another read.
+        This is the poll's fourth and last read: one ``load_pack_catalog`` call,
+        projected twice. ``stereotype_templates_from_packs`` renders the matcher's
+        templates from it, and ``assess_devices_async`` derives readiness from the
+        same rows (it issues no read when the caller supplies ``packs``), so the
+        free group-routed poll stays at four reads. Loading templates alone would
+        force readiness to be re-read or — as it once was — hardcoded.
+
+        The catalog is returned so the claim path can re-assess a locked row
+        without another read: ``_claim`` re-runs ``assess_device_with_pack``
+        against it under the device row lock, and ``_locked_membership_holds``
+        reuses it for the same reason.
         """
         pack_platform_keys = _pack_platform_keys(rows)
         # Key the catalog off every row's pack_id, exactly as
