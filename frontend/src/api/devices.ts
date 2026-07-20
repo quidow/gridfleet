@@ -5,9 +5,7 @@ import type {
   ConfigAuditEntry,
   DeviceDetail,
   DeviceHealth,
-  HardwareHealthStatus,
   HealthVerdictStatus,
-  HardwareTelemetryState,
   DevicePatch,
   DeviceRead,
   SessionOutcomeHeatmapRow,
@@ -30,8 +28,6 @@ export async function fetchDevices(params?: {
   os_version?: string;
   os_version_display?: string;
   search?: string;
-  hardware_health_status?: HardwareHealthStatus;
-  hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
   device_health?: HealthVerdictStatus;
   node_health?: HealthVerdictStatus;
@@ -65,8 +61,6 @@ export async function fetchDevicesPaginated(params: {
   os_version?: string;
   os_version_display?: string;
   search?: string;
-  hardware_health_status?: HardwareHealthStatus;
-  hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
   device_health?: HealthVerdictStatus;
   node_health?: HealthVerdictStatus;

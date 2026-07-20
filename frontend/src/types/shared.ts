@@ -5,9 +5,6 @@ type Schemas = components['schemas'];
 // Derived from FastAPI Enum schemas.
 export type DeviceType = Schemas['DeviceType'];
 export type ConnectionType = Schemas['ConnectionType'];
-export type HardwareChargingState = Schemas['HardwareChargingState'];
-export type HardwareHealthStatus = Schemas['HardwareHealthStatus'];
-export type HardwareTelemetryState = Schemas['HardwareTelemetryState'];
 export type DeviceOperationalState = Schemas['DeviceOperationalState'];
 export type RunState = Schemas['RunState'];
 export type DesiredNodeState = Schemas['DesiredNodeState'];
