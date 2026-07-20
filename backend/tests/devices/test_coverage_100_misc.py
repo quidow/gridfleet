@@ -547,6 +547,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.scalar = AsyncMock(return_value=None)
+    # delete_group locks the target and every possible referrer in one
+    # key-ordered statement, so it reads through ``execute``, not ``scalar``.
+    missing_group_db.execute = AsyncMock(return_value=GroupListResult([]))
     _gs2 = FakeSettingsReader({})
     assert (
         await device_group_service.DeviceGroupsService(

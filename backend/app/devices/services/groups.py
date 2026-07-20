@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,7 @@ from app.devices.services.group_membership import load_group_membership_index
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Collection, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,7 +58,8 @@ class DeviceGroupsService:
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
         if data.group_type == GroupType.dynamic:
-            await self._validate_member_of(db, data.filters)
+            locked = await _lock_groups_by_key(db, _member_of_keys(data.filters))
+            _assert_member_of_resolves(data.filters, locked)
         elif _has_filter_values(data.filters):
             raise ValueError("static groups cannot define filters")
         group = DeviceGroup(
@@ -125,7 +127,11 @@ class DeviceGroupsService:
         }
 
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
-        group = await _get_group_row(db, group_key, for_update=True)
+        # One key-ordered lock over the target plus every group its filters
+        # reference. Locking the target first and the references second would
+        # invert ``delete_group``'s order and deadlock against it.
+        locked = await _lock_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
+        group = locked.get(group_key)
         if group is None:
             return None
         if group.group_type == GroupType.static:
@@ -133,7 +139,7 @@ class DeviceGroupsService:
             if _has_filter_values(data.filters):
                 raise ValueError("static groups cannot define filters")
         elif data.filters is not None:
-            await self._validate_member_of(db, data.filters)
+            _assert_member_of_resolves(data.filters, locked)
         updates = data.model_dump(exclude_unset=True)
         if "filters" in updates:
             group.filters = _dump_filters(data.filters)
@@ -150,11 +156,23 @@ class DeviceGroupsService:
         return group
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
-        group = await _get_group_row(db, group_key, for_update=True)
+        # One key-ordered lock over the target and every possible referrer (any
+        # group carrying a ``member_of``), so this never pre-locks the target
+        # and then queues behind a row a concurrent ``update_group`` already
+        # holds. Both operations acquire ``device_groups`` rows in one
+        # ascending-key statement, which makes a lock cycle impossible.
+        stmt = (
+            select(DeviceGroup)
+            .where(or_(DeviceGroup.key == group_key, DeviceGroup.filters["member_of"].is_not(None)))
+            .order_by(DeviceGroup.key)
+            .with_for_update()
+        )
+        rows = list((await db.execute(stmt)).scalars().all())
+        group = next((row for row in rows if row.key == group_key), None)
         if group is None:
             return False
         if group.group_type == GroupType.static:
-            await self._assert_no_dynamic_references(db, group_key)
+            _assert_no_references(group_key, rows)
         await db.delete(group)
         self._publisher.queue_for_session(
             db,
@@ -224,42 +242,64 @@ class DeviceGroupsService:
             mem_result = await db.execute(mem_stmt)
             return [row[0] for row in mem_result.all()]
 
-    async def _validate_member_of(self, db: AsyncSession, filters: DeviceGroupFilters | None) -> None:
-        """Lock referenced static-group rows in key order and require exact coverage."""
-        if filters is None or not filters.member_of:
-            return
-        wanted = sorted({key for key in filters.member_of if is_valid_group_key(key)})
-        if not wanted:
-            # Malformed keys surface as 422 from the schema; nothing to lock here.
-            return
-        stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted)).with_for_update().order_by(DeviceGroup.key)
-        result = await db.execute(stmt)
-        loaded = list(result.scalars().all())
-        loaded_keys = {row.key for row in loaded}
-        missing = sorted(set(wanted) - loaded_keys)
-        if missing:
-            raise UnknownMemberOfError(missing)
-        non_static = sorted({row.key for row in loaded if row.group_type != GroupType.static})
-        if non_static:
-            raise UnknownMemberOfError(non_static)
 
-    async def _assert_no_dynamic_references(self, db: AsyncSession, static_key: str) -> None:
-        """Lock dynamic group rows and reject deletion if any references the target."""
-        stmt = (
-            select(DeviceGroup)
-            .where(DeviceGroup.group_type == GroupType.dynamic)
-            .with_for_update()
-            .order_by(DeviceGroup.key)
-        )
-        result = await db.execute(stmt)
-        dependents: list[str] = []
-        for group in result.scalars().all():
-            filters_payload = group.filters or {}
-            filters = DeviceGroupFilters.model_validate(filters_payload)
-            if static_key in filters.member_of:
-                dependents.append(group.key)
-        if dependents:
-            raise GroupReferencedError(dependents)
+def _member_of_keys(filters: DeviceGroupFilters | None) -> set[str]:
+    """The well-formed ``member_of`` keys a filters payload references.
+
+    Malformed keys surface as 422 from the schema, so they are dropped here
+    rather than sent to the lock statement.
+    """
+    if filters is None:
+        return set()
+    return {key for key in filters.member_of if is_valid_group_key(key)}
+
+
+async def _lock_groups_by_key(db: AsyncSession, keys: Collection[str]) -> dict[str, DeviceGroup]:
+    """Lock the named ``device_groups`` rows in one ascending-key statement.
+
+    Every multi-row ``device_groups`` lock in this service goes through a single
+    key-ordered ``FOR UPDATE`` (``LockRows`` sits above ``Sort``, so rows are
+    locked in key order). One global lock order acquired in one statement is
+    what keeps concurrent group edits from forming a cycle — locking a target
+    row first and its references second is exactly the inversion that deadlocked
+    ``delete_group`` against ``update_group``.
+    """
+    wanted = sorted({key for key in keys if key})
+    if not wanted:
+        return {}
+    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted)).order_by(DeviceGroup.key).with_for_update()
+    return {row.key: row for row in (await db.execute(stmt)).scalars().all()}
+
+
+def _assert_member_of_resolves(filters: DeviceGroupFilters | None, locked: Mapping[str, DeviceGroup]) -> None:
+    """Require every referenced ``member_of`` key to name a locked static group."""
+    wanted = _member_of_keys(filters)
+    if not wanted:
+        return
+    missing = sorted(wanted - locked.keys())
+    if missing:
+        raise UnknownMemberOfError(missing)
+    non_static = sorted({key for key in wanted if locked[key].group_type != GroupType.static})
+    if non_static:
+        raise UnknownMemberOfError(non_static)
+
+
+def _assert_no_references(target_key: str, locked_rows: Collection[DeviceGroup]) -> None:
+    """Reject deletion if any locked group references *target_key*.
+
+    Scans every group carrying a ``member_of``, not just dynamic ones: nothing
+    enforces that static groups have no ``member_of``, and the tag migration
+    rewrote ``filters`` for any group with a ``tags`` key regardless of type, so
+    a static group can carry one. Skipping those would leave a dangling
+    reference behind.
+    """
+    dependents = [
+        group.key
+        for group in locked_rows
+        if group.key != target_key and target_key in DeviceGroupFilters.model_validate(group.filters or {}).member_of
+    ]
+    if dependents:
+        raise GroupReferencedError(sorted(dependents))
 
 
 def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilters:
