@@ -29,9 +29,7 @@ import type { DeviceSortBy, DeviceSortDir } from '../api/devices';
 import type {
   ConnectionType,
   DevicePatch,
-  HardwareHealthStatus,
   HealthVerdictStatus,
-  HardwareTelemetryState,
   DeviceFilterStatus,
   DeviceType,
   DeviceVerificationCreate,
@@ -62,8 +60,6 @@ export function useDevices(params?: {
   connection_type?: ConnectionType;
   os_version?: string;
   search?: string;
-  hardware_health_status?: HardwareHealthStatus;
-  hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
   device_health?: HealthVerdictStatus;
   node_health?: HealthVerdictStatus;
@@ -88,8 +84,6 @@ export function useDevicesPaginated(params: {
   connection_type?: ConnectionType;
   os_version?: string;
   search?: string;
-  hardware_health_status?: HardwareHealthStatus;
-  hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
   device_health?: HealthVerdictStatus;
   node_health?: HealthVerdictStatus;

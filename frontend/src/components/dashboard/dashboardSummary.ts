@@ -23,9 +23,6 @@ interface DashboardFleetSummary {
   offline: number;
   maintenance: number;
   needsAttention: number;
-  hardwareWarning: number;
-  hardwareCritical: number;
-  staleTelemetry: number;
   lifecycleActive: number;
   lifecycleDevices: DeviceRead[];
   busyDevices: DeviceRead[];
@@ -75,9 +72,6 @@ export function deriveDashboardFleetSummary(devices: DeviceRead[] = []): Dashboa
     const status = deviceChipStatus(device);
     return status === 'busy' || status === 'verifying';
   });
-  const hardwareWarning = devices.filter((device) => device.hardware_health_status === 'warning').length;
-  const hardwareCritical = devices.filter((device) => device.hardware_health_status === 'critical').length;
-  const staleTelemetry = devices.filter((device) => device.hardware_telemetry_state === 'stale').length;
   const needsAttention = devices.filter((device) => device.needs_attention).length;
 
   const platformCounts: Record<string, number> = {};
@@ -92,9 +86,6 @@ export function deriveDashboardFleetSummary(devices: DeviceRead[] = []): Dashboa
     offline: countByAvailability(devices, 'offline'),
     maintenance: countByAvailability(devices, 'maintenance'),
     needsAttention,
-    hardwareWarning,
-    hardwareCritical,
-    staleTelemetry,
     lifecycleActive: lifecycleDevices.length,
     lifecycleDevices,
     busyDevices,

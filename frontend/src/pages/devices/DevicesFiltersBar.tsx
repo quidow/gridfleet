@@ -3,8 +3,6 @@ import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-rea
 import type {
   ConnectionType,
   DeviceType,
-  HardwareHealthStatus,
-  HardwareTelemetryState,
   HealthVerdictStatus,
 } from '../../types';
 import {
@@ -12,10 +10,6 @@ import {
   CONNECTION_TYPE_LABELS,
   DEVICE_TYPES,
   DEVICE_TYPE_LABELS,
-  HARDWARE_HEALTH_STATUSES,
-  HARDWARE_HEALTH_STATUS_LABELS,
-  HARDWARE_TELEMETRY_STATES,
-  HARDWARE_TELEMETRY_STATE_LABELS,
   HEALTH_VERDICT_FILTER_LABELS,
   HEALTH_VERDICT_STATUSES,
 } from './devicePageHelpers';
@@ -33,10 +27,6 @@ type Props = {
   onDeviceTypeFilterChange: (value: DeviceType | '') => void;
   connectionTypeFilter: ConnectionType | '';
   onConnectionTypeFilterChange: (value: ConnectionType | '') => void;
-  hardwareHealthStatusFilter: HardwareHealthStatus | '';
-  onHardwareHealthStatusFilterChange: (value: HardwareHealthStatus | '') => void;
-  hardwareTelemetryStateFilter: HardwareTelemetryState | '';
-  onHardwareTelemetryStateFilterChange: (value: HardwareTelemetryState | '') => void;
   deviceHealthFilter: HealthVerdictStatus | '';
   onDeviceHealthFilterChange: (value: HealthVerdictStatus | '') => void;
   nodeHealthFilter: HealthVerdictStatus | '';
@@ -65,10 +55,6 @@ export function DevicesFiltersBar({
   onDeviceTypeFilterChange,
   connectionTypeFilter,
   onConnectionTypeFilterChange,
-  hardwareHealthStatusFilter,
-  onHardwareHealthStatusFilterChange,
-  hardwareTelemetryStateFilter,
-  onHardwareTelemetryStateFilterChange,
   deviceHealthFilter,
   onDeviceHealthFilterChange,
   nodeHealthFilter,
@@ -90,7 +76,7 @@ export function DevicesFiltersBar({
   ).filter((p, idx, arr) => arr.findIndex((q) => q.id === p.id) === idx);
 
   const hasAdvancedFilters = Boolean(
-    connectionTypeFilter || hardwareHealthStatusFilter || hardwareTelemetryStateFilter || deviceHealthFilter ||
+    connectionTypeFilter || deviceHealthFilter ||
     nodeHealthFilter || viabilityFilter || osVersionFilter,
   );
 
@@ -100,18 +86,6 @@ export function DevicesFiltersBar({
       ? { label: `Connection: ${CONNECTION_TYPE_LABELS[connectionTypeFilter]}`, onRemove: () => onConnectionTypeFilterChange('') }
       : null,
     osVersionFilter ? { label: `OS: ${osVersionFilter}`, onRemove: () => onOsVersionFilterChange('') } : null,
-    hardwareHealthStatusFilter
-      ? {
-          label: `Hardware: ${HARDWARE_HEALTH_STATUS_LABELS[hardwareHealthStatusFilter]}`,
-          onRemove: () => onHardwareHealthStatusFilterChange(''),
-        }
-      : null,
-    hardwareTelemetryStateFilter
-      ? {
-          label: `Telemetry: ${HARDWARE_TELEMETRY_STATE_LABELS[hardwareTelemetryStateFilter]}`,
-          onRemove: () => onHardwareTelemetryStateFilterChange(''),
-        }
-      : null,
     deviceHealthFilter
       ? {
           label: `Device: ${HEALTH_VERDICT_FILTER_LABELS[deviceHealthFilter]}`,
@@ -230,32 +204,6 @@ export function DevicesFiltersBar({
               options={[
                 { value: '', label: 'All OS versions' },
                 ...osVersions.map((osVersion) => ({ value: osVersion, label: osVersion })),
-              ]}
-            />
-            <Select
-              ariaLabel="Hardware health"
-              value={hardwareHealthStatusFilter}
-              onChange={(next) => onHardwareHealthStatusFilterChange(next as HardwareHealthStatus | '')}
-              className={SELECT_CLASS}
-              options={[
-                { value: '', label: 'All hardware health' },
-                ...HARDWARE_HEALTH_STATUSES.map((status) => ({
-                  value: status,
-                  label: HARDWARE_HEALTH_STATUS_LABELS[status],
-                })),
-              ]}
-            />
-            <Select
-              ariaLabel="Telemetry state"
-              value={hardwareTelemetryStateFilter}
-              onChange={(next) => onHardwareTelemetryStateFilterChange(next as HardwareTelemetryState | '')}
-              className={SELECT_CLASS}
-              options={[
-                { value: '', label: 'All telemetry states' },
-                ...HARDWARE_TELEMETRY_STATES.map((state) => ({
-                  value: state,
-                  label: HARDWARE_TELEMETRY_STATE_LABELS[state],
-                })),
               ]}
             />
             <Select
