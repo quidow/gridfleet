@@ -704,24 +704,6 @@ class AllocationService:
             await appium_direct.terminate_session(target, row.session_id)
         await self.mark_ended(db, appium_session_id=row.session_id)
 
-    async def _eligible_devices(
-        self, db: DbSession, *, exclude_device_ids: set[uuid.UUID] | None = None
-    ) -> list[Device]:
-        now = now_utc()
-        stmt = (
-            select(Device)
-            .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-            .where(is_available_sql(now=now))
-            .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
-            .where(node_accepting_new_sessions_predicate())
-            .where(~live_session_exists())
-        )
-        if exclude_device_ids:
-            stmt = stmt.where(~Device.id.in_(exclude_device_ids))
-        devices = list((await db.execute(stmt)).scalars().all())
-        GRID_ELIGIBLE_DEVICES.set(len(devices))
-        return devices
-
     async def _load_groups_by_key(self, db: DbSession, group_keys: Collection[str]) -> list[DeviceGroup]:
         """One read: the requested groups plus the static groups their JSON
         ``member_of`` arrays reference, so the pure evaluator can resolve dynamic

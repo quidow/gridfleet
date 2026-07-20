@@ -168,7 +168,7 @@ async def grid_router(db: DbDep, device_services: DeviceServicesDep) -> dict[str
 
         # Routability projection (design P4): node viability + warm soft-gate + gate-honest
         # reservation, the same axes the allocator's lock-time recheck applies. ``eligible``
-        # mirrors ``allocation._eligible_devices`` exactly (it also excludes a device with a
+        # mirrors ``allocation._eligible_devices_with_facts`` exactly (it also excludes a device with a
         # live session, e.g. a viability probe, which ``unavailable_reason`` does not model).
         node_viable = device_node_is_viable(
             device,

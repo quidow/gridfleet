@@ -126,8 +126,8 @@ async def test_eligible_devices_sets_gauge(
 ) -> None:
     from app.grid.allocation import GRID_ELIGIBLE_DEVICES
 
-    eligible = await allocation_service._eligible_devices(db_session)
-    assert seeded_available_device.id in {d.id for d in eligible}
+    eligible = await allocation_service._eligible_devices_with_facts(db_session, group_keys=())
+    assert seeded_available_device.id in {row.device.id for row in eligible}
     assert GRID_ELIGIBLE_DEVICES._value.get() == len(eligible)  # type: ignore[attr-defined]
 
 

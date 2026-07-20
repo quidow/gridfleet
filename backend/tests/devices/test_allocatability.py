@@ -28,7 +28,7 @@ def test_available_but_reserved_reports_reserved() -> None:
 def test_available_not_accepting_reports_cooldown() -> None:
     # Warm soft-gate (Stage 2): an available device whose node stopped accepting
     # new sessions is parked (cooldown is the only Stage-2 producer), even though
-    # it is free and viable. Gate-honest with allocation._eligible_devices.
+    # it is free and viable. Gate-honest with allocation._eligible_devices_with_facts.
     assert (
         unavailable_reason(
             DeviceOperationalState.available, reserved=False, accepting_new_sessions=False, node_viable=True

@@ -191,7 +191,7 @@ async def test_claim_declines_when_node_not_viable_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
     """_claim re-checks node viability under the row lock: a node with an
-    unsatisfied restart watermark after _eligible_devices ran is declined."""
+    unsatisfied restart watermark after _eligible_devices_with_facts ran is declined."""
     from datetime import UTC, datetime, timedelta
 
     from app.appium_nodes.models import AppiumNode
@@ -248,14 +248,14 @@ async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, se
         .one()
     )
     # Viable before: the device is eligible.
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id in eligible_ids
 
     node.started_at = datetime.now(UTC) - timedelta(seconds=60)
     node.restart_requested_at = datetime.now(UTC)
     await db_session.flush()
 
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id not in eligible_ids
 
 
@@ -517,13 +517,13 @@ async def test_not_accepting_device_not_grid_eligible(
         .one()
     )
     # Accepting before: the device is eligible.
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id in eligible_ids
 
     node.accepting_new_sessions = False  # not a guard-protected column
     await db_session.flush()
 
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id not in eligible_ids
 
 
@@ -536,7 +536,10 @@ async def test_try_allocate_skips_excluded_device(db_session: AsyncSession, seed
     db_session.add(ticket)
     await db_session.flush()
 
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session, exclude_device_ids={dev_a.id})}
+    eligible_ids = {
+        r.device.id
+        for r in await _service()._eligible_devices_with_facts(db_session, group_keys=(), exclude_device_ids={dev_a.id})
+    }
     assert dev_a.id not in eligible_ids
     assert dev_b.id in eligible_ids
 
@@ -551,7 +554,7 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
     """The lock-time recheck must also honor the soft-gate: if a device was
-    eligible at _eligible_devices time but its node flipped to
+    eligible at _eligible_devices_with_facts time but its node flipped to
     accepting_new_sessions=False before the row lock, _claim declines and the
     ticket stays waiting."""
     from app.appium_nodes.models import AppiumNode

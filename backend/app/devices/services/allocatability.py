@@ -1,6 +1,7 @@
 """Read-side projection of a device's allocatability (design P4).
 
-Approximates the grid allocation gate (``app.grid.allocation._eligible_devices``)
+Approximates the grid allocation gate
+(``app.grid.allocation.AllocationService._eligible_devices_with_facts``)
 using the operator-legible axes the presenter already holds: the derived
 ``operational_state``, a **gate-honest** reservation signal — a live,
 non-excluded reservation on a non-terminal run, computed by
