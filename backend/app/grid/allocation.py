@@ -319,6 +319,23 @@ def _ready_rows(
     ]
 
 
+def _union_group_keys(
+    current_group_keys: Collection[str],
+    older_candidate_sets: Sequence[tuple[uuid.UUID | None, list[dict[str, Any]]]],
+) -> set[str]:
+    """Every group key the current ticket and the supplied older waiters request.
+
+    Called twice per attempt against different waiter sets: once over all older
+    waiters (deciding which of them to drop needs the pre-filter key set, since a
+    waiter is dropped precisely when one of its keys fails to load), then again
+    over the survivors, whose keys are the ones devices actually advertise.
+    """
+    keys = set(current_group_keys)
+    for _, older_candidates in older_candidate_sets:
+        keys |= requested_group_keys(older_candidates)
+    return keys
+
+
 def _matching_group_keys_for_device(
     membership: GroupMembershipIndex,
     device_id: uuid.UUID,
@@ -600,10 +617,7 @@ class AllocationService:
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
-        older_group_keys: set[str] = set()
-        for _, older_candidates in older_candidate_sets:
-            older_group_keys |= requested_group_keys(older_candidates)
-        group_keys = set(current_group_keys) | older_group_keys
+        group_keys = _union_group_keys(current_group_keys, older_candidate_sets)
         # The group-definition load returns direct requested groups plus the static
         # groups named by their JSON ``member_of`` arrays in one CTE/query so the
         # evaluator can resolve dynamic groups that reference static groups by key.
@@ -630,6 +644,13 @@ class AllocationService:
             for run_id, older_candidates in older_candidate_sets
             if requested_group_keys(older_candidates) <= loaded_group_keys
         ]
+        # Re-derive the advertised key set from the *surviving* waiters. The set
+        # above was needed pre-filter (deciding which older waiters to drop depends
+        # on knowing which keys loaded), but carrying it into the device loop would
+        # stamp ``gridfleet:group:<key>`` caps for keys no live ticket requested any
+        # more — the surface must stay proportional to the request, not to the
+        # fleet's group count.
+        group_keys = _union_group_keys(current_group_keys, older_candidate_sets)
         # One eligible-devices query projecting reservation owner and the static
         # group-key aggregation for the direct/member_of keys, in the same SQL
         # statement (read 3). The pack-template batch (read 4) folds the per-
@@ -772,7 +793,7 @@ class AllocationService:
         self,
         db: DbSession,
         rows: Sequence[_EligibleRow],
-    ) -> tuple[dict[tuple[str, str], StereotypeTemplate], dict[uuid.UUID, DeviceGroupFacts], dict[str, DriverPack]]:
+    ) -> tuple[StereotypeTemplateCache, dict[uuid.UUID, DeviceGroupFacts], dict[str, DriverPack]]:
         """One read: the pack catalog for every eligible row's pack, projected into
         both the stereotype templates the matcher needs and the readiness verdicts
         the group evaluator needs.
@@ -797,7 +818,21 @@ class AllocationService:
         # assess that device against a missing pack — a divergence between the
         # allocator's needs_attention verdict and the Devices page's.
         pack_catalog = await load_pack_catalog(db, {row.device.pack_id for row in rows if row.device.pack_id})
-        templates = stereotype_templates_from_packs(pack_catalog, pack_platform_keys)
+        rendered = stereotype_templates_from_packs(pack_catalog, pack_platform_keys)
+        # ``stereotype_templates_from_packs`` omits pairs it cannot resolve, but
+        # ``device_match_surface`` decides by *membership* — an absent key is a cache
+        # miss and falls through to ``load_stereotype_template``, which re-reads the
+        # pack catalog. Seed the negatives explicitly so the cache answers for every
+        # pair this batch can ask about and the poll cannot buy a fifth read.
+        #
+        # Today no device reaches that lookup: an unresolvable pair also fails
+        # readiness (``assess_device_with_pack`` resolves release+platform against
+        # this same catalog), so ``_ready_rows`` drops it first. That coupling is
+        # implicit and unenforced; seeding here removes the poll's read budget's
+        # dependence on it.
+        templates: StereotypeTemplateCache = dict(rendered)
+        for pair in pack_platform_keys:
+            templates.setdefault(pair, None)
         readiness = await assess_devices_async(db, [row.device for row in rows], packs=pack_catalog)
         return templates, _facts_from_eligible_rows(rows, readiness, self._settings), pack_catalog
 
@@ -905,10 +940,17 @@ class AllocationService:
         ]
         if exclude_device_ids:
             predicates.append(~Device.id.in_(exclude_device_ids))
-        # Reservation-owner predicate: the device's gating reservation run id
-        # must match the ticket's run id (NULL = NULL for a free ticket on a
-        # free device), so a run-bound ticket cannot land on an unreserved
-        # device and vice versa.
+        # Reservation-owner *staleness* predicate. ``reservation_run_id`` is the
+        # device's own gating reservation owner as read pre-lock (``try_allocate``
+        # passes ``row.reservation_run_id``, NOT ``ticket.run_id``), so this pins
+        # only that the owner has not changed between the poll read and the lock —
+        # NULL = NULL meaning "still unreserved". It does NOT enforce run binding.
+        #
+        # The ticket gate is enforced pre-lock, in ``try_allocate``, by
+        # ``_ticket_passes_reservation(ticket.run_id, reservation_run_id)``. Do not
+        # remove that check on the belief that this predicate covers it: a
+        # run-bound ticket landing on an unreserved device is rejected there and
+        # nowhere else.
         reservation_subq = reservation_gating_owner_sql(now=now)
         if reservation_run_id is None:
             predicates.append(reservation_subq.is_(None))

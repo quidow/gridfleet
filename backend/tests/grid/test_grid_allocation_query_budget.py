@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService
@@ -596,3 +598,142 @@ async def test_reservation_symmetry_under_group_routing(db_session: AsyncSession
     result = await _service().try_allocate(db_session, ticket=bound_ticket)
     assert result is not None
     assert result.device_id == device.id
+
+
+@pytest.mark.db
+async def test_unresolvable_pack_pair_does_not_push_the_poll_past_its_budget(
+    db_session: AsyncSession,
+) -> None:
+    """A device whose pack has no selectable release must not buy a fifth read.
+
+    ``_eligible_facts`` pre-populates ``template_cache`` from
+    ``stereotype_templates_from_packs``, whose contract is that unresolvable pairs
+    are *absent* from the result. ``device_match_surface`` tests membership, so an
+    absent key falls through to ``load_stereotype_template`` — a second
+    ``load_pack_catalog`` on a path whose whole deliverable is a constant four-read
+    poll. Runs against the real stereotype provider (the other budget tests use a
+    stub, which is why this gap is invisible to them).
+    """
+    from app.grid.allocation import device_match_surface
+    from app.packs.models import DriverPack, PackState
+
+    await seed_test_packs(db_session)
+    # A pack row with no releases at all: ``selected_release`` returns None, so the
+    # pair is unresolvable and absent from the rendered templates.
+    db_session.add(
+        DriverPack(
+            id="pack-without-releases",
+            display_name="Pack Without Releases",
+            maintainer="tests",
+            license="MIT",
+            state=PackState.enabled,
+            runtime_policy={"strategy": "recommended"},
+        )
+    )
+    host, _, _ = await seed_host_and_running_node(db_session, identity=f"budget-norel-{uuid.uuid4().hex[:8]}")
+    await db_session.execute(update(Device).where(Device.host_id == host.id).values(pack_id="pack-without-releases"))
+    await db_session.flush()
+
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+
+    service = AllocationService(
+        intent_factory=IntentService,
+        publisher=event_bus,
+        stereotype_provider=device_match_surface,
+    )
+    with _capture_statements(db_session) as statements:
+        result = await service.try_allocate(db_session, ticket=ticket)
+    assert result is None
+    reads = _reads(statements)
+    assert len(reads) == 3, f"unresolvable pack pair bought extra reads: {reads}"
+
+    # Pin the mechanism, not just the count. The read budget above is currently
+    # protected by an implicit coupling (an unresolvable pair also fails readiness,
+    # so ``_ready_rows`` drops the device before the stereotype loop). Assert the
+    # cache itself answers for every requested pair, so a future divergence between
+    # the readiness gate and the template projection cannot silently reintroduce the
+    # per-pair ``load_stereotype_template`` fallback.
+    rows = await service._eligible_devices_with_facts(db_session, group_keys=set(), exclude_device_ids=None)
+    templates, _facts, _catalog = await service._eligible_facts(db_session, rows)
+    assert ("pack-without-releases", "android_mobile") in templates
+    assert templates[("pack-without-releases", "android_mobile")] is None
+
+
+@pytest.mark.db
+async def test_match_surface_omits_group_keys_only_a_dropped_older_waiter_requested(
+    db_session: AsyncSession,
+) -> None:
+    """Group caps must reflect the keys a *surviving* ticket actually requested.
+
+    ``group_keys`` is the union of the current ticket's keys and every older
+    waiter's keys, computed *before* stale older waiters are filtered out. An older
+    waiter naming any unknown key is dropped (it cannot block younger valid work),
+    but its other keys stay in ``group_keys``, so every eligible device advertises
+    ``gridfleet:group:<key>`` entries nothing will match against this tick —
+    contradicting ``device_match_surface``'s promise that the surface stays
+    proportional to the request rather than to the fleet's group count.
+    """
+    await seed_test_packs(db_session)
+    host, _, _ = await seed_host_and_running_node(db_session, identity=f"budget-caps-{uuid.uuid4().hex[:8]}")
+    device = (await db_session.execute(select(Device).where(Device.host_id == host.id))).scalar_one()
+
+    wanted_key = f"wanted-{uuid.uuid4().hex[:8]}"
+    stale_key = f"stale-{uuid.uuid4().hex[:8]}"
+    for key in (wanted_key, stale_key):
+        group = DeviceGroup(key=key, name=key, group_type=GroupType.static)
+        db_session.add(group)
+        await db_session.flush()
+        db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device.id))
+    await db_session.flush()
+
+    # Older waiter: requests a real group plus a key that does not exist, so it is
+    # dropped from the surviving candidate sets.
+    # created_at must be set explicitly: the server default is the transaction
+    # timestamp, so tickets flushed in one test transaction tie and the
+    # strict-``<`` older-waiter query would load neither.
+    now = now_utc()
+    older = GridSessionQueueTicket(
+        requested_body=_body(
+            platformName="Android",
+            **{f"gridfleet:group:{stale_key}": True, "gridfleet:group:ghost-does-not-exist": True},
+        ),
+        created_at=now - timedelta(seconds=5),
+        last_polled_at=now,
+    )
+    db_session.add(older)
+    await db_session.flush()
+
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{f"gridfleet:group:{wanted_key}": True}),
+        created_at=now,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    seen: list[set[str]] = []
+
+    async def _recording_stereotype(
+        db: AsyncSession,
+        device: Device,
+        *,
+        template_cache: object | None = None,
+        matching_group_keys: Collection[str] = (),
+    ) -> dict[str, Any]:
+        seen.append(set(matching_group_keys))
+        return {"platformName": "Android", **{f"gridfleet:group:{k}": True for k in matching_group_keys}}
+
+    service = AllocationService(
+        intent_factory=IntentService,
+        publisher=event_bus,
+        stereotype_provider=_recording_stereotype,
+    )
+    await service.try_allocate(db_session, ticket=ticket)
+
+    assert seen, "stereotype provider was never consulted"
+    advertised = set().union(*seen)
+    assert wanted_key in advertised
+    assert stale_key not in advertised, (
+        f"surface advertised {stale_key}, requested only by an older waiter that was dropped: {advertised}"
+    )
