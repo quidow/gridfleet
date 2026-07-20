@@ -1467,23 +1467,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/portability/inventory": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read-only device inventory export (JSON or CSV) */
-        get: operations["inventory_api_portability_inventory_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/runs": {
         parameters: {
             query?: never;
@@ -3997,11 +3980,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /**
-         * InventoryFormat
-         * @enum {string}
-         */
-        InventoryFormat: "csv" | "json";
         /** LifecycleActionOut */
         LifecycleActionOut: {
             /**
@@ -10195,93 +10173,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportPreview"];
-                };
-            };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    inventory_api_portability_inventory_get: {
-        parameters: {
-            query?: {
-                format?: components["schemas"]["InventoryFormat"];
-                columns?: string | null;
-                pack_id?: string | null;
-                platform_id?: string | null;
-                status?: ("available" | "busy" | "offline" | "maintenance" | "verifying") | null;
-                reserved?: boolean | null;
-                host_id?: string | null;
-                identity_value?: string | null;
-                connection_target?: string | null;
-                device_type?: components["schemas"]["DeviceType"] | null;
-                connection_type?: components["schemas"]["ConnectionType"] | null;
-                os_version?: string | null;
-                os_version_display?: string | null;
-                search?: string | null;
-                needs_attention?: boolean | null;
-                device_health?: ("ok" | "warn" | "failed" | "unknown") | null;
-                node_health?: ("ok" | "warn" | "failed" | "unknown") | null;
-                viability?: ("ok" | "warn" | "failed" | "unknown") | null;
-                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
-                sort_dir?: "asc" | "desc";
-                group?: string[] | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation error */

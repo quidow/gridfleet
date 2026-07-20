@@ -68,7 +68,6 @@ from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
 from app.portability.services.export import PortabilityExportService
 from app.portability.services.import_bundle import PortabilityImportService
-from app.portability.services.inventory import InventoryExportService
 from app.portability.services_container import PortabilityServices
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
@@ -134,7 +133,6 @@ def compose_app(
     presenter_svc = DevicePresenterService()
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
-    inventory_export_svc = InventoryExportService()
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
@@ -300,7 +298,6 @@ def compose_app(
     portability_services = PortabilityServices(
         export=portability_export_svc,
         import_=portability_import_svc,
-        inventory=inventory_export_svc,
     )
     lifecycle_services = LifecycleServices(
         policy=lifecycle_policy_svc,

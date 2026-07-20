@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import ValidationError
 
-from app.devices.models import DeviceGroup, DeviceGroupMembership, GroupType
 from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
@@ -13,8 +12,6 @@ from app.portability.schemas import (
 )
 
 if TYPE_CHECKING:
-    import uuid
-
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -168,62 +165,6 @@ async def test_export_endpoint_returns_bundle(client: AsyncClient, db_session: A
     cd = response.headers["content-disposition"]
     assert cd.startswith("attachment; filename=")
     assert cd.endswith('.json"')
-
-
-@pytest.mark.asyncio
-@pytest.mark.db
-async def test_inventory_endpoint_filters_by_group(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    """The inventory export honors repeated ?group= params with AND semantics."""
-    from tests.helpers import create_device_record
-
-    east_tv = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="inv-east-tv",
-        connection_target="inv-east-tv",
-        name="Inv East TV",
-        operational_state="available",
-    )
-    east_phone = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="inv-east-phone",
-        connection_target="inv-east-phone",
-        name="Inv East Phone",
-        operational_state="available",
-    )
-
-    async def _add_static_group(key: str, device_ids: list[uuid.UUID]) -> None:
-        group = DeviceGroup(key=key, name=key, group_type=GroupType.static)
-        db_session.add(group)
-        await db_session.flush()
-        for device_id in device_ids:
-            db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device_id))
-        await db_session.commit()
-
-    await _add_static_group("east", [east_tv.id, east_phone.id])
-    await _add_static_group("tv", [east_tv.id])
-
-    response = await client.get(
-        "/api/portability/inventory",
-        params=[("group", "east"), ("group", "tv"), ("columns", "identity.value")],
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    values = {row["identity"]["value"] for row in payload}
-    assert values == {"inv-east-tv"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.db
-async def test_inventory_endpoint_rejects_unknown_group(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    response = await client.get("/api/portability/inventory", params=[("group", "missing")])
-    assert response.status_code == 422
-    assert response.json()["error"]["message"] == "unknown device groups: missing"
 
 
 @pytest.mark.asyncio

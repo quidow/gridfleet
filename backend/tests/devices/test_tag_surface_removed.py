@@ -19,7 +19,7 @@ from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificati
 from app.devices.schemas.filters import DeviceGroupFilters, DeviceQueryFilters
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.readiness import READINESS_IMPACTING_FIELDS
-from app.portability.schemas import InventoryColumn
+from app.portability.schemas import ExportedDevice
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
 from tests.helpers import create_device_record
 
@@ -74,7 +74,7 @@ def test_run_requirement_and_reserved_device_drop_tags() -> None:
 
 def test_readiness_and_portability_drop_tags() -> None:
     assert "tags" not in READINESS_IMPACTING_FIELDS
-    assert "tags" not in {column.value for column in InventoryColumn}
+    assert "tags" not in ExportedDevice.model_fields
 
 
 async def test_bulk_update_tags_endpoints_are_removed(client: AsyncClient) -> None:
