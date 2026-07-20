@@ -26,12 +26,10 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
-from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import readiness as device_readiness
 from app.devices.services.state import derive_operational_states
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.runs.service_reservation import get_device_reservation_map, reservation_gating_run_id
 
 # The dynamic-filter matcher is one return per axis by design; the axis set is
@@ -123,7 +121,6 @@ class DeviceGroupFacts:
     operational_state: DeviceOperationalState
     is_reserved: bool
     readiness_state: str
-    hardware_telemetry_state: HardwareTelemetryState
     needs_attention: bool
     static_group_keys: frozenset[str]
 
@@ -147,30 +144,23 @@ def build_device_group_facts(
     row — but the derivation from those inputs is identical. Keeping it here
     means ``needs_attention`` in particular cannot drift between the paths.
 
-    ``settings`` may be ``None`` when the caller has no settings reader (the
-    grid allocator's settings-free polls); telemetry then reports ``unknown``
-    rather than being guessed from raw columns.
+    ``settings`` is retained for call-site compatibility but is no longer
+    consumed by this pure function.
 
     ``review_required`` defaults to the device row. Callers whose rows provably
     cleared the review gate under a lock pass ``False`` explicitly.
     """
-    hardware_telemetry_state = (
-        HardwareTelemetryState.unknown
-        if settings is None
-        else hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
-    )
+    del settings  # kept for call-site compatibility; no longer consumed
     effective_review_required = bool(device.review_required) if review_required is None else review_required
     needs_attention = device_attention.compute_needs_attention(
         operational_state,
         readiness_state,
-        hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
         review_required=effective_review_required,
     )
     return DeviceGroupFacts(
         operational_state=operational_state,
         is_reserved=is_reserved,
         readiness_state=readiness_state,
-        hardware_telemetry_state=hardware_telemetry_state,
         needs_attention=needs_attention,
         static_group_keys=static_group_keys,
     )
@@ -220,13 +210,6 @@ def _device_matches_dynamic_filters(device: Device, facts: DeviceGroupFacts, fil
         displayed = device.os_version_display or device.os_version
         if displayed != filters.os_version_display:
             return False
-    if filters.hardware_health_status is not None and device.hardware_health_status != filters.hardware_health_status:
-        return False
-    if (
-        filters.hardware_telemetry_state is not None
-        and facts.hardware_telemetry_state != filters.hardware_telemetry_state
-    ):
-        return False
     if filters.needs_attention is not None and facts.needs_attention != filters.needs_attention:
         return False
     # member_of: AND over static-group keys. Dynamic or unknown keys contribute
