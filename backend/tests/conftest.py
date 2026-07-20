@@ -51,7 +51,6 @@ from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service import HostCrudService
 from app.hosts.service_diagnostics import HostDiagnosticsService
-from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import HostStatusPushService
@@ -461,10 +460,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
         return HostServices(
             crud=HostCrudService(publisher=test_event_bus, settings=settings_service),
-            hardware_telemetry=HardwareTelemetryService(
-                publisher=test_event_bus,
-                settings=settings_service,
-            ),
             resource_telemetry=HostResourceTelemetryService(
                 settings=settings_service,
             ),

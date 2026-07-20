@@ -216,8 +216,6 @@ async def test_list_devices(client: AsyncClient, db_session: AsyncSession, defau
     data = resp.json()
     assert len(data) == 2
     assert all("lifecycle_policy_summary" in item for item in data)
-    assert all("hardware_health_status" in item for item in data)
-    assert all("hardware_telemetry_state" in item for item in data)
     # Contract pin: bare-list items must be valid DeviceRead
     assert DeviceRead.model_validate(data[0])
 
@@ -742,9 +740,6 @@ async def test_get_device(client: AsyncClient, db_session: AsyncSession, default
     assert data["identity_scope"] == "host"
     assert data["appium_node"] is None
     assert data["lifecycle_policy_summary"]["label"] == "Idle"
-    assert data["hardware_health_status"] == "unknown"
-    assert data["hardware_telemetry_state"] == "unknown"
-    assert data["battery_level_percent"] is None
     # default GET omits orchestration
     assert data["orchestration"] is None
     # opt-in returns it
@@ -753,105 +748,6 @@ async def test_get_device(client: AsyncClient, db_session: AsyncSession, default
     assert data["orchestration"]["intents"] == []
     assert data["orchestration"]["derived"]["grid_routing"]["accepting_new_sessions"] is True
     assert data["orchestration"]["derived"]["recovery"]["allowed"] is True
-
-
-@pytest.mark.asyncio
-async def test_get_device_includes_hardware_telemetry_fields(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="telemetry-1",
-        connection_target="telemetry-1",
-    )
-    device.battery_level_percent = 76
-    device.battery_temperature_c = 37.4
-    device.charging_state = "charging"
-    device.hardware_health_status = "healthy"
-    device.hardware_telemetry_support_status = "supported"
-
-    device.hardware_telemetry_reported_at = datetime.now(UTC)
-    await db_session.commit()
-
-    resp = await client.get(f"/api/devices/{device.id}")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["battery_level_percent"] == 76
-    assert data["battery_temperature_c"] == 37.4
-    assert data["charging_state"] == "charging"
-    assert data["hardware_health_status"] == "healthy"
-    assert data["hardware_telemetry_state"] == "fresh"
-
-
-@pytest.mark.asyncio
-async def test_list_devices_filter_hardware_health_status(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    warning_device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="warning-telemetry",
-        connection_target="warning-telemetry",
-        name="Warning Telemetry",
-    )
-    healthy_device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="healthy-telemetry",
-        connection_target="healthy-telemetry",
-        name="Healthy Telemetry",
-    )
-    warning_device.hardware_health_status = "warning"
-    healthy_device.hardware_health_status = "healthy"
-    await db_session.commit()
-
-    resp = await client.get("/api/devices", params={"hardware_health_status": "warning"})
-    assert resp.status_code == 200
-    assert [item["name"] for item in resp.json()] == ["Warning Telemetry"]
-
-
-@pytest.mark.asyncio
-async def test_list_devices_filter_hardware_telemetry_state(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    stale_device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="stale-telemetry",
-        connection_target="stale-telemetry",
-        name="Stale Telemetry",
-    )
-    unsupported_device = await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="unsupported-telemetry",
-        connection_target="unsupported-telemetry",
-        name="Unsupported Telemetry",
-    )
-    stale_device.hardware_telemetry_support_status = "supported"
-    stale_device.hardware_telemetry_reported_at = datetime.now(UTC) - timedelta(hours=1)
-    unsupported_device.hardware_telemetry_support_status = "unsupported"
-    unsupported_device.hardware_telemetry_reported_at = datetime.now(UTC)
-    await db_session.commit()
-
-    from tests.conftest import settings_service
-
-    settings_service._cache["general.hardware_telemetry_stale_timeout_sec"] = 60
-
-    stale_resp = await client.get("/api/devices", params={"hardware_telemetry_state": "stale"})
-    assert stale_resp.status_code == 200
-    assert [item["name"] for item in stale_resp.json()] == ["Stale Telemetry"]
-
-    unsupported_resp = await client.get("/api/devices", params={"hardware_telemetry_state": "unsupported"})
-    assert unsupported_resp.status_code == 200
-    assert [item["name"] for item in unsupported_resp.json()] == ["Unsupported Telemetry"]
 
 
 @pytest.mark.asyncio

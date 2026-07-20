@@ -1,4 +1,4 @@
-"""Tests that host status and hardware health events carry the correct severity."""
+"""Tests that host status events carry the correct severity."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from app.hosts.service import _host_status_severity
-from app.hosts.service_hardware_telemetry import _hardware_severity
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -56,38 +55,6 @@ def test_host_status_none_old_to_online_emits_info() -> None:
 def test_host_status_none_old_to_offline_emits_info() -> None:
     """None → offline (born offline) should produce 'info'."""
     assert _host_status_severity(None, "offline") == "info"
-
-
-# ---------------------------------------------------------------------------
-# Unit tests: _hardware_severity helper
-# ---------------------------------------------------------------------------
-
-
-def test_hardware_health_critical_emits_critical() -> None:
-    """Any → critical should produce 'critical'."""
-    assert _hardware_severity("ok", "critical") == "critical"
-    assert _hardware_severity("warning", "critical") == "critical"
-    assert _hardware_severity(None, "critical") == "critical"
-
-
-def test_hardware_health_recovery_from_warning_emits_success() -> None:
-    """warning → ok recovery should produce 'success'."""
-    assert _hardware_severity("warning", "ok") == "success"
-
-
-def test_hardware_health_recovery_from_critical_emits_success() -> None:
-    """critical → ok recovery should produce 'success'."""
-    assert _hardware_severity("critical", "ok") == "success"
-
-
-def test_hardware_health_warning_emits_warning() -> None:
-    """ok → warning should produce 'warning' (default)."""
-    assert _hardware_severity("ok", "warning") == "warning"
-
-
-def test_hardware_health_no_prior_status_warning_emits_warning() -> None:
-    """None → warning should produce 'warning'."""
-    assert _hardware_severity(None, "warning") == "warning"
 
 
 # ---------------------------------------------------------------------------

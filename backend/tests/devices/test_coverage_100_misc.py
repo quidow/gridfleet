@@ -410,7 +410,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
                 "retention.background_loop_heartbeat_days": 1,
                 "retention.automation_artifact_days": 1,
                 "retention.host_resource_telemetry_hours": 1,
-                "retention.hardware_telemetry_days": 1,
                 "retention.test_data_audit_days": 1,
             }
         ),

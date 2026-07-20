@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event
 
-from app.core.timeutil import now_utc
 from app.devices.group_keys import is_valid_group_key
 from app.devices.models import (
     Device,
@@ -15,10 +14,7 @@ from app.devices.models import (
     DeviceGroupMembership,
     DeviceOperationalState,
     GroupType,
-    HardwareHealthStatus,
-    HardwareTelemetrySupportStatus,
 )
-from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
@@ -93,14 +89,12 @@ def _facts(
     operational_state: str = "available",
     is_reserved: bool = False,
     readiness_state: str = "verified",
-    hardware_telemetry_state: str = "ok",
     needs_attention: bool = False,
 ) -> DeviceGroupFacts:
     return DeviceGroupFacts(
         operational_state=operational_state,  # type: ignore[arg-type]
         is_reserved=is_reserved,
         readiness_state=readiness_state,
-        hardware_telemetry_state=hardware_telemetry_state,  # type: ignore[arg-type]
         needs_attention=needs_attention,
         static_group_keys=frozenset(static_group_keys or ()),
     )
@@ -519,16 +513,13 @@ async def test_group_bulk_route_contract_for_empty_and_missing_groups(
 
 
 def _needs_attention_device() -> Device:
-    """A real device whose hardware health is ``critical`` and whose review flag is
+    """A real device whose readiness is ``setup_required`` and whose review flag is
     clear — the shape that exposed the earlier drift, where the grid allocator
     hardcoded ``readiness_state="verified"`` and a ``needs_attention`` dynamic
     group silently never matched there.
     """
     device = _device("attention-parity")
     device.review_required = False
-    device.hardware_health_status = HardwareHealthStatus.critical
-    device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.supported
-    device.hardware_telemetry_reported_at = now_utc()
     return device
 
 
@@ -546,7 +537,7 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     ``False`` by construction from the gates its locked rows passed).
     """
     device = _needs_attention_device()
-    settings = FakeSettingsReader({"general.hardware_telemetry_stale_timeout_sec": 600})
+    settings = FakeSettingsReader({})
     shared = {
         "readiness_state": "setup_required",
         "static_group_keys": frozenset({"east"}),
@@ -579,15 +570,14 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     )
 
     assert canonical == grid == run
-    # setup_required + critical hardware health must flag attention on every path.
+    # setup_required must flag attention on every path.
     assert canonical.needs_attention is True
-    assert canonical.hardware_telemetry_state == HardwareTelemetryState.fresh
 
 
-def test_build_device_group_facts_reports_unknown_telemetry_without_settings() -> None:
-    """The grid allocator's settings-free polls pass ``settings=None``. The fallback
-    lives in the helper, so telemetry reports ``unknown`` rather than being guessed,
-    and no other axis shifts.
+def test_build_device_group_facts_ignores_settings_value() -> None:
+    """The ``settings`` argument is retained for call-site compatibility but is no
+    longer consumed by the pure derivation, so passing ``None`` versus a real
+    reader produces identical facts.
     """
     device = _needs_attention_device()
     common: dict[str, Any] = {
@@ -600,12 +590,11 @@ def test_build_device_group_facts_reports_unknown_telemetry_without_settings() -
     without = build_device_group_facts(device, settings=None, **common)
     with_settings = build_device_group_facts(
         device,
-        settings=FakeSettingsReader({"general.hardware_telemetry_stale_timeout_sec": 600}),
+        settings=FakeSettingsReader({}),
         **common,
     )
 
-    assert without.hardware_telemetry_state == HardwareTelemetryState.unknown
-    assert with_settings.hardware_telemetry_state == HardwareTelemetryState.fresh
+    assert without == with_settings
     assert without.needs_attention == with_settings.needs_attention is True
 
 
@@ -620,12 +609,12 @@ async def test_narrow_group_scopes_stay_bounded_and_unbounded_ones_are_reported(
 
     ``_load_devices_in_scope`` ORs one scope per dynamic group into a single batch.
     A group pinning no column-scope axis is unbounded — ``status``, ``reserved``,
-    ``hardware_telemetry_state`` and ``needs_attention`` are deliberately excluded
-    from the column scope, so a group filtered only on ``status`` reaches it easily.
-    The union with an unbounded arm is inherently the whole fleet (that group really
-    does span it), so this pins the two things that are actually in our control: the
-    common all-narrow case stays bounded, and the degenerate case is visible in the
-    log instead of silently widening every co-listed group's batch.
+    and ``needs_attention`` are deliberately excluded from the column scope, so a
+    group filtered only on ``status`` reaches it easily. The union with an
+    unbounded arm is inherently the whole fleet (that group really does span it),
+    so this pins the two things that are actually in our control: the common
+    all-narrow case stays bounded, and the degenerate case is visible in the log
+    instead of silently widening every co-listed group's batch.
     """
     from app.devices.services.groups import _load_devices_in_scope
 

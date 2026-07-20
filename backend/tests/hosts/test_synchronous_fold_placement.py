@@ -32,8 +32,8 @@ def test_synchronous_folds_keep_only_the_cheap_sections() -> None:
         and isinstance(entry.args[0], ast.Constant)
         and isinstance(entry.args[0].value, str)
     }
-    # Telemetry, properties, host_telemetry stay synchronous; the two health folds
+    # Properties and host_telemetry stay synchronous; the two health folds
     # must NOT be here (both fold off the request path on the StatusFoldLoop).
     assert "device_health" not in folds
     assert "node_health" not in folds
-    assert {"device_telemetry", "device_properties", "host_telemetry"} <= folds
+    assert {"device_properties", "host_telemetry"} <= folds

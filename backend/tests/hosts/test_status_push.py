@@ -59,7 +59,6 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
         "host_telemetry": {"recorded_at": "2026-07-09T00:00:00+00:00", "cpu_percent": 1.0},
         "node_health": {"reported_at": "2026-07-09T00:00:01+00:00", "nodes": []},
         "device_health": {"reported_at": "2026-07-09T00:00:02+00:00", "devices": {}},
-        "device_telemetry": {"reported_at": "2026-07-09T00:00:03+00:00", "devices": {}},
         "device_properties": {"reported_at": "2026-07-09T00:00:04+00:00", "devices": {}},
     }
     resp = await client.post("/agent/hosts/status", json=body)
@@ -75,7 +74,6 @@ async def test_status_push_stamps_liveness_and_stores_snapshot(client: AsyncClie
     assert stored["payload"]["device_health"]["reported_at"] == "2026-07-09T00:00:02+00:00"
     # Telemetry/properties sections fold synchronously and are not persisted.
     assert "host_telemetry" not in stored["payload"]
-    assert "device_telemetry" not in stored["payload"]
     assert "device_properties" not in stored["payload"]
 
 
@@ -91,7 +89,6 @@ async def test_status_push_trims_unread_sections_from_stored_snapshot(
         "host_telemetry": {"recorded_at": "2026-07-17T00:00:00+00:00", "cpu_percent": 1.0},
         "node_health": {"reported_at": "2026-07-17T00:00:01+00:00", "nodes": []},
         "device_health": {"reported_at": "2026-07-17T00:00:02+00:00", "devices": {}},
-        "device_telemetry": {"reported_at": "2026-07-17T00:00:03+00:00", "devices": {}},
         "device_properties": {"reported_at": "2026-07-17T00:00:04+00:00", "devices": {}},
     }
 
@@ -104,7 +101,7 @@ async def test_status_push_trims_unread_sections_from_stored_snapshot(
     # The synchronous folds still receive every pushed section.
     process.assert_awaited_once()
     fold_payload = process.await_args.kwargs["payload"]
-    assert {"host_telemetry", "device_telemetry", "device_properties"} <= set(fold_payload)
+    assert {"host_telemetry", "device_properties"} <= set(fold_payload)
 
 
 async def test_status_push_never_writes_status(client: AsyncClient, db_session: AsyncSession) -> None:

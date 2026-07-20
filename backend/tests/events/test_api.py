@@ -66,7 +66,6 @@ async def test_event_catalog_lists_public_emitted_events(client: AsyncClient) ->
     body = response.json()
     names = [entry["name"] for entry in body["events"]]
     assert "device.verification.updated" in names
-    assert "device.hardware_health_changed" in names
     assert "host.discovery_completed" in names
     assert "run.created" in names
     assert "system.cleanup_completed" in names

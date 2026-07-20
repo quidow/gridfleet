@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from app.devices.models import HardwareHealthStatus
 from app.devices.services.health_view import build_public_summary, device_allows_allocation, merged_liveness
 
 
@@ -31,7 +30,6 @@ def _device(
     device_checks_healthy: bool | None = None,
     device_checks_summary: str | None = None,
     device_checks_checked_at: object = None,
-    hardware_health_status: HardwareHealthStatus = HardwareHealthStatus.unknown,
     session_viability_status: str | None = None,
     session_viability_error: str | None = None,
     session_viability_checked_at: object = None,
@@ -41,7 +39,6 @@ def _device(
         device_checks_healthy=device_checks_healthy,
         device_checks_summary=device_checks_summary,
         device_checks_checked_at=device_checks_checked_at,
-        hardware_health_status=hardware_health_status,
         session_viability_status=session_viability_status,
         session_viability_error=session_viability_error,
         session_viability_checked_at=session_viability_checked_at,
@@ -59,16 +56,11 @@ def test_device_verdict_failed_on_checks() -> None:
     assert summary["overall"] == "failed"
 
 
-def test_device_verdict_hardware_critical_beats_passing_checks() -> None:
-    device = _device(device_checks_healthy=True, hardware_health_status=HardwareHealthStatus.critical)
-    assert build_public_summary(device)["device"]["status"] == "failed"
-
-
-def test_device_verdict_hardware_warning() -> None:
-    device = _device(device_checks_healthy=True, hardware_health_status=HardwareHealthStatus.warning)
+def test_device_verdict_ok_when_checks_pass() -> None:
+    device = _device(device_checks_healthy=True, device_checks_summary="ok")
     summary = build_public_summary(device)
-    assert summary["device"]["status"] == "warn"
-    assert summary["overall"] == "warn"
+    assert summary["device"]["status"] == "ok"
+    assert summary["overall"] == "ok"
 
 
 def test_device_verdict_unknown_when_never_checked() -> None:
