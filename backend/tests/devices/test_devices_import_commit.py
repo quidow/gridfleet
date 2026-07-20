@@ -7,12 +7,14 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from app.devices.models import Device
+from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
+from app.devices.schemas.filters import DeviceGroupFilters
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
+    ExportedDeviceGroup,
     ImportCommitRequest,
     ImportMapping,
     OriginalHost,
@@ -24,20 +26,24 @@ from tests.helpers import seed_existing_device, seed_host_named
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
-def _bundle(devices: list[ExportedDevice]) -> ExportBundle:
+def _bundle(devices: list[ExportedDevice], groups: list[ExportedDeviceGroup] | None = None) -> ExportBundle:
     return ExportBundle(
         schema_version=2,
         exported_at=datetime.now(UTC),
         source_instance="alpha",
-        groups=[],
+        groups=groups or [],
         devices=devices,
     )
 
 
-def _device(identity_value: str = "R58", hostname: str = "lab-04") -> ExportedDevice:
+def _device(
+    identity_value: str = "R58",
+    hostname: str = "lab-04",
+    static_groups: list[str] | None = None,
+) -> ExportedDevice:
     return ExportedDevice(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -47,8 +53,29 @@ def _device(identity_value: str = "R58", hostname: str = "lab-04") -> ExportedDe
         name="Pixel",
         device_type="real_device",
         connection_type="usb",
+        static_groups=static_groups or [],
         original_host=OriginalHost(hostname=hostname),
     )
+
+
+def _static_group(key: str) -> ExportedDeviceGroup:
+    return ExportedDeviceGroup(key=key, name=key.replace("-", " "), group_type=GroupType.static)
+
+
+def _dynamic_group(key: str, member_of: list[str]) -> ExportedDeviceGroup:
+    return ExportedDeviceGroup(
+        key=key,
+        name=key.replace("-", " "),
+        group_type=GroupType.dynamic,
+        filters=DeviceGroupFilters(member_of=member_of),
+    )
+
+
+async def _committed_group_keys(session_maker: async_sessionmaker[AsyncSession]) -> dict[str, DeviceGroup]:
+    """Read device groups back through a fresh session so uncommitted state cannot satisfy the assertion."""
+    async with session_maker() as verify_session:
+        rows = (await verify_session.execute(select(DeviceGroup))).scalars().all()
+        return {row.key: row for row in rows}
 
 
 @pytest.mark.asyncio
@@ -309,6 +336,126 @@ async def test_commit_handles_session_commit_failure_after_savepoint_release(
     assert result.created == []
     assert len(result.failed) == 1
     assert "outer commit" in result.failed[0].reason.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_persists_groups_when_every_device_row_is_skipped(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """Group definitions are what the operator asked for; they must survive an all-duplicate device set."""
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle(
+        [
+            _device(identity_value="DUPE", static_groups=["shelf-a"]),
+            _device(identity_value="DUPE", static_groups=["shelf-a"]),
+        ],
+        groups=[_static_group("shelf-a")],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[
+            ImportMapping(index=0, target_host_id=host.id),
+            ImportMapping(index=1, target_host_id=host.id),
+        ],
+    )
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
+
+    assert result.created == []
+    assert len(result.skipped) == 2
+    assert all(r.reason == "duplicate in bundle" for r in result.skipped)
+
+    persisted = await _committed_group_keys(db_session_maker)
+    assert "shelf-a" in persisted
+    assert persisted["shelf-a"].group_type == GroupType.static
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_persists_groups_for_bundle_with_no_devices(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    bundle = _bundle([], groups=[_static_group("shelf-a"), _static_group("shelf-b")])
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[],
+    )
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
+
+    assert result.created == []
+    assert result.skipped == []
+    assert result.failed == []
+
+    persisted = await _committed_group_keys(db_session_maker)
+    assert set(persisted) == {"shelf-a", "shelf-b"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_persists_static_groups_and_memberships(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle(
+        [_device(identity_value="R58", static_groups=["shelf-a"])],
+        groups=[_static_group("shelf-a")],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
+    assert len(result.created) == 1
+    device_id = result.created[0].device_id
+
+    persisted = await _committed_group_keys(db_session_maker)
+    assert set(persisted) == {"shelf-a"}
+    async with db_session_maker() as verify_session:
+        memberships = (await verify_session.execute(select(DeviceGroupMembership))).scalars().all()
+    assert [(m.group_id, m.device_id) for m in memberships] == [(persisted["shelf-a"].id, device_id)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_persists_static_and_dynamic_groups(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle(
+        [_device(identity_value="R58", static_groups=["shelf-a"])],
+        groups=[_static_group("shelf-a"), _dynamic_group("rack-roll-up", member_of=["shelf-a"])],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
+    assert len(result.created) == 1
+
+    persisted = await _committed_group_keys(db_session_maker)
+    assert set(persisted) == {"shelf-a", "rack-roll-up"}
+    assert persisted["rack-roll-up"].group_type == GroupType.dynamic
+    assert persisted["rack-roll-up"].filters == {"member_of": ["shelf-a"]}
 
 
 @pytest.mark.asyncio

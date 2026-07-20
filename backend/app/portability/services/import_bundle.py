@@ -365,9 +365,11 @@ class PortabilityImportService:
 
         await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
 
-        # Commit any pending static memberships when no dynamic-group commit fired above.
-        if static_groups and not dynamic_groups and device_id_by_index:
-            await session.commit()
+        # Group definitions and memberships are staged, not committed, by the helpers above.
+        # Commit unconditionally: the group writes are what the operator asked this endpoint
+        # to create, and they must land even when no device row committed (every row a
+        # duplicate/conflict/invalid, or a groups-only bundle carrying no devices at all).
+        await session.commit()
 
         return ImportCommitResult(created=created, skipped=skipped, failed=failed)
 
@@ -430,7 +432,6 @@ class PortabilityImportService:
         await session.flush()
         for group in groups:
             group_id_by_key[group.key] = group.id
-        await session.commit()
 
     async def _insert_row_with_savepoint(
         self,

@@ -268,10 +268,10 @@ test.describe('Device group detail', () => {
     await page.getByText('OS Version').locator('..').getByRole('combobox').selectOption('14');
     await expect(page.getByLabel('Group key')).toHaveValue('qa-android-network');
     await page.getByLabel('Group key').fill('network-qa-android');
-    
+
     // Test that tags are removed
     await expect(page.getByText(/tag/i)).toHaveCount(0);
-    
+
     const responsePromise = page.waitForResponse(res => res.url().includes('/api/device-groups') && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Create Group' }).last().click();
     await responsePromise;
