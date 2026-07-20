@@ -68,12 +68,27 @@ async def load_stereotype_templates(
     """
     if not keys:
         return {}
-    pack_ids = sorted({pack_id for pack_id, _ in keys})
+    packs = await load_pack_catalog(session, {pack_id for pack_id, _ in keys})
+    return stereotype_templates_from_packs(packs, keys)
+
+
+async def load_pack_catalog(session: AsyncSession, pack_ids: Collection[str]) -> dict[str, DriverPack]:
+    """One read: the named packs with their releases and platforms eager-loaded.
+
+    A single joined statement (unlike
+    ``app.devices.services.readiness.load_packs_by_ids``, whose ``selectinload``
+    costs three), which matters on the grid allocator's poll path where the
+    catalog load is the whole per-poll read budget for pack facts. The result
+    feeds both :func:`stereotype_templates_from_packs` and readiness assessment.
+    """
+    ids = sorted({pack_id for pack_id in pack_ids if pack_id})
+    if not ids:
+        return {}
     packs = (
         (
             await session.scalars(
                 select(DriverPack)
-                .where(DriverPack.id.in_(pack_ids))
+                .where(DriverPack.id.in_(ids))
                 .options(
                     joinedload(DriverPack.releases),
                     joinedload(DriverPack.releases).joinedload(DriverPackRelease.platforms),
@@ -83,10 +98,25 @@ async def load_stereotype_templates(
         .unique()
         .all()
     )
-    by_id = {pack.id: pack for pack in packs}
+    return {pack.id: pack for pack in packs}
+
+
+def stereotype_templates_from_packs(
+    packs: dict[str, DriverPack],
+    keys: Collection[tuple[str, str]],
+) -> dict[tuple[str, str], StereotypeTemplate]:
+    """Pure projection of an already-loaded pack catalog into stereotype templates.
+
+    The catalog must carry ``releases`` and their ``platforms`` eager-loaded (as
+    :func:`load_stereotype_templates` and
+    ``app.devices.services.readiness.load_packs_by_ids`` both produce). Lets a
+    caller that needs the catalog for something else — the grid allocator, which
+    also assesses readiness against it — render templates without paying a second
+    read, while keeping the pack/release/platform walk in one place.
+    """
     templates: dict[tuple[str, str], StereotypeTemplate] = {}
     for pack_id, platform_id in keys:
-        pack = by_id.get(pack_id)
+        pack = packs.get(pack_id)
         if pack is None:
             continue
         release = selected_release(pack.releases, pack.current_release)

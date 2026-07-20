@@ -47,6 +47,7 @@ from app.devices.services.group_membership import (
     _load_static_group_keys_by_device_id as load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
+from app.devices.services.readiness import _assess_device_with_pack, assess_devices_async
 from app.devices.services.state import is_available_sql
 from app.grid import appium_direct
 from app.grid.constants import RETRY_INTERVAL_SEC
@@ -61,7 +62,12 @@ from app.grid.matching import (
 )
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts import service_hardware_telemetry as hardware_telemetry
-from app.packs.services.capability import StereotypeTemplate, load_stereotype_template, load_stereotype_templates
+from app.packs.services.capability import (
+    StereotypeTemplate,
+    load_pack_catalog,
+    load_stereotype_template,
+    stereotype_templates_from_packs,
+)
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs.models import TERMINAL_STATES, TestRun
 from app.runs.service_reservation import reservation_gating_owner_sql
@@ -70,10 +76,14 @@ from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.core.protocols import SettingsReader
+    from app.devices.services.readiness import DeviceReadiness
     from app.events.protocols import EventPublisher
+    from app.packs.models import DriverPack
 
 logger = logging.getLogger(__name__)
 
@@ -257,13 +267,24 @@ def _pack_platform_keys(rows: Collection[_EligibleRow]) -> set[tuple[str, str]]:
 
 def _facts_from_eligible_rows(
     rows: Collection[_EligibleRow],
-    templates: dict[tuple[str, str], StereotypeTemplate],
+    readiness_by_device_id: Mapping[uuid.UUID, DeviceReadiness],
     settings: SettingsReader | None,
 ) -> dict[uuid.UUID, DeviceGroupFacts]:
-    """Build the pure evaluator's fact inputs from the eligible batch + template
-    batch. No database IO: every fact the evaluator consumes is either a loaded
-    device/node/host column, a projected reservation owner, a projected static
-    key set, or a synchronous settings-derived telemetry value."""
+    """Build the pure evaluator's fact inputs from the eligible batch. No database
+    IO: every fact the evaluator consumes is either a loaded device/node/host
+    column, a projected reservation owner, a projected static key set, a
+    synchronous settings-derived telemetry value, or a pre-assessed readiness
+    verdict from the caller's pack catalog.
+
+    ``operational_state`` is ``available`` by construction, not by assumption:
+    ``is_available_sql`` is exactly the ``else_`` branch of
+    ``operational_state_sql``, so every row that cleared the eligibility gate is
+    genuinely available. ``readiness_state`` is *not* similarly implied —
+    ``_ready_sql`` uses ``verified_at`` as a stand-in and its own comment notes
+    the pack-manifest setup-fields axis is not SQL-expressible — so it must be
+    derived per device (``app.devices.services.readiness``, the same logic
+    ``load_group_membership_index`` uses) rather than asserted as ``verified``.
+    """
     facts: dict[uuid.UUID, DeviceGroupFacts] = {}
     for row in rows:
         device = row.device
@@ -272,21 +293,22 @@ def _facts_from_eligible_rows(
         else:
             hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
         hardware_health_status = hardware_telemetry.current_hardware_health_status(device)
+        readiness = readiness_by_device_id.get(device.id)
+        readiness_state = readiness.readiness_state if readiness is not None else "setup_required"
         needs_attention = device_attention.compute_needs_attention(
             DeviceOperationalState.available,
-            "verified",
+            readiness_state,
             hardware_health_status=hardware_health_status,
             review_required=bool(device.review_required),
         )
         facts[device.id] = DeviceGroupFacts(
             operational_state=DeviceOperationalState.available,
             is_reserved=row.reservation_run_id is not None,
-            readiness_state="verified",
+            readiness_state=readiness_state,
             hardware_telemetry_state=hardware_telemetry_state,
             needs_attention=needs_attention,
             static_group_keys=row.static_group_keys,
         )
-    _ = templates  # templates inform the match surface, not the membership facts
     return facts
 
 
@@ -611,8 +633,7 @@ class AllocationService:
             group_keys=loaded_group_keys,
             exclude_device_ids=exclude_device_ids,
         )
-        templates = await load_stereotype_templates(db, _pack_platform_keys(eligible_rows))
-        facts_by_device_id = _facts_from_eligible_rows(eligible_rows, templates, self._settings)
+        templates, facts_by_device_id, pack_catalog = await self._eligible_facts(db, eligible_rows)
         membership = evaluate_group_memberships(
             groups=groups,
             devices=[row.device for row in eligible_rows],
@@ -654,6 +675,7 @@ class AllocationService:
                     run_id=ticket.run_id,
                     exclude_device_ids=exclude_device_ids,
                     groups=groups,
+                    pack_catalog=pack_catalog,
                 )
                 if result is not None:
                     GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
@@ -755,6 +777,30 @@ class AllocationService:
             )
         GRID_ELIGIBLE_DEVICES.set(len(rows))
         return rows
+
+    async def _eligible_facts(
+        self,
+        db: DbSession,
+        rows: Sequence[_EligibleRow],
+    ) -> tuple[dict[tuple[str, str], StereotypeTemplate], dict[uuid.UUID, DeviceGroupFacts], dict[str, DriverPack]]:
+        """One read: the pack catalog for every eligible row's pack, projected into
+        both the stereotype templates the matcher needs and the readiness verdicts
+        the group evaluator needs.
+
+        This is the poll's fourth and last read. It replaces the former
+        ``load_stereotype_templates`` call rather than joining it — that helper
+        loaded the same catalog and discarded everything but the templates, which
+        is why readiness had to be hardcoded here. Readiness is assessed from the
+        catalog synchronously (``assess_devices_async`` issues no read when the
+        caller supplies ``packs``), so the free group-routed poll stays at four
+        reads. The catalog is returned so the claim path can re-assess a locked
+        row without another read.
+        """
+        pack_platform_keys = _pack_platform_keys(rows)
+        pack_catalog = await load_pack_catalog(db, {pack_id for pack_id, _ in pack_platform_keys})
+        templates = stereotype_templates_from_packs(pack_catalog, pack_platform_keys)
+        readiness = await assess_devices_async(db, [row.device for row in rows], packs=pack_catalog)
+        return templates, _facts_from_eligible_rows(rows, readiness, self._settings), pack_catalog
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket
@@ -872,6 +918,7 @@ class AllocationService:
         groups: Sequence[DeviceGroup],
         candidate_group_keys: Collection[str],
         reservation_run_id: uuid.UUID | None,
+        pack_catalog: dict[str, DriverPack],
     ) -> bool:
         """Re-evaluate the candidate's requested group keys against the locked row.
 
@@ -882,7 +929,8 @@ class AllocationService:
         (``app.runs.service_allocator._batch_select_devices`` step 7b): one
         scalar static-group-keys read, on the claim path only — the free-poll
         read budget is untouched. Dynamic-filter axes re-evaluate for free
-        against the freshly locked device row.
+        against the freshly locked device row, readiness included (the caller's
+        pack catalog is reused, so re-assessing the locked row costs no read).
         """
         if not candidate_group_keys:
             return True
@@ -892,10 +940,11 @@ class AllocationService:
             reservation_run_id=reservation_run_id,
             static_group_keys=static_keys.get(locked_device.id, frozenset()),
         )
+        readiness = {locked_device.id: _assess_device_with_pack(locked_device, pack_catalog.get(locked_device.pack_id))}
         membership = evaluate_group_memberships(
             groups=groups,
             devices=[locked_device],
-            facts_by_device_id=_facts_from_eligible_rows([row], {}, self._settings),
+            facts_by_device_id=_facts_from_eligible_rows([row], readiness, self._settings),
         )
         return membership.matches_all(locked_device.id, candidate_group_keys)
 
@@ -909,6 +958,7 @@ class AllocationService:
         run_id: uuid.UUID | None,
         exclude_device_ids: set[uuid.UUID] | None = None,
         groups: Sequence[DeviceGroup] = (),
+        pack_catalog: dict[str, DriverPack] | None = None,
     ) -> AllocationResult | None:
         # Fold every lock-time recheck into the lock query: availability, node
         # viability/acceptance, exclusion, and the reservation-owner gate. A
@@ -934,6 +984,7 @@ class AllocationService:
             groups=groups,
             candidate_group_keys=requested_group_keys([candidate]),
             reservation_run_id=reservation_run_id,
+            pack_catalog=pack_catalog or {},
         ):
             return None
         # Fresh-snapshot live-session recheck under the lock: a concurrent claim
