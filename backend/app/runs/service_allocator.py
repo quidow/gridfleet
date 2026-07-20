@@ -29,14 +29,12 @@ from app.devices.services.group_membership import (
     evaluate_group_memberships,
     load_group_membership_index,
     load_groups_by_keys,
-)
-from app.devices.services.group_membership import (
-    _load_static_group_keys_by_device_id as load_static_group_keys_by_device_id,
+    load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import (
-    _assess_device_with_pack,
+    assess_device_with_pack,
     assess_devices_async,
     load_packs_by_ids,
 )
@@ -530,7 +528,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         locked_facts: dict[uuid.UUID, DeviceGroupFacts] = {}
         for locked_device in locked_devices_list:
             pack = pack_catalog.get(locked_device.pack_id)
-            readiness_state = _assess_device_with_pack(locked_device, pack).readiness_state
+            readiness_state = assess_device_with_pack(locked_device, pack).readiness_state
             hardware_telemetry_state = hardware_telemetry.hardware_telemetry_state_for_device(
                 locked_device, settings=settings
             )
@@ -554,7 +552,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     locked_ready: dict[uuid.UUID, Device] = {}
     for device in locked_rows.values():
         pack = pack_catalog.get(device.pack_id)
-        readiness = _assess_device_with_pack(device, pack)
+        readiness = assess_device_with_pack(device, pack)
         if readiness.readiness_state != "verified":
             continue
         if not device_health.device_allows_allocation(device):

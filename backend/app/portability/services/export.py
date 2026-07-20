@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, GroupType
-from app.devices.services.group_membership import _load_static_group_keys_by_device_id
+from app.devices.services.group_membership import load_static_group_keys_by_device_id
 from app.portability.schemas import (
     SCHEMA_VERSION,
     ExportBundle,
@@ -38,7 +38,7 @@ class PortabilityExportService:
         exported_groups = [_exported_group(g) for g in groups]
 
         device_ids = [d.id for d in devices]
-        static_keys_by_device = await _load_static_group_keys_by_device_id(db, device_ids)
+        static_keys_by_device = await load_static_group_keys_by_device_id(db, device_ids)
 
         exported = [_exported_device(d, sorted(static_keys_by_device.get(d.id, frozenset()))) for d in devices]
         return ExportBundle(

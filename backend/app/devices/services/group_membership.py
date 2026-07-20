@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select, true
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
@@ -192,7 +193,7 @@ def evaluate_group_memberships(
     return GroupMembershipIndex(by_key=memberships)
 
 
-async def _load_static_group_keys_by_device_id(
+async def load_static_group_keys_by_device_id(
     db: AsyncSession, device_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, frozenset[str]]:
     """One joined read: memberships -> static groups, aggregated per device."""
@@ -258,8 +259,6 @@ async def load_group_membership_index(
     # relationship (e.g. the group-detail router via selectinload) skip this.
     unloaded = [d for d in device_list if "appium_node" in sa_inspect(d).unloaded]
     if unloaded:
-        from sqlalchemy.orm import selectinload  # noqa: PLC0415 - avoid import cycle risk
-
         reloaded = list(
             (
                 await db.execute(
@@ -297,7 +296,7 @@ async def load_group_membership_index(
 
     static_keys_map: Mapping[uuid.UUID, frozenset[str]]
     if static_group_keys_by_device_id is None:
-        static_keys_map = await _load_static_group_keys_by_device_id(db, device_ids)
+        static_keys_map = await load_static_group_keys_by_device_id(db, device_ids)
     else:
         static_keys_map = static_group_keys_by_device_id
 

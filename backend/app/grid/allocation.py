@@ -42,12 +42,10 @@ from app.devices.services.group_membership import (
     GroupMembershipIndex,
     evaluate_group_memberships,
     load_groups_by_keys,
-)
-from app.devices.services.group_membership import (
-    _load_static_group_keys_by_device_id as load_static_group_keys_by_device_id,
+    load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
-from app.devices.services.readiness import _assess_device_with_pack, assess_devices_async
+from app.devices.services.readiness import assess_device_with_pack, assess_devices_async
 from app.devices.services.state import is_available_sql
 from app.grid import appium_direct
 from app.grid.constants import RETRY_INTERVAL_SEC
@@ -922,7 +920,7 @@ class AllocationService:
             reservation_run_id=reservation_run_id,
             static_group_keys=static_keys.get(locked_device.id, frozenset()),
         )
-        readiness = {locked_device.id: _assess_device_with_pack(locked_device, pack_catalog.get(locked_device.pack_id))}
+        readiness = {locked_device.id: assess_device_with_pack(locked_device, pack_catalog.get(locked_device.pack_id))}
         membership = evaluate_group_memberships(
             groups=groups,
             devices=[locked_device],

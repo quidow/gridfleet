@@ -47,7 +47,7 @@ async def test_create_run_rechecks_readiness_after_lock(
     also part of ``is_available_sql``, so clearing it would be caught by the
     locked SELECT's own WHERE clause and the test would pass even with the
     post-lock readiness recheck removed. ``device_config`` is invisible to the
-    SQL gates, so only the post-lock ``_assess_device_with_pack`` call can
+    SQL gates, so only the post-lock ``assess_device_with_pack`` call can
     reject this device.
     """
     device = await create_device(
