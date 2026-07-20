@@ -30,6 +30,8 @@ _DROPPED_ENUMS = (
     "hardwaretelemetrysupportstatus",
 )
 
+_STATE_NAMESPACE = "hardware_telemetry.state"
+
 _DROPPED_SETTINGS = (
     "general.hardware_telemetry_stale_timeout_sec",
     "general.hardware_telemetry_consecutive_samples",
@@ -42,14 +44,29 @@ def upgrade() -> None:
     for column in _TELEMETRY_COLUMNS:
         op.drop_column("devices", column)
     for enum_name in _DROPPED_ENUMS:
-        op.execute(f"DROP TYPE {enum_name}")
+        op.execute(f"DROP TYPE IF EXISTS {enum_name}")
     for key in _DROPPED_SETTINGS:
         op.execute(
             sa.text("DELETE FROM settings WHERE key = :key").bindparams(key=key)
         )
+    # The deleted hysteresis path (service_hardware_telemetry) kept a pending
+    # warning/critical streak per device here; nothing reads the namespace now.
+    op.execute(
+        sa.text("DELETE FROM control_plane_state_entries WHERE namespace = :namespace").bindparams(
+            namespace=_STATE_NAMESPACE
+        )
+    )
 
 
 def downgrade() -> None:
+    # ALTER TABLE ADD COLUMN does not emit CREATE TYPE, so the enum types the
+    # columns below reference must exist before they are added.
+    op.execute(
+        "CREATE TYPE hardwarechargingstate AS ENUM "
+        "('charging', 'discharging', 'full', 'not_charging', 'unknown')"
+    )
+    op.execute("CREATE TYPE hardwarehealthstatus AS ENUM ('unknown', 'healthy', 'warning', 'critical')")
+    op.execute("CREATE TYPE hardwaretelemetrysupportstatus AS ENUM ('unknown', 'supported', 'unsupported')")
     op.add_column(
         "devices",
         sa.Column("battery_level_percent", sa.Integer(), nullable=True),

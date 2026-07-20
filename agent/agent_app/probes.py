@@ -137,7 +137,7 @@ class ProbeLoop:
             )
         return {"reported_at": _now_iso(), "nodes": nodes}
 
-    async def _probe_devices(self, runner: ProbeRunner, only_device_types: set[str] | None = None) -> dict[str, Any]:
+    async def _probe_devices(self, runner: ProbeRunner) -> dict[str, Any]:
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
         live = {
@@ -146,8 +146,6 @@ class ProbeLoop:
         }
 
         async def one(entry: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-            if only_device_types and entry.get("device_type") not in only_device_types:
-                return None
             async with semaphore:
                 try:
                     observation = await runner(entry, live.get(entry.get("connection_target"), False))

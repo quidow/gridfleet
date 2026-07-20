@@ -147,7 +147,6 @@ async def _classify_shortfall_gates(
             db,
             groups=groups,
             devices=devices,
-            settings=settings,
             pack_catalog=pack_catalog,
             operational_states=op_states,
         )
@@ -438,7 +437,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     group_index: GroupMembershipIndex | None = None
     if groups:
         group_index = await load_group_membership_index(
-            db, groups=groups, devices=candidates, settings=settings, pack_catalog=pack_catalog
+            db, groups=groups, devices=candidates, pack_catalog=pack_catalog
         )
 
     # Step 7a: in-memory selection per requirement in request order, excluding
@@ -537,7 +536,6 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
                 is_reserved=False,
                 readiness_state=assess_device_with_pack(locked_device, pack).readiness_state,
                 static_group_keys=locked_static_keys.get(locked_device.id, frozenset()),
-                settings=settings,
                 review_required=False,
             )
         locked_group_index = evaluate_group_memberships(

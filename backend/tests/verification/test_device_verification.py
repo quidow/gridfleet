@@ -172,18 +172,14 @@ async def _wait_for_job(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(
-                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
                     publisher=_publisher_mock(),
                     agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
-                    crud=DeviceCrudService(
-                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     viability=_viability,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -1601,18 +1597,14 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(
-                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
                     publisher=_publisher_mock(),
                     agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
-                    crud=DeviceCrudService(
-                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -1758,9 +1750,7 @@ async def test_validate_update_request_rejects_operator_stopped(
     prep = VerificationPreparationService(
         settings=settings_service,
         circuit_breaker=_noop_circuit_breaker(),
-        crud=DeviceCrudService(
-            settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-        ),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         identity=DeviceIdentityConflictService(),
     )
     context, error = await prep.validate_update_request(
@@ -1797,9 +1787,7 @@ async def test_validate_update_request_rejects_running_session(
     prep = VerificationPreparationService(
         settings=settings_service,
         circuit_breaker=_noop_circuit_breaker(),
-        crud=DeviceCrudService(
-            settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-        ),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         identity=DeviceIdentityConflictService(),
     )
     context, error = await prep.validate_update_request(

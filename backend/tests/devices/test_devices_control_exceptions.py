@@ -97,9 +97,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             device.id,
             db=db_session,
             device_services=SimpleNamespace(
-                crud=DeviceCrudService(
-                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 publisher=event_bus,
             ),
             settings_services=_settings_services(),

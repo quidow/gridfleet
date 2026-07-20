@@ -8,7 +8,6 @@ from app.portability.schemas import (
     parse_columns_param,
 )
 from app.portability.services.inventory import InventoryExportService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device
 
 if TYPE_CHECKING:
@@ -19,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def _inventory_service() -> InventoryExportService:
-    return InventoryExportService(settings=FakeSettingsReader({}))
+    return InventoryExportService()
 
 
 def test_inventory_column_enum_has_expected_dot_paths() -> None:

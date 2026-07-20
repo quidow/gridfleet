@@ -35,9 +35,9 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
     )
     from app.devices.services.service import DeviceCrudService
 
-    loaded = await DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-    ).get_device(db_session, device.id)
+    loaded = await DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus).get_device(
+        db_session, device.id
+    )
     assert loaded is not None
     return loaded
 

@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.events.protocols import EventPublisher
@@ -67,11 +66,9 @@ class DeviceGroupsService:
         *,
         publisher: EventPublisher,
         crud: DeviceCrudProtocol,
-        settings: SettingsReader,
     ) -> None:
         self._publisher = publisher
         self._crud = crud
-        self._settings = settings
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
         if data.group_type == GroupType.dynamic:
@@ -116,9 +113,7 @@ class DeviceGroupsService:
         dynamic_counts: dict[str, int] = {}
         if dynamic_groups:
             devices = await _load_devices_in_scope(db, dynamic_groups)
-            index = await load_group_membership_index(
-                db, groups=dynamic_groups, devices=devices, settings=self._settings
-            )
+            index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices)
             dynamic_counts = {group.key: len(index.device_ids(group.key)) for group in dynamic_groups}
         return [
             _serialize_group(
@@ -139,7 +134,7 @@ class DeviceGroupsService:
             members = await _load_static_members(db, group)
         else:
             devices = await _load_devices_in_scope(db, [group])
-            index = await load_group_membership_index(db, groups=[group], devices=devices, settings=self._settings)
+            index = await load_group_membership_index(db, groups=[group], devices=devices)
             member_ids = index.device_ids(group.key)
             members = [device for device in devices if device.id in member_ids]
         return {
@@ -274,7 +269,7 @@ class DeviceGroupsService:
             mem_result = await db.execute(mem_stmt)
             return [row[0] for row in mem_result.all()]
         devices = await _load_devices_in_scope(db, [group])
-        index = await load_group_membership_index(db, groups=[group], devices=devices, settings=self._settings)
+        index = await load_group_membership_index(db, groups=[group], devices=devices)
         return list(index.device_ids(group.key))
 
 

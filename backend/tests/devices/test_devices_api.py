@@ -30,7 +30,6 @@ from app.lifecycle.services import remediation_log
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host, seed_ready_loop_snapshots
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -284,7 +283,7 @@ async def test_list_devices_pack_lookups_do_not_scale_with_device_count(
 async def test_batch_serialization_matches_per_device(db_session: AsyncSession, default_host_id: str) -> None:
     """The batched precompute path must produce byte-identical payloads to the
     per-device path across runnable / platform-removed / pack-unavailable cases."""
-    presenter = DevicePresenterService(settings=FakeSettingsReader({}))
+    presenter = DevicePresenterService()
 
     d_ok = await _create_device(db_session, default_host_id, identity_value="ok", connection_target="ok", name="ok")
     d_bad_platform = await create_device_record(
@@ -907,9 +906,7 @@ async def test_list_devices_filter_by_device_health_paginated_total(
 async def test_device_create_payload_preserves_explicit_unified_platform_lane(
     db_session: AsyncSession, default_host_id: str
 ) -> None:
-    crud = DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     payload = await crud.prepare_device_create_payload(
         db_session,
         DeviceVerificationCreate(
@@ -974,9 +971,7 @@ async def test_update_device_returns_none_when_device_missing(client: AsyncClien
     import uuid
 
     missing_id = uuid.uuid4()
-    crud = DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     result = await crud.update_device(
         db_session,
         missing_id,

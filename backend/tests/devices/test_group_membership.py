@@ -22,7 +22,6 @@ from app.devices.services.group_membership import (
     evaluate_group_memberships,
 )
 from app.devices.services.service import device_scope_conditions
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -537,11 +536,9 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     ``False`` by construction from the gates its locked rows passed).
     """
     device = _needs_attention_device()
-    settings = FakeSettingsReader({})
     shared = {
         "readiness_state": "setup_required",
         "static_group_keys": frozenset({"east"}),
-        "settings": settings,
     }
 
     # Canonical loader: reservation via the gating-owner map lookup.
@@ -572,30 +569,6 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     assert canonical == grid == run
     # setup_required must flag attention on every path.
     assert canonical.needs_attention is True
-
-
-def test_build_device_group_facts_ignores_settings_value() -> None:
-    """The ``settings`` argument is retained for call-site compatibility but is no
-    longer consumed by the pure derivation, so passing ``None`` versus a real
-    reader produces identical facts.
-    """
-    device = _needs_attention_device()
-    common: dict[str, Any] = {
-        "operational_state": DeviceOperationalState.available,
-        "is_reserved": False,
-        "readiness_state": "setup_required",
-        "static_group_keys": frozenset(),
-    }
-
-    without = build_device_group_facts(device, settings=None, **common)
-    with_settings = build_device_group_facts(
-        device,
-        settings=FakeSettingsReader({}),
-        **common,
-    )
-
-    assert without == with_settings
-    assert without.needs_attention == with_settings.needs_attention is True
 
 
 @pytest.mark.db

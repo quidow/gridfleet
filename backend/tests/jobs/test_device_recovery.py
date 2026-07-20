@@ -103,18 +103,14 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
             preparation=VerificationPreparationService(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(
-                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
                 agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
-                crud=DeviceCrudService(
-                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),
@@ -234,18 +230,14 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(
-                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
                     publisher=AsyncMock(),
                     agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
-                    crud=DeviceCrudService(
-                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     viability=AsyncMock(),
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -328,18 +320,14 @@ async def test_device_recovery_job_completed_when_device_missing(
             preparation=VerificationPreparationService(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(
-                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
                 agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
-                crud=DeviceCrudService(
-                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

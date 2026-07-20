@@ -20,7 +20,6 @@ from app.sessions import service as session_service
 from app.sessions.filters import SessionFilters
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
@@ -163,9 +162,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         lambda *_args, **_kwargs: False,
     )
 
-    crud = DeviceCrudService(
-        settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     filters = DeviceQueryFilters(
         status="available",
         host_id=available.host_id,

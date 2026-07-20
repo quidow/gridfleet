@@ -8,7 +8,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType, ExclusionKind
 from app.devices.services import presenter as device_presenter
 from app.devices.services.presenter import DevicePresenterService
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     import pytest
@@ -36,7 +35,7 @@ async def test_serialize_device_includes_needs_attention(db_session: AsyncSessio
     await db_session.commit()
     await db_session.refresh(device)
 
-    payload = await DevicePresenterService(settings=FakeSettingsReader({})).serialize_device(db_session, device)
+    payload = await DevicePresenterService().serialize_device(db_session, device)
     assert payload["needs_attention"] is True
 
 
@@ -62,7 +61,7 @@ async def test_serialize_device_review_required_needs_attention(db_session: Asyn
     await db_session.commit()
     await db_session.refresh(device)
 
-    payload = await DevicePresenterService(settings=FakeSettingsReader({})).serialize_device(db_session, device)
+    payload = await DevicePresenterService().serialize_device(db_session, device)
     assert payload["needs_attention"] is True
 
 
@@ -90,7 +89,7 @@ async def test_serialize_device_includes_extended_device_info(db_session: AsyncS
     await db_session.commit()
     await db_session.refresh(device)
 
-    payload = await DevicePresenterService(settings=FakeSettingsReader({})).serialize_device(db_session, device)
+    payload = await DevicePresenterService().serialize_device(db_session, device)
 
     assert payload["model"] == "Fire TV Stick 4K"
     assert payload["model_number"] == "AFTMM"
@@ -182,7 +181,7 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: 
         lifecycle_policy_state={"last_action": "recovery_started"},
         review_required=False,
     )
-    svc = DevicePresenterService(settings=FakeSettingsReader({}))
+    svc = DevicePresenterService()
     monkeypatch.setattr(svc, "serialize_device", AsyncMock(return_value={"id": "device"}))
     monkeypatch.setattr(device_presenter, "_serialize_orchestration", AsyncMock(return_value={"intents": []}))
     monkeypatch.setattr(

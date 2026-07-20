@@ -85,14 +85,15 @@ async def test_run_create_and_maintenance_cannot_overlap(
             _maintenance_svc = MaintenanceService(
                 review=build_review_service(), settings=settings_service, publisher=event_bus
             )
-            _crud_svc = DeviceCrudService(
-                settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
-            )
+            _crud_svc = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
             return DeviceServices(
                 fleet_capacity=FleetCapacityService(),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
-                groups=DeviceGroupsService(publisher=event_bus, crud=_crud_svc, settings=settings_service),
+                groups=DeviceGroupsService(
+                    publisher=event_bus,
+                    crud=_crud_svc,
+                ),
                 maintenance=_maintenance_svc,
                 bulk=BulkOperationsService(
                     publisher=event_bus,
@@ -104,7 +105,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                         review=build_review_service(), settings=settings_service, publisher=event_bus
                     ),
                 ),
-                presenter=DevicePresenterService(settings=settings_service),
+                presenter=DevicePresenterService(),
                 test_data=TestDataService(publisher=event_bus),
                 crud=_crud_svc,
                 capability=DeviceCapabilityService(),

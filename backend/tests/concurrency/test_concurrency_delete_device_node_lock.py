@@ -12,7 +12,6 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -25,9 +24,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
 
 def _crud() -> DeviceCrudService:
-    return DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    return DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
 
 
 async def test_delete_device_does_not_wait_for_running_node_to_stop(

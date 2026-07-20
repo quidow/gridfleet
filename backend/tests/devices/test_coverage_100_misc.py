@@ -317,14 +317,14 @@ async def test_device_verification_runner_missing_job_branches() -> None:
     prep = VerificationPreparationService(
         settings=settings,
         circuit_breaker=cb,
-        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         identity=DeviceIdentityConflictService(),
     )
     exec_svc = VerificationExecutionService(
         review=build_review_service(),
         publisher=publisher,
         agent=AgentCallContext(settings=settings, circuit_breaker=cb),
-        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -472,7 +472,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     result = await _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
         circuit_breaker=Mock(),
-        serializer=_DevicePresenterService(settings=FakeSettingsReader()),
+        serializer=_DevicePresenterService(),
         identity_guard=DeviceIdentityConflictService(),
     ).discover_devices(
         discovery_db,
@@ -535,8 +535,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
         publisher=event_bus,
-        crud=DeviceCrudService(settings=_gs1, identity=DeviceIdentityConflictService(), publisher=event_bus),
-        settings=_gs1,
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
@@ -548,8 +547,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     assert (
         await device_group_service.DeviceGroupsService(
             publisher=event_bus,
-            crud=DeviceCrudService(settings=_gs2, identity=DeviceIdentityConflictService(), publisher=event_bus),
-            settings=_gs2,
+            crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         ).delete_group(missing_group_db, "missing-group")
         is False
     )
@@ -643,18 +641,14 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             preparation=VerificationPreparationService(
                 settings=FakeSettingsReader({}),
                 circuit_breaker=Mock(),
-                crud=DeviceCrudService(
-                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
                 agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
-                crud=DeviceCrudService(
-                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

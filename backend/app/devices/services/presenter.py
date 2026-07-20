@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.models import Device, DeviceReservation
     from app.runs.models import TestRun
 
@@ -53,9 +52,6 @@ def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int 
 
 
 class DevicePresenterService:
-    def __init__(self, *, settings: SettingsReader) -> None:
-        self._settings = settings
-
     async def build_serialization_contexts(
         self, db: AsyncSession, devices: list[Device]
     ) -> dict[uuid.UUID, DeviceSerializationContext]:

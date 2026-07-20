@@ -112,7 +112,7 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         settings=settings,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
     )
     started = await svc.bulk_start_nodes(db_session, [device.id for device in devices])
@@ -176,7 +176,7 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         settings=_settings_rc,
         circuit_breaker=Mock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_rc, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_rc, publisher=event_bus
         ),
@@ -261,7 +261,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         maintenance=MaintenanceService(
             review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
         ),
-        crud=DeviceCrudService(settings=_settings_exit, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_exit, publisher=event_bus
         ),

@@ -93,7 +93,6 @@ class GridFleetClient:
         connection_type: str | None = None,
         os_version: str | None = None,
         search: str | None = None,
-        hardware_health_status: str | None = None,
         needs_attention: bool | None = None,
         groups: Sequence[str] = (),
     ) -> list[Device]:
@@ -111,7 +110,6 @@ class GridFleetClient:
                 "connection_type": connection_type,
                 "os_version": os_version,
                 "search": search,
-                "hardware_health_status": hardware_health_status,
                 "needs_attention": needs_attention,
             }
         )

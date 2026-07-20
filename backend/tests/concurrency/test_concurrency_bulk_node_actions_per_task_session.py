@@ -115,9 +115,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             settings=_settings_runner,
             circuit_breaker=MagicMock(),
             maintenance=MagicMock(),
-            crud=DeviceCrudService(
-                settings=_settings_runner, identity=DeviceIdentityConflictService(), publisher=event_bus
-            ),
+            crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
             operator=OperatorNodeLifecycleService(
                 review=build_review_service(), settings=_settings_runner, publisher=event_bus
             ),

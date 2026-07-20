@@ -56,7 +56,6 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.schemas.filters import DeviceGroupFilters
     from app.devices.services.identity_conflicts import DeviceIdentityConflictService
     from app.events.protocols import EventPublisher
@@ -75,10 +74,7 @@ class UnknownGroupKeysError(ValueError):
 
 
 class DeviceCrudService:
-    def __init__(
-        self, *, settings: SettingsReader, identity: DeviceIdentityConflictService, publisher: EventPublisher
-    ) -> None:
-        self._settings = settings
+    def __init__(self, *, identity: DeviceIdentityConflictService, publisher: EventPublisher) -> None:
         self._identity = identity
         self._publisher = publisher
 
@@ -192,7 +188,7 @@ class DeviceCrudService:
         self, db: AsyncSession, dynamic_groups: list[DeviceGroup], devices: list[Device]
     ) -> list[Device]:
         """AND membership across the dynamic keys, evaluated live over the batch."""
-        index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices, settings=self._settings)
+        index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices)
         keys = [group.key for group in dynamic_groups]
         return [device for device in devices if index.matches_all(device.id, keys)]
 

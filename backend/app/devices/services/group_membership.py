@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.packs.models import DriverPack
 
 
@@ -132,7 +131,6 @@ def build_device_group_facts(
     is_reserved: bool,
     readiness_state: str,
     static_group_keys: frozenset[str],
-    settings: SettingsReader | None,
     review_required: bool | None = None,
 ) -> DeviceGroupFacts:
     """Derive one device's evaluator facts. Pure: no IO, no session.
@@ -144,13 +142,9 @@ def build_device_group_facts(
     row — but the derivation from those inputs is identical. Keeping it here
     means ``needs_attention`` in particular cannot drift between the paths.
 
-    ``settings`` is retained for call-site compatibility but is no longer
-    consumed by this pure function.
-
     ``review_required`` defaults to the device row. Callers whose rows provably
     cleared the review gate under a lock pass ``False`` explicitly.
     """
-    del settings  # kept for call-site compatibility; no longer consumed
     effective_review_required = bool(device.review_required) if review_required is None else review_required
     needs_attention = device_attention.compute_needs_attention(
         operational_state,
@@ -272,7 +266,6 @@ async def load_group_membership_index(
     *,
     groups: Sequence[DeviceGroup],
     devices: Sequence[Device],
-    settings: SettingsReader,
     pack_catalog: dict[str, DriverPack] | None = None,
     operational_states: Mapping[uuid.UUID, DeviceOperationalState] | None = None,
     static_group_keys_by_device_id: Mapping[uuid.UUID, frozenset[str]] | None = None,
@@ -367,7 +360,6 @@ async def load_group_membership_index(
             is_reserved=gating_owner_map.get(device.id) is not None,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
             static_group_keys=static_keys_map.get(device.id, frozenset()),
-            settings=settings,
         )
 
     return evaluate_group_memberships(groups=groups, devices=device_list, facts_by_device_id=facts_by_device_id)

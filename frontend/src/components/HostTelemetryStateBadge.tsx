@@ -1,3 +1,5 @@
+import { Badge } from './ui/Badge';
+import type { BadgeTone } from './ui/Badge';
 import type { HostTelemetryFreshnessState } from '../lib/hostResourceTelemetry';
 
 const LABELS: Record<HostTelemetryFreshnessState, string> = {
@@ -6,10 +8,10 @@ const LABELS: Record<HostTelemetryFreshnessState, string> = {
   unknown: 'Unknown',
 };
 
-const STYLES: Record<HostTelemetryFreshnessState, string> = {
-  fresh: 'bg-info-soft text-info-foreground',
-  stale: 'bg-warning-soft text-warning-foreground',
-  unknown: 'bg-neutral-soft text-neutral-foreground',
+const TONES: Record<HostTelemetryFreshnessState, BadgeTone> = {
+  fresh: 'info',
+  stale: 'warning',
+  unknown: 'neutral',
 };
 
 type Props = {
@@ -18,9 +20,5 @@ type Props = {
 
 export function HostTelemetryStateBadge({ state }: Props) {
   const normalizedState: HostTelemetryFreshnessState = state ?? 'unknown';
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STYLES[normalizedState]}`}>
-      {LABELS[normalizedState]}
-    </span>
-  );
+  return <Badge tone={TONES[normalizedState]}>{LABELS[normalizedState]}</Badge>;
 }

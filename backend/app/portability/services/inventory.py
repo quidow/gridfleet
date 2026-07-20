@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.services.service import DeviceListStatement
     from app.portability.schemas import InventoryColumn
@@ -142,9 +141,6 @@ def _base_query(filters: DeviceQueryFilters | None) -> Select[tuple[Device, str]
 class InventoryExportService:
     """Container-held streaming inventory export."""
 
-    def __init__(self, *, settings: SettingsReader) -> None:
-        self._settings = settings
-
     async def _resolve_group_filter(
         self, session: AsyncSession, filters: DeviceQueryFilters | None
     ) -> set[uuid.UUID] | None:
@@ -164,7 +160,7 @@ class InventoryExportService:
             selectinload(Device.host)
         )
         candidates = list((await session.execute(candidate_stmt)).scalars().all())
-        index = await load_group_membership_index(session, groups=groups, devices=candidates, settings=self._settings)
+        index = await load_group_membership_index(session, groups=groups, devices=candidates)
         return {device.id for device in candidates if index.matches_all(device.id, keys)}
 
     async def iter_inventory_json(
