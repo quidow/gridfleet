@@ -95,6 +95,27 @@ cd docker
 docker compose --env-file .env -f docker-compose.prod.yml logs --tail=200 backend
 ```
 
+### Audit for dangling `member_of` references
+
+A race between deleting a static group and adding the first `member_of` reference
+to it could leave a dynamic group pointing at a key that no longer exists. The
+race is fixed, but a reference written before the fix is not repaired by it, and
+it fails **silently**: the group resolves to zero members rather than erroring, so
+sessions and runs targeting it queue until timeout with no diagnostic.
+
+Run once after upgrading:
+
+```sql
+SELECT d.key AS dynamic_group, missing.key AS missing_reference
+FROM device_groups d
+CROSS JOIN LATERAL jsonb_array_elements_text(d.filters -> 'member_of') AS missing(key)
+WHERE d.filters ? 'member_of'
+  AND NOT EXISTS (SELECT 1 FROM device_groups s WHERE s.key = missing.key);
+```
+
+Any row is a dynamic group that can never match. Repair by editing the group's
+filters to drop or repoint the missing key.
+
 ## 4. Roll back application code without restoring the database
 
 If the problem is clearly in the new application build and the schema/data is still valid:
