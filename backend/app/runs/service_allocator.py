@@ -74,6 +74,17 @@ _MATCH_RETRY_ATTEMPTS = 5
 _MATCH_RETRY_BACKOFF_SEC = 0.25
 _RESTART_WINDOW_FALLBACK_SEC = 120
 
+# Extra candidates carried per requirement into the locked recheck so a device
+# dropped by ``SKIP LOCKED`` has a stand-in. Without spares a requirement that
+# picked exactly ``count`` rows pre-lock comes up short the moment one row is
+# momentarily locked, and the re-match loop cannot rescue it: selection is
+# deterministic (oldest-first over the same candidate list), so every attempt
+# re-picks the same devices. The spare budget is ``min(count, this)`` — it at
+# most doubles the locked id list for the common small asks and stops growing
+# past this many extra rows per requirement, so the single
+# ``SELECT ... FOR UPDATE`` never approaches locking the eligible fleet.
+_MAX_SPARE_CANDIDATES_PER_REQUIREMENT = 8
+
 
 class _UnmetRequirementError(Exception):
     def __init__(self, requirement: DeviceRequirement, matched_count: int) -> None:
@@ -331,12 +342,13 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     6. one static-group-keys read (folded into the membership index loader) when
        any requirement pins groups,
     7. one locked recheck SELECT ... FOR UPDATE OF devices SKIP LOCKED over the
-       selected device ids.
+       selected device ids (primary picks plus a bounded spare surplus).
 
     Steps 1-7 are constant in the candidate and requirement counts: the candidate
     SELECT projects every matching row in one statement, the readiness assessment
     reuses the batched pack catalog, and the locked recheck is a single id-list
-    query.
+    query whose length is bounded by ``count + min(count,
+    _MAX_SPARE_CANDIDATES_PER_REQUIREMENT)`` per requirement.
     """
     # Step 1: validate group keys once, before any device lock. Raises
     # UnknownGroupKeysError -> HTTP 422 if any key is missing.
@@ -429,7 +441,24 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         )
 
     # Step 7a: in-memory selection per requirement in request order, excluding
-    # already-selected device ids. The locked recheck follows.
+    # already-selected device ids. Two passes so the locked recheck has spares
+    # without letting one requirement's surplus starve a later one:
+    #
+    #   pass 1 assigns each requirement its primary picks (exactly ``count``,
+    #     ``all_available`` takes everything) — unchanged request-order semantics;
+    #   pass 2 tops each requirement up with spare candidates drawn only from
+    #     devices no requirement claimed as a primary and no earlier requirement
+    #     already took as a spare.
+    #
+    # Primaries and spares are therefore disjoint across requirements, so a
+    # requirement can fall back to its own spares without touching another's
+    # guaranteed devices. With no lock loss the reconcile below keeps exactly the
+    # primaries, i.e. the pre-spare behaviour.
+    def _matches(device: Device, req: DeviceRequirement) -> bool:
+        return _device_matches_requirement_static(
+            device, req, readiness_lookup=readiness_lookup, group_index=group_index
+        )
+
     selected_ids: set[uuid.UUID] = set()
     per_requirement_candidates: list[list[Device]] = []
     device_to_requirement_idx: dict[uuid.UUID, int] = {}
@@ -438,9 +467,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         for device in candidates:
             if device.id in selected_ids:
                 continue
-            if _device_matches_requirement_static(
-                device, req, readiness_lookup=readiness_lookup, group_index=group_index
-            ):
+            if _matches(device, req):
                 picked.append(device)
                 device_to_requirement_idx[device.id] = req_idx
                 if req.allocation != "all_available":
@@ -449,6 +476,23 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
                         break
         per_requirement_candidates.append(picked)
         selected_ids.update(device.id for device in picked)
+
+    for req_idx, req in enumerate(requirements):
+        if req.allocation == "all_available":
+            continue  # already carries every matching candidate
+        assert req.count is not None
+        spare_budget = min(req.count, _MAX_SPARE_CANDIDATES_PER_REQUIREMENT)
+        spares = 0
+        for device in candidates:
+            if spares >= spare_budget:
+                break
+            if device.id in selected_ids:
+                continue
+            if _matches(device, req):
+                per_requirement_candidates[req_idx].append(device)
+                device_to_requirement_idx[device.id] = req_idx
+                selected_ids.add(device.id)
+                spares += 1
 
     # Step 7b: one locked recheck SELECT ... FOR UPDATE OF devices SKIP LOCKED
     # over the full selected-id set. Revalidates availability, review, node
@@ -526,9 +570,15 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
                 continue
         locked_ready[device.id] = device
 
+    # Reconcile in request order: each requirement takes the survivors of its own
+    # primary+spare list, truncated to what it actually asked for so unused spares
+    # are released rather than held (``all_available`` keeps every survivor).
     reconciled: list[list[Device]] = []
-    for picked in per_requirement_candidates:
+    for req, picked in zip(requirements, per_requirement_candidates, strict=True):
         kept = [locked_ready[device.id] for device in picked if device.id in locked_ready]
+        if req.allocation != "all_available":
+            assert req.count is not None
+            kept = kept[: req.count]
         reconciled.append(kept)
     return reconciled
 
