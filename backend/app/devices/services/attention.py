@@ -1,4 +1,4 @@
-from app.devices.models import DeviceOperationalState, HardwareHealthStatus
+from app.devices.models import DeviceOperationalState
 
 _OPERATIONAL_NEEDS_ATTENTION = frozenset(
     {
@@ -13,7 +13,6 @@ def compute_needs_attention(
     operational_state: DeviceOperationalState,
     readiness_state: str,
     *,
-    hardware_health_status: HardwareHealthStatus | None = None,
     review_required: bool = False,
 ) -> bool:
     """A device needs attention when it is out of service or flagged while in service.
@@ -29,8 +28,6 @@ def compute_needs_attention(
         return True
     if review_required:
         return True
-    if readiness_state in _READINESS_NEEDS_ATTENTION:
-        return True
-    if hardware_health_status is HardwareHealthStatus.critical:  # noqa: SIM103 - short-circuit for clarity
+    if readiness_state in _READINESS_NEEDS_ATTENTION:  # noqa: SIM103 - short-circuit for clarity
         return True
     return False

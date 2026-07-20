@@ -24,7 +24,6 @@ from app.devices.services.decision import (
 from app.devices.services.intent_reconciler import gather_decision_facts
 from app.devices.services.serialization_types import DeviceSerializationContext
 from app.devices.services.state import derive_operational_state, derive_operational_states
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.lifecycle.services import remediation_log
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
@@ -129,11 +128,9 @@ class DevicePresenterService:
         lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
         if health_summary is None:
             health_summary = device_health.build_public_summary(device, policy_view=policy)
-        hardware_status = hardware_telemetry.current_hardware_health_status(device)
         needs_attention = device_attention.compute_needs_attention(
             operational_state,
             readiness.readiness_state,
-            hardware_health_status=hardware_status,
             review_required=bool(device.review_required),
         )
 
@@ -172,14 +169,6 @@ class DevicePresenterService:
             "connection_type": device.connection_type,
             "ip_address": device.ip_address,
             "device_config": copy.deepcopy(device.device_config or {}),
-            "battery_level_percent": device.battery_level_percent,
-            "battery_temperature_c": device.battery_temperature_c,
-            "charging_state": device.charging_state,
-            "hardware_health_status": hardware_status,
-            "hardware_telemetry_reported_at": device.hardware_telemetry_reported_at,
-            "hardware_telemetry_state": hardware_telemetry.hardware_telemetry_state_for_device(
-                device, settings=self._settings
-            ),
             "readiness_state": readiness.readiness_state,
             "missing_setup_fields": readiness.missing_setup_fields,
             "verified_at": device.verified_at,
