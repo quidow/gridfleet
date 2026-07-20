@@ -4,8 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from app.devices.group_keys import GroupKey
-from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
-from app.devices.schemas.device import HardwareTelemetryState
+from app.devices.models import ConnectionType, DeviceType
 
 ChipStatus = Literal["available", "busy", "offline", "maintenance", "verifying"]
 DeviceSortBy = Literal[
@@ -38,8 +37,6 @@ class DeviceGroupFilters(BaseModel):
     connection_type: ConnectionType | None = None
     os_version: str | None = None
     os_version_display: str | None = None
-    hardware_health_status: HardwareHealthStatus | None = None
-    hardware_telemetry_state: HardwareTelemetryState | None = None
     needs_attention: bool | None = None
     member_of: list[GroupKey] = Field(default_factory=list)
 
