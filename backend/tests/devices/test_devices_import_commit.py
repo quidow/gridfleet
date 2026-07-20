@@ -340,6 +340,52 @@ async def test_commit_handles_session_commit_failure_after_savepoint_release(
 
 @pytest.mark.asyncio
 @pytest.mark.db
+async def test_commit_persists_groups_when_a_device_commit_fails(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """Static definitions commit before the device loop, so a mid-loop commit failure
+    cannot roll them back and strand the dynamic groups' ``member_of`` references."""
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle([_device(static_groups=["shelf-a"])], groups=[_static_group("shelf-a")])
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+
+    original_commit = db_session.__class__.commit
+
+    commits: list[str] = []
+
+    async def flaky_commit(self: AsyncSession) -> None:  # type: ignore[override]
+        # Identify the per-row outer commit by the device the savepoint just flushed
+        # into the session, rather than by call index — an index would silently start
+        # targeting a different commit if the sequence ever changed.
+        has_device = any(isinstance(obj, Device) for obj in self.identity_map.values())
+        commits.append("device" if has_device else "group")
+        if has_device:
+            raise RuntimeError("outer commit failed")
+        return await original_commit(self)
+
+    with patch.object(db_session.__class__, "commit", flaky_commit):
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
+
+    # The group definitions committed before the device loop ever ran.
+    assert commits[0] == "group"
+    assert "device" in commits
+    assert result.created == []
+    assert len(result.failed) == 1
+
+    persisted = await _committed_group_keys(db_session_maker)
+    assert "shelf-a" in persisted
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
 async def test_commit_persists_groups_when_every_device_row_is_skipped(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

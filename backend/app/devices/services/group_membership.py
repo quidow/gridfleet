@@ -221,7 +221,6 @@ async def load_group_membership_index(
     settings: SettingsReader,
     pack_catalog: dict[str, DriverPack] | None = None,
     operational_states: Mapping[uuid.UUID, DeviceOperationalState] | None = None,
-    reservation_owner_by_device_id: Mapping[uuid.UUID, uuid.UUID | None] | None = None,
     static_group_keys_by_device_id: Mapping[uuid.UUID, frozenset[str]] | None = None,
 ) -> GroupMembershipIndex:
     """Fixed-count loader: gather every fact the pure evaluator needs in a
@@ -239,7 +238,7 @@ async def load_group_membership_index(
       session lookup, one verification-lease lookup, and a pack-catalog load
       when no catalog is supplied),
     - one batch reservation map, projected through ``reservation_gating_run_id``
-      (only when ``reservation_owner_by_device_id`` is absent),
+      (only when a dynamic group needs native facts),
     - one joined static-membership read (only when
       ``static_group_keys_by_device_id`` is absent).
     """
@@ -281,8 +280,8 @@ async def load_group_membership_index(
     else:
         op_map = operational_states or {}
 
-    gating_owner_map: Mapping[uuid.UUID, uuid.UUID | None] = reservation_owner_by_device_id or {}
-    if needs_native_facts and reservation_owner_by_device_id is None:
+    gating_owner_map: Mapping[uuid.UUID, uuid.UUID | None] = {}
+    if needs_native_facts:
         # Project the gating owner, not "any active reservation row".
         # ``reservation_gating_run_id`` is the single source for the allocator's
         # gate and the read-side badge — it drops terminal-state runs and

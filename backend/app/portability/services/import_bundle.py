@@ -318,6 +318,13 @@ class PortabilityImportService:
         dynamic_groups = [g for g in request.bundle.groups if g.group_type == GroupType.dynamic]
 
         group_id_by_key = await self._insert_group_definitions(session, static_groups)
+        if static_groups:
+            # Commit the static definitions before the device loop so they survive a
+            # failure of any per-row commit below. Otherwise a mid-loop commit failure
+            # rolls the staged definitions back while the dynamic groups inserted
+            # afterwards commit normally, leaving their ``member_of`` pointing at rows
+            # that no longer exist.
+            await session.commit()
 
         by_index = {row.index: row for row in preview.rows}
         mappings_by_index = {m.index: m for m in request.mappings}
