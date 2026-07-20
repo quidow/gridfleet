@@ -3,9 +3,6 @@ from app.devices.models.device import (
     Device,
     DeviceOperationalState,
     DeviceType,
-    HardwareChargingState,
-    HardwareHealthStatus,
-    HardwareTelemetrySupportStatus,
     device_search_vector_expression,
 )
 from app.devices.models.event import DeviceEvent, DeviceEventType
@@ -30,8 +27,5 @@ __all__ = [
     "DeviceType",
     "ExclusionKind",
     "GroupType",
-    "HardwareChargingState",
-    "HardwareHealthStatus",
-    "HardwareTelemetrySupportStatus",
     "device_search_vector_expression",
 ]
