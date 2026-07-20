@@ -25,6 +25,7 @@ from app.devices.services import platform_label as platform_label_service
 from app.devices.services.groups import (
     GroupKeyConflictError,
     GroupReferencedError,
+    StaticGroupFiltersError,
     UnknownMemberOfError,
 )
 from app.lifecycle.services import remediation_log
@@ -53,7 +54,7 @@ async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: Devi
         group = await device_services.groups.create_group(db, data)
     except GroupKeyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except UnknownMemberOfError as exc:
+    except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await device_services.groups.get_group(db, group.key) or {}
 
@@ -119,7 +120,7 @@ async def update_group(
 ) -> dict[str, Any]:
     try:
         group = found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
-    except UnknownMemberOfError as exc:
+    except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await device_services.groups.get_group(db, group.key) or {}
 

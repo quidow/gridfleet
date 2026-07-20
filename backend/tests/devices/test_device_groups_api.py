@@ -509,6 +509,38 @@ async def test_dynamic_group_member_of_dynamic_key_rejected(client: AsyncClient)
 
 
 @pytest.mark.db
+async def test_create_static_group_with_filters_rejected_as_422(client: AsyncClient) -> None:
+    """A static group carrying filters is a domain validation failure, not a 500.
+
+    Same class as ``member_of`` naming an unknown key: the body is schema-valid
+    but the payload is invalid, so it must surface as 422 naming the problem.
+    """
+    resp = await client.post(
+        "/api/device-groups",
+        json={"key": "lab", "name": "Lab", "group_type": "static", "filters": {"pack_id": "appium-uiautomator2"}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "filters" in resp.text.lower()
+    assert "static" in resp.text.lower()
+
+
+@pytest.mark.db
+async def test_update_static_group_with_filters_rejected_as_422(client: AsyncClient) -> None:
+    create = await client.post(
+        "/api/device-groups",
+        json={"key": "lab-patch", "name": "Lab", "group_type": "static"},
+    )
+    assert create.status_code == 201
+    resp = await client.patch(
+        "/api/device-groups/lab-patch",
+        json={"filters": {"pack_id": "appium-uiautomator2"}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "filters" in resp.text.lower()
+    assert "static" in resp.text.lower()
+
+
+@pytest.mark.db
 async def test_delete_static_group_referenced_by_dynamic_returns_409(
     client: AsyncClient,
 ) -> None:

@@ -36,6 +36,18 @@ class GroupReferencedError(ValueError):
         super().__init__(f"static group is referenced by dynamic groups: {', '.join(dependents)}")
 
 
+class StaticGroupFiltersError(ValueError):
+    """Raised when a static group's payload carries filters.
+
+    Static groups classify by explicit membership only; filters belong to
+    dynamic groups. Sibling of :class:`UnknownMemberOfError` — a schema-valid
+    body that the domain rejects — and mapped to the same 422.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("static groups cannot define filters")
+
+
 class UnknownMemberOfError(ValueError):
     """Raised when a dynamic filter references an unknown or non-static group."""
 
@@ -61,7 +73,7 @@ class DeviceGroupsService:
             locked = await _lock_groups_by_key(db, _member_of_keys(data.filters))
             _assert_member_of_resolves(data.filters, locked)
         elif _has_filter_values(data.filters):
-            raise ValueError("static groups cannot define filters")
+            raise StaticGroupFiltersError
         group = DeviceGroup(
             key=data.key,
             name=data.name,
@@ -137,7 +149,7 @@ class DeviceGroupsService:
         if group.group_type == GroupType.static:
             # Static groups must not carry filters; reject any filters payload.
             if _has_filter_values(data.filters):
-                raise ValueError("static groups cannot define filters")
+                raise StaticGroupFiltersError
         elif data.filters is not None:
             _assert_member_of_resolves(data.filters, locked)
         updates = data.model_dump(exclude_unset=True)
