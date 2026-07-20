@@ -57,8 +57,6 @@ Current dynamic-group filter surface:
 - device type
 - connection type
 - OS version and OS version display
-- hardware health status
-- hardware telemetry state
 - needs attention
 - `member_of` — a list of **static** group keys
 

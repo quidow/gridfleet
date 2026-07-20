@@ -12,7 +12,6 @@ A `Device` row carries **multiple independent axes** of state. They look related
 | Operational state | read-time projection over durable facts | evaluator + SQL twin in `app/devices/services/state.py`; nobody stores current state |
 | Operational-state event ledger | `Device.operational_state_last_emitted` | `emit_operational_state_transition` in the locked intent-reconciler edge detector, plus the device-creation seed |
 | Reservation | `device_reservations` rows | computed `is_reserved` via `app.devices.services.reservation_query.device_is_reserved` |
-| Hardware health | `Device.hardware_health_status` | the `host_sweep` hardware-telemetry fold |
 | Lifecycle JSON | `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` helpers, under the row lock |
 | Remediation memory | `device_remediation_log` (append-only) | ladder writers via `app.lifecycle.services.actions.escalate_device_remediation_failure`; derivations in `app/lifecycle/services/remediation_log.py` |
 | Node state | `AppiumNode.desired_state` + observed columns | desired via `write_desired_state`; observed per `PROTECTED_COLUMN_WRITERS` |
@@ -37,10 +36,6 @@ Masking order is `busy > verifying > maintenance > offline`: a higher state can 
 ### Reservation (computed, not a column)
 
 Active reservations are rows in `device_reservations`; the `is_reserved` flag is computed via `device_is_reserved` and surfaced through the presenter. A device can be reserved while the projection reads `offline` (the agent died but the run keeps the device). Reservation is never part of the status chip; it is an orthogonal boolean filter.
-
-## Axis: Hardware health (`Device.hardware_health_status`)
-
-`unknown · healthy · warning · critical`, written exclusively by the `host_sweep` hardware-telemetry fold from pushed battery/temperature reports. Never read by node-lifecycle code; operator dashboard only. Live surface: `device.hardware_health_changed` (telemetry transitions), `device.health_changed` (aggregate summary transitions), `device.crashed` (per-device crash incidents; distinct from the per-process `node.crash`).
 
 ## Axis: Lifecycle JSON + remediation memory
 

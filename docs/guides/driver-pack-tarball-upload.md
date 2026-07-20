@@ -156,7 +156,6 @@ class DriverPackAdapter(Protocol):
     async def pre_session(self, spec: SessionSpec) -> dict[str, Any]: ...
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None: ...
     async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice: ...
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry: ...
     def subprocess_env(self) -> SubprocessEnvContribution: ...
     def tool_versions(self) -> dict[str, str | None]: ...
 ```
@@ -168,8 +167,8 @@ The hooks are `async` and take typed dataclass/Protocol context objects (not a `
 A pack scales its adapter surface to what it actually needs. There are three supported shapes, smallest first:
 
 1. **Manifest-only (no adapter).** A `manifest.yaml` with platforms and static capabilities, and no `adapter/` wheel. Every adapter hook is treated as "no adapter loaded". Use this when static config is enough.
-2. **Core two-hook adapter.** An `Adapter` implementing exactly the required core — `discover` and `normalize_device` — and nothing else. The pack gets custom device enumeration and canonicalization while every optional hook (health, lifecycle, sessions, telemetry) transparently degrades to the no-adapter branch. The end-to-end example is the agent test `agent/tests/pack/test_adapter_loader.py::test_minimal_two_hook_adapter_loads_and_dispatches`, which loads a real two-hook wheel and drives it through discover + normalize.
-3. **Capability add-ons.** Start from the core two hooks and add optional hooks as the pack needs them — `health_check`/`doctor`, `lifecycle_action`, `pre_session`/`post_session`, `telemetry`. The curated adapters under `driver-packs/adapters/` are living examples of this tier.
+2. **Core two-hook adapter.** An `Adapter` implementing exactly the required core — `discover` and `normalize_device` — and nothing else. The pack gets custom device enumeration and canonicalization while every optional hook (health, lifecycle, sessions) transparently degrades to the no-adapter branch. The end-to-end example is the agent test `agent/tests/pack/test_adapter_loader.py::test_minimal_two_hook_adapter_loads_and_dispatches`, which loads a real two-hook wheel and drives it through discover + normalize.
+3. **Capability add-ons.** Start from the core two hooks and add optional hooks as the pack needs them — `health_check`/`doctor`, `lifecycle_action`, `pre_session`/`post_session`. The curated adapters under `driver-packs/adapters/` are living examples of this tier.
 
 ### The declare-it-then-implement-it rule
 
@@ -193,7 +192,7 @@ The following hooks are wired and dispatched as of Phase B.2:
 | `health_check` | On each periodic device health check cycle for a device governed by this pack |
 | `lifecycle_action` | When a lifecycle action (`reconnect`, `release_forwarded_ports`, `resolve`) is dispatched for a device governed by this pack, including transport-identity resolution requested by `connection_behavior.host_resolution_action` |
 | `pre_session` | Immediately before an Appium session is started; return value is merged into the capability set |
-| `post_session` | After an Appium session ends; return value is ignored (cleanup / telemetry hook) |
+| `post_session` | After an Appium session ends; return value is ignored (cleanup hook) |
 
 Return-value contracts:
 

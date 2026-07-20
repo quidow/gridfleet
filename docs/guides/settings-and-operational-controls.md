@@ -39,27 +39,16 @@ Most important settings:
   - together determine how host liveness is derived from agent status pushes (`host_offline_after_sec` since the last push) and how often the reachability probe checks for a network partition
 - `node_fail_window_sec`
   - controls how many wall-clock seconds of node-health failure trigger automatic restart behavior
-- `hardware_telemetry_stale_timeout_sec` and `hardware_telemetry_consecutive_samples`
-  - control when battery telemetry becomes stale in the UI and how many repeated hot samples are required before escalating a hardware alert
 - `host_resource_telemetry_window_minutes`
   - sets the default Host Detail chart window
 
-The observation cadences themselves (node health, device connectivity, property refresh, hardware and host-resource telemetry) are no longer settings: the agent gathers those observations locally on fixed 30/60/300/600 s constants in `agent_app/probes.py` and pushes them in its consolidated status; the manager folds each pushed section into durable facts.
-- `hardware_temperature_warning_c` and `hardware_temperature_critical_c`
-  - define the warning and critical overheating thresholds used for `device.hardware_health_changed` events and the Devices UI
+The observation cadences themselves (node health, device connectivity, property refresh, and host-resource telemetry) are no longer settings: the agent gathers those observations locally on fixed 30/60/300/600 s constants in `agent_app/probes.py` and pushes them in its consolidated status; the manager folds each pushed section into durable facts.
 - `session_viability_interval_sec` and `session_viability_timeout_sec`
   - control the idle Appium-session probe loop; setting the interval to `0` disables that loop
 - `lifecycle_recovery_backoff_base_sec` and `lifecycle_recovery_backoff_max_sec`
   - control how long the manager waits between repeated automatic recovery attempts
 
 Change this tab cautiously. These knobs affect the whole fleet, including dashboard triage noise, automatic recovery cadence, and how quickly hosts or devices look unhealthy.
-
-Hardware telemetry surfaces now use four freshness states:
-
-- `Fresh` means a supported device reported telemetry within the configured stale timeout
-- `Stale` means the last supported sample is older than the stale timeout
-- `Unsupported` means the current platform/tooling cannot provide battery telemetry for that device
-- `Unknown` means the manager has not recorded a successful telemetry sample yet
 
 Host resource telemetry is intentionally lightweight:
 
@@ -93,7 +82,6 @@ The `Notifications` tab controls which recent events generate in-app toast messa
 Practical guidance:
 
 - use toasts for events you want the current operator to notice immediately
-- `device.hardware_health_changed` is intended for warning/critical battery conditions; raise its toast priority when labs need to surface overheating or charging anomalies
 
 ## Device Defaults
 

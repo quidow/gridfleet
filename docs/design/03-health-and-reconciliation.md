@@ -23,7 +23,7 @@ One `BackgroundLoop` per independent lifecycle. Cadences, read sets, and write s
 
 | Loop | Owns |
 | --- | --- |
-| `host_sweep_loop` | Host liveness from push recency (`evaluate_host` in `app/hosts/liveness.py` is the single `Host.status` edge detector), the offline cascade, node convergence from the latest pushed snapshot, the inline observation folds (device health, host/device telemetry, device properties), and the cadence-gated `/agent/health` partition diagnostic |
+| `host_sweep_loop` | Host liveness from push recency (`evaluate_host` in `app/hosts/liveness.py` is the single `Host.status` edge detector), the offline cascade, node convergence from the latest pushed snapshot, the inline observation folds (device health, host telemetry, device properties), and the cadence-gated `/agent/health` partition diagnostic |
 | `appium_sweep_loop` | The direct-to-Appium session observation pass (liveness probes + orphan-session kill) and the scheduled session-viability pass behind a 60 s scan throttle |
 | `durable_job_worker_loop` | Durable `jobs` table execution |
 | `grid_allocation_reaper_loop` | Queue-ticket expiry and crash-orphaned pending `Session` rows |
@@ -74,7 +74,6 @@ Every public health fact has exactly one durable home:
 | `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `status_fold_loop`, host diagnostics, and the device-capability active-target fill | latest consolidated agent status push per host (Appium processes + guarded health sections only; telemetry/properties sections fold synchronously off the in-memory payload and are not stored) — the single snapshot source; guarded health sections become eligible only after post-convergence stamping |
 | `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
 | `connectivity.previously_offline` | `host_sweep` connectivity fold | remembers why a reconnect is treated as recovery rather than first startup |
-| `hardware_telemetry.state` | `host_sweep` hardware-telemetry fold | stale/fresh telemetry bookkeeping |
 | `host_sweep.observation_fold` | `host_sweep` observation folds | per-host stamp watermark per pushed section, an optimization that skips redundant work; folds remain idempotent |
 | `session_viability.state` | `appium_sweep` viability pass | cadence bookkeeping for deeper session probes (the in-flight guard is the probe's own `Session` row since WS-16.1) |
 
