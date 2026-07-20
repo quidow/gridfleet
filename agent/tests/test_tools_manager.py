@@ -59,7 +59,7 @@ async def test_get_tool_status_includes_adapter_tool_versions() -> None:
         pack_release = "1.0"
 
         def tool_versions(self) -> dict[str, str | None]:
-            return {"go_ios": "1.0.207"}
+            return {"xcodebuild": "16.2"}
 
     registry = AdapterRegistry()
     registry.set("test-pack", "1.0", FakeAdapter())  # type: ignore[arg-type]
@@ -68,7 +68,7 @@ async def test_get_tool_status_includes_adapter_tool_versions() -> None:
         _stub_desired_pack(
             "test-pack",
             [
-                ToolDependency(name="go_ios", description="iOS telemetry"),
+                ToolDependency(name="xcodebuild", description="Xcode build tools"),
             ],
         ),
     ]
@@ -80,7 +80,7 @@ async def test_get_tool_status_includes_adapter_tool_versions() -> None:
         status = await get_tool_status(adapter_registry=registry, desired_packs=desired)
 
     pack_tools = status["packs"]["test-pack"]
-    assert pack_tools[0]["version"] == "1.0.207"
+    assert pack_tools[0]["version"] == "16.2"
 
 
 async def test_get_tool_status_with_provider_error() -> None:
@@ -107,7 +107,7 @@ async def test_get_tool_status_structured_response() -> None:
         pack_release = "1.0"
 
         def tool_versions(self) -> dict[str, str | None]:
-            return {"go_ios": "1.0.207", "xcodebuild": "16.2"}
+            return {"xcodebuild": "16.2"}
 
     registry = AdapterRegistry()
     registry.set("test-pack", "1.0", FakeAdapter())  # type: ignore[arg-type]
@@ -116,7 +116,6 @@ async def test_get_tool_status_structured_response() -> None:
         _stub_desired_pack(
             "test-pack",
             [
-                ToolDependency(name="go_ios", description="iOS telemetry"),
                 ToolDependency(name="xcodebuild", description="Xcode build tools"),
             ],
         ),
@@ -132,10 +131,10 @@ async def test_get_tool_status_structured_response() -> None:
     assert status["host"]["node"]["name"] == "Node"
     assert status["host"]["node_provider"]["version"] is None
 
-    assert len(status["packs"]["test-pack"]) == 2
-    go_ios_entry = next(e for e in status["packs"]["test-pack"] if e["name"] == "go_ios")
-    assert go_ios_entry["version"] == "1.0.207"
-    assert go_ios_entry["description"] == "iOS telemetry"
+    assert len(status["packs"]["test-pack"]) == 1
+    xcode_entry = next(e for e in status["packs"]["test-pack"] if e["name"] == "xcodebuild")
+    assert xcode_entry["version"] == "16.2"
+    assert xcode_entry["description"] == "Xcode build tools"
 
 
 async def test_get_tool_status_missing_tool_version_is_null() -> None:
@@ -144,7 +143,7 @@ async def test_get_tool_status_missing_tool_version_is_null() -> None:
         pack_release = "1.0"
 
         def tool_versions(self) -> dict[str, str | None]:
-            return {"go_ios": None}
+            return {"xcodebuild": None}
 
     registry = AdapterRegistry()
     registry.set("test-pack", "1.0", FakeAdapter())  # type: ignore[arg-type]
@@ -153,7 +152,6 @@ async def test_get_tool_status_missing_tool_version_is_null() -> None:
         _stub_desired_pack(
             "test-pack",
             [
-                ToolDependency(name="go_ios", description="iOS telemetry"),
                 ToolDependency(name="xcodebuild", description="Xcode build tools"),
             ],
         ),
@@ -166,9 +164,7 @@ async def test_get_tool_status_missing_tool_version_is_null() -> None:
         status = await get_tool_status(adapter_registry=registry, desired_packs=desired)
 
     pack_tools = status["packs"]["test-pack"]
-    go_ios_entry = next(e for e in pack_tools if e["name"] == "go_ios")
     xcode_entry = next(e for e in pack_tools if e["name"] == "xcodebuild")
-    assert go_ios_entry["version"] is None
     assert xcode_entry["version"] is None
 
 

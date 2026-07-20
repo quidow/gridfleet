@@ -41,7 +41,6 @@ BANNED_LITERALS: dict[str, str] = {
     "booting": "Android emulator lifecycle state",
     "booted": "Android emulator lifecycle state",
     "xcodebuild": "iOS Xcode build tool",
-    "go_ios": "iOS device management CLI",
 }
 
 BANNED_IMPORTS: set[tuple[str, str]] = {

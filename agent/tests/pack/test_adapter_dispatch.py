@@ -23,21 +23,19 @@ from agent_app.pack.adapter_dispatch import (
     dispatch_normalize_device,
     dispatch_post_session,
     dispatch_pre_session,
-    dispatch_telemetry,
     missing_declared_hooks,
 )
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DoctorCheckResult,
     FieldError,
-    HardwareTelemetry,
     HealthCheckResult,
     LifecycleActionResult,
     NormalizedDevice,
     SessionOutcome,
     SessionSpec,
 )
-from agent_app.pack.contexts import DiscoveryCtx, DoctorCtx, HealthCtx, LifecycleCtx, NormalizeCtx, TelemetryCtx
+from agent_app.pack.contexts import DiscoveryCtx, DoctorCtx, HealthCtx, LifecycleCtx, NormalizeCtx
 from agent_app.pack.manifest import DesiredPack, DesiredPlatform
 from agent_app.pack.runtime_types import AppiumInstallable
 from tests.pack.fake_worker import FakeWorkerHandle
@@ -99,9 +97,6 @@ class _GoodAdapter:
             field_errors=[],
         )
 
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        return HardwareTelemetry(supported=True, battery_level_percent=85)
-
 
 class _RaisingAdapter:
     """Every hook raises a RuntimeError."""
@@ -134,9 +129,6 @@ class _RaisingAdapter:
 
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         raise RuntimeError("normalize_device exploded")
-
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        raise RuntimeError("telemetry exploded")
 
 
 class _WrongTypeAdapter:
@@ -171,9 +163,6 @@ class _WrongTypeAdapter:
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         return {"bad": "type"}  # type: ignore[return-value]
 
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        return {"bad": "type"}  # type: ignore[return-value]
-
 
 def test_normalized_device_dataclass() -> None:
     nd = NormalizedDevice(
@@ -188,11 +177,6 @@ def test_normalized_device_dataclass() -> None:
         field_errors=[FieldError(field_id="example", message="message")],
     )
     assert nd.identity_scheme == "android_serial"
-
-
-def test_hardware_telemetry_unsupported() -> None:
-    telemetry = HardwareTelemetry(supported=False)
-    assert telemetry.battery_level_percent is None
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +400,7 @@ async def test_execution_error_chained_cause() -> None:
 
 
 # ---------------------------------------------------------------------------
-# dispatch_normalize_device / dispatch_telemetry
+# dispatch_normalize_device
 # ---------------------------------------------------------------------------
 
 
@@ -429,17 +413,6 @@ async def test_dispatch_normalize_device_returns_device() -> None:
     )
     assert isinstance(result, NormalizedDevice)
     assert result.identity_value == "avd:Pixel_7"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_telemetry_returns_telemetry() -> None:
-    adapter = _GoodAdapter()
-    result = await dispatch_telemetry(
-        FakeWorkerHandle(adapter),
-        TelemetryCtx(device_identity_value="emulator-5554", connection_target="emulator-5554"),
-    )
-    assert isinstance(result, HardwareTelemetry)
-    assert result.battery_level_percent == 85
 
 
 @pytest.mark.asyncio
@@ -456,17 +429,6 @@ async def test_dispatch_normalize_device_execution_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_telemetry_execution_error() -> None:
-    adapter = _RaisingAdapter()
-    with pytest.raises(AdapterHookExecutionError) as exc_info:
-        await dispatch_telemetry(
-            FakeWorkerHandle(adapter),
-            TelemetryCtx(device_identity_value="emulator-5554", connection_target="emulator-5554"),
-        )
-    assert exc_info.value.hook == "telemetry"
-
-
-@pytest.mark.asyncio
 async def test_dispatch_normalize_device_contract_error() -> None:
     adapter = _WrongTypeAdapter()
     with pytest.raises(AdapterContractError) as exc_info:
@@ -478,18 +440,6 @@ async def test_dispatch_normalize_device_contract_error() -> None:
         )
     assert exc_info.value.hook == "normalize_device"
     assert "NormalizedDevice" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_dispatch_telemetry_contract_error() -> None:
-    adapter = _WrongTypeAdapter()
-    with pytest.raises(AdapterContractError) as exc_info:
-        await dispatch_telemetry(
-            FakeWorkerHandle(adapter),
-            TelemetryCtx(device_identity_value="emulator-5554", connection_target="emulator-5554"),
-        )
-    assert exc_info.value.hook == "telemetry"
-    assert "HardwareTelemetry" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

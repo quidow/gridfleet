@@ -11,7 +11,7 @@ from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.lifespan import lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
+from agent_app.pack.adapter_types import HealthCheckResult, LifecycleActionResult
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.registration import RegistrationService
 from tests.pack.fake_worker import FakeWorkerHandle
@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 class _AdapterContext(Protocol):
     device_identity_value: object
-    connection_target: object
 
 
 @pytest.fixture
@@ -69,18 +68,12 @@ class _FakeAdapter:
 
     def __init__(self) -> None:
         self.health_calls: list[str] = []
-        self.telemetry_calls: list[tuple[str, str]] = []
         self.lifecycle_calls: list[tuple[str, str, dict[str, object]]] = []
 
     async def health_check(self, ctx: object) -> list[HealthCheckResult]:
         ctx_any = cast("_AdapterContext", ctx)
         self.health_calls.append(str(ctx_any.device_identity_value))
         return [HealthCheckResult(check_id="adapter_alive", ok=True)]
-
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        ctx_any = cast("_AdapterContext", ctx)
-        self.telemetry_calls.append((str(ctx_any.device_identity_value), str(ctx_any.connection_target)))
-        return HardwareTelemetry(supported=True, battery_level_percent=84)
 
     async def lifecycle_action(
         self,

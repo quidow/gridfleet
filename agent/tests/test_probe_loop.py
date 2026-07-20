@@ -77,15 +77,6 @@ async def _health_probe(**kwargs: object) -> dict[str, Any]:
     }
 
 
-async def _telemetry_probe(**kwargs: object) -> dict[str, Any]:
-    return {
-        "support_status": "supported",
-        "battery_level_percent": 80,
-        "battery_temperature_c": 30.1,
-        "charging_state": "charging",
-    }
-
-
 async def _properties_probe(**kwargs: object) -> dict[str, Any]:
     probe_kwargs = cast("dict[str, Any]", kwargs)
     return {
@@ -105,7 +96,6 @@ def _loop(roster: _Roster) -> ProbeLoop:
         manager=_Manager(),
         host_identity=_identity(),
         health_probe=_health_probe,
-        telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
     )
 
@@ -132,12 +122,11 @@ async def test_latest_results_shape() -> None:
 
     results = loop.latest_results()
     assert results is not None
-    assert set(results) == {"node_health", "device_health", "device_telemetry", "device_properties"}
+    assert set(results) == {"node_health", "device_health", "device_properties"}
     assert results["node_health"]["nodes"][0]["running"] is True
     # device_health is now a v7 list of typed items keyed by device_id.
     device_ids = {item["device_id"] for item in results["device_health"]["devices"]}
     assert device_ids == {"d1", "d2"}
-    assert "serial-1" in results["device_telemetry"]["devices"]
     assert results["device_properties"]["devices"]["serial-1"]["detected_properties"]["os_version"] == "14"
 
 
@@ -156,7 +145,6 @@ async def test_device_health_section_emits_typed_items_including_failures() -> N
         manager=_Manager(),
         host_identity=_identity(),
         health_probe=_health,
-        telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
     )
     await loop._refresh_roster()
@@ -222,7 +210,6 @@ async def test_device_health_section_limits_probe_concurrency() -> None:
         manager=_Manager(),
         host_identity=_identity(),
         health_probe=_health,
-        telemetry_probe=_telemetry_probe,
         properties_probe=_properties_probe,
     )
     await loop._refresh_roster()
@@ -242,21 +229,18 @@ async def test_roster_fetch_failure_keeps_device_results_and_refreshes_node_heal
     assert before is not None
     before_node_health = before["node_health"]
     before_device_health = before["device_health"]
-    before_device_telemetry = before["device_telemetry"]
     before_device_properties = before["device_properties"]
 
     roster.fail = True
     loop._due["roster"] = 0.0
     loop._due["node_health"] = 0.0
     loop._due["device_health"] = 0.0
-    loop._due["device_telemetry"] = 0.0
     loop._due["device_properties"] = 0.0
     await loop.run_once()
 
     after = loop.latest_results()
     assert after is not None
     assert after["device_health"] is before_device_health
-    assert after["device_telemetry"] is before_device_telemetry
     assert after["device_properties"] is before_device_properties
     assert after["node_health"] is not before_node_health
 
@@ -275,7 +259,7 @@ async def test_moved_sections_carry_dedup_token() -> None:
         assert isinstance(section["payload_sha256"], str)
 
     # Non-moved sections stay tokenless (they are not dedup-gated backend-side).
-    for name in ("device_telemetry", "device_properties"):
+    for name in ("device_properties",):
         assert "section_sequence" not in results[name]
         assert "payload_sha256" not in results[name]
 

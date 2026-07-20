@@ -51,14 +51,14 @@ async def test_detect_capabilities_merges_multiple_adapters() -> None:
         pack_release = "1.0"
 
         def tool_versions(self) -> dict[str, str | None]:
-            return {"xcodebuild": "16.2", "go_ios": "1.0.301"}
+            return {"xcodebuild": "16.2"}
 
     registry = AdapterRegistry()
     registry.set("android", "1.0", AndroidAdapter())  # type: ignore[arg-type]
     registry.set("apple", "1.0", AppleAdapter())  # type: ignore[arg-type]
 
     capabilities = await _cache(registry).detect()
-    assert capabilities["tools"] == {"adb": "1.0.41", "xcodebuild": "16.2", "go_ios": "1.0.301"}
+    assert capabilities["tools"] == {"adb": "1.0.41", "xcodebuild": "16.2"}
 
 
 async def test_detect_capabilities_skips_none_versions() -> None:
