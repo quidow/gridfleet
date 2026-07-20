@@ -52,7 +52,7 @@ window. See `docs/design/04-backend-agent-contract.md` for the full contract.
 When an operator selects a new pack release, the 60-second `release_rollout` janitor stage creates a drain-safe restart intent for nodes still running the previous release. The agent includes the pinned release used to start each running node in its status-push snapshot, and `reconciler_agent.py` folds it into `AppiumNode.observed_pack_release`. The intent removes the node from new allocation, then the normal reconciler stamps the restart watermark once it observes no live session.
 
 At push ingest, the handler folds the observation sections (`node_health`,
-`device_health`, `device_telemetry`, `device_properties`, `host_telemetry`)
+`device_health`, `device_properties`, `host_telemetry`)
 into durable facts after the liveness commit. Restart ingest, Appium-node
 convergence, and each fold are contained so an observation failure cannot
 erase the heartbeat. `host_sweep` is the silence detector: it emits liveness
@@ -72,7 +72,6 @@ Each fact class has exactly one channel:
 | Appium process inventory + restart events | push `appium_processes` | agent push interval (10 s) |
 | Node Appium health | push `node_health` | agent constant (30 s); fold push-bounded (≤ push interval) |
 | Device pack health | push `device_health` | agent constant (60 s); fold push-bounded (≤ push interval) |
-| Device hardware telemetry | push `device_telemetry` | agent constant (300 s); fold push-bounded (≤ push interval) |
 | Device properties | push `device_properties` | agent constant (600 s); fold push-bounded (≤ push interval) |
 | Host resource telemetry | push `host_telemetry` | push interval; fold push-bounded (≤ push interval) |
 | Pack install/doctor status | push `packs` | agent pack state loop |

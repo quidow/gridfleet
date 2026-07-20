@@ -80,9 +80,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
                 device_id,
                 db=session,
                 device_services=SimpleNamespace(
-                    crud=DeviceCrudService(
-                        settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-                    ),
+                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     publisher=event_bus,
                 ),
                 settings_services=SimpleNamespace(service=FakeSettingsReader({})),

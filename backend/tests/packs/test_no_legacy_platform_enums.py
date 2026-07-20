@@ -85,15 +85,6 @@ def test_agent_pack_runtime_status_does_not_stub_plugins() -> None:
     assert 'appium_plugins": []' not in path.read_text()
 
 
-def test_agent_pack_telemetry_signature_uses_adapter_contract() -> None:
-    assert not (AGENT_ROOT / "device_telemetry.py").exists()
-    path = AGENT_ROOT / "pack" / "adapter_dispatch.py"
-    text = path.read_text()
-    signature = re.search(r"async def dispatch_telemetry\((.*?)\)\s*->", text, flags=re.S)
-    assert signature is not None
-    assert "platform: str" not in signature.group(1)
-
-
 def test_policy_and_plugin_tests_exist() -> None:
     expected = [
         ROOT.parent / "agent" / "tests" / "pack" / "test_runtime_policy.py",

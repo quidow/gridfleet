@@ -192,7 +192,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
         settings=_settings_bulk,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_bulk, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_bulk, publisher=event_bus
         ),
@@ -232,7 +232,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
         settings=_settings_group,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_group, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_group, publisher=event_bus
         ),

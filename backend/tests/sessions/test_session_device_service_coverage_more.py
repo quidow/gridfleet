@@ -9,9 +9,7 @@ from app.core.pagination import encode_cursor
 from app.devices.models import (
     DeviceOperationalState,
     DeviceReservation,
-    HardwareHealthStatus,
 )
-from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
@@ -22,7 +20,6 @@ from app.sessions import service as session_service
 from app.sessions.filters import SessionFilters
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
@@ -142,7 +139,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         connection_target="device-filter-available",
         name="Alpha Device",
         operational_state=DeviceOperationalState.available,
-        hardware_health_status=HardwareHealthStatus.warning,
     )
     maintenance = await create_device_record(
         db_session,
@@ -162,16 +158,11 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         lambda _device: {"healthy": True},
     )
     monkeypatch.setattr(
-        "app.devices.services.service.hardware_telemetry.current_hardware_health_status", lambda _device: None
-    )
-    monkeypatch.setattr(
         "app.devices.services.service.device_attention.compute_needs_attention",
         lambda *_args, **_kwargs: False,
     )
 
-    crud = DeviceCrudService(
-        settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     filters = DeviceQueryFilters(
         status="available",
         host_id=available.host_id,
@@ -187,16 +178,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     assert total == 1
     assert [device.id for device in page] == [available.id]
     assert await crud.count_devices_by_filters(db_session, filters) == 1
-
-    telemetry_filters = DeviceQueryFilters(hardware_telemetry_state=HardwareTelemetryState.fresh)
-    monkeypatch.setattr(
-        "app.devices.services.service.hardware_telemetry.hardware_telemetry_state_for_device",
-        lambda device, settings=None: (
-            HardwareTelemetryState.fresh if device.id == available.id else HardwareTelemetryState.stale
-        ),
-    )
-    telemetry_devices = await crud.list_devices_by_filters(db_session, telemetry_filters)
-    assert [device.id for device in telemetry_devices] == [available.id]
 
     page, total = await crud.list_devices_paginated(
         db_session,

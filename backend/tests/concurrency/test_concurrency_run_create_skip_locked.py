@@ -17,7 +17,6 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.core.protocols import SettingsReader
 
 _settings = FakeSettingsReader({})
 _allocator_svc = RunAllocatorService(
@@ -67,7 +66,6 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
         requirements: list[DeviceRequirement],
         *,
         restart_window_sec: int,
-        settings: SettingsReader,
     ) -> list[list[Device]]:
         nonlocal calls
         calls += 1
@@ -75,7 +73,6 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
             db,
             requirements,
             restart_window_sec=restart_window_sec,
-            settings=settings,
         )
         if calls == 1:
             # First pass races the held lock: SKIP LOCKED drops the only device.
@@ -148,10 +145,9 @@ async def test_create_run_exhausts_widened_retry_budget(
         requirements: list[DeviceRequirement],
         *,
         restart_window_sec: int,
-        settings: SettingsReader,
     ) -> list[list[Device]]:
         nonlocal calls
-        _ = db, restart_window_sec, settings
+        _ = db, restart_window_sec
         calls += 1
         return [[] for _ in requirements]
 

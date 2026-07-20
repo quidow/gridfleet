@@ -24,12 +24,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     device_type: 'real_device',
     connection_type: 'network',
     ip_address: '10.0.0.50',
-    battery_level_percent: 84,
-    battery_temperature_c: 36.7,
-    charging_state: 'charging',
-    hardware_health_status: 'healthy',
-    hardware_telemetry_reported_at: '2026-03-30T10:00:03Z',
-    hardware_telemetry_state: 'fresh',
     readiness_state: 'verified',
     missing_setup_fields: [],
     verified_at: '2026-03-30T10:00:03Z',
@@ -55,13 +49,13 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
 }
 
 describe('DeviceDetailStatusPills', () => {
-  it('renders four status pills', () => {
+  it('renders three status pills', () => {
     render(
       <MemoryRouter>
         <DeviceDetailStatusPills device={makeDevice()} />
       </MemoryRouter>,
     );
-    expect(screen.getAllByLabelText(/^(Hardware|Device|Node|Viability) /)).toHaveLength(4);
+    expect(screen.getAllByLabelText(/^(Device|Node|Viability) /)).toHaveLength(3);
   });
 
   it('verdict pills link to triage tab with device-health anchor', () => {

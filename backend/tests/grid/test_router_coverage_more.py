@@ -400,8 +400,6 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         os_version=None,
         os_version_display=None,
         search=None,
-        hardware_health_status=None,
-        hardware_telemetry_state=None,
         needs_attention=None,
         device_health=None,
         node_health=None,

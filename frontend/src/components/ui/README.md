@@ -230,7 +230,7 @@ Tonal attention card with total, supporting description, and linked detail rows.
   description="devices needing review"
   total={3}
   tone="warn"
-  rows={[{ label: 'Telemetry coverage', values: '2 stale', to: '/devices?hardware_telemetry_state=stale' }]}
+  rows={[{ label: 'Device health', values: '2 failed', to: '/devices?device_health=failed' }]}
 />
 ```
 

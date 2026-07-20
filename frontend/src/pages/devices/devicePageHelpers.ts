@@ -12,9 +12,7 @@ import type {
   DeviceRead,
   DeviceFilterStatus,
   DeviceType,
-  HardwareHealthStatus,
   HealthVerdictStatus,
-  HardwareTelemetryState,
   DeviceVerificationUpdate,
   PlatformDescriptor,
 } from '../../types';
@@ -23,8 +21,6 @@ import { DEVICE_FILTER_STATUSES } from '../../lib/deviceState';
 export const CHIP_STATUSES: DeviceFilterStatus[] = DEVICE_FILTER_STATUSES;
 export const DEVICE_TYPES: DeviceType[] = DEVICE_TYPE_OPTIONS;
 export const CONNECTION_TYPES: ConnectionType[] = CONNECTION_TYPE_OPTIONS;
-export const HARDWARE_HEALTH_STATUSES: HardwareHealthStatus[] = ['unknown', 'healthy', 'warning', 'critical'];
-export const HARDWARE_TELEMETRY_STATES: HardwareTelemetryState[] = ['unknown', 'fresh', 'stale'];
 export const HEALTH_VERDICT_STATUSES: HealthVerdictStatus[] = ['ok', 'warn', 'failed', 'unknown'];
 
 export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
@@ -42,20 +38,6 @@ export const HEALTH_VERDICT_FILTER_LABELS: Record<HealthVerdictStatus, string> =
   warn: 'Warning',
   failed: 'Failed',
   unknown: 'Unknown',
-};
-
-export const HARDWARE_HEALTH_STATUS_LABELS: Record<HardwareHealthStatus, string> = {
-  unknown: 'Unknown',
-  healthy: 'Healthy',
-  warning: 'Warning',
-  critical: 'Critical',
-};
-
-export const HARDWARE_TELEMETRY_STATE_LABELS: Record<HardwareTelemetryState, string> = {
-  unknown: 'Unknown',
-  fresh: 'Fresh',
-  stale: 'Stale',
-  unsupported: 'No telemetry',
 };
 
 export { CONNECTION_TYPE_LABELS };

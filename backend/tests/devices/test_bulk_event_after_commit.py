@@ -30,7 +30,7 @@ def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
         circuit_breaker=MagicMock(),
         maintenance=maintenance
         or MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
-        crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(review=build_review_service(), settings=_settings, publisher=event_bus),
     )
 

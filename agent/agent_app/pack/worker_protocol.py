@@ -77,10 +77,6 @@ def _decode_lifecycle_result(raw: Any) -> t.LifecycleActionResult:  # noqa: ANN4
     return t.LifecycleActionResult(**raw)
 
 
-def _decode_hardware_telemetry(raw: Any) -> t.HardwareTelemetry:  # noqa: ANN401
-    return t.HardwareTelemetry(**raw)
-
-
 HOOK_SPECS: dict[str, HookSpec] = {
     "discover": HookSpec(c.DiscoveryCtx, _decode_discovery_candidates, list),
     "normalize_device": HookSpec(c.NormalizeCtx, _decode_normalized_device, t.NormalizedDevice),
@@ -89,7 +85,6 @@ HOOK_SPECS: dict[str, HookSpec] = {
     "lifecycle_action": HookSpec(c.LifecycleCtx, _decode_lifecycle_result, t.LifecycleActionResult),
     "pre_session": HookSpec(None, dict, dict),
     "post_session": HookSpec(None, lambda _raw: None, type(None)),
-    "telemetry": HookSpec(c.TelemetryCtx, _decode_hardware_telemetry, t.HardwareTelemetry),
 }
 
 

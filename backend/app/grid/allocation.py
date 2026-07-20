@@ -264,13 +264,11 @@ def _pack_platform_keys(rows: Collection[_EligibleRow]) -> set[tuple[str, str]]:
 def _facts_from_eligible_rows(
     rows: Collection[_EligibleRow],
     readiness_by_device_id: Mapping[uuid.UUID, DeviceReadiness],
-    settings: SettingsReader | None,
 ) -> dict[uuid.UUID, DeviceGroupFacts]:
     """Build the pure evaluator's fact inputs from the eligible batch. No database
     IO: every fact the evaluator consumes is either a loaded device/node/host
-    column, a projected reservation owner, a projected static key set, a
-    synchronous settings-derived telemetry value, or a pre-assessed readiness
-    verdict from the caller's pack catalog.
+    column, a projected reservation owner, a projected static key set, or a
+    pre-assessed readiness verdict from the caller's pack catalog.
 
     ``operational_state`` is ``available`` by construction, not by assumption:
     ``is_available_sql`` is exactly the ``else_`` branch of
@@ -291,7 +289,6 @@ def _facts_from_eligible_rows(
             is_reserved=row.reservation_run_id is not None,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
             static_group_keys=row.static_group_keys,
-            settings=settings,
         )
     return facts
 
@@ -834,7 +831,7 @@ class AllocationService:
         for pair in pack_platform_keys:
             templates.setdefault(pair, None)
         readiness = await assess_devices_async(db, [row.device for row in rows], packs=pack_catalog)
-        return templates, _facts_from_eligible_rows(rows, readiness, self._settings), pack_catalog
+        return templates, _facts_from_eligible_rows(rows, readiness), pack_catalog
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket
@@ -992,7 +989,7 @@ class AllocationService:
         membership = evaluate_group_memberships(
             groups=groups,
             devices=[locked_device],
-            facts_by_device_id=_facts_from_eligible_rows([row], readiness, self._settings),
+            facts_by_device_id=_facts_from_eligible_rows([row], readiness),
         )
         return membership.matches_all(locked_device.id, candidate_group_keys)
 

@@ -60,7 +60,7 @@ def _svc(
         settings=_settings,
         circuit_breaker=circuit_breaker or MagicMock(),
         maintenance=maintenance or MagicMock(),
-        crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=operator
         or OperatorNodeLifecycleService(review=build_review_service(), settings=_settings, publisher=event_bus),  # type: ignore[arg-type]
     )
@@ -198,7 +198,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         settings=_settings_exit2,
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance,
-        crud=DeviceCrudService(settings=_settings_exit2, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_exit2, publisher=event_bus
         ),
@@ -222,9 +222,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         settings=_settings_enter2,
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance2,
-        crud=DeviceCrudService(
-            settings=_settings_enter2, identity=DeviceIdentityConflictService(), publisher=event_bus
-        ),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_enter2, publisher=event_bus
         ),

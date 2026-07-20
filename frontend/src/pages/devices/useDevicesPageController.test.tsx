@@ -17,8 +17,6 @@ function makeDevice(overrides: Partial<DeviceRead>): DeviceRead {
     id: overrides.id ?? `d-${Math.random()}`,
     operational_state: 'available',
     needs_attention: false,
-    hardware_health_status: 'healthy',
-    hardware_telemetry_state: 'fresh',
     name: 'X',
     pack_id: 'appium-uiautomator2',
     platform_id: 'android_mobile',

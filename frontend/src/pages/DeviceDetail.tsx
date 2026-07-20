@@ -17,7 +17,6 @@ import type { DeviceVerificationUpdate } from '../types';
 import { DeviceCapabilitiesPanel } from '../components/deviceDetail/DeviceCapabilitiesPanel';
 import { DeviceHealthPanel } from '../components/deviceDetail/DeviceHealthPanel';
 import { DeviceLifecyclePolicyPanel } from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
-import { DeviceHardwareTelemetryCard } from '../components/deviceDetail/DeviceHardwareTelemetryCard';
 import { DeviceInfoPanel } from '../components/deviceDetail/DeviceInfoPanel';
 import { DeviceLogsPanel } from '../components/deviceDetail/DeviceLogsPanel';
 import { DeviceNodePanel } from '../components/deviceDetail/DeviceNodePanel';
@@ -274,9 +273,6 @@ export function DeviceDetail() {
                       />
                     </SectionErrorBoundary>
                   </div>
-                  <SectionErrorBoundary scope="device-hardware-telemetry">
-                    <DeviceHardwareTelemetryCard device={device} />
-                  </SectionErrorBoundary>
                 </div>
               </Card>
             </div>

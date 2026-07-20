@@ -10,7 +10,7 @@ While the old instance is still running:
 2. Click **Export Config** in the **Export configuration** card. The browser downloads `gridfleet-devices-<timestamp>.json`.
 3. Keep this file alongside any other ops artifacts you preserve across the install.
 
-The bundle is human-readable. You can hand-edit it before importing: strip rows, adjust a device's `static_groups`, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data + device groups only — runtime state (operational_state, telemetry, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
+The bundle is human-readable. You can hand-edit it before importing: strip rows, adjust a device's `static_groups`, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data + device groups only — runtime state (operational_state, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
 
 ### Bundle schema version
 
@@ -67,7 +67,7 @@ Each created device is queued for verification on commit. Devices transition `of
 
 ## Inventory snapshot (separate feature)
 
-The Devices page also has an **Export Inventory** button. That export is a *read-only snapshot* with runtime fields included (operational_state, hardware telemetry, verification status). It is **not** round-trippable through the import wizard. Use it for spreadsheets, audits, or external tooling.
+The Devices page also has an **Export Inventory** button. That export is a *read-only snapshot* with runtime fields included (operational_state, verification status). It is **not** round-trippable through the import wizard. Use it for spreadsheets, audits, or external tooling.
 
 Choose between CSV or JSON via the modal's format toggle. The column picker remembers your last selection in `localStorage`. The active Devices-page filters (excluding sort and pagination) are applied to the export.
 

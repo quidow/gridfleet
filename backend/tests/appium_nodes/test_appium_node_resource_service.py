@@ -232,8 +232,6 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         Device,
         DeviceOperationalState,
         DeviceType,
-        HardwareHealthStatus,
-        HardwareTelemetrySupportStatus,
     )
     from app.hosts.models import Host, HostStatus, OSType
 
@@ -261,8 +259,6 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         operational_state=DeviceOperationalState.offline,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
-        hardware_health_status=HardwareHealthStatus.unknown,
-        hardware_telemetry_support_status=HardwareTelemetrySupportStatus.unknown,
     )
     db_session.add(device)
     await db_session.flush()

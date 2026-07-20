@@ -8,8 +8,6 @@ import type {
   DeviceChipStatus,
   DeviceRead,
   DeviceType,
-  HardwareHealthStatus,
-  HardwareTelemetryState,
   HealthVerdictStatus,
   DeviceVerificationUpdate,
 } from '../../types';
@@ -17,8 +15,6 @@ import {
   CHIP_STATUSES,
   CONNECTION_TYPES,
   DEVICE_TYPES,
-  HARDWARE_HEALTH_STATUSES,
-  HARDWARE_TELEMETRY_STATES,
   HEALTH_VERDICT_STATUSES,
 } from './devicePageHelpers';
 import type { DeviceSortKey } from './devicePageHelpers';
@@ -54,16 +50,6 @@ export function useDevicesPageController() {
   const needsAttentionFilter = searchParams.get('needs_attention') === 'true';
   const deviceTypeFilter = readEnumSearchParam(searchParams, 'device_type', DEVICE_TYPES);
   const connectionTypeFilter = readEnumSearchParam(searchParams, 'connection_type', CONNECTION_TYPES);
-  const hardwareHealthStatusFilter = readEnumSearchParam(
-    searchParams,
-    'hardware_health_status',
-    HARDWARE_HEALTH_STATUSES,
-  );
-  const hardwareTelemetryStateFilter = readEnumSearchParam(
-    searchParams,
-    'hardware_telemetry_state',
-    HARDWARE_TELEMETRY_STATES,
-  );
   const deviceHealthFilter = readEnumSearchParam(searchParams, 'device_health', HEALTH_VERDICT_STATUSES);
   const nodeHealthFilter = readEnumSearchParam(searchParams, 'node_health', HEALTH_VERDICT_STATUSES);
   const viabilityFilter = readEnumSearchParam(searchParams, 'viability', HEALTH_VERDICT_STATUSES);
@@ -77,8 +63,6 @@ export function useDevicesPageController() {
     connection_type: connectionTypeFilter || undefined,
     os_version_display: osVersionFilter || undefined,
     search: search || undefined,
-    hardware_health_status: hardwareHealthStatusFilter || undefined,
-    hardware_telemetry_state: hardwareTelemetryStateFilter || undefined,
     device_health: deviceHealthFilter || undefined,
     node_health: nodeHealthFilter || undefined,
     viability: viabilityFilter || undefined,
@@ -203,14 +187,6 @@ export function useDevicesPageController() {
     updateSearchParam('os_version_display', next);
   }
 
-  function updateHardwareHealthStatusFilter(next: HardwareHealthStatus | '') {
-    updateSearchParam('hardware_health_status', next);
-  }
-
-  function updateHardwareTelemetryStateFilter(next: HardwareTelemetryState | '') {
-    updateSearchParam('hardware_telemetry_state', next);
-  }
-
   function updateDeviceHealthFilter(next: HealthVerdictStatus | '') {
     updateSearchParam('device_health', next);
   }
@@ -249,7 +225,7 @@ export function useDevicesPageController() {
 
   const hasFilters = Boolean(
     packIdFilter || platformFilter || statusFilter || reservedFilter || needsAttentionFilter || deviceTypeFilter || connectionTypeFilter ||
-    hardwareHealthStatusFilter || hardwareTelemetryStateFilter || deviceHealthFilter || nodeHealthFilter ||
+    deviceHealthFilter || nodeHealthFilter ||
     viabilityFilter || osVersionFilter || search,
   );
 
@@ -275,10 +251,6 @@ export function useDevicesPageController() {
     setDeviceTypeFilter: updateDeviceTypeFilter,
     connectionTypeFilter,
     setConnectionTypeFilter: updateConnectionTypeFilter,
-    hardwareHealthStatusFilter,
-    setHardwareHealthStatusFilter: updateHardwareHealthStatusFilter,
-    hardwareTelemetryStateFilter,
-    setHardwareTelemetryStateFilter: updateHardwareTelemetryStateFilter,
     deviceHealthFilter,
     setDeviceHealthFilter: updateDeviceHealthFilter,
     nodeHealthFilter,

@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 NODE_HEALTH_INTERVAL_SEC = 30.0
 DEVICE_HEALTH_INTERVAL_SEC = 60.0
-TELEMETRY_INTERVAL_SEC = 300.0
 PROPERTIES_INTERVAL_SEC = 600.0
 ROSTER_REFRESH_INTERVAL_SEC = 300.0
 _TICK_SEC = 5.0
@@ -37,7 +36,6 @@ class ProbeLoop:
     manager: Any
     host_identity: Any
     health_probe: ProbeCallable
-    telemetry_probe: ProbeCallable
     properties_probe: ProbeCallable
     on_results: Callable[[], None] | None = None
     _results: dict[str, Any] = field(default_factory=dict, init=False)
@@ -95,12 +93,6 @@ class ProbeLoop:
                 "device_health", await self._probe_device_health_section()
             )
             changed = True
-        if roster_ok and self._roster and self._stage_due("device_telemetry", TELEMETRY_INTERVAL_SEC, now):
-            self._results["device_telemetry"] = await self._probe_devices(
-                self._run_telemetry,
-                only_device_types={"real_device"},
-            )
-            changed = True
         if roster_ok and self._roster and self._stage_due("device_properties", PROPERTIES_INTERVAL_SEC, now):
             self._results["device_properties"] = await self._probe_devices(self._run_properties)
             changed = True
@@ -145,7 +137,7 @@ class ProbeLoop:
             )
         return {"reported_at": _now_iso(), "nodes": nodes}
 
-    async def _probe_devices(self, runner: ProbeRunner, only_device_types: set[str] | None = None) -> dict[str, Any]:
+    async def _probe_devices(self, runner: ProbeRunner) -> dict[str, Any]:
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
         live = {
@@ -154,8 +146,6 @@ class ProbeLoop:
         }
 
         async def one(entry: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-            if only_device_types and entry.get("device_type") not in only_device_types:
-                return None
             async with semaphore:
                 try:
                     observation = await runner(entry, live.get(entry.get("connection_target"), False))
@@ -223,23 +213,6 @@ class ProbeLoop:
             "detail": payload.get("detail"),
             "checks": payload.get("checks", []),
             "recommended_action": payload.get("recommended_action"),
-            "observed_at": _now_iso(),
-        }
-
-    async def _run_telemetry(self, entry: dict[str, Any], _has_live_session: bool) -> dict[str, Any] | None:
-        payload = await self.telemetry_probe(
-            pack_id=entry["pack_id"],
-            platform_id=entry["platform_id"],
-            connection_target=entry["connection_target"],
-            identity_value=entry.get("identity_value") or entry["connection_target"],
-        )
-        if payload is None:
-            return None
-        return {
-            "support_status": payload.get("support_status"),
-            "battery_level_percent": payload.get("battery_level_percent"),
-            "battery_temperature_c": payload.get("battery_temperature_c"),
-            "charging_state": payload.get("charging_state"),
             "observed_at": _now_iso(),
         }
 

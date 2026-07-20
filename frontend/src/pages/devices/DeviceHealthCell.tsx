@@ -2,7 +2,6 @@ import { memo } from 'react';
 import type { DeviceRead, HealthVerdictRead } from '../../types';
 import { Popover } from '../../components/ui/Popover';
 import { VERDICT_DOT_CLASSES, VERDICT_STATUS_LABELS, VERDICT_TEXT_CLASSES } from '../../lib/healthVerdicts';
-import { formatBatteryLevel, formatChargingState } from '../../lib/hardwareTelemetry';
 import { formatDateTime } from '../../utils/dateFormatting';
 
 type Props = { device: DeviceRead };
@@ -30,12 +29,6 @@ function Dot({ short, label, verdict }: { short: string; label: string; verdict:
 
 function DeviceHealthCellInner({ device }: Props) {
   const hs = device.health_summary;
-
-  const hasTelemetryData =
-    device.battery_level_percent !== null && device.battery_level_percent !== undefined
-    || (device.charging_state !== null && device.charging_state !== undefined && device.charging_state !== 'unknown');
-  const showTelemetry = device.hardware_telemetry_state !== 'unsupported' && hasTelemetryData;
-  const telemetryLine = `${formatBatteryLevel(device.battery_level_percent)} · ${formatChargingState(device.charging_state)}`;
 
   const trigger = (
     <span className="inline-flex items-center gap-2">
@@ -69,12 +62,6 @@ function DeviceHealthCellInner({ device }: Props) {
             );
           })}
         </div>
-        {showTelemetry ? (
-          <div>
-            <p className="heading-label mb-0.5">Battery</p>
-            <p className="text-text-2">{telemetryLine}</p>
-          </div>
-        ) : null}
       </div>
     </Popover>
   );

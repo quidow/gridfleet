@@ -9,14 +9,12 @@ from agent_app.pack.adapter_types import (
     DiscoveryContext,
     DoctorCheckResult,
     DoctorContext,
-    HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
     NormalizedDevice,
     NormalizeDeviceContext,
     SessionOutcome,
     SessionSpec,
-    TelemetryContext,
 )
 
 
@@ -31,16 +29,10 @@ class Adapter:
         return await discover_apple_devices(ctx)
 
     async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
-        from .tools import find_go_ios, host_supports_apple_devicectl
+        from .tools import host_supports_apple_devicectl
 
-        go_ios = find_go_ios()
         return [
             DoctorCheckResult(check_id="xcrun", ok=host_supports_apple_devicectl(), message=""),
-            DoctorCheckResult(
-                check_id="go_ios",
-                ok=bool(go_ios),
-                message="go-ios CLI found" if go_ios else "go-ios CLI not found; iOS telemetry unavailable",
-            ),
         ]
 
     async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
@@ -63,16 +55,11 @@ class Adapter:
 
         return await normalize_device(ctx)
 
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
-        from .telemetry import collect_telemetry
-
-        return await collect_telemetry(ctx)
-
     def tool_versions(self) -> dict[str, str | None]:
         import re
         import subprocess
 
-        versions: dict[str, str | None] = {"xcodebuild": None, "go_ios": None}
+        versions: dict[str, str | None] = {"xcodebuild": None}
 
         try:
             result = subprocess.run(
@@ -81,16 +68,6 @@ class Adapter:
             match = re.search(r"Xcode\s+(\d+\.\d+(?:\.\d+)?)", result.stdout)
             if match:
                 versions["xcodebuild"] = match.group(1)
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass  # version stays None from default
-
-        try:
-            result = subprocess.run(
-                ["ios", "--version"], capture_output=True, text=True, timeout=5
-            )
-            match = re.search(r"v?(\d+\.\d+\.\d+)", result.stdout)
-            if match:
-                versions["go_ios"] = match.group(1)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass  # version stays None from default
 

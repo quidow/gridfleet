@@ -92,7 +92,7 @@ Depending on the current run/session context, the manager may:
 
 The Devices table shows a readiness/health indicator (the Health cell, which folds active lifecycle summary states — recovery paused, backoff, recoverable — into its tone and reason popover) and an Availability cell whose tooltip surfaces the maintenance reason when the device is in maintenance. There is no separate lifecycle badge column in the table; the dedicated lifecycle badge appears on the dashboard incident views.
 
-Operators can filter the Devices table by availability status, platform, host, connection type, device type, OS version, hardware health, and needs-attention.
+Operators can filter the Devices table by availability status, platform, host, connection type, device type, OS version, and needs-attention.
 
 ### Device Health Panel
 

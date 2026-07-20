@@ -78,8 +78,6 @@ macOS hosts can run both Apple and Android lanes.
 
 - Physical iOS and tvOS devices must still trust the Mac and allow developer tooling access.
 - `xcrun devicectl` is used for Apple real-device discovery and health checks.
-- `go-ios` provides the `ios` CLI used for iOS real-device battery telemetry.
-- Install `go-ios` with npm on hosts that run iOS real-device lanes: `npm install -g go-ios`.
 
 ## Emulator And Simulator Preparation
 
@@ -108,7 +106,7 @@ So operators infer missing host-level tooling indirectly:
 Current remediation behavior:
 
 - Appium runtimes are reconciled by the desired driver-pack loop.
-- Missing host-level tools such as `go_ios`, `java`, `adb`, Xcode, or the Android SDK require operator setup, using the verification checks below.
+- Missing host-level tools such as `java`, `adb`, Xcode, or the Android SDK require operator setup, using the verification checks below.
 
 ## Verification Checklist
 
@@ -154,7 +152,6 @@ What good looks like:
 
 - `xcodebuild` resolves and reports the active Xcode version
 - `xcrun simctl` can list available simulator devices
-- `ios --version` reports the installed `go-ios` CLI version for Apple real-device telemetry
 
 ## Related Docs
 

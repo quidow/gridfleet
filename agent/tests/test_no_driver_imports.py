@@ -41,6 +41,8 @@ BANNED_LITERALS: dict[str, str] = {
     "booting": "Android emulator lifecycle state",
     "booted": "Android emulator lifecycle state",
     "xcodebuild": "iOS Xcode build tool",
+    # Preventive: the agent core must not hardcode this even though no curated
+    # adapter ships it any more. The ban guards ``agent_app/``, not the adapters.
     "go_ios": "iOS device management CLI",
 }
 

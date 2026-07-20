@@ -47,7 +47,6 @@ from app.grid.allocation import AllocationService, device_match_surface
 from app.grid.services_container import GridServices
 from app.hosts.service import HostCrudService
 from app.hosts.service_diagnostics import HostDiagnosticsService
-from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import HostStatusPushService, ObservationFold
@@ -132,10 +131,10 @@ def compose_app(
         circuit_breaker=circuit_breaker,
     )
 
-    presenter_svc = DevicePresenterService(settings=settings_svc)
+    presenter_svc = DevicePresenterService()
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
-    inventory_export_svc = InventoryExportService(settings=settings_svc)
+    inventory_export_svc = InventoryExportService()
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
@@ -180,13 +179,12 @@ def compose_app(
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService()
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
-    property_refresh_svc, hardware_telemetry_svc, resource_telemetry_svc = (
+    property_refresh_svc, resource_telemetry_svc = (
         PropertyRefreshService(discovery=pack_discovery_svc),
-        HardwareTelemetryService(publisher=bus, settings=settings_svc),
         HostResourceTelemetryService(settings=settings_svc),
     )
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
-    crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc, publisher=bus)
+    crud_svc = DeviceCrudService(identity=identity_conflict_svc, publisher=bus)
     connectivity_svc, remediation_runner_svc = (
         ConnectivityService(
             publisher=bus,
@@ -203,7 +201,10 @@ def compose_app(
             pool=http_pool,
         ),
     )
-    groups_svc = DeviceGroupsService(publisher=bus, crud=crud_svc, settings=settings_svc)
+    groups_svc = DeviceGroupsService(
+        publisher=bus,
+        crud=crud_svc,
+    )
     bulk_svc = BulkOperationsService(
         publisher=bus,
         settings=settings_svc,
@@ -337,7 +338,6 @@ def compose_app(
         lifecycle=lifecycle_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
-            hardware_telemetry=hardware_telemetry_svc,
             resource_telemetry=resource_telemetry_svc,
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             host_events=HostEventsService(),
@@ -347,7 +347,6 @@ def compose_app(
                 # node_health is folded off the request path by the StatusFoldLoop
                 # (level-triggered), so it is no longer an inline ObservationFold.
                 observation_folds=(
-                    ObservationFold("device_telemetry", hardware_telemetry_svc.fold_host_device_telemetry),
                     ObservationFold("device_properties", property_refresh_svc.fold_host_device_properties),
                     ObservationFold("host_telemetry", resource_telemetry_svc.fold_host_telemetry),
                     # device_health moved to StatusFoldLoop (Phase 4).

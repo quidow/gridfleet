@@ -28,7 +28,6 @@ from app.devices.schemas.group import DeviceGroupUpdate
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -40,11 +39,9 @@ pytestmark = [pytest.mark.db, pytest.mark.asyncio]
 
 
 def _service() -> DeviceGroupsService:
-    settings = FakeSettingsReader({})
     return DeviceGroupsService(
         publisher=event_bus,
-        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
-        settings=settings,
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
     )
 
 

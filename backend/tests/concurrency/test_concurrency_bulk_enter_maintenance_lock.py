@@ -90,9 +90,7 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
             settings=_settings_enter,
             circuit_breaker=MagicMock(),
             maintenance=mock_maintenance,
-            crud=DeviceCrudService(
-                settings=_settings_enter, identity=DeviceIdentityConflictService(), publisher=event_bus
-            ),
+            crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
             operator=OperatorNodeLifecycleService(
                 review=build_review_service(), settings=_settings_enter, publisher=event_bus
             ),

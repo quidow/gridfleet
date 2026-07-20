@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,27 +56,6 @@ class DeviceOperationalState(enum.StrEnum):
     offline = "offline"
     verifying = "verifying"
     maintenance = "maintenance"
-
-
-class HardwareChargingState(enum.StrEnum):
-    charging = "charging"
-    discharging = "discharging"
-    full = "full"
-    not_charging = "not_charging"
-    unknown = "unknown"
-
-
-class HardwareHealthStatus(enum.StrEnum):
-    unknown = "unknown"
-    healthy = "healthy"
-    warning = "warning"
-    critical = "critical"
-
-
-class HardwareTelemetrySupportStatus(enum.StrEnum):
-    unknown = "unknown"
-    supported = "supported"
-    unsupported = "unsupported"
 
 
 class Device(Base):
@@ -150,22 +129,6 @@ class Device(Base):
     device_type: Mapped[DeviceType] = mapped_column(Enum(DeviceType), nullable=False)
     connection_type: Mapped[ConnectionType] = mapped_column(Enum(ConnectionType), nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String, nullable=True)
-    battery_level_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    battery_temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
-    charging_state: Mapped[HardwareChargingState | None] = mapped_column(Enum(HardwareChargingState), nullable=True)
-    hardware_health_status: Mapped[HardwareHealthStatus] = mapped_column(
-        Enum(HardwareHealthStatus),
-        nullable=False,
-        default=HardwareHealthStatus.unknown,
-        server_default=HardwareHealthStatus.unknown.value,
-    )
-    hardware_telemetry_support_status: Mapped[HardwareTelemetrySupportStatus] = mapped_column(
-        Enum(HardwareTelemetrySupportStatus),
-        nullable=False,
-        default=HardwareTelemetrySupportStatus.unknown,
-        server_default=HardwareTelemetrySupportStatus.unknown.value,
-    )
-    hardware_telemetry_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     device_config: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, default=dict, server_default="{}"
     )

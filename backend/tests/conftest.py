@@ -51,7 +51,6 @@ from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service import HostCrudService
 from app.hosts.service_diagnostics import HostDiagnosticsService
-from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import HostStatusPushService
@@ -356,14 +355,15 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _maintenance_svc = MaintenanceService(
             review=build_review_service(), settings=settings_service, publisher=test_event_bus
         )
-        _crud_svc = DeviceCrudService(
-            settings=settings_service, identity=DeviceIdentityConflictService(), publisher=test_event_bus
-        )
+        _crud_svc = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=test_event_bus)
         return DeviceServices(
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=test_event_bus, crud=_crud_svc, settings=settings_service),
+            groups=DeviceGroupsService(
+                publisher=test_event_bus,
+                crud=_crud_svc,
+            ),
             maintenance=_maintenance_svc,
             bulk=BulkOperationsService(
                 publisher=test_event_bus,
@@ -375,7 +375,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     review=build_review_service(), settings=settings_service, publisher=test_event_bus
                 ),
             ),
-            presenter=DevicePresenterService(settings=settings_service),
+            presenter=DevicePresenterService(),
             test_data=TestDataService(publisher=test_event_bus),
             crud=_crud_svc,
             capability=DeviceCapabilityService(),
@@ -451,7 +451,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return PortabilityServices(
             export=PortabilityExportService(),
             import_=PortabilityImportService(verification_enqueuer=VerificationService()),
-            inventory=InventoryExportService(settings=settings_service),
+            inventory=InventoryExportService(),
         )
 
     def override_get_host_services() -> HostServices:
@@ -461,10 +461,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
         return HostServices(
             crud=HostCrudService(publisher=test_event_bus, settings=settings_service),
-            hardware_telemetry=HardwareTelemetryService(
-                publisher=test_event_bus,
-                settings=settings_service,
-            ),
             resource_telemetry=HostResourceTelemetryService(
                 settings=settings_service,
             ),
@@ -604,7 +600,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             discovery=PackDiscoveryService(
                 agent_get_pack_devices=agent_operations.get_pack_devices,
                 circuit_breaker=test_circuit_breaker,
-                serializer=DevicePresenterService(settings=settings_service),
+                serializer=DevicePresenterService(),
                 identity_guard=DeviceIdentityConflictService(),
             ),
             storage=storage,

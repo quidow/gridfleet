@@ -37,7 +37,6 @@ class HostStatusPush(BaseModel):
     packs: dict[str, Any] | None = None
     node_health: dict[str, Any] | None = None
     device_health: dict[str, Any] | None = None
-    device_telemetry: dict[str, Any] | None = None
     device_properties: dict[str, Any] | None = None
 
 

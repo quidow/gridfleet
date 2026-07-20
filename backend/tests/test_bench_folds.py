@@ -95,7 +95,6 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus
-from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY, HostStatusPushService, ObservationFold
 from app.lifecycle.services import remediation_log
@@ -650,23 +649,6 @@ def _node_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str,
     }
 
 
-def _telemetry_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
-    k = _churn_count(len(devices), churn)
-    return {
-        "reported_at": now_utc().isoformat(),
-        "devices": {
-            d.identity: {
-                "observed_at": now_utc().isoformat(),
-                "support_status": "supported",
-                "battery_level_percent": 5 if i < k else 80,
-                "battery_temperature_c": 100.0 if i < k else 30.0,  # first k: critical temp
-                "charging_state": "charging",
-            }
-            for i, d in enumerate(devices)
-        },
-    }
-
-
 def _properties_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
     k = _churn_count(len(devices), churn)
     return {
@@ -736,21 +718,6 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
         await service.fold_host_nodes(db_session, host.id, _node_section(devices, CHURN))
 
     await _measure("fold_host_nodes", seed=_seed, run=_run, tap=tap)
-    event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
-
-
-async def test_bench_device_telemetry_fold(db_session: AsyncSession) -> None:
-    service = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}))
-    tap = QueryTap()
-    event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
-
-    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
-        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
-
-    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
-        await service.fold_host_device_telemetry(db_session, host.id, _telemetry_section(devices, CHURN))
-
-    await _measure("fold_host_device_telemetry", seed=_seed, run=_run, tap=tap)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
 
@@ -841,7 +808,6 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
-    hardware_telemetry = HardwareTelemetryService(publisher=event_bus, settings=settings)
     discovery = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(), circuit_breaker=Mock(), serializer=Mock(), identity_guard=AsyncMock()
     )
@@ -858,7 +824,6 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
         session_factory=session_factory,
         observation_folds=(
             ObservationFold("node_health", node_health.fold_host_nodes),
-            ObservationFold("device_telemetry", hardware_telemetry.fold_host_device_telemetry),
             ObservationFold("device_properties", property_refresh.fold_host_device_properties),
             ObservationFold("host_telemetry", resource_telemetry.fold_host_telemetry),
         ),
@@ -878,7 +843,6 @@ def _consolidated_payload(devices: list[_SeededDevice], churn: float, iteration:
         "host_telemetry": _host_telemetry_sample(iteration),
         "node_health": node_section,
         "device_health": _device_section(devices, churn),
-        "device_telemetry": _telemetry_section(devices, churn),
         "device_properties": _properties_section(devices, churn),
     }
 

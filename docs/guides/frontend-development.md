@@ -11,7 +11,7 @@ frontend/src/
 │   └── ui/       # Shared UI primitives (DataTable, Badge, Button, FilterBar)
 ├── context/      # Global React providers (auth, theme)
 ├── hooks/        # react-query data hooks with defined polling intervals
-├── lib/          # Framework-agnostic helpers (state derivation, telemetry, errors)
+├── lib/          # Framework-agnostic helpers (state derivation, errors)
 ├── pages/        # Routable top-level views (Dashboard, Devices, Hosts)
 ├── types/        # Stable frontend aliases derived from generated OpenAPI schemas
 └── utils/        # Small formatting/value helpers

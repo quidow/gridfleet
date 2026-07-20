@@ -55,23 +55,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         ),
     ),
     PublicEventDefinition(
-        name="device.hardware_health_changed",
-        category="device_and_node_lifecycle",
-        description="Hardware telemetry changed a device into warning or critical state.",
-        default_severity="warning",
-        allowed_severities=frozenset({"warning", "critical", "success"}),
-        typical_data_fields=(
-            "device_id",
-            "device_name",
-            "old_status",
-            "new_status",
-            "battery_level_percent",
-            "battery_temperature_c",
-            "charging_state",
-            "reported_at",
-        ),
-    ),
-    PublicEventDefinition(
         name="node.state_changed",
         category="device_and_node_lifecycle",
         description="Managed Appium node state changed.",

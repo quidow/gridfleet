@@ -12,8 +12,6 @@ from app.devices.models import (
     ConnectionType,
     DeviceOperationalState,
     DeviceType,
-    HardwareChargingState,
-    HardwareHealthStatus,
 )
 from app.devices.readiness_types import ReadinessState
 from app.sessions.models import Session, SessionStatus
@@ -266,13 +264,6 @@ class DeviceOrchestrationRead(BaseModel):
     derived: dict[str, Any]
 
 
-class HardwareTelemetryState(enum.StrEnum):
-    unknown = "unknown"
-    fresh = "fresh"
-    stale = "stale"
-    unsupported = "unsupported"
-
-
 class UnavailableReason(enum.StrEnum):
     busy = "busy"
     verifying = "verifying"
@@ -319,12 +310,6 @@ class DeviceRead(BaseModel):
     connection_type: ConnectionType
     ip_address: str | None
     device_config: dict[str, Any] | None = None
-    battery_level_percent: int | None
-    battery_temperature_c: float | None
-    charging_state: HardwareChargingState | None
-    hardware_health_status: HardwareHealthStatus
-    hardware_telemetry_reported_at: datetime | None
-    hardware_telemetry_state: HardwareTelemetryState
     readiness_state: ReadinessState
     missing_setup_fields: list[str]
     verified_at: datetime | None

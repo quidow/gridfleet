@@ -22,12 +22,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,
-    battery_level_percent: 84,
-    battery_temperature_c: 36.7,
-    charging_state: 'charging',
-    hardware_health_status: 'healthy',
-    hardware_telemetry_reported_at: '2026-03-30T10:00:03Z',
-    hardware_telemetry_state: 'fresh',
     readiness_state: 'verified',
     missing_setup_fields: [],
     verified_at: '2026-03-30T10:00:03Z',
@@ -290,7 +284,6 @@ describe('deriveDeviceDetailTriage', () => {
         review_reason: 'Recovery probe failed 5 times',
         review_set_at: '2026-05-17T15:00:00Z',
         operational_state: 'offline',
-        hardware_health_status: 'warning',
         appium_node: null,
       }),
       { health: makeHealth() },
@@ -302,28 +295,6 @@ describe('deriveDeviceDetailTriage', () => {
       title: 'Device shelved — operator review required',
       detail: 'Recovery probe failed 5 times',
       action: { kind: 'none' },
-    });
-  });
-
-  it('keeps unsupported telemetry passive while surfacing stale telemetry', () => {
-    const unsupported = deriveDeviceDetailTriage(
-      makeDevice({ hardware_telemetry_state: 'unsupported' }),
-      { health: makeHealth() },
-    );
-    const stale = deriveDeviceDetailTriage(
-      makeDevice({ hardware_telemetry_state: 'stale' }),
-      { health: makeHealth() },
-    );
-
-    expect(unsupported).toMatchObject({
-      tone: 'ok',
-      title: 'Device ready for sessions',
-      action: { kind: 'none' },
-    });
-    expect(stale).toMatchObject({
-      tone: 'warn',
-      title: 'Hardware Stale',
-      action: { kind: 'open-hardware-filter' },
     });
   });
 
@@ -349,32 +320,6 @@ describe('deriveDeviceDetailTriage', () => {
       tone: 'error',
       eyebrow: 'Health check',
       title: 'Device health check failed',
-    });
-  });
-
-  it('shows hardware warning when hardware health status is warning', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({ hardware_health_status: 'warning' }),
-      { health: makeHealth() },
-    );
-
-    expect(triage).toMatchObject({
-      tone: 'warn',
-      eyebrow: 'Hardware telemetry',
-      action: { kind: 'open-hardware-filter' },
-    });
-  });
-
-  it('shows hardware critical when hardware health status is critical', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({ hardware_health_status: 'critical' }),
-      { health: makeHealth() },
-    );
-
-    expect(triage).toMatchObject({
-      tone: 'error',
-      eyebrow: 'Hardware telemetry',
-      action: { kind: 'open-hardware-filter' },
     });
   });
 

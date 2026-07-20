@@ -38,7 +38,7 @@ Current auth behavior:
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `reserved`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, repeated `group` | `DeviceRead[]` |
+| `GET` | `/api/devices` | List devices with readiness, reservation, and lifecycle summary data | filters: `platform_id`, `status`, `reserved`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `needs_attention`, repeated `group` | `DeviceRead[]` |
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
@@ -391,15 +391,6 @@ Filters compose with AND semantics. Example: `GET /api/notifications?types=node.
 
 `DeviceRead` / `DeviceDetail` expose device state as `operational_state` (one of `available`, `busy`, `offline`, `verifying`, `maintenance`). Reservation is exposed separately as the boolean `is_reserved` plus an optional `reservation` object.
 
-They also return the latest hardware telemetry snapshot fields:
-
-- `battery_level_percent`
-- `battery_temperature_c`
-- `charging_state`
-- `hardware_health_status`
-- `hardware_telemetry_reported_at`
-- `hardware_telemetry_state`
-
 ## Device Groups
 
 Groups are addressed by their **key**, not by a UUID. A key matches `^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$` (lowercase alphanumerics and inner hyphens, 1–64 characters), is unique across all group types, and is **immutable** — `DeviceGroupUpdate` accepts `name`, `description`, and `filters` only. The group's internal UUID is never exposed in a route, response schema, event payload, or export bundle. A `{group_key}` path parameter that does not satisfy the key format returns `422`; a well-formed key naming no group returns `404`.
@@ -436,8 +427,6 @@ Supported dynamic group filters:
 - `os_version`
 - `os_version_display`
 - `reserved`
-- `hardware_health_status`
-- `hardware_telemetry_state`
 - `needs_attention`
 - `member_of` — a list of **static** group keys
 

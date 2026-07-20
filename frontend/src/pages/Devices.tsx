@@ -192,10 +192,6 @@ export function Devices() {
           onDeviceTypeFilterChange={controller.setDeviceTypeFilter}
           connectionTypeFilter={controller.connectionTypeFilter}
           onConnectionTypeFilterChange={controller.setConnectionTypeFilter}
-          hardwareHealthStatusFilter={controller.hardwareHealthStatusFilter}
-          onHardwareHealthStatusFilterChange={controller.setHardwareHealthStatusFilter}
-          hardwareTelemetryStateFilter={controller.hardwareTelemetryStateFilter}
-          onHardwareTelemetryStateFilterChange={controller.setHardwareTelemetryStateFilter}
           deviceHealthFilter={controller.deviceHealthFilter}
           onDeviceHealthFilterChange={controller.setDeviceHealthFilter}
           nodeHealthFilter={controller.nodeHealthFilter}

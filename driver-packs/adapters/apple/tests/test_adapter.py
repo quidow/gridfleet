@@ -13,7 +13,6 @@ REQUIRED_METHODS = {
     "pre_session",
     "post_session",
     "normalize_device",
-    "telemetry",
 }
 
 
@@ -24,28 +23,25 @@ def test_adapter_protocol() -> None:
 
 @pytest.mark.asyncio
 @patch("adapter.tools.host_supports_apple_devicectl", return_value=True)
-@patch("adapter.tools.find_go_ios", return_value="/usr/local/bin/ios")
-async def test_doctor_requires_devicectl_and_go_ios(_mock_go_ios: object, _mock_devicectl: object) -> None:
+async def test_doctor_requires_devicectl(_mock_devicectl: object) -> None:
     checks = await Adapter().doctor(None)
 
     assert [(check.check_id, check.ok) for check in checks] == [
         ("xcrun", True),
-        ("go_ios", True),
     ]
 
 
-def test_tool_versions_returns_xcodebuild_and_go_ios() -> None:
+def test_tool_versions_returns_xcodebuild() -> None:
     from unittest.mock import patch
 
     from adapter import Adapter
 
     xcode_result = type("R", (), {"stdout": "Xcode 16.2\nBuild version 16C5032a", "returncode": 0})()
-    go_ios_result = type("R", (), {"stdout": "v1.0.301", "returncode": 0})()
 
-    with patch("subprocess.run", side_effect=[xcode_result, go_ios_result]):
+    with patch("subprocess.run", side_effect=[xcode_result]):
         result = Adapter().tool_versions()
 
-    assert result == {"xcodebuild": "16.2", "go_ios": "1.0.301"}
+    assert result == {"xcodebuild": "16.2"}
 
 
 def test_tool_versions_handles_missing_tools() -> None:
@@ -56,4 +52,4 @@ def test_tool_versions_handles_missing_tools() -> None:
     with patch("subprocess.run", side_effect=FileNotFoundError()):
         result = Adapter().tool_versions()
 
-    assert result == {"xcodebuild": None, "go_ios": None}
+    assert result == {"xcodebuild": None}

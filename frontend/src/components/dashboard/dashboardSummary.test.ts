@@ -28,12 +28,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,
-    battery_level_percent: 90,
-    battery_temperature_c: 36,
-    charging_state: 'charging',
-    hardware_health_status: 'healthy',
-    hardware_telemetry_reported_at: '2026-04-16T12:00:00Z',
-    hardware_telemetry_state: 'fresh',
     readiness_state: 'verified',
     missing_setup_fields: [],
     verified_at: '2026-04-16T12:00:00Z',
@@ -80,27 +74,6 @@ function makeIncident(overrides: Partial<LifecycleIncidentRead> = {}): Lifecycle
 }
 
 describe('dashboardSummary', () => {
-  it('counts stale telemetry and hardware warnings independently', () => {
-    const summary = deriveDashboardFleetSummary([
-      makeDevice({ id: 'unsupported', hardware_telemetry_state: 'unsupported' }),
-      makeDevice({ id: 'stale', hardware_telemetry_state: 'stale' }),
-      makeDevice({ id: 'warning', hardware_health_status: 'warning' }),
-    ]);
-
-    expect(summary.staleTelemetry).toBe(1);
-    expect(summary.hardwareWarning).toBe(1);
-  });
-
-  it('counts hardware critical devices', () => {
-    const summary = deriveDashboardFleetSummary([
-      makeDevice({ id: 'critical', hardware_health_status: 'critical' }),
-      makeDevice({ id: 'stale', hardware_telemetry_state: 'stale' }),
-    ]);
-
-    expect(summary.hardwareCritical).toBe(1);
-    expect(summary.staleTelemetry).toBe(1);
-  });
-
   it('groups repeated lifecycle incidents by device, state, and label', () => {
     const grouped = groupLifecycleIncidents([
       makeIncident({ id: 'older', created_at: '2026-04-16T12:00:00Z', reason: 'Old reason' }),

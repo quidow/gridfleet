@@ -46,7 +46,6 @@ from app.devices.services.state import (
     is_verifying_sql,
     operational_state_rank_sql,
 )
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 from app.lifecycle.services import remediation_log
 
@@ -57,7 +56,6 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.schemas.filters import DeviceGroupFilters
     from app.devices.services.identity_conflicts import DeviceIdentityConflictService
     from app.events.protocols import EventPublisher
@@ -76,10 +74,7 @@ class UnknownGroupKeysError(ValueError):
 
 
 class DeviceCrudService:
-    def __init__(
-        self, *, settings: SettingsReader, identity: DeviceIdentityConflictService, publisher: EventPublisher
-    ) -> None:
-        self._settings = settings
+    def __init__(self, *, identity: DeviceIdentityConflictService, publisher: EventPublisher) -> None:
         self._identity = identity
         self._publisher = publisher
 
@@ -139,7 +134,6 @@ class DeviceCrudService:
                     device_attention.compute_needs_attention(
                         operational_state,
                         readiness.readiness_state,
-                        hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
                         review_required=bool(device.review_required),
                     )
                     is wanted
@@ -162,13 +156,6 @@ class DeviceCrudService:
                     continue
                 kept_health.append(device)
             devices = kept_health
-        if filters.hardware_telemetry_state is not None:
-            devices = [
-                device
-                for device in devices
-                if hardware_telemetry.hardware_telemetry_state_for_device(device, settings=self._settings)
-                == filters.hardware_telemetry_state
-            ]
         return devices
 
     async def _partition_group_filters(
@@ -201,7 +188,7 @@ class DeviceCrudService:
         self, db: AsyncSession, dynamic_groups: list[DeviceGroup], devices: list[Device]
     ) -> list[Device]:
         """AND membership across the dynamic keys, evaluated live over the batch."""
-        index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices, settings=self._settings)
+        index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices)
         keys = [group.key for group in dynamic_groups]
         return [device for device in devices if index.matches_all(device.id, keys)]
 
@@ -305,7 +292,6 @@ class DeviceCrudService:
 def _has_post_filters(filters: DeviceQueryFilters) -> bool:
     return (
         filters.needs_attention is not None
-        or filters.hardware_telemetry_state is not None
         or filters.device_health is not None
         or filters.node_health is not None
         or filters.viability is not None
@@ -347,8 +333,6 @@ def _version_and_text_conditions(filters: DeviceQueryFilters) -> list[ColumnElem
         conditions.append(Device.os_version == filters.os_version)
     if filters.os_version_display is not None:
         conditions.append(func.coalesce(Device.os_version_display, Device.os_version) == filters.os_version_display)
-    if filters.hardware_health_status is not None:
-        conditions.append(Device.hardware_health_status == filters.hardware_health_status)
     if filters.search:
         query = func.websearch_to_tsquery("simple", filters.search)
         conditions.append(device_search_vector_expression().op("@@")(query))
@@ -383,11 +367,11 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
 
 
 # Group-filter axes that map to a plain ``devices`` column predicate. The
-# fact-derived axes (``status``, ``reserved``, ``hardware_telemetry_state``,
-# ``needs_attention``) are deliberately excluded: their SQL twins are evaluated
-# at a different instant than the in-memory facts the evaluator uses, so
-# narrowing a *candidate* load on them could drop a device the evaluator would
-# have included. Those axes stay in the pure evaluator.
+# fact-derived axes (``status``, ``reserved``, ``needs_attention``) are
+# deliberately excluded: their SQL twins are evaluated at a different instant
+# than the in-memory facts the evaluator uses, so narrowing a *candidate*
+# load on them could drop a device the evaluator would have included. Those
+# axes stay in the pure evaluator.
 _COLUMN_SCOPE_AXES = frozenset(
     {
         "pack_id",
@@ -399,7 +383,6 @@ _COLUMN_SCOPE_AXES = frozenset(
         "connection_type",
         "os_version",
         "os_version_display",
-        "hardware_health_status",
     }
 )
 

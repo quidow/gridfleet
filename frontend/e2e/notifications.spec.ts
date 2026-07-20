@@ -48,10 +48,10 @@ const SEVERITY_EVENTS = [
   },
   {
     id: 'evt-degrade',
-    type: 'device.hardware_health_changed',
+    type: 'device.operational_state_changed',
     severity: 'warning',
     timestamp: new Date(Date.UTC(2026, 4, 1, 9, 4, 0)).toISOString(),
-    data: { device_name: 'test-device', old_status: 'ok', new_status: 'warning' },
+    data: { device_name: 'test-device', old_operational_state: 'available', new_operational_state: 'offline' },
   },
 ];
 
@@ -213,7 +213,7 @@ test.describe('Notifications Page — severity badges', () => {
     await page.keyboard.press('Escape');
 
     await expect(page).toHaveURL(/severity=critical%2Cwarning|severity=critical,warning|severity=warning%2Ccritical|severity=warning,critical/);
-    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'device.hardware_health_changed' }) })).toBeVisible();
+    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'device.operational_state_changed' }) })).toBeVisible();
 
     // Uncheck Critical, leaving only Warning
     await severityTrigger.click();

@@ -96,7 +96,7 @@ async def test_setup_required_device_evaluates_identically_in_both_paths(db_sess
     db_session.add(group)
     await db_session.flush()
     groups = await load_groups_by_keys(db_session, [group.key])
-    index = await load_group_membership_index(db_session, groups=groups, devices=[device], settings=_settings)
+    index = await load_group_membership_index(db_session, groups=groups, devices=[device])
 
     assert grid_facts[device.id].readiness_state == "setup_required"
     assert grid_facts[device.id].needs_attention is True
@@ -122,7 +122,7 @@ async def test_needs_attention_group_matches_but_readiness_gate_declines(db_sess
     db_session.add(DeviceGroup(key=key, name=key, group_type=GroupType.dynamic, filters={"needs_attention": True}))
     await db_session.flush()
     groups = await load_groups_by_keys(db_session, [key])
-    index = await load_group_membership_index(db_session, groups=groups, devices=[device], settings=_settings)
+    index = await load_group_membership_index(db_session, groups=groups, devices=[device])
     assert device.id in index.device_ids(key), "the group must still match the device"
 
     ticket = GridSessionQueueTicket(

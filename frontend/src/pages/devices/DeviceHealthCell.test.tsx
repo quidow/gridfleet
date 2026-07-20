@@ -30,10 +30,6 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       health_summary: healthSummary(),
       lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null },
       missing_setup_fields: [],
-      hardware_telemetry_state: 'unsupported',
-      hardware_health_status: 'ok',
-      battery_level_percent: null,
-      charging_state: null,
       device_type: 'real_device',
       connection_type: 'network',
       reservation: null,
@@ -76,19 +72,4 @@ describe('DeviceHealthCell', () => {
     expect(screen.getByText(/checked/i)).toBeInTheDocument();
   });
 
-  it('shows battery section in the popover when telemetry is present', async () => {
-    render(
-      <DeviceHealthCell
-        device={baseDevice({
-          hardware_telemetry_state: 'fresh',
-          battery_level_percent: 80,
-          charging_state: 'charging',
-        } as Partial<DeviceRead>)}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: /health details for test/i }));
-
-    expect(screen.getByText('Battery')).toBeInTheDocument();
-  });
 });

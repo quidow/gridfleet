@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.07.4
+release: 2026.07.5
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -9,8 +9,6 @@ requires:
   tool_dependencies:
     - name: xcodebuild
       description: "Builds and tests iOS/tvOS apps via Xcode"
-    - name: go_ios
-      description: "iOS real-device battery and hardware telemetry"
 appium_server:
   source: npm
   package: appium

@@ -10,7 +10,6 @@ from agent_app.pack.adapter_types import (
     DiscoveryContext,
     DoctorCheckResult,
     DoctorContext,
-    HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
     LifecycleActionResult,
@@ -20,7 +19,6 @@ from agent_app.pack.adapter_types import (
     SessionOutcome,
     SessionSpec,
     SubprocessEnvContribution,
-    TelemetryContext,
 )
 
 
@@ -76,11 +74,6 @@ class Adapter:
         from .normalize import normalize_device
 
         return await normalize_device(ctx)
-
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
-        from .telemetry import collect_telemetry
-
-        return await collect_telemetry(ctx)
 
     def tool_versions(self) -> dict[str, str | None]:
         import re

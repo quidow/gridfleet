@@ -56,8 +56,6 @@ def test_list_devices_sends_supported_filters(monkeypatch):
         connection_type="usb",
         os_version="14",
         search="pixel",
-        hardware_health_status="healthy",
-        hardware_telemetry_state="fresh",
         needs_attention=False,
     )
 
@@ -79,8 +77,6 @@ def test_list_devices_sends_supported_filters(monkeypatch):
                 ("connection_type", "usb"),
                 ("os_version", "14"),
                 ("search", "pixel"),
-                ("hardware_health_status", "healthy"),
-                ("hardware_telemetry_state", "fresh"),
                 ("needs_attention", "false"),
             ],
             10,

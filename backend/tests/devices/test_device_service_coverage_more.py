@@ -10,7 +10,6 @@ from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, De
 from app.devices.services import service as device_service
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -20,9 +19,7 @@ async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pyte
     prepared = {"name": "Device"}
     monkeypatch.setattr(DeviceCrudService, "prepare_device_create_payload", AsyncMock(return_value=prepared))
 
-    crud = DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     ensure = AsyncMock()
     monkeypatch.setattr(crud._identity, "ensure_device_payload_identity_available", ensure)
     monkeypatch.setattr(
@@ -53,9 +50,7 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
     db = MagicMock()
     db.rollback = AsyncMock()
     device_id = uuid.uuid4()
-    crud = DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
     assert await crud.update_device(db, device_id, DevicePatch(name="new")) is None
 

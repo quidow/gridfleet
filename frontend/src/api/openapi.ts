@@ -2110,13 +2110,8 @@ export interface components {
             /** Allocatable */
             allocatable: boolean;
             appium_node?: components["schemas"]["AppiumNodeRead"] | null;
-            /** Battery Level Percent */
-            battery_level_percent: number | null;
-            /** Battery Temperature C */
-            battery_temperature_c: number | null;
             /** Blocked Reason */
             blocked_reason?: string | null;
-            charging_state: components["schemas"]["HardwareChargingState"] | null;
             /** Connection Target */
             connection_target: string | null;
             connection_type: components["schemas"]["ConnectionType"];
@@ -2130,10 +2125,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             device_type: components["schemas"]["DeviceType"];
-            hardware_health_status: components["schemas"]["HardwareHealthStatus"];
-            /** Hardware Telemetry Reported At */
-            hardware_telemetry_reported_at: string | null;
-            hardware_telemetry_state: components["schemas"]["HardwareTelemetryState"];
             health_summary: components["schemas"]["DeviceHealthSummaryRead"];
             /**
              * Host Id
@@ -2262,8 +2253,6 @@ export interface components {
             connection_target?: string | null;
             connection_type?: components["schemas"]["ConnectionType"] | null;
             device_type?: components["schemas"]["DeviceType"] | null;
-            hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
-            hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
             /** Host Id */
             host_id?: string | null;
             /** Identity Value */
@@ -2447,13 +2436,8 @@ export interface components {
         DeviceRead: {
             /** Allocatable */
             allocatable: boolean;
-            /** Battery Level Percent */
-            battery_level_percent: number | null;
-            /** Battery Temperature C */
-            battery_temperature_c: number | null;
             /** Blocked Reason */
             blocked_reason?: string | null;
-            charging_state: components["schemas"]["HardwareChargingState"] | null;
             /** Connection Target */
             connection_target: string | null;
             connection_type: components["schemas"]["ConnectionType"];
@@ -2467,10 +2451,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             device_type: components["schemas"]["DeviceType"];
-            hardware_health_status: components["schemas"]["HardwareHealthStatus"];
-            /** Hardware Telemetry Reported At */
-            hardware_telemetry_reported_at: string | null;
-            hardware_telemetry_state: components["schemas"]["HardwareTelemetryState"];
             health_summary: components["schemas"]["DeviceHealthSummaryRead"];
             /**
              * Host Id
@@ -3301,21 +3281,6 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /**
-         * HardwareChargingState
-         * @enum {string}
-         */
-        HardwareChargingState: "charging" | "discharging" | "full" | "not_charging" | "unknown";
-        /**
-         * HardwareHealthStatus
-         * @enum {string}
-         */
-        HardwareHealthStatus: "unknown" | "healthy" | "warning" | "critical";
-        /**
-         * HardwareTelemetryState
-         * @enum {string}
-         */
-        HardwareTelemetryState: "unknown" | "fresh" | "stale" | "unsupported";
         /** HealthCheckAppliesWhenOut */
         HealthCheckAppliesWhenOut: {
             /** Connection Types */
@@ -3823,10 +3788,6 @@ export interface components {
             } | null;
             /** Device Properties */
             device_properties?: {
-                [key: string]: unknown;
-            } | null;
-            /** Device Telemetry */
-            device_telemetry?: {
                 [key: string]: unknown;
             } | null;
             /**
@@ -6348,8 +6309,6 @@ export interface operations {
                 os_version?: string | null;
                 os_version_display?: string | null;
                 search?: string | null;
-                hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
-                hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
                 device_health?: ("ok" | "warn" | "failed" | "unknown") | null;
                 node_health?: ("ok" | "warn" | "failed" | "unknown") | null;
@@ -10302,8 +10261,6 @@ export interface operations {
                 os_version?: string | null;
                 os_version_display?: string | null;
                 search?: string | null;
-                hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
-                hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
                 device_health?: ("ok" | "warn" | "failed" | "unknown") | null;
                 node_health?: ("ok" | "warn" | "failed" | "unknown") | null;

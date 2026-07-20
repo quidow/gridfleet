@@ -22,10 +22,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated out of the run; the escalated device is placed into maintenance or left available per `general.run_failure_escalates_to_maintenance`; `0` disables escalation |
 | `general.run_failure_escalates_to_maintenance` | `general` | `bool` | `true` | boolean | When a device is escalated out of a run (CI preparation failure or cooldown threshold exceeded), true places it into maintenance (manual recovery); false leaves it available. The device is released from the run regardless |
-| `general.hardware_telemetry_stale_timeout_sec` | `general` | `int` | `900` | `60..86400` | How old hardware telemetry can get before the UI marks it stale |
-| `general.hardware_temperature_warning_c` | `general` | `int` | `38` | `20..100` | Temperature threshold that raises a hardware warning |
-| `general.hardware_temperature_critical_c` | `general` | `int` | `42` | `20..100` | Temperature threshold that raises a critical hardware alert |
-| `general.hardware_telemetry_consecutive_samples` | `general` | `int` | `2` | `1..10` | Consecutive warning or critical samples required before escalating hardware health |
 | `general.session_viability_interval_sec` | `general` | `int` | `3600` | `0..604800` | Interval for idle session-viability probes; `0` disables the loop |
 | `general.session_viability_timeout_sec` | `general` | `int` | `120` | `10..600` | Timeout for a session-viability probe |
 | `general.session_viability_failure_threshold` | `general` | `int` | `3` | `1..20` | Consecutive session-viability failures required before the manager parks the device; tolerates transient Appium hiccups |

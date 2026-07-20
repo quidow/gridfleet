@@ -68,7 +68,6 @@ The manager publishes one shared event object shape:
 | --- | --- | --- | --- | --- |
 | `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state` | `info` | all | node lifecycle, health recovery/failure, session-sync busy/idle flows |
 | `device.verification.updated` | full verification job snapshot | `info` | `info`, `success`, `warning`, `critical` | verification pipeline |
-| `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | `warning` | `warning`, `critical`, `success` | hardware telemetry loop |
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | `info` | `info`, `success`, `warning` | node start/stop/recovery paths |
 | `device.lifecycle_incident` | `device_id`, `device_name`, `event_type`, `label`, `summary_state`, plus nullable `reason`, `detail`, `source`, `run_id`, `run_name` | `info` | all | lifecycle incident recorder (`lifecycle.services.incidents`): recovery suppressed/failed/backoff/recovered, deferred and auto stop, node-health escalation, run exclusion/cooldown |
 | `node.crash` | `device_id`, `device_name`, `error`, `will_restart` | `critical` | `critical`, `warning` | node-health failure handling |
@@ -152,7 +151,6 @@ The `device_events` table is narrower than the live event bus. Causes are record
 - `connectivity_lost` — device disconnect (connectivity sweep), host heartbeat loss (one per device on the host), connectivity remediation escalation
 - `node_crash`
 - `node_restart`
-- `hardware_health_changed`
 - `connectivity_restored` — legacy value; no longer emitted (historical rows only)
 - `lifecycle_deferred_stop`
 - `lifecycle_auto_stopped`

@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from app.appium_nodes.services.effective_state import compute_effective_state
 from app.core.timeutil import now_utc
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -55,14 +54,9 @@ def _verdict(status: HealthVerdictStatus, detail: str | None, checked_at: dateti
 
 
 def _device_verdict(device: Device) -> dict[str, Any]:
-    hardware = hardware_telemetry.current_hardware_health_status(device)
     checked_at = device.device_checks_checked_at
     if device.device_checks_healthy is False:
         return _verdict("failed", device.device_checks_summary or "Device checks failed", checked_at)
-    if hardware.value == "critical":
-        return _verdict("failed", "Hardware critical", checked_at)
-    if hardware.value == "warning":
-        return _verdict("warn", "Hardware warning", checked_at)
     if device.device_checks_healthy is True:
         return _verdict("ok", device.device_checks_summary, checked_at)
     return _verdict("unknown", "not checked", None)

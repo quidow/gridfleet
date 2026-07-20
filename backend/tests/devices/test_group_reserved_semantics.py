@@ -20,7 +20,6 @@ import pytest
 from app.devices.models import Device, DeviceGroup, DeviceReservation, GroupType
 from app.devices.services.group_membership import load_group_membership_index
 from app.runs.models import RunState, TestRun
-from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,7 +81,6 @@ async def _reserved_axis_members(db_session: AsyncSession, devices: list[Device]
         db_session,
         groups=[group],
         devices=devices,
-        settings=FakeSettingsReader({}),
     )
     return set(index.device_ids(group.key))
 

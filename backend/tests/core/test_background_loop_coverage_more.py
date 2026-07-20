@@ -63,15 +63,16 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_maint_2 = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
     )
-    _svc_crud_2 = DeviceCrudService(
-        settings=_svc_settings_2, identity=DeviceIdentityConflictService(), publisher=event_bus
-    )
+    _svc_crud_2 = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_2, crud=_svc_crud_2, settings=_svc_settings_2),
+            groups=DeviceGroupsService(
+                publisher=_svc_pub_2,
+                crud=_svc_crud_2,
+            ),
             maintenance=_svc_maint_2,
             bulk=BulkOperationsService(
                 publisher=_svc_pub_2,
@@ -83,7 +84,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
                     review=build_review_service(), settings=_svc_settings_2, publisher=event_bus
                 ),
             ),
-            presenter=DevicePresenterService(settings=_svc_settings_2),
+            presenter=DevicePresenterService(),
             test_data=TestDataService(publisher=_svc_pub_2),
             crud=_svc_crud_2,
             capability=DeviceCapabilityService(),

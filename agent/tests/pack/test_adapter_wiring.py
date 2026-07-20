@@ -22,7 +22,6 @@ from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
     DoctorCheckResult,
     DoctorContext,
-    HardwareTelemetry,
     HealthCheckResult,
     LifecycleActionResult,
     NormalizedDevice,
@@ -114,10 +113,6 @@ class _RecordingAdapter:
             model_number="MODEL-1",
             software_versions={"firmware": "15.1.4", "build": "3321"},
         )
-
-    async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        self.calls.append(("telemetry", {"ctx": ctx}))
-        return HardwareTelemetry(supported=False)
 
 
 def _make_adapter_pack(pack_id: str = "vendor-foo", release: str = "0.1.0") -> DesiredPack:

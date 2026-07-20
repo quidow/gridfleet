@@ -114,7 +114,7 @@ class Adapter:
         assert failed["ok"] is False
         assert failed["error"]["kind"] == "exception"  # type: ignore[index]
         assert "boom" in failed["error"]["message"]  # type: ignore[index]
-        unknown = await _request(proc, 9, "telemetry", {"ctx": {}})
+        unknown = await _request(proc, 9, "telemetry_gone", {"ctx": {}})
         assert unknown["id"] == 9
         assert unknown["error"]["kind"] == "unknown_hook"  # type: ignore[index]
     finally:

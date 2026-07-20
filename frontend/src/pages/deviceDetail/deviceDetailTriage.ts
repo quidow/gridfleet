@@ -1,7 +1,3 @@
-import {
-  HARDWARE_HEALTH_STATUS_LABELS,
-  HARDWARE_TELEMETRY_STATE_LABELS,
-} from '../../lib/hardwareTelemetry';
 import type { DeviceDetail, DeviceHealth } from '../../types';
 
 export type DeviceDetailTriageTone = 'ok' | 'warn' | 'error' | 'neutral' | 'info';
@@ -10,7 +6,6 @@ export type DeviceDetailTriageActionKind =
   | 'verify'
   | 'open-run'
   | 'start-node'
-  | 'open-hardware-filter'
   | 'exit-maintenance'
   | 'none';
 
@@ -37,20 +32,6 @@ export interface DeviceDetailTriage {
 type Options = {
   health?: DeviceHealth;
 };
-
-function hardwareTone(device: DeviceDetail): DeviceDetailTriageTone | null {
-  if (device.hardware_health_status === 'critical') return 'error';
-  if (device.hardware_health_status === 'warning') return 'warn';
-  if (device.hardware_telemetry_state === 'stale') return 'warn';
-  return null;
-}
-
-function hardwareFilterTarget(device: DeviceDetail): string {
-  if (device.hardware_health_status === 'critical' || device.hardware_health_status === 'warning') {
-    return `/devices?hardware_health_status=${device.hardware_health_status}`;
-  }
-  return `/devices?hardware_telemetry_state=${device.hardware_telemetry_state}`;
-}
 
 function failedHealthDetail(device: DeviceDetail, health?: DeviceHealth): string {
   const checkDetail = health?.device_checks.detail;
@@ -154,24 +135,6 @@ export function deriveDeviceDetailTriage(
     };
   }
 
-  const hardwareIssueTone = hardwareTone(device);
-  if (hardwareIssueTone) {
-    const value = device.hardware_telemetry_state === 'stale'
-        ? HARDWARE_TELEMETRY_STATE_LABELS.stale
-        : HARDWARE_HEALTH_STATUS_LABELS[device.hardware_health_status];
-    return {
-      tone: hardwareIssueTone,
-      eyebrow: 'Hardware telemetry',
-      title: `Hardware ${value}`,
-      detail: 'Review the latest hardware snapshot before routing long sessions.',
-      action: {
-        kind: 'open-hardware-filter',
-        label: 'View Affected Devices',
-        to: hardwareFilterTarget(device),
-      },
-    };
-  }
-
   if (reservation) {
     const busy = device.operational_state === 'busy';
     return {
@@ -218,14 +181,11 @@ export function deriveDeviceDetailTriage(
     };
   }
 
-  const telemetryNotReported = device.hardware_telemetry_state === 'unsupported';
   return {
     tone: 'ok',
     eyebrow: 'Ready',
     title: 'Device ready for sessions',
-    detail: telemetryNotReported
-      ? 'Readiness, availability, lifecycle, and connectivity are clear. Battery telemetry is not reported by this host.'
-      : 'Readiness, availability, lifecycle, and telemetry are clear.',
+    detail: 'Readiness, availability, lifecycle, and connectivity are clear.',
     action: { kind: 'none', label: '' },
   };
 }

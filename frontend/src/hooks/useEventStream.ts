@@ -13,7 +13,6 @@ const EVENT_QUERY_MAP: Record<string, ReadonlyArray<readonly string[]>> = {
   'node.state_changed': [qk.devices.root, qk.device.root, qk.deviceCapabilities.root],
   'node.crash': [qk.devices.root, qk.device.root],
   'device.health_changed': [qk.devices.root, qk.device.root, qk.deviceHealth.root, qk.health.root],
-  'device.hardware_health_changed': [qk.devices.root, qk.device.root, qk.deviceHealth.root, qk.health.root],
   'device.crashed': [qk.devices.root, qk.device.root, qk.deviceHealth.root],
   'host.status_changed': [qk.hosts.root, qk.host.root, qk.devices.root, qk.health.root, qk.hostDriverPacks.root],
   'host.heartbeat_lost': [qk.hosts.root, qk.host.root, qk.devices.root, qk.health.root],
@@ -85,7 +84,6 @@ const DEFAULT_TOAST_EVENTS = [
   'node.crash',
   'host.heartbeat_lost',
   'device.operational_state_changed',
-  'device.hardware_health_changed',
   'run.expired',
 ];
 const DEFAULT_TOAST_DISMISS_SEC = 5;

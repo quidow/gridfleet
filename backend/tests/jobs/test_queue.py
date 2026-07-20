@@ -52,18 +52,14 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
             preparation=VerificationPreparationService(
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(
-                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 review=build_review_service(),
                 publisher=AsyncMock(),
                 agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=AsyncMock()),
-                crud=DeviceCrudService(
-                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
-                ),
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

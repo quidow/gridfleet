@@ -10,7 +10,6 @@ from agent_app.pack.adapter_types import (
     DiscoveryContext,
     DoctorCheckResult,
     DoctorContext,
-    HardwareTelemetry,
     HealthCheckResult,
     HealthContext,
     LifecycleActionResult,
@@ -19,7 +18,6 @@ from agent_app.pack.adapter_types import (
     NormalizeDeviceContext,
     SessionOutcome,
     SessionSpec,
-    TelemetryContext,
 )
 
 if TYPE_CHECKING:
@@ -165,7 +163,3 @@ async def dispatch_normalize_device(
     ctx: NormalizeDeviceContext,
 ) -> NormalizedDevice:
     return await _call_hook(handle, "normalize_device", {"ctx": _context_payload(ctx)}, NormalizedDevice)
-
-
-async def dispatch_telemetry(handle: WorkerHandle, ctx: TelemetryContext) -> HardwareTelemetry:
-    return await _call_hook(handle, "telemetry", {"ctx": _context_payload(ctx)}, HardwareTelemetry)

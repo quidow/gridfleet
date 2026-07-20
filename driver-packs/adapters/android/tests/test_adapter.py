@@ -13,7 +13,6 @@ REQUIRED_METHODS = {
     "pre_session",
     "post_session",
     "normalize_device",
-    "telemetry",
 }
 
 

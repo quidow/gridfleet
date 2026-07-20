@@ -10,10 +10,9 @@ from agent_app.pack.adapter_dispatch import (
     dispatch_normalize_device,
     dispatch_post_session,
     dispatch_pre_session,
-    dispatch_telemetry,
 )
 from agent_app.pack.adapter_types import SessionOutcome, SessionSpec
-from agent_app.pack.contexts import LifecycleCtx, NormalizeCtx, TelemetryCtx
+from agent_app.pack.contexts import LifecycleCtx, NormalizeCtx
 from agent_app.pack.router import _adapter_health_payload, _adapter_lifecycle_payload, worker_or_none
 
 if TYPE_CHECKING:
@@ -105,25 +104,3 @@ async def adapter_normalize_device(
         return None
     result = await dispatch_normalize_device(handle, NormalizeCtx(host_id, platform_id, raw_input))
     return dataclasses.asdict(result)
-
-
-async def adapter_telemetry(
-    *,
-    adapter_registry: AdapterRegistry,
-    pack_id: str,
-    pack_release: str,
-    identity_value: str,
-    connection_target: str,
-) -> dict[str, Any] | None:
-    handle = worker_or_none(adapter_registry, pack_id, pack_release)
-    if handle is None or not adapter_supports(handle, "telemetry"):
-        return None
-    result = await dispatch_telemetry(handle, TelemetryCtx(identity_value, connection_target))
-    if not result.supported:
-        return {"support_status": "unsupported"}
-    return {
-        "support_status": "supported",
-        "battery_level_percent": result.battery_level_percent,
-        "battery_temperature_c": result.battery_temperature_c,
-        "charging_state": result.charging_state,
-    }

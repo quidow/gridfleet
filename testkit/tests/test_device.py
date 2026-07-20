@@ -20,7 +20,6 @@ SERIALIZED_DEVICE = {
     "model": "Pixel 6",
     "operational_state": "available",
     "is_reserved": False,
-    "battery_level_percent": 87,
     "device_config": {"foo": "bar"},
     "health_summary": {"overall": "ok"},
 }

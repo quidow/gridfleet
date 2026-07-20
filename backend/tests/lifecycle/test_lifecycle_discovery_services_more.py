@@ -10,7 +10,6 @@ from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.lifecycle.services import incidents
 from app.lifecycle.services.incidents import LifecycleIncidentDetails, LifecycleIncidentService
 from app.packs.services.discovery import PackDiscoveryService
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -154,7 +153,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     svc = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
         circuit_breaker=Mock(),
-        serializer=DevicePresenterService(settings=FakeSettingsReader()),
+        serializer=DevicePresenterService(),
         identity_guard=DeviceIdentityConflictService(),
     )
 

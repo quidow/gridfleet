@@ -79,7 +79,6 @@ async def test_build_payload_includes_probe_sections() -> None:
     probe_sections = {
         "node_health": {"reported_at": "now", "nodes": []},
         "device_health": {"reported_at": "now", "devices": {}},
-        "device_telemetry": {"reported_at": "now", "devices": {}},
         "device_properties": {"reported_at": "now", "devices": {}},
     }
     loop = StatusPushLoop(
@@ -93,7 +92,7 @@ async def test_build_payload_includes_probe_sections() -> None:
 
     payload = await loop.build_payload()
 
-    assert {"node_health", "device_health", "device_telemetry", "device_properties"} <= set(payload)
+    assert {"node_health", "device_health", "device_properties"} <= set(payload)
     assert payload["device_health"] == probe_sections["device_health"]
 
 
@@ -110,7 +109,7 @@ async def test_build_payload_omits_probe_sections_when_unavailable() -> None:
 
     payload = await loop.build_payload()
 
-    assert not {"node_health", "device_health", "device_telemetry", "device_properties"} & set(payload)
+    assert not {"node_health", "device_health", "device_properties"} & set(payload)
 
 
 @pytest.mark.asyncio

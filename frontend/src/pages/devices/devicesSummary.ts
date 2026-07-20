@@ -3,8 +3,6 @@ import type {
   DeviceChipStatus,
   DeviceFilterStatus,
   DeviceRead,
-  HardwareHealthStatus,
-  HardwareTelemetryState,
 } from '../../types';
 import { deviceChipStatus } from '../../lib/deviceState';
 
@@ -12,8 +10,6 @@ const SUMMARY_PARAM_KEYS = [
   'status',
   'reserved',
   'needs_attention',
-  'hardware_health_status',
-  'hardware_telemetry_state',
 ] as const;
 
 export interface DevicesSummaryStats {
@@ -24,17 +20,12 @@ export interface DevicesSummaryStats {
   offline: number;
   maintenance: number;
   attentionCount: number;
-  hardwareCritical: number;
-  hardwareWarning: number;
-  telemetryStale: number;
 }
 
 interface DevicesSummaryHrefOptions {
   status?: DeviceFilterStatus | null;
   reserved?: boolean;
   needsAttention?: boolean;
-  hardwareHealthStatus?: HardwareHealthStatus | null;
-  hardwareTelemetryState?: HardwareTelemetryState | null;
 }
 
 function countByAvailabilityStatus(devices: DeviceRead[], status: DeviceChipStatus) {
@@ -53,9 +44,6 @@ export function deriveDevicesSummaryStats(devices: DeviceRead[]): DevicesSummary
     offline: countByAvailabilityStatus(devices, 'offline'),
     maintenance: countByAvailabilityStatus(devices, 'maintenance'),
     attentionCount: devices.filter((device) => device.needs_attention).length,
-    hardwareCritical: devices.filter((device) => device.hardware_health_status === 'critical').length,
-    hardwareWarning: devices.filter((device) => device.hardware_health_status === 'warning').length,
-    telemetryStale: devices.filter((device) => device.hardware_telemetry_state === 'stale').length,
   };
 }
 
@@ -85,12 +73,6 @@ export function buildDevicesSummaryHref(
   }
   if (options.needsAttention) {
     nextParams.set('needs_attention', 'true');
-  }
-  if (options.hardwareHealthStatus) {
-    nextParams.set('hardware_health_status', options.hardwareHealthStatus);
-  }
-  if (options.hardwareTelemetryState) {
-    nextParams.set('hardware_telemetry_state', options.hardwareTelemetryState);
   }
 
   const query = nextParams.toString();

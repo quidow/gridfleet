@@ -25,7 +25,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
 
-_crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus)
+_crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
 
 HOST_PAYLOAD = {
     "hostname": "remote-host",

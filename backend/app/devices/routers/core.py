@@ -14,14 +14,13 @@ from app.devices.dependencies import DeviceServicesDep
 # covered by runtime-evaluated-decorators); FastAPI resolves its Query-param enum
 # annotations at runtime via get_type_hints, so these must stay at module scope.
 from app.devices.group_keys import GroupKey  # noqa: TC001
-from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus  # noqa: TC001
+from app.devices.models import ConnectionType, DeviceType  # noqa: TC001
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.device import (
     DeviceDetail,
     DeviceListPage,
     DevicePatch,
     DeviceRead,
-    HardwareTelemetryState,
     SessionOutcomeHeatmapRow,
 )
 from app.devices.schemas.filters import (
@@ -65,8 +64,6 @@ def build_device_query_filters(
     os_version: Annotated[str | None, Query()] = None,
     os_version_display: Annotated[str | None, Query()] = None,
     search: Annotated[str | None, Query()] = None,
-    hardware_health_status: Annotated[HardwareHealthStatus | None, Query()] = None,
-    hardware_telemetry_state: Annotated[HardwareTelemetryState | None, Query()] = None,
     needs_attention: Annotated[bool | None, Query()] = None,
     device_health: Annotated[HealthVerdictFilter | None, Query()] = None,
     node_health: Annotated[HealthVerdictFilter | None, Query()] = None,
@@ -88,8 +85,6 @@ def build_device_query_filters(
         os_version=os_version,
         os_version_display=os_version_display,
         search=search,
-        hardware_health_status=hardware_health_status,
-        hardware_telemetry_state=hardware_telemetry_state,
         needs_attention=needs_attention,
         device_health=device_health,
         node_health=node_health,

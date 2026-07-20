@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { AnalyticsEmptyState } from '../analytics/AnalyticsEmptyState';
-import { HardwareTelemetryStateBadge } from '../HardwareTelemetryStateBadge';
+import { HostTelemetryStateBadge } from '../HostTelemetryStateBadge';
 import { Card } from '../ui/Card';
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import { deriveHostResourceTelemetryState } from '../../lib/hostResourceTelemetry';
@@ -122,7 +122,7 @@ export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <HardwareTelemetryStateBadge state={telemetryState} />
+          <HostTelemetryStateBadge state={telemetryState} />
           {!hostOnline ? (
             <span className="text-xs text-text-3">Host offline; charts show the last recorded samples.</span>
           ) : null}

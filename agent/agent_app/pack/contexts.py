@@ -31,12 +31,6 @@ class NormalizeCtx:
 
 
 @dataclass
-class TelemetryCtx:
-    device_identity_value: str
-    connection_target: str
-
-
-@dataclass
 class HealthCtx:
     device_identity_value: str
     platform_id: str | None = None

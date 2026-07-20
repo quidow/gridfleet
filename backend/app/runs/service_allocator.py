@@ -110,7 +110,6 @@ async def _classify_shortfall_gates(
     reserved_run_by_device: dict[uuid.UUID, uuid.UUID],
     *,
     restart_window_sec: int,
-    settings: SettingsReader,
 ) -> tuple[Counter[str], Counter[str], set[uuid.UUID]]:
     """Bucket each device by the first allocator gate it fails.
 
@@ -147,7 +146,6 @@ async def _classify_shortfall_gates(
             db,
             groups=groups,
             devices=devices,
-            settings=settings,
             pack_catalog=pack_catalog,
             operational_states=op_states,
         )
@@ -211,8 +209,6 @@ def _format_shortfall_parts(
 async def _describe_requirement_shortfall(
     db: AsyncSession,
     requirement: DeviceRequirement,
-    *,
-    settings: SettingsReader,
 ) -> str:
     """Per-gate breakdown of why the requirement's candidates were excluded.
 
@@ -255,7 +251,6 @@ async def _describe_requirement_shortfall(
         devices,
         reserved_run_by_device,
         restart_window_sec=_RESTART_WINDOW_FALLBACK_SEC,
-        settings=settings,
     )
     return _format_shortfall_parts(len(devices), state_counts, gate_counts, blocking_runs)
 
@@ -333,7 +328,6 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     requirements: list[DeviceRequirement],
     *,
     restart_window_sec: int,
-    settings: SettingsReader,
 ) -> list[list[Device]]:
     """One batch pass: load every fact the run-allocator needs in a bounded number
     of reads, then select devices per requirement in request order excluding
@@ -438,7 +432,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     group_index: GroupMembershipIndex | None = None
     if groups:
         group_index = await load_group_membership_index(
-            db, groups=groups, devices=candidates, settings=settings, pack_catalog=pack_catalog
+            db, groups=groups, devices=candidates, pack_catalog=pack_catalog
         )
 
     # Step 7a: in-memory selection per requirement in request order, excluding
@@ -537,7 +531,6 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
                 is_reserved=False,
                 readiness_state=assess_device_with_pack(locked_device, pack).readiness_state,
                 static_group_keys=locked_static_keys.get(locked_device.id, frozenset()),
-                settings=settings,
                 review_required=False,
             )
         locked_group_index = evaluate_group_memberships(
@@ -627,7 +620,7 @@ class RunAllocatorService:
                 await db.rollback()
                 attempt += 1
                 if attempt >= _MATCH_RETRY_ATTEMPTS:
-                    shortfall = await _describe_requirement_shortfall(db, exc.requirement, settings=self._settings)
+                    shortfall = await _describe_requirement_shortfall(db, exc.requirement)
                     raise ValueError(
                         "Not enough devices for requirement: "
                         f"pack_id={exc.requirement.pack_id}, "
@@ -694,7 +687,6 @@ class RunAllocatorService:
             db,
             data.requirements,
             restart_window_sec=self._restart_window_sec(),
-            settings=self._settings,
         )
         all_matched: list[Device] = []
         for req, devices in zip(data.requirements, selection, strict=True):
