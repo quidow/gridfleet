@@ -56,8 +56,13 @@ def build_grid_stereotype_caps(
     ``matching_group_keys`` is the set of device-group keys the membership index
     says match this device; only those keys are advertised as
     ``gridfleet:group:<key>`` caps (boolean true). The caller never enumerates
-    the full group catalog. Task 4 wires the membership index; until then the
-    default empty collection means no group caps are advertised.
+    the full group catalog — the grid allocator passes the subset a ticket
+    actually asked about (``_matching_group_keys_for_device``), so the stereotype
+    stays proportional to the request rather than to the fleet's group count.
+    The default empty collection is for callers that render a stereotype outside
+    allocation (node start), where group routing is not being decided; such a
+    stereotype advertises no group caps and matches no ``gridfleet:group:*``
+    selector.
     """
     stereotype: dict[str, Any] = {}
     if pack_stereotype:

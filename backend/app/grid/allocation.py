@@ -1112,8 +1112,12 @@ async def device_match_surface(
 
     *matching_group_keys* is the set of device-group keys the membership index says
     match this device; only those keys are advertised as ``gridfleet:group:<key>``
-    caps (boolean true). Task 4 wires the membership index; until then the default
-    empty collection means no group caps are advertised.
+    caps (boolean true). ``try_allocate`` computes it per eligible device with
+    ``_matching_group_keys_for_device``, narrowed to the keys the current ticket
+    and its older waiters actually requested — so the surface never enumerates the
+    full group catalog. The default empty collection applies to callers rendering a
+    match surface outside allocation, whose stereotype matches no
+    ``gridfleet:group:*`` selector.
     """
     surface: dict[str, Any] = {}
     resolved = resolve_pack_for_device(device)
