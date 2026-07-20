@@ -27,12 +27,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     identity_value: 'emulator-5554',
     connection_target: null,
     ip_address: null,
-    battery_level_percent: null,
-    battery_temperature_c: null,
-    charging_state: null,
-    hardware_health_status: 'unknown',
-    hardware_telemetry_reported_at: null,
-    hardware_telemetry_state: 'unknown',
     verified_at: null,
     lifecycle_policy_summary: {
       state: 'idle',

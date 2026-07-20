@@ -319,8 +319,8 @@ async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGr
     A group whose filters pin nothing a query can narrow on is *unbounded*: it
     genuinely spans the fleet, so the union with it is the fleet and no arm can
     reduce it. That is inherent, not a bug — but it is worth seeing, because the
-    axes that produce it (``status``, ``reserved``, ``hardware_telemetry_state``,
-    ``needs_attention``) are cheap to filter on in the UI and easy to reach by
+    axes that produce it (``status``, ``reserved``, ``needs_attention``) are
+    cheap to filter on in the UI and easy to reach by
     accident. Those axes are deliberately excluded from the column scope: their
     SQL twins evaluate at a different instant than the evaluator's facts, so
     narrowing on them could drop a real member. Unbounded groups are therefore
