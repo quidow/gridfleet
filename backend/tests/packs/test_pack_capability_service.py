@@ -1,7 +1,9 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
+from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.packs.services.capability import (
     _device_field_defaults,
     coerce_device_config_fields,
@@ -35,6 +37,59 @@ async def test_render_stereotype_missing_platform_raises(db_session: AsyncSessio
 
     with pytest.raises(LookupError):
         await render_stereotype(db_session, pack_id="appium-uiautomator2", platform_id="does_not_exist")
+
+
+@pytest.mark.asyncio
+async def test_load_stereotype_template_reports_absent_pack(db_session: AsyncSession) -> None:
+    """No ``driver_packs`` row at all — the message must name the missing pack,
+    not claim the pack exists with no releases."""
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    with pytest.raises(LookupError) as exc:
+        await load_stereotype_template(db_session, pack_id="no-such-pack", platform_id="android_mobile")
+    assert "unknown pack no-such-pack" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_load_stereotype_template_reports_pack_with_no_releases(db_session: AsyncSession) -> None:
+    """Pack row exists but carries no selectable release — the operator must be
+    pointed at the empty pack, not at a supposedly missing platform."""
+    db_session.add(
+        DriverPack(
+            id="empty-pack",
+            display_name="Empty pack",
+            maintainer="tests",
+            license="MIT",
+            state=PackState.enabled,
+            runtime_policy={"strategy": "recommended"},
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(LookupError) as exc:
+        await load_stereotype_template(db_session, pack_id="empty-pack", platform_id="android_mobile")
+    assert "no releases for pack empty-pack" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_load_stereotype_template_reports_platform_missing_from_release(db_session: AsyncSession) -> None:
+    """Pack and release both present, platform absent — the message names the
+    platform and the release version it was looked for in."""
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    with pytest.raises(LookupError) as exc:
+        await load_stereotype_template(db_session, pack_id="appium-uiautomator2", platform_id="does_not_exist")
+    message = str(exc.value)
+    assert "does_not_exist" in message
+    assert "appium-uiautomator2" in message
+
+    release = await db_session.scalar(
+        select(DriverPackRelease).where(DriverPackRelease.pack_id == "appium-uiautomator2")
+    )
+    assert release is not None
+    assert release.release in message, f"release version missing from message: {message}"
 
 
 @pytest.mark.asyncio

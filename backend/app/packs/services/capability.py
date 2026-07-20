@@ -143,19 +143,25 @@ async def load_stereotype_template(
     """Fetch the device-independent stereotype template for a pack/platform.
 
     The only DB-touching half of stereotype rendering — cacheable by
-    ``(pack_id, platform_id)``. Raises ``LookupError`` when the pack has no
-    selectable release or the platform is absent from it. One-key wrapper over
-    :func:`load_stereotype_templates` so the single- and batch-key paths share
-    one query shape.
+    ``(pack_id, platform_id)``. Raises ``LookupError`` naming which of the three
+    real conditions was hit: the pack row is absent, the pack carries no
+    selectable release, or the platform is absent from the selected release.
+    Loads the catalog itself (rather than wrapping
+    :func:`load_stereotype_templates`) so the diagnosis reads the same rows the
+    projection walked — one query for both the hit and the miss path.
     """
-    templates = await load_stereotype_templates(session, {(pack_id, platform_id)})
-    try:
-        return templates[(pack_id, platform_id)]
-    except KeyError as exc:
-        pack = await session.scalar(select(DriverPack).where(DriverPack.id == pack_id))
-        if pack is None:
-            raise LookupError(f"no releases for pack {pack_id}") from exc
-        raise LookupError(f"platform {platform_id!r} not in {pack_id} release") from exc
+    packs = await load_pack_catalog(session, {pack_id})
+    templates = stereotype_templates_from_packs(packs, {(pack_id, platform_id)})
+    template = templates.get((pack_id, platform_id))
+    if template is not None:
+        return template
+    pack = packs.get(pack_id)
+    if pack is None:
+        raise LookupError(f"unknown pack {pack_id}")
+    release = selected_release(pack.releases, pack.current_release)
+    if release is None:
+        raise LookupError(f"no releases for pack {pack_id}")
+    raise LookupError(f"platform {platform_id!r} not in {pack_id} release {release.release}")
 
 
 async def render_stereotype(
