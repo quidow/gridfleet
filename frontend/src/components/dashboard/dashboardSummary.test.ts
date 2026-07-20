@@ -80,27 +80,6 @@ function makeIncident(overrides: Partial<LifecycleIncidentRead> = {}): Lifecycle
 }
 
 describe('dashboardSummary', () => {
-  it('counts stale telemetry and hardware warnings independently', () => {
-    const summary = deriveDashboardFleetSummary([
-      makeDevice({ id: 'unsupported', hardware_telemetry_state: 'unsupported' }),
-      makeDevice({ id: 'stale', hardware_telemetry_state: 'stale' }),
-      makeDevice({ id: 'warning', hardware_health_status: 'warning' }),
-    ]);
-
-    expect(summary.staleTelemetry).toBe(1);
-    expect(summary.hardwareWarning).toBe(1);
-  });
-
-  it('counts hardware critical devices', () => {
-    const summary = deriveDashboardFleetSummary([
-      makeDevice({ id: 'critical', hardware_health_status: 'critical' }),
-      makeDevice({ id: 'stale', hardware_telemetry_state: 'stale' }),
-    ]);
-
-    expect(summary.hardwareCritical).toBe(1);
-    expect(summary.staleTelemetry).toBe(1);
-  });
-
   it('groups repeated lifecycle incidents by device, state, and label', () => {
     const grouped = groupLifecycleIncidents([
       makeIncident({ id: 'older', created_at: '2026-04-16T12:00:00Z', reason: 'Old reason' }),

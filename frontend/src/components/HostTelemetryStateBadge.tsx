@@ -7,9 +7,9 @@ const LABELS: Record<HostTelemetryFreshnessState, string> = {
 };
 
 const STYLES: Record<HostTelemetryFreshnessState, string> = {
-  fresh: 'bg-green-100 text-green-800',
-  stale: 'bg-amber-100 text-amber-800',
-  unknown: 'bg-slate-100 text-slate-700',
+  fresh: 'bg-info-soft text-info-foreground',
+  stale: 'bg-warning-soft text-warning-foreground',
+  unknown: 'bg-neutral-soft text-neutral-foreground',
 };
 
 type Props = {

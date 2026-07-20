@@ -30,9 +30,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     battery_level_percent: 90,
     battery_temperature_c: 36,
     charging_state: 'charging',
-    hardware_health_status: 'healthy',
-    hardware_telemetry_reported_at: '2026-04-16T12:00:00Z',
-    hardware_telemetry_state: 'fresh',
     readiness_state: 'verified',
     missing_setup_fields: [],
     verified_at: '2026-04-16T12:00:00Z',
@@ -94,8 +91,8 @@ describe('devicesSummary', () => {
 
   it('preserves unrelated query params when building summary hrefs', () => {
     const params = new URLSearchParams('platform_id=android_mobile&search=pixel&status=busy');
-    expect(buildDevicesSummaryHref(params, { hardwareHealthStatus: 'warning' })).toBe(
-      '/devices?platform_id=android_mobile&search=pixel&hardware_health_status=warning',
+    expect(buildDevicesSummaryHref(params, { needsAttention: true })).toBe(
+      '/devices?platform_id=android_mobile&search=pixel&needs_attention=true',
     );
   });
 
@@ -124,8 +121,6 @@ function fleet(): DeviceRead[] {
   const base = {
     operational_state: 'available',
     needs_attention: false,
-    hardware_health_status: 'healthy',
-    hardware_telemetry_state: 'fresh',
   } as unknown as DeviceRead;
   return [
     { ...base } as DeviceRead,

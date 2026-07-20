@@ -77,12 +77,6 @@ const DEFAULT_DEVICE = {
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.50',
-  battery_level_percent: 84,
-  battery_temperature_c: 36.7,
-  charging_state: 'charging',
-  hardware_health_status: 'healthy',
-  hardware_telemetry_reported_at: '2026-03-30T10:00:03Z',
-  hardware_telemetry_state: 'fresh',
   readiness_state: 'verified',
   missing_setup_fields: [],
   verified_at: '2026-03-30T10:00:03Z',
@@ -506,8 +500,6 @@ test.describe('Devices page', () => {
         name: 'Available Device',
         operational_state: 'available',
         hold: null,
-        hardware_health_status: 'healthy',
-        hardware_telemetry_state: 'fresh',
         needs_attention: false,
       },
       {
@@ -520,8 +512,6 @@ test.describe('Devices page', () => {
         name: 'Busy Device',
         operational_state: 'busy',
         hold: null,
-        hardware_health_status: 'critical',
-        hardware_telemetry_state: 'fresh',
         needs_attention: true,
       },
       {
@@ -534,8 +524,6 @@ test.describe('Devices page', () => {
         name: 'Offline Device',
         operational_state: 'offline',
         hold: null,
-        hardware_health_status: 'healthy',
-        hardware_telemetry_state: 'stale',
         needs_attention: true,
       },
     ]);
@@ -735,12 +723,9 @@ test.describe('Devices page', () => {
 
     // More filters live behind the disclosure — open it first.
     await page.getByRole('button', { name: /More filters/i }).click();
-    // Advanced filters: Connection Type (3), OS Version (4),
-    // Hardware Health (5), Telemetry State (6).
+    // Advanced filters: Connection Type (3), OS Version (4).
     await filters.nth(3).selectOption('network');
     await filters.nth(4).selectOption('15');
-    await filters.nth(5).selectOption('healthy');
-    await filters.nth(6).selectOption('fresh');
 
     await page.getByPlaceholder('Search by name, identity, or target...').fill('beta');
 
@@ -750,8 +735,6 @@ test.describe('Devices page', () => {
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.device_type ?? null).toBe('real_device');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.connection_type ?? null).toBe('network');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.os_version_display ?? null).toBe('15');
-    await expect.poll(() => mockApi.getLatestDevicesRequest()?.hardware_health_status ?? null).toBe('healthy');
-    await expect.poll(() => mockApi.getLatestDevicesRequest()?.hardware_telemetry_state ?? null).toBe('fresh');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.search ?? null).toBe('beta');
 
     await expect(page).toHaveURL(/platform_id=android_mobile/);
@@ -760,8 +743,6 @@ test.describe('Devices page', () => {
     await expect(page).toHaveURL(/device_type=real_device/);
     await expect(page).toHaveURL(/connection_type=network/);
     await expect(page).toHaveURL(/os_version_display=15/);
-    await expect(page).toHaveURL(/hardware_health_status=healthy/);
-    await expect(page).toHaveURL(/hardware_telemetry_state=fresh/);
     await expect(page).toHaveURL(/search=beta/);
   });
 
@@ -786,8 +767,6 @@ test.describe('Devices page', () => {
         connection_type: 'usb',
         ip_address: null,
         health_summary: mockHealthSummary(true, 'Healthy'),
-        hardware_health_status: 'healthy',
-        hardware_telemetry_state: 'fresh',
         readiness_state: 'verified',
         missing_setup_fields: [],
         verified_at: '2026-03-30T10:00:03Z',
@@ -1249,7 +1228,7 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'Device Health' })).toBeVisible();
   });
 
-  test('devices table shows unified health column with telemetry summary', async ({ page }) => {
+  test('devices table shows unified health column', async ({ page }) => {
     await page.goto('/devices');
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
 
@@ -1258,7 +1237,7 @@ test.describe('Devices page', () => {
     await expect(firstDeviceRow(page).getByLabel('Node ok')).toBeVisible();
     await expect(firstDeviceRow(page).getByLabel('Viability ok')).toBeVisible();
     await firstDeviceRow(page).getByRole('button', { name: /Health details/ }).click();
-    await expect(page.getByRole('dialog', { name: /Health details/ }).getByText('84% · Charging')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /Health details/ })).toBeVisible();
   });
 
   test('device detail shows triage, setup, and logs content', async ({ page }) => {
@@ -1276,12 +1255,11 @@ test.describe('Devices page', () => {
     const firstDeviceLink = firstDeviceRow(page).getByRole('link').first();
     await firstDeviceLink.click();
 
-    // Triage tab (default) surfaces Device Health + Info/Telemetry grid.
+    // Triage tab (default) surfaces Device Health + Device Info grid.
     await expect(page.getByText('Device Health')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: 'Test Session' })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Session Viability')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Device Info')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { name: 'Hardware Telemetry' })).toBeVisible({ timeout: 10_000 });
 
     // Switch to Setup tab — node controls + capabilities + config editor
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
@@ -1311,67 +1289,17 @@ test.describe('Devices page', () => {
     await expect(page.getByText('Device log line')).toBeVisible();
   });
 
-  test('device detail shows hardware telemetry card', async ({ page }) => {
-    await page.goto(`/devices/${DEFAULT_DEVICE.id}`);
-
-    await expect(page.getByRole('heading', { name: 'Hardware Telemetry' })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText('84%')).toBeVisible();
-    await expect(page.getByText('Charging', { exact: true })).toBeVisible();
-    await expect(page.getByText('36.7C')).toBeVisible();
-    await expect(page.getByText('Fresh', { exact: true })).toBeVisible();
-  });
-
   test('device detail shows health strip with control shortcut', async ({ page }) => {
     await page.goto(`/devices/${DEFAULT_DEVICE.id}`);
 
     await expect(page.getByRole('heading', { name: DEFAULT_DEVICE.name })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Android · 14 · linux-host')).toBeVisible();
-    // Hardware plus the three verdict pills (Device / Node / Viability).
-    await expect(page.getByText('Hardware', { exact: true }).first()).toBeVisible();
-    await expect(page.getByLabel(/^(Hardware|Device|Node|Viability) /)).toHaveCount(4);
+    // The three verdict pills (Device / Node / Viability).
+    await expect(page.getByLabel(/^(Device|Node|Viability) /)).toHaveCount(3);
 
     await page.getByRole('link', { name: /^Node running/i }).click();
     await expect(page).toHaveURL(/\/devices\/device-default\?tab=triage(#device-health)?$/);
     await expect(page.getByText('Device Health')).toBeVisible({ timeout: 15_000 });
-  });
-
-  test('device detail hardware pill links to hardware filter', async ({ page }) => {
-    // The Lifecycle pill was removed; only Hardware + Connectivity pills remain.
-    // This test now only verifies the Hardware pill navigates to the hardware filter.
-    const attentionDevice = {
-      ...DEFAULT_DEVICE,
-      name: 'Attention Device',
-      lifecycle_policy_summary: {
-        state: 'backoff',
-        label: 'Waiting to Retry',
-        detail: 'Waiting before retry',
-        backoff_until: '2026-03-30T10:10:03Z',
-      },
-      hardware_health_status: 'warning',
-    };
-    const attentionDetail = { ...DEFAULT_DEVICE_DETAIL, ...attentionDevice };
-
-    await page.route((url) => new URL(url).pathname === '/api/devices', async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.fallback();
-        return;
-      }
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(devicesResponseBody([attentionDevice], new URL(route.request().url()))) });
-    });
-    await page.route((url) => new URL(url).pathname === `/api/devices/${DEFAULT_DEVICE.id}`, async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.fallback();
-        return;
-      }
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(attentionDetail) });
-    });
-
-    await page.goto(`/devices/${DEFAULT_DEVICE.id}`);
-    await expect(page.getByRole('heading', { name: 'Attention Device' })).toBeVisible({ timeout: 15_000 });
-
-    await page.getByRole('link', { name: /Hardware.*Warning/i }).click();
-    await expect(page).toHaveURL(/\/devices\?hardware_health_status=warning$/);
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
   });
 
   test('device detail tab navigation is URL-addressable', async ({ page }) => {
@@ -2286,10 +2214,9 @@ test.describe('Devices page', () => {
     await expect(page.locator('h1.heading-page')).toBeVisible();
 
     const header = page.locator('header').first();
-    const pills = header.getByLabel(/^(Hardware|Device|Node|Viability) /);
-    // Hardware plus the three verdict pills (Device / Node / Viability).
-    await expect(pills).toHaveCount(4);
-    await expect(header.getByText('Hardware', { exact: true })).toBeVisible();
+    const pills = header.getByLabel(/^(Device|Node|Viability) /);
+    // The three verdict pills (Device / Node / Viability).
+    await expect(pills).toHaveCount(3);
     await expect(header.getByText('Node', { exact: true })).toBeVisible();
   });
 

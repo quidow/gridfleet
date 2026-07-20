@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceDetail } from '../../types';
-import {
-  getDeviceDetailStatusPills,
-  hardwareSummary,
-} from './deviceDetailSummary';
+import { getDeviceDetailStatusPills } from './deviceDetailSummary';
 
 const healthSummary = (over: Partial<DeviceDetail['health_summary']> = {}): DeviceDetail['health_summary'] => ({
   device: { status: 'ok', detail: null, checked_at: '2026-03-30T10:00:03Z' },
@@ -59,24 +56,9 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
 }
 
 describe('deviceDetailSummary', () => {
-  it('keeps unsupported hardware neutral and non-clickable', () => {
-    const device = makeDevice({
-      hardware_health_status: 'healthy',
-      hardware_telemetry_state: 'unsupported',
-      hardware_telemetry_reported_at: null,
-    });
-
-    expect(hardwareSummary(device)).toMatchObject({
-      value: 'No telemetry',
-      tone: 'neutral',
-    });
-    expect(hardwareSummary(device).to).toBeUndefined();
-  });
-
-  it('builds hardware plus the three verdict pills', () => {
+  it('builds the three verdict pills', () => {
     const device = makeDevice({
       operational_state: 'busy',
-      hardware_health_status: 'warning',
       health_summary: healthSummary({
         device: { status: 'failed', detail: 'ADB not responsive', checked_at: '2026-03-30T10:00:03Z' },
         node: { status: 'warn', detail: 'starting', checked_at: null },
@@ -87,27 +69,21 @@ describe('deviceDetailSummary', () => {
 
     const pills = getDeviceDetailStatusPills(device);
 
-    expect(pills).toHaveLength(4);
+    expect(pills).toHaveLength(3);
     expect(pills[0]).toMatchObject({
-      key: 'hardware',
-      label: 'Hardware',
-      tone: 'warn',
-      to: '/devices?hardware_health_status=warning',
-    });
-    expect(pills[1]).toMatchObject({
       key: 'device',
       label: 'Device',
       value: 'ADB not responsive',
       tone: 'error',
       to: `/devices/${device.id}?tab=triage#device-health`,
     });
-    expect(pills[2]).toMatchObject({
+    expect(pills[1]).toMatchObject({
       key: 'node',
       label: 'Node',
       value: 'starting',
       tone: 'warn',
     });
-    expect(pills[3]).toMatchObject({
+    expect(pills[2]).toMatchObject({
       key: 'viability',
       label: 'Viability',
       value: 'not run',
@@ -127,8 +103,8 @@ describe('deviceDetailSummary', () => {
       }),
     );
 
-    expect(pills[1]).toMatchObject({ key: 'device', value: 'OK', tone: 'ok' });
-    expect(pills[2]).toMatchObject({ key: 'node', value: 'Unknown', tone: 'neutral' });
-    expect(pills[3]).toMatchObject({ key: 'viability', value: 'Failed', tone: 'error' });
+    expect(pills[0]).toMatchObject({ key: 'device', value: 'OK', tone: 'ok' });
+    expect(pills[1]).toMatchObject({ key: 'node', value: 'Unknown', tone: 'neutral' });
+    expect(pills[2]).toMatchObject({ key: 'viability', value: 'Failed', tone: 'error' });
   });
 });
