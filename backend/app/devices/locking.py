@@ -13,7 +13,8 @@ EAGER LOADS: ``lock_device`` always eager-loads ``appium_node`` and ``host``.
 Pass ``load_sessions=True`` to additionally eager-load ``Device.sessions`` —
 required by lifecycle_policy callers that read session-related state inside
 the locked transaction. ``lock_device_handle`` joins the two scalar relationships
-into its locked statement and returns transaction-bound proof of ownership.
+into its locked statement, honours ``load_sessions`` with or without
+``predicates``, and returns transaction-bound proof of ownership.
 """
 
 from __future__ import annotations
@@ -118,14 +119,22 @@ async def lock_device_handle(
     columns resolves against the same joined row rather than minting a second
     anonymous join (a cartesian product). With no predicates, ``joinedload``
     keeps the original anonymous-join behavior the existing callers expect.
+
+    ``load_sessions`` is honoured in both branches. It targets a different
+    relationship than the two ``contains_eager`` loads, so its ``selectinload``
+    composes with them: the joined row still populates ``appium_node``/``host``
+    and ``Device.sessions`` is filled by one extra IN query.
     """
     if predicates:
+        predicate_options: list[Any] = [contains_eager(Device.appium_node), contains_eager(Device.host)]
+        if load_sessions:
+            predicate_options.append(selectinload(Device.sessions))
         stmt = (
             select(Device)
             .where(Device.id == device_id)
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
             .outerjoin(Host, Host.id == Device.host_id)
-            .options(contains_eager(Device.appium_node), contains_eager(Device.host))
+            .options(*predicate_options)
             .with_for_update(of=Device)
             .execution_options(populate_existing=True)
         )
