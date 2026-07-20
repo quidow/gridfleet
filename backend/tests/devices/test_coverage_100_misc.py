@@ -527,17 +527,12 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             return self._value
 
     group_db = AsyncMock()
-    group_db.execute = AsyncMock(return_value=GroupListResult([static_group]))
-
-    class _FakeIndex:
-        def device_ids(self, _key: str) -> frozenset[object]:
-            return frozenset({object(), object()})  # two members
-
-    monkeypatch.setattr(
-        device_group_service,
-        "load_group_membership_index",
-        AsyncMock(return_value=_FakeIndex()),
+    # Two reads: the group list, then the static member-count aggregate. A
+    # static group's count never touches the membership evaluator.
+    group_db.execute = AsyncMock(
+        side_effect=[GroupListResult([static_group]), GroupListResult([(static_group.key, 2)])]
     )
+
     _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
         publisher=event_bus,

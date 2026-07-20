@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -11,11 +11,13 @@ from app.devices.group_keys import is_valid_group_key
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.group_membership import load_group_membership_index
+from app.devices.services.service import device_scope_conditions
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Collection, Mapping
 
+    from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
@@ -103,40 +105,53 @@ class DeviceGroupsService:
         result = await db.execute(stmt)
         groups = list(result.scalars().all())
 
-        # One device batch feeding the pure evaluator. The same facts load is
-        # reused for every group definition; counts come from the index.
-        device_stmt = select(Device).options(selectinload(Device.appium_node))
-        devices = list((await db.execute(device_stmt)).scalars().all())
-        index = await load_group_membership_index(db, groups=groups, devices=devices, settings=self._settings)
-        return [_serialize_group(group, device_count=len(index.device_ids(group.key))) for group in groups]
+        # Static counts are an aggregate over membership rows — no device facts
+        # involved. Only dynamic groups need the evaluator, and they share one
+        # scoped device batch, so neither branch issues a per-group statement.
+        static_counts = await _static_member_counts(db) if any(_is_static(g) for g in groups) else {}
+        dynamic_groups = [group for group in groups if not _is_static(group)]
+        dynamic_counts: dict[str, int] = {}
+        if dynamic_groups:
+            devices = await _load_devices_in_scope(db, dynamic_groups)
+            index = await load_group_membership_index(
+                db, groups=dynamic_groups, devices=devices, settings=self._settings
+            )
+            dynamic_counts = {group.key: len(index.device_ids(group.key)) for group in dynamic_groups}
+        return [
+            _serialize_group(
+                group,
+                device_count=static_counts.get(group.key, 0) if _is_static(group) else dynamic_counts[group.key],
+            )
+            for group in groups
+        ]
 
     async def get_group(self, db: AsyncSession, group_key: str) -> dict[str, Any] | None:
-        stmt = (
-            select(DeviceGroup)
-            .where(DeviceGroup.key == group_key)
-            .options(selectinload(DeviceGroup.memberships).selectinload(DeviceGroupMembership.device))
-        )
-        result = await db.execute(stmt)
-        group = result.scalar_one_or_none()
+        group = await _get_group_row(db, group_key)
         if group is None:
             return None
 
-        device_ids = [m.device_id for m in group.memberships]
-        if group.group_type == GroupType.dynamic:
-            # Load all devices once and let the evaluator project membership.
-            device_stmt = select(Device).options(selectinload(Device.appium_node))
-            devices = list((await db.execute(device_stmt)).scalars().all())
-        elif not device_ids:
-            devices = []
+        if _is_static(group):
+            # Membership rows are the answer for a static group; no device facts
+            # are needed, so the evaluator is not involved at all.
+            members = await _load_static_members(db, group)
         else:
-            device_stmt = select(Device).where(Device.id.in_(device_ids)).options(selectinload(Device.appium_node))
-            devices = list((await db.execute(device_stmt)).scalars().all())
-        index = await load_group_membership_index(db, groups=[group], devices=devices, settings=self._settings)
-        members = [device for device in devices if device.id in index.device_ids(group.key)]
+            devices = await _load_devices_in_scope(db, [group])
+            index = await load_group_membership_index(db, groups=[group], devices=devices, settings=self._settings)
+            member_ids = index.device_ids(group.key)
+            members = [device for device in devices if device.id in member_ids]
         return {
             **_serialize_group(group, device_count=len(members)),
             "devices": members,
         }
+
+    async def get_group_type(self, db: AsyncSession, group_key: str) -> GroupType | None:
+        """The group's type in one row read, or ``None`` when the key is unknown.
+
+        Callers that only need "does this group exist / is it dynamic" must not
+        pay :meth:`get_group`'s member load to find out.
+        """
+        group = await _get_group_row(db, group_key)
+        return None if group is None else group.group_type
 
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
         # One key-ordered lock over the target plus every group its filters
@@ -251,14 +266,65 @@ class DeviceGroupsService:
         if group is None:
             return []
 
-        if group.group_type == GroupType.dynamic:
-            devices = list((await db.execute(select(Device))).scalars().all())
-            index = await load_group_membership_index(db, groups=[group], devices=devices, settings=self._settings)
-            return list(index.device_ids(group.key))
-        else:
+        if _is_static(group):
             mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group.id)
             mem_result = await db.execute(mem_stmt)
             return [row[0] for row in mem_result.all()]
+        devices = await _load_devices_in_scope(db, [group])
+        index = await load_group_membership_index(db, groups=[group], devices=devices, settings=self._settings)
+        return list(index.device_ids(group.key))
+
+
+def _is_static(group: DeviceGroup) -> bool:
+    return group.group_type == GroupType.static
+
+
+async def _static_member_counts(db: AsyncSession) -> dict[str, int]:
+    """One aggregate for every static group's member count.
+
+    Deliberately unkeyed by group: a per-group count would be an N+1 across the
+    group list, which is what the fleet-wide fact load replaced. Groups with no
+    members are absent from the result and read as zero at the call site.
+    """
+    stmt = (
+        select(DeviceGroup.key, func.count(DeviceGroupMembership.device_id))
+        .join(DeviceGroupMembership, DeviceGroupMembership.group_id == DeviceGroup.id)
+        .where(DeviceGroup.group_type == GroupType.static)
+        .group_by(DeviceGroup.key)
+    )
+    return {key: int(count) for key, count in (await db.execute(stmt)).all()}
+
+
+async def _load_static_members(db: AsyncSession, group: DeviceGroup) -> list[Device]:
+    stmt = (
+        select(Device)
+        .join(DeviceGroupMembership, DeviceGroupMembership.device_id == Device.id)
+        .where(DeviceGroupMembership.group_id == group.id)
+        .options(selectinload(Device.appium_node))
+        .order_by(Device.created_at, Device.id)
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGroup]) -> list[Device]:
+    """One device read bounding the candidates for every supplied dynamic group.
+
+    The per-group scopes are ORed so a single batch serves the whole list, and
+    a group whose filters pin nothing a query can narrow on widens the scope to
+    the fleet — which is what that group genuinely spans. Membership itself is
+    still decided live by the evaluator; this only bounds what it must consider.
+    """
+    scopes: list[ColumnElement[bool]] = []
+    for group in dynamic_groups:
+        conditions = device_scope_conditions(_validate_filters(group.filters))
+        if not conditions:
+            scopes = []
+            break
+        scopes.append(and_(*conditions))
+    stmt = select(Device).options(selectinload(Device.appium_node))
+    if scopes:
+        stmt = stmt.where(or_(*scopes))
+    return list((await db.execute(stmt)).scalars().all())
 
 
 def _member_of_keys(filters: DeviceGroupFilters | None) -> set[str]:
