@@ -89,6 +89,41 @@ async fn create_session_created_roundtrip() {
 }
 
 #[tokio::test]
+async fn create_session_forwards_group_capabilities_verbatim() {
+    let (server, addr) = stub_backend();
+    thread::spawn(move || {
+        let mut req = server.recv().unwrap();
+        let mut body = String::new();
+        req.as_reader().read_to_string(&mut body).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // The router must relay the group capability untouched: same key, and the
+        // JSON boolean `true` rather than a stringified or rewritten value.
+        assert_eq!(
+            v["body"]["capabilities"]["alwaysMatch"],
+            serde_json::json!({
+                "platformName": "Android",
+                "gridfleet:group:east-lab": true,
+                "gridfleet:group:screen-type-4k": true,
+            })
+        );
+        req.respond(json_response(
+            r#"{"status":"created","session_id":"sid-1","target":"http://host:4730","device_id":null,"appium_status":200,"appium_body":{"value":{"sessionId":"sid-1"}}}"#,
+        ))
+        .unwrap();
+    });
+    let client = gridfleet_router::backend::BackendClient::new(&addr, None);
+    let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android","gridfleet:group:east-lab":true,"gridfleet:group:screen-type-4k":true}}}"#;
+
+    assert!(matches!(
+        client
+            .create_session(raw, None, None, Duration::from_secs(30))
+            .await
+            .unwrap(),
+        gridfleet_router::backend::CreateOutcome::Created { .. }
+    ));
+}
+
+#[tokio::test]
 async fn create_session_queued_roundtrip() {
     let (server, addr) = stub_backend();
     thread::spawn(move || {

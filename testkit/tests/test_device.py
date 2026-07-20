@@ -18,7 +18,6 @@ SERIALIZED_DEVICE = {
     "connection_type": "usb",
     "manufacturer": "Google",
     "model": "Pixel 6",
-    "tags": {"screen_type": "4k"},
     "operational_state": "available",
     "is_reserved": False,
     "battery_level_percent": 87,
@@ -45,7 +44,6 @@ def test_from_payload_parses_all_curated_fields() -> None:
         connection_type="usb",
         manufacturer="Google",
         model="Pixel 6",
-        tags={"screen_type": "4k"},
         operational_state="available",
         is_reserved=False,
     )
@@ -73,7 +71,11 @@ def test_from_payload_defaults_optionals_to_none_when_absent() -> None:
     assert device.os_version_display is None
     assert device.manufacturer is None
     assert device.model is None
-    assert device.tags is None
+
+
+def test_from_payload_drops_retired_tags() -> None:
+    device = Device.from_payload({"id": "dev-1", "tags": {"lab": "east"}})
+    assert not hasattr(device, "tags")
 
 
 def test_from_payload_ignores_unknown_backend_keys() -> None:

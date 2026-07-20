@@ -12,7 +12,7 @@ from .device import Device
 from .run_lifecycle import HeartbeatThread
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from .types import (
         CooldownResult,
@@ -96,7 +96,7 @@ class GridFleetClient:
         hardware_health_status: str | None = None,
         hardware_telemetry_state: str | None = None,
         needs_attention: bool | None = None,
-        tags: dict[str, str] | None = None,
+        groups: Sequence[str] = (),
     ) -> list[Device]:
         """List devices with backend filter passthrough."""
         params = _query_params(
@@ -117,8 +117,7 @@ class GridFleetClient:
                 "needs_attention": needs_attention,
             }
         )
-        if tags:
-            params.extend((f"tags.{key}", value) for key, value in tags.items())
+        params.extend(("group", key) for key in groups)
         payload = self._send("GET", "/devices", params=params).json()
         if isinstance(payload, dict) and isinstance(payload.get("items"), list):
             rows = cast("JsonObjectList", payload["items"])

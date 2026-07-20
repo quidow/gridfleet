@@ -261,6 +261,7 @@ fn spawn_appium_create_counter() -> (String, Arc<AtomicUsize>) {
 struct CreateCounts {
     calls: Arc<AtomicUsize>,
     run_id: Arc<std::sync::Mutex<Option<String>>>,
+    capabilities: Arc<std::sync::Mutex<Option<serde_json::Value>>>,
 }
 
 fn spawn_backend_create_session(
@@ -274,6 +275,7 @@ fn spawn_backend_create_session(
     let counts = CreateCounts {
         calls: Arc::new(AtomicUsize::new(0)),
         run_id: Arc::new(std::sync::Mutex::new(None)),
+        capabilities: Arc::new(std::sync::Mutex::new(None)),
     };
     let c = counts.clone();
     thread::spawn(move || {
@@ -289,6 +291,7 @@ fn spawn_backend_create_session(
                 if let Some(run_id) = v["run_id"].as_str() {
                     *c.run_id.lock().unwrap() = Some(run_id.to_string());
                 }
+                *c.capabilities.lock().unwrap() = Some(v["body"]["capabilities"].clone());
                 let call = c.calls.fetch_add(1, Ordering::SeqCst);
                 if queue_first && call == 0 {
                     req.respond(
@@ -330,6 +333,37 @@ fn created_body(target: &str) -> String {
         "appium_body": {"value": {"sessionId": "session-1", "capabilities": {}}},
     })
     .to_string()
+}
+
+#[test]
+fn new_session_relays_group_capabilities_to_backend_unchanged() {
+    let (appium_addr, _appium_creates) = spawn_appium_create_counter();
+    let (backend_addr, counts) =
+        spawn_backend_create_session(appium_addr.clone(), 200, created_body(&appium_addr), false);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    ureq::post(&format!("{base}/session"))
+        .send(
+            r#"{"capabilities":{"alwaysMatch":{"platformName":"Android","gridfleet:group:east-lab":true}}}"#,
+        )
+        .unwrap()
+        .body_mut()
+        .read_to_string()
+        .unwrap();
+
+    // The router is a byte-for-byte proxy for W3C capabilities: the backend stub
+    // must observe the group key and the JSON boolean `true` exactly as sent.
+    let seen = counts.capabilities.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        seen,
+        serde_json::json!({
+            "alwaysMatch": {
+                "platformName": "Android",
+                "gridfleet:group:east-lab": true,
+            }
+        })
+    );
 }
 
 #[test]

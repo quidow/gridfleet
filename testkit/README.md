@@ -181,7 +181,7 @@ driver = create_appium_driver(
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...); returns a list of typed `Device` objects |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, groups=(), ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, groups, ...); returns a list of typed `Device` objects |
 | `GridFleetClient.get_device(device_id)` | Fetch one device as a typed `Device` (curated base fields) by backend device id |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
@@ -203,9 +203,9 @@ driver = create_appium_driver(
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
-### Targeting Devices by Tag
+### Targeting Devices by Group
 
-GridFleet injects device tags into node stereotypes as `gridfleet:tag:<key>` capabilities, so the router's backend allocation can route sessions to devices matching specific tags.
+Devices belong to named groups identified by an immutable group key. Requesting a `gridfleet:group:<key>` capability restricts allocation to devices in that group; the value is always the JSON boolean `true`. Passing several group capabilities ANDs them, so the session lands only on a device that is in every requested group.
 
 ```python
 @pytest.mark.parametrize(
@@ -214,7 +214,7 @@ GridFleet injects device tags into node stereotypes as `gridfleet:tag:<key>` cap
         {
             "pack_id": "appium-uiautomator2",
             "platform_id": "android_mobile",
-            "gridfleet:tag:screen_type": "4k",
+            "gridfleet:group:screen-type-4k": True,
         }
     ],
     indirect=True,
@@ -229,11 +229,17 @@ The same capability works for free sessions:
 driver = create_appium_driver(
     pack_id="appium-uiautomator2",
     platform_id="android_mobile",
-    capabilities={"gridfleet:tag:screen_type": "4k"},
+    capabilities={"gridfleet:group:screen-type-4k": True},
 )
 ```
 
-When an operator edits device tags, GridFleet marks the device for re-verification. The next verification restarts the Appium node and re-registers it with the updated Grid stereotype.
+When building options directly, set the capability the same way:
+
+```python
+options.set_capability("gridfleet:group:east-lab", True)
+```
+
+Group keys are lowercase and immutable (`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`), so a capability that worked yesterday keeps working after an operator renames a group's display label. The retired `gridfleet:tag:*` capabilities are rejected with HTTP 400.
 
 ### Worker Identity
 
@@ -257,6 +263,7 @@ run = client.reserve_devices(
             "os_version": "8",
             "allocation": "all_available",
             "min_count": 1,
+            "groups": ["east-lab", "screen-type-4k"],
         }
     ],
     ttl_minutes=45,
@@ -327,9 +334,10 @@ assert device.platform_label in {"Android", "iOS", "tvOS", "Roku", None}
 # Or fetch / list directly
 one = client.get_device(device.id)
 available = client.list_devices(status="available")
+east_lab = client.list_devices(groups=["east-lab"])
 ```
 
-`Device` carries the curated base field set both endpoints emit (`id`, `identity_value`, `connection_target`, `name`, `pack_id`, `platform_id`, `platform_label`, `os_version`, `os_version_display`, `host_id`, `device_type`, `connection_type`, `manufacturer`, `model`, `tags`, `operational_state`, `is_reserved`). Volatile long-tail fields (battery, telemetry, readiness, health summary, ...) are intentionally not surfaced. For operator-attached free-form data, use `client.get_device_test_data(device.id)` or the `device_test_data` fixture.
+`Device` carries the curated base field set both endpoints emit (`id`, `identity_value`, `connection_target`, `name`, `pack_id`, `platform_id`, `platform_label`, `os_version`, `os_version_display`, `host_id`, `device_type`, `connection_type`, `manufacturer`, `model`, `operational_state`, `is_reserved`). Volatile long-tail fields (battery, telemetry, readiness, health summary, ...) are intentionally not surfaced. For operator-attached free-form data, use `client.get_device_test_data(device.id)` or the `device_test_data` fixture.
 
 ### Run Cleanup Policy
 
