@@ -9,7 +9,9 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import (
     Device,
+    DeviceGroup,
     DeviceOperationalState,
+    GroupType,
     device_search_vector_expression,
 )
 from app.devices.schemas.device import (
@@ -17,6 +19,7 @@ from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
+from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
 from app.devices.services import link_repair
@@ -28,6 +31,11 @@ from app.devices.services.connectivity import (
     IP_PING_NAMESPACE,
     PROBE_FAILED_NAMESPACE,
     PROBE_UNANSWERED_NAMESPACE,
+)
+from app.devices.services.group_membership import (
+    load_group_membership_index,
+    load_groups_by_keys,
+    static_group_membership_exists,
 )
 from app.devices.services.state import (
     derive_operational_state,
@@ -44,17 +52,27 @@ from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Sequence
 
+    from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.devices.schemas.filters import DeviceQueryFilters
+    from app.devices.schemas.filters import DeviceGroupFilters
     from app.devices.services.identity_conflicts import DeviceIdentityConflictService
     from app.events.protocols import EventPublisher
 
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]
 DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
+
+
+class UnknownGroupKeysError(ValueError):
+    """Raised when a device query references device group keys that do not exist."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+        super().__init__(f"unknown device groups: {', '.join(keys)}")
 
 
 class DeviceCrudService:
@@ -94,9 +112,22 @@ class DeviceCrudService:
             raise
 
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
-        stmt = _build_device_list_stmt(filters)
+        static_keys, dynamic_groups = await self._partition_group_filters(db, filters)
+        return await self._list_devices(db, filters, static_group_keys=static_keys, dynamic_groups=dynamic_groups)
+
+    async def _list_devices(
+        self,
+        db: AsyncSession,
+        filters: DeviceQueryFilters,
+        *,
+        static_group_keys: list[str],
+        dynamic_groups: list[DeviceGroup],
+    ) -> list[Device]:
+        stmt = _build_device_list_stmt(filters, static_group_keys=static_group_keys)
         result = await db.execute(stmt)
         devices = list(result.scalars().all())
+        if dynamic_groups:
+            devices = await self._apply_dynamic_groups_filter(db, dynamic_groups, devices)
         if filters.needs_attention is not None:
             wanted = filters.needs_attention
             kept: list[Device] = []
@@ -140,30 +171,69 @@ class DeviceCrudService:
             ]
         return devices
 
+    async def _partition_group_filters(
+        self, db: AsyncSession, filters: DeviceQueryFilters
+    ) -> tuple[list[str], list[DeviceGroup]]:
+        """Split ``filters.groups`` into SQL-expressible and evaluator-only keys.
+
+        Static membership is a join on ``device_group_memberships``, so those
+        keys become WHERE predicates and the query keeps paginating in SQL. Only
+        dynamic keys need the in-memory evaluator (dynamic membership is never
+        materialised), so only they force the load-everything-then-slice branch.
+
+        One read validates the whole key set and raises
+        :class:`UnknownGroupKeysError` for any missing key so the router
+        surfaces HTTP 422.
+        """
+        keys = list(filters.groups)
+        if not keys:
+            return [], []
+        groups = await load_groups_by_keys(db, keys)
+        by_key = {group.key: group for group in groups}
+        missing = [key for key in keys if key not in by_key]
+        if missing:
+            raise UnknownGroupKeysError(missing)
+        static_keys = [key for key in keys if by_key[key].group_type == GroupType.static]
+        dynamic_groups = [by_key[key] for key in keys if by_key[key].group_type == GroupType.dynamic]
+        return static_keys, dynamic_groups
+
+    async def _apply_dynamic_groups_filter(
+        self, db: AsyncSession, dynamic_groups: list[DeviceGroup], devices: list[Device]
+    ) -> list[Device]:
+        """AND membership across the dynamic keys, evaluated live over the batch."""
+        index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices, settings=self._settings)
+        keys = [group.key for group in dynamic_groups]
+        return [device for device in devices if index.matches_all(device.id, keys)]
+
     async def list_devices_paginated(
         self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
     ) -> tuple[list[Device], int]:
-        has_post_filters = _has_post_filters(filters)
+        static_keys, dynamic_groups = await self._partition_group_filters(db, filters)
 
-        if has_post_filters:
-            all_devices = await self.list_devices_by_filters(db, filters)
+        if _has_post_filters(filters) or dynamic_groups:
+            all_devices = await self._list_devices(
+                db, filters, static_group_keys=static_keys, dynamic_groups=dynamic_groups
+            )
             total = len(all_devices)
             page = all_devices[offset : offset + limit]
             return page, total
 
-        count_result = await db.execute(_build_device_count_stmt(filters))
+        count_result = await db.execute(_build_device_count_stmt(filters, static_group_keys=static_keys))
         total = int(count_result.scalar() or 0)
 
-        stmt = _build_device_list_stmt(filters).limit(limit).offset(offset)
+        stmt = _build_device_list_stmt(filters, static_group_keys=static_keys).limit(limit).offset(offset)
         result = await db.execute(stmt)
         page = list(result.scalars().all())
         return page, total
 
     async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int:
-        if _has_post_filters(filters):
-            return len(await self.list_devices_by_filters(db, filters))
+        static_keys, dynamic_groups = await self._partition_group_filters(db, filters)
+        if _has_post_filters(filters) or dynamic_groups:
+            return len(
+                await self._list_devices(db, filters, static_group_keys=static_keys, dynamic_groups=dynamic_groups)
+            )
 
-        result = await db.execute(_build_device_count_stmt(filters))
+        result = await db.execute(_build_device_count_stmt(filters, static_group_keys=static_keys))
         return int(result.scalar() or 0)
 
     async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None:
@@ -242,61 +312,113 @@ def _has_post_filters(filters: DeviceQueryFilters) -> bool:
     )
 
 
-def _apply_status_filter(stmt: DeviceQueryStatement, status: str) -> DeviceQueryStatement:
+def _status_condition(status: str) -> ColumnElement[bool] | None:
     if status == "available":
-        return stmt.where(is_available_sql(now=now_utc()))
+        return is_available_sql(now=now_utc())
     if status == "busy":
-        return stmt.where(or_(is_busyish_sql(), is_verifying_sql(now=now_utc())))
+        return or_(is_busyish_sql(), is_verifying_sql(now=now_utc()))
     if status == "offline":
-        return stmt.where(is_offline_sql(now=now_utc()))
+        return is_offline_sql(now=now_utc())
     if status == "maintenance":
-        return stmt.where(is_maintenance_sql(now=now_utc()))
+        return is_maintenance_sql(now=now_utc())
     if status == "verifying":
-        return stmt.where(is_verifying_sql(now=now_utc()))
-    return stmt
+        return is_verifying_sql(now=now_utc())
+    return None
 
 
-def _apply_identity_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
+def _identity_conditions(filters: DeviceQueryFilters) -> list[ColumnElement[bool]]:
+    conditions: list[ColumnElement[bool]] = []
     if filters.host_id is not None:
-        stmt = stmt.where(Device.host_id == filters.host_id)
+        conditions.append(Device.host_id == filters.host_id)
     if filters.identity_value is not None:
-        stmt = stmt.where(Device.identity_value == filters.identity_value)
+        conditions.append(Device.identity_value == filters.identity_value)
     if filters.connection_target is not None:
-        stmt = stmt.where(Device.connection_target == filters.connection_target)
+        conditions.append(Device.connection_target == filters.connection_target)
     if filters.device_type is not None:
-        stmt = stmt.where(Device.device_type == filters.device_type)
+        conditions.append(Device.device_type == filters.device_type)
     if filters.connection_type is not None:
-        stmt = stmt.where(Device.connection_type == filters.connection_type)
-    return stmt
+        conditions.append(Device.connection_type == filters.connection_type)
+    return conditions
 
 
-def _apply_version_and_text_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
+def _version_and_text_conditions(filters: DeviceQueryFilters) -> list[ColumnElement[bool]]:
+    conditions: list[ColumnElement[bool]] = []
     if filters.os_version is not None:
-        stmt = stmt.where(Device.os_version == filters.os_version)
+        conditions.append(Device.os_version == filters.os_version)
     if filters.os_version_display is not None:
-        stmt = stmt.where(func.coalesce(Device.os_version_display, Device.os_version) == filters.os_version_display)
+        conditions.append(func.coalesce(Device.os_version_display, Device.os_version) == filters.os_version_display)
     if filters.hardware_health_status is not None:
-        stmt = stmt.where(Device.hardware_health_status == filters.hardware_health_status)
-    if filters.tags:
-        stmt = stmt.where(Device.tags.contains(filters.tags))
+        conditions.append(Device.hardware_health_status == filters.hardware_health_status)
     if filters.search:
         query = func.websearch_to_tsquery("simple", filters.search)
-        stmt = stmt.where(device_search_vector_expression().op("@@")(query))
-    return stmt
+        conditions.append(device_search_vector_expression().op("@@")(query))
+    return conditions
+
+
+def _device_filter_conditions(filters: DeviceQueryFilters) -> list[ColumnElement[bool]]:
+    """Every SQL predicate the filter set contributes, as composable conditions.
+
+    Split out of :func:`_apply_device_filters` so the same predicates can be
+    ORed across group definitions (see :func:`device_scope_conditions`) instead
+    of only ANDed onto one statement.
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if filters.pack_id is not None:
+        conditions.append(Device.pack_id == filters.pack_id)
+    if filters.platform_id is not None:
+        conditions.append(Device.platform_id == filters.platform_id)
+    if filters.status is not None:
+        status_condition = _status_condition(filters.status)
+        if status_condition is not None:
+            conditions.append(status_condition)
+    if filters.reserved is not None:
+        conditions.append(active_reservation_exists() if filters.reserved else ~active_reservation_exists())
+    conditions.extend(_identity_conditions(filters))
+    conditions.extend(_version_and_text_conditions(filters))
+    return conditions
 
 
 def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
-    if filters.pack_id is not None:
-        stmt = stmt.where(Device.pack_id == filters.pack_id)
-    if filters.platform_id is not None:
-        stmt = stmt.where(Device.platform_id == filters.platform_id)
-    if filters.status is not None:
-        stmt = _apply_status_filter(stmt, filters.status)
-    if filters.reserved is not None:
-        stmt = stmt.where(active_reservation_exists() if filters.reserved else ~active_reservation_exists())
-    stmt = _apply_identity_filters(stmt, filters)
-    stmt = _apply_version_and_text_filters(stmt, filters)
-    return stmt
+    return stmt.where(*_device_filter_conditions(filters))
+
+
+# Group-filter axes that map to a plain ``devices`` column predicate. The
+# fact-derived axes (``status``, ``reserved``, ``hardware_telemetry_state``,
+# ``needs_attention``) are deliberately excluded: their SQL twins are evaluated
+# at a different instant than the in-memory facts the evaluator uses, so
+# narrowing a *candidate* load on them could drop a device the evaluator would
+# have included. Those axes stay in the pure evaluator.
+_COLUMN_SCOPE_AXES = frozenset(
+    {
+        "pack_id",
+        "platform_id",
+        "host_id",
+        "identity_value",
+        "connection_target",
+        "device_type",
+        "connection_type",
+        "os_version",
+        "os_version_display",
+        "hardware_health_status",
+    }
+)
+
+
+def device_scope_conditions(filters: DeviceGroupFilters) -> list[ColumnElement[bool]]:
+    """Conditions that bound the candidate devices a dynamic group can contain.
+
+    A superset filter, never an exact one: it reuses the device-list column
+    predicates for the axes that are plain columns plus a static-membership
+    EXISTS per ``member_of`` key, and leaves every fact-derived axis to
+    :func:`evaluate_group_memberships`. An empty list means "the whole fleet is
+    in scope" — the group pins nothing a query can narrow on.
+    """
+    column_filters = DeviceQueryFilters.model_validate(
+        {key: value for key, value in filters.model_dump().items() if key in _COLUMN_SCOPE_AXES}
+    )
+    conditions = _device_filter_conditions(column_filters)
+    conditions.extend(static_group_membership_exists(key) for key in filters.member_of)
+    return conditions
 
 
 def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
@@ -326,7 +448,18 @@ def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
     return [direction(primary), direction(Device.created_at), direction(Device.id)]
 
 
-def _build_device_list_stmt(filters: DeviceQueryFilters) -> DeviceListStatement:
+def _static_group_conditions(static_group_keys: Sequence[str]) -> list[ColumnElement[bool]]:
+    """AND semantics: a device must be a member of every requested static group.
+
+    One correlated EXISTS per key inside a single statement, so the statement
+    count stays at one however many keys are requested.
+    """
+    return [static_group_membership_exists(key) for key in static_group_keys]
+
+
+def _build_device_list_stmt(
+    filters: DeviceQueryFilters, *, static_group_keys: Sequence[str] = ()
+) -> DeviceListStatement:
     stmt = (
         select(Device)
         .outerjoin(Host, Host.id == Device.host_id)
@@ -334,12 +467,16 @@ def _build_device_list_stmt(filters: DeviceQueryFilters) -> DeviceListStatement:
         .execution_options(populate_existing=True)
     )
     stmt = cast("DeviceListStatement", _apply_device_filters(stmt, filters))
+    stmt = stmt.where(*_static_group_conditions(static_group_keys))
     return stmt.order_by(*_device_order_clause(filters))
 
 
-def _build_device_count_stmt(filters: DeviceQueryFilters) -> DeviceCountStatement:
+def _build_device_count_stmt(
+    filters: DeviceQueryFilters, *, static_group_keys: Sequence[str] = ()
+) -> DeviceCountStatement:
     stmt = select(func.count()).select_from(Device)
-    return cast("DeviceCountStatement", _apply_device_filters(stmt, filters))
+    stmt = cast("DeviceCountStatement", _apply_device_filters(stmt, filters))
+    return stmt.where(*_static_group_conditions(static_group_keys))
 
 
 async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Device | None:

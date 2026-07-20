@@ -71,7 +71,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_svc_pub_2, crud=_svc_crud_2),
+            groups=DeviceGroupsService(publisher=_svc_pub_2, crud=_svc_crud_2, settings=_svc_settings_2),
             maintenance=_svc_maint_2,
             bulk=BulkOperationsService(
                 publisher=_svc_pub_2,

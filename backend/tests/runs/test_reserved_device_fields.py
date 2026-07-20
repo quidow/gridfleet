@@ -1,7 +1,7 @@
 """Coverage for reserved-device field exposure and reservation-lookup load behavior.
 
 These tests guard behavior that is independent of the (now-removed) ?include
-feature: _build_device_info copying tier1 fields/tags into the reserve response,
+feature: _build_device_info copying tier1 fields into the reserve response,
 GET /api/runs{,/{id}} exposing those fields via to_reserved_device_info(), and
 get_device_reservation_with_entry not loading reserved-device rows (N+1 guard).
 """
@@ -71,22 +71,6 @@ async def test_build_device_info_populates_tier1_fields(db_session: AsyncSession
     assert info.connection_type == "virtual"
     assert info.manufacturer == "Google"
     assert info.model == "Pixel 7"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_build_device_info_populates_tags(db_session: AsyncSession, default_host_id: str) -> None:
-    created = await create_device(
-        db_session,
-        host_id=default_host_id,
-        name="tagged-device",
-    )
-    created.tags = {"screen_type": "4k", "rack": "A1"}
-    await db_session.flush()
-    result = await db_session.execute(select(Device).where(Device.id == created.id).options(selectinload(Device.host)))
-    device = result.scalar_one()
-    info = _build_device_info(device, platform_label="Android")
-    assert info.tags == {"screen_type": "4k", "rack": "A1"}
 
 
 @pytest.mark.db

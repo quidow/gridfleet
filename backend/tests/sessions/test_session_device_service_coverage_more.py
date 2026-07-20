@@ -142,7 +142,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         connection_target="device-filter-available",
         name="Alpha Device",
         operational_state=DeviceOperationalState.available,
-        tags={"team": "qa"},
         hardware_health_status=HardwareHealthStatus.warning,
     )
     maintenance = await create_device_record(
@@ -152,7 +151,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         connection_target="device-filter-maint",
         name="Beta Device",
         lifecycle_policy_state={"maintenance_reason": "operator"},
-        tags={"team": "ops"},
     )
 
     monkeypatch.setattr(
@@ -178,7 +176,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         status="available",
         host_id=available.host_id,
         search="Alpha",
-        tags={"team": "qa"},
         needs_attention=False,
         sort_by="name",
         sort_dir="asc",

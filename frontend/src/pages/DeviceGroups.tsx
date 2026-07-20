@@ -21,6 +21,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 
 type GroupFormState = {
+  key: string;
   name: string;
   description: string;
   group_type: 'static' | 'dynamic';
@@ -29,6 +30,7 @@ type GroupFormState = {
 
 function createInitialFormState(): GroupFormState {
   return {
+    key: '',
     name: '',
     description: '',
     group_type: 'static',
@@ -41,7 +43,7 @@ const COLUMNS: DataTableColumn<DeviceGroupRead>[] = [
     key: 'name',
     header: 'Name',
     render: (group) => (
-      <Link to={`/groups/${group.id}`} className="font-medium text-accent hover:text-accent-hover text-sm">
+      <Link to={`/groups/${group.key}`} className="font-medium text-accent hover:text-accent-hover text-sm">
         {group.name}
       </Link>
     ),
@@ -63,6 +65,17 @@ const COLUMNS: DataTableColumn<DeviceGroupRead>[] = [
   },
 ];
 
+function suggestGroupKey(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/g, '');
+}
+
 function DeviceGroupsContent() {
   const { data: groups, isLoading, dataUpdatedAt } = useDeviceGroups();
   const { data: allDevices = [] } = useDevices({});
@@ -73,9 +86,11 @@ function DeviceGroupsContent() {
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeviceGroupRead | null>(null);
   const [form, setForm] = useState<GroupFormState>(createInitialFormState);
+  const [isKeyManuallyEdited, setIsKeyManuallyEdited] = useState(false);
 
   function resetForm() {
     setForm(createInitialFormState());
+    setIsKeyManuallyEdited(false);
   }
 
   const hostOptions = hosts.map((host) => ({ id: host.id, name: host.hostname }));
@@ -93,7 +108,7 @@ function DeviceGroupsContent() {
       align: 'right',
       render: (group) => (
         <div className="flex items-center justify-end gap-1">
-          <Link to={`/groups/${group.id}`} className="rounded p-1.5 text-text-3 hover:text-text-2" title="Edit">
+          <Link to={`/groups/${group.key}`} className="rounded p-1.5 text-text-3 hover:text-text-2" title="Edit">
             <Pencil size={15} />
           </Link>
           <button
@@ -128,7 +143,7 @@ function DeviceGroupsContent() {
         <DataTable
           columns={columnsWithActions}
           rows={groups ?? []}
-          rowKey={(g) => g.id}
+          rowKey={(g) => g.key}
           emptyState={
             <EmptyState
               icon={FolderOpen}
@@ -167,6 +182,7 @@ function DeviceGroupsContent() {
           onSubmit={async (event) => {
             event.preventDefault();
             const data: DeviceGroupCreate = {
+              key: form.key,
               name: form.name,
               description: form.description || undefined,
               group_type: form.group_type,
@@ -182,7 +198,25 @@ function DeviceGroupsContent() {
               id="device-group-name"
               required
               value={form.name}
-              onChange={(value) => setForm({ ...form, name: value })}
+              onChange={(value) => {
+                setForm(prev => {
+                  if (!isKeyManuallyEdited) {
+                    return { ...prev, name: value, key: suggestGroupKey(value) };
+                  }
+                  return { ...prev, name: value };
+                });
+              }}
+            />
+          </Field>
+          <Field label="Group key" htmlFor="device-group-key">
+            <TextField
+              id="device-group-key"
+              required
+              value={form.key}
+              onChange={(value) => {
+                setIsKeyManuallyEdited(true);
+                setForm({ ...form, key: value });
+              }}
             />
           </Field>
           <Field label="Description" htmlFor="device-group-description">
@@ -219,7 +253,7 @@ function DeviceGroupsContent() {
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
-          if (deleteTarget) await deleteGroup.mutateAsync(deleteTarget.id);
+          if (deleteTarget) await deleteGroup.mutateAsync(deleteTarget.key);
           setDeleteTarget(null);
         }}
         title="Delete Group"

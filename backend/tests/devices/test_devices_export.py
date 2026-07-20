@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import ValidationError
 
+from app.devices.models import DeviceGroup, DeviceGroupMembership, GroupType
 from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
@@ -12,6 +13,8 @@ from app.portability.schemas import (
 )
 
 if TYPE_CHECKING:
+    import uuid
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +31,6 @@ def test_exported_device_strict_extra_forbid() -> None:
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "tags": {},
                 "device_config": {},
                 "test_data": {},
                 "original_host": {"hostname": "lab-04"},
@@ -39,7 +41,7 @@ def test_exported_device_strict_extra_forbid() -> None:
 
 def test_export_bundle_schema_version_required() -> None:
     with pytest.raises(ValidationError):
-        ExportBundle.model_validate({"exported_at": "2026-05-23T00:00:00Z", "devices": []})
+        ExportBundle.model_validate({"exported_at": "2026-05-23T00:00:00Z", "groups": [], "devices": []})
 
 
 def test_original_host_host_id_optional() -> None:
@@ -69,7 +71,6 @@ def test_exported_device_identity_scope_rejects_unknown_value() -> None:
         "name": "Pixel",
         "device_type": "real_device",
         "connection_type": "usb",
-        "tags": {},
         "device_config": {},
         "test_data": {},
         "original_host": {"hostname": "lab-04"},
@@ -98,15 +99,15 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
     from tests.helpers import seed_host_and_device
 
     host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
-    device.tags = {"team": "qa"}
     device.test_data = {"creds": {"u": "a"}}
     device.device_config = {"foo": "bar"}
     await db_session.commit()
 
     bundle = await PortabilityExportService().build_export_bundle(db_session)
 
-    assert bundle.schema_version == 1
+    assert bundle.schema_version == 2
     assert bundle.source_instance is None
+    assert bundle.groups == []
     assert len(bundle.devices) == 1
     exported = bundle.devices[0]
     assert exported.pack_id == device.pack_id
@@ -118,7 +119,7 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
     assert exported.device_type == device.device_type
     assert exported.connection_type == device.connection_type
     assert exported.connection_target == device.connection_target
-    assert exported.tags == {"team": "qa"}
+    assert exported.static_groups == []
     assert exported.device_config == {"foo": "bar"}
     assert exported.test_data == {"creds": {"u": "a"}}
     assert exported.original_host.hostname == host.hostname
@@ -145,6 +146,7 @@ async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSe
         "session_viability_status",
         "host_id",
         "id",
+        "tags",
     }
     assert not (forbidden & dumped.keys())
 
@@ -159,8 +161,108 @@ async def test_export_endpoint_returns_bundle(client: AsyncClient, db_session: A
     response = await client.get("/api/portability/export")
     assert response.status_code == 200
     body = response.json()
-    assert body["schema_version"] == 1
+    assert body["schema_version"] == 2
+    assert body["groups"] == []
     assert len(body["devices"]) == 1
+    assert body["devices"][0]["static_groups"] == []
+    assert "tags" not in body["devices"][0]
     cd = response.headers["content-disposition"]
     assert cd.startswith("attachment; filename=")
     assert cd.endswith('.json"')
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_inventory_endpoint_filters_by_group(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """The inventory export honors repeated ?group= params with AND semantics."""
+    from tests.helpers import create_device_record
+
+    east_tv = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="inv-east-tv",
+        connection_target="inv-east-tv",
+        name="Inv East TV",
+        operational_state="available",
+    )
+    east_phone = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="inv-east-phone",
+        connection_target="inv-east-phone",
+        name="Inv East Phone",
+        operational_state="available",
+    )
+
+    async def _add_static_group(key: str, device_ids: list[uuid.UUID]) -> None:
+        group = DeviceGroup(key=key, name=key, group_type=GroupType.static)
+        db_session.add(group)
+        await db_session.flush()
+        for device_id in device_ids:
+            db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device_id))
+        await db_session.commit()
+
+    await _add_static_group("east", [east_tv.id, east_phone.id])
+    await _add_static_group("tv", [east_tv.id])
+
+    response = await client.get(
+        "/api/portability/inventory",
+        params=[("group", "east"), ("group", "tv"), ("columns", "identity.value")],
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    values = {row["identity"]["value"] for row in payload}
+    assert values == {"inv-east-tv"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_inventory_endpoint_rejects_unknown_group(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    response = await client.get("/api/portability/inventory", params=[("group", "missing")])
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == "unknown device groups: missing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_v2_round_trip_preserves_groups(
+    client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
+    from app.devices.models import DeviceGroup, DeviceGroupMembership, GroupType
+    from tests.helpers import seed_host_and_device
+
+    _host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
+
+    g_east = DeviceGroup(key="east", name="East", description=None, group_type=GroupType.static, filters=None)
+    g_east_tvs = DeviceGroup(
+        key="east-tvs",
+        name="East TVs",
+        description=None,
+        group_type=GroupType.dynamic,
+        filters={"member_of": ["east"], "device_type": "real_device"},
+    )
+    db_session.add_all([g_east, g_east_tvs])
+    await db_session.flush()
+
+    db_session.add(DeviceGroupMembership(device_id=device.id, group_id=g_east.id))
+    await db_session.commit()
+
+    bundle = (await client.get("/api/portability/export")).json()
+    assert bundle["schema_version"] == 2
+    assert bundle["groups"] == [
+        {"key": "east", "name": "East", "description": None, "group_type": "static", "filters": None},
+        {
+            "key": "east-tvs",
+            "name": "East TVs",
+            "description": None,
+            "group_type": "dynamic",
+            "filters": {"member_of": ["east"], "device_type": "real_device"},
+        },
+    ]
+    assert bundle["devices"][0]["static_groups"] == ["east"]
+    assert "tags" not in bundle["devices"][0]
+    assert "id" not in bundle["groups"][0]

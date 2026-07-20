@@ -3,13 +3,18 @@ import type { AxiosInstance } from "axios";
 import api from "./client";
 import type { components } from "./openapi";
 
-export type ExportBundle = components["schemas"]["ExportBundle"];
+// The bundle schema is emitted as a request/response pair because group
+// filters serialize through a plain model serializer on the way out. The
+// request variant carries the structured filter shape, so it is the one the
+// import flow parses and posts; the response variant is only downloaded.
+export type ExportBundle = components["schemas"]["ExportBundle-Input"];
+export type ExportBundleResponse = components["schemas"]["ExportBundle-Output"];
 export type ImportPreview = components["schemas"]["ImportPreview"];
 export type ImportCommitRequest = components["schemas"]["ImportCommitRequest"];
 export type ImportCommitResult = components["schemas"]["ImportCommitResult"];
 
-export async function fetchExportBundle(client: AxiosInstance = api): Promise<ExportBundle> {
-  const response = await client.get<ExportBundle>("/portability/export", { responseType: "json" });
+export async function fetchExportBundle(client: AxiosInstance = api): Promise<ExportBundleResponse> {
+  const response = await client.get<ExportBundleResponse>("/portability/export", { responseType: "json" });
   return response.data;
 }
 

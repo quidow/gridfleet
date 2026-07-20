@@ -43,7 +43,7 @@ const ROUTER_FIXTURE = {
   queue: [
     {
       requestId: 'q1',
-      capabilities: { platformName: 'Android', 'gridfleet:tag:team': 'qa' },
+      capabilities: { platformName: 'Android', 'gridfleet:group:east-lab': true },
       requestTimestamp: new Date().toISOString(),
       runId: null,
     },

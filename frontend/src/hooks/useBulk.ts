@@ -3,7 +3,6 @@ import {
   bulkStartNodes,
   bulkStopNodes,
   bulkRestartNodes,
-  bulkUpdateTags,
   bulkDelete,
   bulkEnterMaintenance,
   bulkExitMaintenance,
@@ -26,7 +25,6 @@ function useBulkMutation<T>(mutationFn: (body: T) => Promise<BulkOperationResult
 export const useBulkStartNodes = () => useBulkMutation(bulkStartNodes);
 export const useBulkStopNodes = () => useBulkMutation(bulkStopNodes);
 export const useBulkRestartNodes = () => useBulkMutation(bulkRestartNodes);
-export const useBulkUpdateTags = () => useBulkMutation(bulkUpdateTags);
 export const useBulkDelete = () => useBulkMutation(bulkDelete);
 export const useBulkEnterMaintenance = () => useBulkMutation(bulkEnterMaintenance);
 export const useBulkExitMaintenance = () => useBulkMutation(bulkExitMaintenance);

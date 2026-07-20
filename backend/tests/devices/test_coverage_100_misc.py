@@ -226,7 +226,6 @@ async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.
         manufacturer=None,
         model=None,
         device_config={},
-        tags=None,
     )
     # Pack stereotype is the only source for routing keys; the builder no longer
     # injects browserName defaults of its own. The pack manifest decides whether
@@ -505,6 +504,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
 async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     static_group = SimpleNamespace(
         id=uuid.uuid4(),
+        key="static",
         name="static",
         description=None,
         group_type=device_group_service.GroupType.static,
@@ -527,23 +527,31 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             return self._value
 
     group_db = AsyncMock()
+    # Two reads: the group list, then the static member-count aggregate. A
+    # static group's count never touches the membership evaluator.
     group_db.execute = AsyncMock(
-        side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
+        side_effect=[GroupListResult([static_group]), GroupListResult([(static_group.key, 2)])]
     )
+
     _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
         publisher=event_bus,
         crud=DeviceCrudService(settings=_gs1, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        settings=_gs1,
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
-    missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
+    missing_group_db.scalar = AsyncMock(return_value=None)
+    # delete_group locks the target and every possible referrer in one
+    # key-ordered statement, so it reads through ``execute``, not ``scalar``.
+    missing_group_db.execute = AsyncMock(return_value=GroupListResult([]))
     _gs2 = FakeSettingsReader({})
     assert (
         await device_group_service.DeviceGroupsService(
             publisher=event_bus,
             crud=DeviceCrudService(settings=_gs2, identity=DeviceIdentityConflictService(), publisher=event_bus),
-        ).delete_group(missing_group_db, uuid.uuid4())
+            settings=_gs2,
+        ).delete_group(missing_group_db, "missing-group")
         is False
     )
 

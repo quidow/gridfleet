@@ -74,7 +74,7 @@ def node_accepting_new_sessions_predicate() -> ColumnElement[bool]:
     elsewhere by their node target — mirroring :func:`node_viable_predicate`'s
     node-less arm. This is a *different axis* from node viability (process up / not
     transitioning): it is the warm-park gate the grid new-session allocator
-    (``_eligible_devices``) and the read-side allocatability projection both
+    (``_eligible_devices_with_facts``) and the read-side allocatability projection both
     consult, so the two cannot disagree on whether a parked device is allocatable.
     """
     return or_(AppiumNode.id.is_(None), AppiumNode.accepting_new_sessions.is_(True))

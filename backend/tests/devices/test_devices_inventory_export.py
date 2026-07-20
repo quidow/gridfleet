@@ -8,11 +8,18 @@ from app.portability.schemas import (
     parse_columns_param,
 )
 from app.portability.services.inventory import InventoryExportService
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _inventory_service() -> InventoryExportService:
+    return InventoryExportService(settings=FakeSettingsReader({}))
 
 
 def test_inventory_column_enum_has_expected_dot_paths() -> None:
@@ -38,7 +45,6 @@ def test_inventory_column_enum_has_expected_dot_paths() -> None:
         "model_number",
         "software_versions",
         "operational_state",
-        "tags",
         "device_config",
         "test_data",
         "hardware.battery_level_percent",
@@ -78,7 +84,7 @@ async def test_iter_inventory_json_emits_selected_columns(db_session: AsyncSessi
     host, device = await seed_host_and_device(db_session, identity="INV-1")
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_json(
+        async for chunk in _inventory_service().iter_inventory_json(
             db_session,
             columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME, InventoryColumn.IDENTITY_VALUE],
             filters=None,
@@ -99,7 +105,7 @@ async def test_iter_inventory_csv_emits_header_and_rows(db_session: AsyncSession
     host, _ = await seed_host_and_device(db_session, identity="INV-2")
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_csv(
+        async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
             columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME],
             filters=None,
@@ -115,13 +121,13 @@ async def test_iter_inventory_csv_emits_header_and_rows(db_session: AsyncSession
 @pytest.mark.db
 async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: AsyncSession) -> None:
     _, device = await seed_host_and_device(db_session, identity="INV-3")
-    device.tags = {"team": "qa"}
+    device.software_versions = {"team": "qa"}
     await db_session.commit()
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_csv(
+        async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
-            columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+            columns=[InventoryColumn.NAME, InventoryColumn.SOFTWARE_VERSIONS],
             filters=None,
         )
     ]
@@ -136,7 +142,7 @@ async def test_iter_inventory_json_serializes_uuid_id(db_session: AsyncSession) 
     _, device = await seed_host_and_device(db_session, identity="INV-4")
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_json(
+        async for chunk in _inventory_service().iter_inventory_json(
             db_session,
             columns=[InventoryColumn.ID],
             filters=None,
@@ -193,14 +199,13 @@ async def test_inventory_endpoint_filter_pack_id(client: AsyncClient, db_session
 async def test_iter_inventory_csv_escapes_formula_injection(db_session: AsyncSession) -> None:
     _, device = await seed_host_and_device(db_session, identity="INV-FORMULA")
     device.name = "=CMD()"
-    device.tags = {"k": "=evil"}
     await db_session.commit()
 
     chunks: list[str] = [
         chunk
-        async for chunk in InventoryExportService().iter_inventory_csv(
+        async for chunk in _inventory_service().iter_inventory_csv(
             db_session,
-            columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+            columns=[InventoryColumn.NAME],
             filters=None,
         )
     ]
@@ -214,3 +219,29 @@ def test_parse_columns_param_deduplicates_preserving_order() -> None:
         InventoryColumn.NAME,
         InventoryColumn.HOST_HOSTNAME,
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_inventory_endpoint_survives_a_generator_that_yields_nothing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An export generator that returns without yielding must be an empty body, not a 500.
+
+    The route pulls the first chunk eagerly so ``UnknownGroupKeysError`` can surface
+    as 422 before streaming starts. Both current generators always emit a header, so
+    this is latent — pin it anyway: any future early return would otherwise turn an
+    empty export into an unhandled ``StopAsyncIteration``.
+    """
+    await seed_host_and_device(db_session, identity="EP-EMPTY")
+
+    async def _empty(*args: object, **kwargs: object) -> AsyncIterator[str]:
+        return
+        yield ""  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(InventoryExportService, "iter_inventory_json", _empty)
+    response = await client.get("/api/portability/inventory")
+    assert response.status_code == 200
+    assert response.text == ""

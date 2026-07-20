@@ -26,7 +26,7 @@ class DummyResponse:
             raise httpx.HTTPStatusError("request failed", request=httpx.Request("GET", "http://test"), response=None)
 
 
-def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
+def test_list_devices_sends_supported_filters(monkeypatch):
     calls: list[tuple[str, JsonObject | list[tuple[str, str]], int | None]] = []
 
     def fake_request(
@@ -59,7 +59,6 @@ def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
         hardware_health_status="healthy",
         hardware_telemetry_state="fresh",
         needs_attention=False,
-        tags={"team": "qa", "rack": "A1"},
     )
 
     assert len(devices) == 1
@@ -83,12 +82,34 @@ def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
                 ("hardware_health_status", "healthy"),
                 ("hardware_telemetry_state", "fresh"),
                 ("needs_attention", "false"),
-                ("tags.team", "qa"),
-                ("tags.rack", "A1"),
             ],
             10,
         )
     ]
+
+
+def test_list_devices_sends_repeated_group_params(monkeypatch):
+    calls: list[tuple[str, JsonObject | list[tuple[str, str]], int | None]] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        *,
+        json: JsonObject | None = None,
+        params: JsonObject | list[tuple[str, str]] | None = None,
+        timeout: int | None = None,
+        auth: object = None,
+    ) -> DummyResponse:
+        calls.append((url, params or {}, timeout))
+        return DummyResponse([{"id": "dev-1", "operational_state": "available"}])
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
+
+    client = GridFleetClient("http://manager/api")
+    devices = client.list_devices(groups=["east", "tv"])
+
+    assert len(devices) == 1
+    assert calls[0][1] == [("group", "east"), ("group", "tv")]
 
 
 def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypatch):

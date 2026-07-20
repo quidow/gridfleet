@@ -101,7 +101,8 @@ API `effective_state` as the derived read model.
 ### Data Storage
 - Database: Async PostgreSQL via `asyncpg`.
 - Tables are strictly schema-typed with `alembic` handling migrations.
-- `tags` and hardware detections are JSON fields attached to the `Device` model.
+- Hardware detections are JSON fields attached to the `Device` model.
+- Device grouping lives in its own tables: `device_groups` (keyed by an immutable public `key`; dynamic groups store their filter rules as JSON) and the `device_group_memberships` join table for static membership. Devices carry no grouping column — the retired `devices.tags` JSON field was migrated into static groups and dropped. Dynamic membership is derived at read time from live device facts and is never materialized or cached.
 - Process configurations use `GRIDFLEET_` prefixed env vars, while the device configuration mostly delegates to a dynamic Database Settings Registry.
 
 ### Probe Sessions

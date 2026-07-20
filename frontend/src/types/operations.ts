@@ -22,20 +22,23 @@ export type HealthStatus = Omit<Schemas['HealthStatusRead'], 'checks'> & {
 };
 
 export type BulkDeviceIds = Schemas['BulkDeviceIds'];
-export type BulkTagsUpdate = Omit<Schemas['BulkTagsUpdate'], 'merge'> & {
-  merge?: boolean;
-};
 export type BulkOperationResult = Omit<Schemas['BulkOperationResult'], 'errors'> & {
   errors: Record<string, string>;
 };
 
-export type DeviceGroupFilters = Schemas['DeviceGroupFilters'];
-export type DeviceGroupRead = Omit<Schemas['DeviceGroupRead'], 'group_type'> & {
+// The backend serializes filters through a plain model serializer, so OpenAPI
+// emits an opaque object for the response side and the structured shape only
+// for request bodies. The response payload is that same shape with unset
+// fields omitted, so read types narrow back onto it.
+export type DeviceGroupFilters = Schemas['DeviceGroupFilters-Input'];
+export type DeviceGroupRead = Omit<Schemas['DeviceGroupRead'], 'group_type' | 'filters'> & {
   group_type: DeviceGroupType;
+  filters: DeviceGroupFilters | null;
 };
-export type DeviceGroupDetail = Omit<Schemas['DeviceGroupDetail'], 'devices' | 'group_type'> & {
+export type DeviceGroupDetail = Omit<Schemas['DeviceGroupDetail'], 'devices' | 'group_type' | 'filters'> & {
   devices: DeviceRead[];
   group_type: DeviceGroupType;
+  filters: DeviceGroupFilters | null;
 };
 export type DeviceGroupCreate = Omit<Schemas['DeviceGroupCreate'], 'group_type'> & {
   group_type?: DeviceGroupType;

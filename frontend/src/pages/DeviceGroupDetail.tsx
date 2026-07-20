@@ -29,8 +29,8 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import type { DeviceRead } from '../types';
 
 export function DeviceGroupDetail() {
-  const { id } = useParams<{ id: string }>();
-  const { data: group, isLoading } = useDeviceGroup(id!);
+  const { key } = useParams<{ key: string }>();
+  const { data: group, isLoading } = useDeviceGroup(key!);
   const { data: allDevices = [] } = useDevices({});
   const { data: hosts = [] } = useHosts();
   usePageTitle(group?.name ?? 'Group');
@@ -87,7 +87,7 @@ export function DeviceGroupDetail() {
             align: 'right' as const,
             render: (device: DeviceRead) => (
               <button
-                onClick={() => removeMembers.mutate({ groupId: group.id, deviceIds: [device.id] })}
+                onClick={() => removeMembers.mutate({ groupKey: group.key, deviceIds: [device.id] })}
                 className="rounded p-1.5 text-text-3 hover:text-danger-foreground"
                 title="Remove from group"
               >
@@ -103,7 +103,15 @@ export function DeviceGroupDetail() {
     <div>
       <PageHeader
         title={group.name}
-        subtitle={`${group.group_type} · ${group.device_count} devices${group.description ? ` · ${group.description}` : ''}`}
+        subtitle={
+          <div className="flex items-center gap-2">
+            <span>{group.group_type} · {group.device_count} devices{group.description ? ` · ${group.description}` : ''}</span>
+            <span className="text-text-4">·</span>
+            <span className="font-mono text-xs text-text-3 bg-surface-2 px-1.5 py-0.5 rounded" title="Group Key">
+              {group.key}
+            </span>
+          </div>
+        }
         actions={
           isStatic ? (
             <Button
@@ -135,7 +143,7 @@ export function DeviceGroupDetail() {
                 </button>
                 <button
                   onClick={async () => {
-                    await updateGroup.mutateAsync({ id: group.id, data: { filters: draftToDeviceGroupFilters(editFilters) } });
+                    await updateGroup.mutateAsync({ key: group.key, data: { filters: draftToDeviceGroupFilters(editFilters) } });
                     setEditFilters(null);
                   }}
                   className="text-sm font-medium text-accent hover:text-accent-hover"
@@ -168,7 +176,7 @@ export function DeviceGroupDetail() {
         </Card>
       ) : null}
 
-      <GroupActionBar groupId={group.id} devices={group.devices} />
+      <GroupActionBar groupKey={group.key} devices={group.devices} />
 
       <DataTable<DeviceRead>
         columns={columns}
@@ -267,7 +275,7 @@ export function DeviceGroupDetail() {
             disabled={addSelection.size === 0 || addMembers.isPending}
             loading={addMembers.isPending}
             onClick={async () => {
-              await addMembers.mutateAsync({ groupId: group.id, deviceIds: Array.from(addSelection) });
+              await addMembers.mutateAsync({ groupKey: group.key, deviceIds: Array.from(addSelection) });
               setShowAddMembers(false);
             }}
           >

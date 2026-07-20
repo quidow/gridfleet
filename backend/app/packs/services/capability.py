@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services.release_ordering import selected_release
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.packs.services.platform_resolver import ResolvedPackPlatform
@@ -49,6 +51,82 @@ class StereotypeTemplate:
         return rendered
 
 
+async def load_pack_catalog(session: AsyncSession, pack_ids: Collection[str]) -> dict[str, DriverPack]:
+    """One read: the named packs with their releases and platforms eager-loaded.
+
+    A single joined statement (unlike
+    ``app.devices.services.readiness.load_packs_by_ids``, whose ``selectinload``
+    costs three), which matters on the grid allocator's poll path where the
+    catalog load is the whole per-poll read budget for pack facts. The result
+    feeds both :func:`stereotype_templates_from_packs` and readiness assessment.
+
+    The two ``joinedload``s are a *chain* (pack -> releases -> platforms), not two
+    sibling collections, so they do not form a cartesian product: the statement
+    returns exactly one row per leaf platform, which is the minimum any strategy
+    must transfer. ``.unique()`` deduplicates the repeated parent columns, not
+    multiplied rows. Measured on a synthetic catalog (12 packs x 6 retained
+    releases x 8 platforms): 576 rows in 1 statement, against 660 rows in 3
+    statements for the ``selectinload(...).selectinload(...)`` equivalent — worse
+    on both axes. Row volume is linear and trivial; do not "fix" this to
+    ``selectinload``.
+    """
+    ids = sorted({pack_id for pack_id in pack_ids if pack_id})
+    if not ids:
+        return {}
+    packs = (
+        (
+            await session.scalars(
+                select(DriverPack)
+                .where(DriverPack.id.in_(ids))
+                .options(
+                    joinedload(DriverPack.releases),
+                    joinedload(DriverPack.releases).joinedload(DriverPackRelease.platforms),
+                )
+            )
+        )
+        .unique()
+        .all()
+    )
+    return {pack.id: pack for pack in packs}
+
+
+def stereotype_templates_from_packs(
+    packs: dict[str, DriverPack],
+    keys: Collection[tuple[str, str]],
+) -> dict[tuple[str, str], StereotypeTemplate]:
+    """Pure projection of an already-loaded pack catalog into stereotype templates.
+
+    The catalog must carry ``releases`` and their ``platforms`` eager-loaded (as
+    :func:`load_pack_catalog` and ``app.devices.services.readiness.load_packs_by_ids``
+    both produce). Lets a caller that needs the catalog for something else — the
+    grid allocator, which also assesses readiness against it — render templates
+    without paying a second read, while keeping the pack/release/platform walk in
+    one place.
+
+    Pairs whose pack has no selectable release, or whose platform is absent from
+    that release, are simply missing from the result; callers translate a missing
+    key into ``LookupError``/metric behavior. There is no cross-platform fallback.
+    """
+    templates: dict[tuple[str, str], StereotypeTemplate] = {}
+    for pack_id, platform_id in keys:
+        pack = packs.get(pack_id)
+        if pack is None:
+            continue
+        release = selected_release(pack.releases, pack.current_release)
+        if release is None:
+            continue
+        platform = next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
+        if platform is None:
+            continue
+        stereotype_base: dict[str, Any] = platform.data.get("capabilities", {}).get("stereotype", {})
+        templates[(pack_id, platform_id)] = StereotypeTemplate(
+            platform_name=platform.appium_platform_name,
+            automation_name=platform.automation_name,
+            stereotype_base=stereotype_base,
+        )
+    return templates
+
+
 async def load_stereotype_template(
     session: AsyncSession,
     *,
@@ -58,26 +136,25 @@ async def load_stereotype_template(
     """Fetch the device-independent stereotype template for a pack/platform.
 
     The only DB-touching half of stereotype rendering — cacheable by
-    ``(pack_id, platform_id)``. Raises ``LookupError`` when the pack has no
-    selectable release or the platform is absent from it.
+    ``(pack_id, platform_id)``. Raises ``LookupError`` naming which of the three
+    real conditions was hit: the pack row is absent, the pack carries no
+    selectable release, or the platform is absent from the selected release.
+    Composes :func:`load_pack_catalog` with :func:`stereotype_templates_from_packs`
+    so the diagnosis re-reads the same in-memory rows the projection walked — one
+    query for both the hit and the miss path.
     """
-    pack = await session.scalar(
-        select(DriverPack)
-        .where(DriverPack.id == pack_id)
-        .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
-    )
-    release = selected_release(pack.releases, pack.current_release) if pack is not None else None
+    packs = await load_pack_catalog(session, {pack_id})
+    templates = stereotype_templates_from_packs(packs, {(pack_id, platform_id)})
+    template = templates.get((pack_id, platform_id))
+    if template is not None:
+        return template
+    pack = packs.get(pack_id)
+    if pack is None:
+        raise LookupError(f"unknown pack {pack_id}")
+    release = selected_release(pack.releases, pack.current_release)
     if release is None:
         raise LookupError(f"no releases for pack {pack_id}")
-    platform = next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
-    if platform is None:
-        raise LookupError(f"platform {platform_id!r} not in {pack_id} release {release.release}")
-    stereotype_base: dict[str, Any] = platform.data.get("capabilities", {}).get("stereotype", {})
-    return StereotypeTemplate(
-        platform_name=platform.appium_platform_name,
-        automation_name=platform.automation_name,
-        stereotype_base=stereotype_base,
-    )
+    raise LookupError(f"platform {platform_id!r} not in {pack_id} release {release.release}")
 
 
 async def render_stereotype(

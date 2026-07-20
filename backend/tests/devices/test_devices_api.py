@@ -10,7 +10,15 @@ import pytest_asyncio
 from sqlalchemy import event
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import (
+    ConnectionType,
+    Device,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceOperationalState,
+    DeviceType,
+    GroupType,
+)
 from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -44,7 +52,6 @@ DEVICE_PAYLOAD = {
     "identity_scheme": "android_serial",
     "identity_scope": "host",
     "os_version": "14",
-    "tags": {"type": "emulator"},
 }
 
 HOST_PAYLOAD = {
@@ -98,7 +105,6 @@ _KNOWN_DEVICE_PAYLOAD_KEYS = frozenset(
         "identity_scheme",
         "identity_scope",
         "os_version",
-        "tags",
         "device_type",
         "connection_type",
         "ip_address",
@@ -125,7 +131,6 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
         identity_scheme=str(payload["identity_scheme"]),
         identity_scope=str(payload["identity_scope"]),
         os_version=str(payload["os_version"]),
-        tags=payload.get("tags"),
         device_type=payload.get("device_type", "real_device"),
         connection_type=payload.get("connection_type"),
         ip_address=payload.get("ip_address"),
@@ -315,38 +320,6 @@ async def test_batch_serialization_matches_per_device(db_session: AsyncSession, 
     assert payloads[d_no_pack.id]["blocked_reason"] == "pack_unavailable"
 
 
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_list_devices_filters_tags_with_jsonb_containment(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    await _create_device(
-        db_session,
-        default_host_id,
-        name="Smoke One",
-        identity_value="jsonb-1",
-        connection_target="jsonb-1",
-        tags={"team": "qa", "lane": "smoke"},
-    )
-    await _create_device(
-        db_session,
-        default_host_id,
-        name="Smoke Two",
-        identity_value="jsonb-2",
-        connection_target="jsonb-2",
-        tags={"team": "dev", "lane": "smoke"},
-    )
-    await db_session.commit()
-
-    response = await client.get("/api/devices", params={"tags.team": "qa", "tags.lane": "smoke"})
-
-    assert response.status_code == 200
-    names = {item["name"] for item in response.json()}
-    assert names == {"Smoke One"}
-
-
 @pytest.mark.asyncio
 async def test_list_devices_filter_platform(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
@@ -527,27 +500,52 @@ async def test_list_devices_filter_search_matches_name_identity_and_target(
 
 
 @pytest.mark.asyncio
-async def test_list_devices_filter_tags(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    await _create_device(
+async def test_devices_group_query_is_and(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Repeated ?group= params are ANDed: only devices in every named group match."""
+    east_tv = await _create_device(
         db_session,
         default_host_id,
-        identity_value="tagged-qa",
-        connection_target="tagged-qa",
-        name="Tagged QA",
-        tags={"team": "qa", "lane": "smoke"},
+        identity_value="east-tv",
+        connection_target="east-tv",
+        name="east-tv",
     )
-    await _create_device(
+    east_phone = await _create_device(
         db_session,
         default_host_id,
-        identity_value="tagged-dev",
-        connection_target="tagged-dev",
-        name="Tagged Dev",
-        tags={"team": "dev", "lane": "smoke"},
+        identity_value="east-phone",
+        connection_target="east-phone",
+        name="east-phone",
     )
 
-    resp = await client.get("/api/devices", params={"tags.team": "qa", "tags.lane": "smoke"})
-    assert resp.status_code == 200
-    assert [item["name"] for item in resp.json()] == ["Tagged QA"]
+    async def _add_static_group(key: str, device_ids: list[uuid.UUID]) -> None:
+        group = DeviceGroup(key=key, name=key, group_type=GroupType.static)
+        db_session.add(group)
+        await db_session.flush()
+        for device_id in device_ids:
+            db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device_id))
+        await db_session.commit()
+
+    await _add_static_group("east", [east_tv.id, east_phone.id])
+    await _add_static_group("tv", [east_tv.id])
+
+    response = await client.get("/api/devices", params=[("group", "east"), ("group", "tv"), ("limit", 50)])
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["items"]] == [str(east_tv.id)]
+
+
+@pytest.mark.asyncio
+async def test_devices_group_query_unknown_key_is_422(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    response = await client.get("/api/devices", params=[("group", "missing")])
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == "unknown device groups: missing"
 
 
 async def test_list_devices_filter_status(
@@ -1049,12 +1047,11 @@ async def test_update_device(client: AsyncClient, db_session: AsyncSession, defa
 
     resp = await client.patch(
         f"/api/devices/{device_id}",
-        json={"name": "Updated Name", "tags": {"owner": "qa"}},
+        json={"name": "Updated Name"},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "Updated Name"
-    assert data["tags"]["owner"] == "qa"
     assert data["lifecycle_policy_summary"]["state"] == "idle"
 
 

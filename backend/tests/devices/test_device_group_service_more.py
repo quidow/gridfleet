@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+
+import pytest
 
 from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
@@ -23,6 +24,7 @@ def _svc(settings: object | None = None) -> DeviceGroupsService:
     return DeviceGroupsService(
         publisher=event_bus,
         crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        settings=_settings,
     )
 
 
@@ -37,78 +39,76 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     svc = _svc()
     group = await svc.create_group(
         db_session,
-        DeviceGroupCreate(name="static phones", description="operator set", group_type="static"),
+        DeviceGroupCreate(key="static-phones", name="static phones", description="operator set", group_type="static"),
     )
     await settle_after_commit_tasks()
 
-    assert await svc.add_members(db_session, group.id, [first_device.id, second_device.id]) == 2
-    assert await svc.add_members(db_session, group.id, [first_device.id]) == 0
+    assert await svc.add_members(db_session, group.key, [first_device.id, second_device.id]) == 2
+    assert await svc.add_members(db_session, group.key, [first_device.id]) == 0
 
     groups = await svc.list_groups(db_session)
     assert groups[0]["device_count"] == 2
 
-    detail = await svc.get_group(db_session, group.id)
+    detail = await svc.get_group(db_session, group.key)
     assert detail is not None
     assert [device.id for device in detail["devices"]] == [first_device.id, second_device.id]
-    assert await svc.get_group_device_ids(db_session, group.id) == [first_device.id, second_device.id]
+    assert await svc.get_group_device_ids(db_session, group.key) == [first_device.id, second_device.id]
 
-    assert await svc.remove_members(db_session, group.id, [first_device.id]) == 1
-    assert await svc.remove_members(db_session, group.id, [first_device.id]) == 0
+    assert await svc.remove_members(db_session, group.key, [first_device.id]) == 1
+    assert await svc.remove_members(db_session, group.key, [first_device.id]) == 0
 
     updated = await svc.update_group(
         db_session,
-        group.id,
+        group.key,
         DeviceGroupUpdate(name="static phones updated", description="renamed"),
     )
     assert updated is not None
     assert updated.name == "static phones updated"
     assert updated.description == "renamed"
 
-    assert await svc.delete_group(db_session, group.id) is True
-    assert await svc.delete_group(db_session, group.id) is False
-    assert await svc.get_group(db_session, group.id) is None
-    assert await svc.update_group(db_session, group.id, DeviceGroupUpdate(name="missing")) is None
+    assert await svc.delete_group(db_session, group.key) is True
+    assert await svc.delete_group(db_session, group.key) is False
+    assert await svc.get_group(db_session, group.key) is None
+    assert await svc.update_group(db_session, group.key, DeviceGroupUpdate(name="missing")) is None
 
 
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
     _host, device = await seed_host_and_device(db_session, identity="group-dynamic-1")
-    filters = DeviceGroupFilters(platform_id="android_mobile", tags={"tier": "smoke"})
     svc = _svc()
+    # Classification now lives in a static group the dynamic filter references.
+    await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="tier-smoke", name="tier smoke", group_type="static"),
+    )
+    await svc.add_members(db_session, "tier-smoke", [device.id])
+    filters = DeviceGroupFilters(platform_id="android_mobile", member_of=["tier-smoke"])
     group = await svc.create_group(
         db_session,
-        DeviceGroupCreate(name="dynamic smoke", group_type="dynamic", filters=filters),
+        DeviceGroupCreate(key="dynamic-smoke", name="dynamic smoke", group_type="dynamic", filters=filters),
     )
     await settle_after_commit_tasks()
 
-    mock_crud = AsyncMock()
-    mock_crud.count_devices_by_filters = AsyncMock(return_value=5)
-    mock_crud.list_devices_by_filters = AsyncMock(return_value=[device])
-    svc_mocked = DeviceGroupsService(publisher=event_bus, crud=mock_crud)
-    groups = await svc_mocked.list_groups(db_session)
-    detail = await svc_mocked.get_group(db_session, group.id)
-    device_ids = await svc_mocked.get_group_device_ids(db_session, group.id)
+    groups = await svc.list_groups(db_session)
+    detail = await svc.get_group(db_session, group.key)
+    device_ids = await svc.get_group_device_ids(db_session, group.key)
 
     assert groups[0]["group_type"] == "dynamic"
-    assert groups[0]["filters"] == {"platform_id": "android_mobile", "tags": {"tier": "smoke"}}
-    assert groups[0]["device_count"] == 5
+    assert groups[0]["filters"] == {"platform_id": "android_mobile", "member_of": ["tier-smoke"]}
+    assert groups[0]["device_count"] == 1
     assert detail is not None
     assert detail["device_count"] == 1
-    assert detail["devices"] == [device]
+    assert [d.id for d in detail["devices"]] == [device.id]
     assert device_ids == [device.id]
-    mock_crud.count_devices_by_filters.assert_awaited_once()
-    assert mock_crud.list_devices_by_filters.await_count == 2
 
     updated = await svc.update_group(
         db_session,
-        group.id,
+        group.key,
         DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
     )
     assert updated is not None
     assert updated.filters == {"platform_id": "ios"}
-    mock_crud2 = AsyncMock()
-    mock_crud2.list_devices_by_filters = AsyncMock(return_value=[device])
-    svc_mocked2 = DeviceGroupsService(publisher=event_bus, crud=mock_crud2)
-    assert await svc_mocked2.get_group_device_ids(db_session, group.id) == [device.id]
+    # No iOS device is seeded, so membership is empty after the filter change.
+    assert await svc.get_group_device_ids(db_session, group.key) == []
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
@@ -122,10 +122,64 @@ async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
 
 
 async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: AsyncSession) -> None:
-    group = DeviceGroup(name="orphan", group_type=GroupType.static, filters=None)
+    group = DeviceGroup(key="orphan", name="orphan", group_type=GroupType.static, filters=None)
     db_session.add(group)
     await db_session.commit()
     await db_session.delete(group)
     await db_session.commit()
 
-    assert await _svc().get_group_device_ids(db_session, group.id) == []
+    assert await _svc().get_group_device_ids(db_session, group.key) == []
+
+
+async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: AsyncSession) -> None:
+    """The reference scan runs for every group type and must not over-reject.
+
+    ``delete_group`` no longer gates ``_assert_no_references`` on the target being
+    static, so a dynamic group with no dependents must still delete cleanly.
+    """
+    svc = _svc()
+    await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="del-static", name="del static", group_type="static"),
+    )
+    dynamic = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(
+            key="del-dynamic",
+            name="del dynamic",
+            group_type="dynamic",
+            filters=DeviceGroupFilters(member_of=["del-static"]),
+        ),
+    )
+    await settle_after_commit_tasks()
+
+    assert await svc.delete_group(db_session, dynamic.key) is True
+    assert await svc.get_group(db_session, dynamic.key) is None
+
+
+async def test_delete_dynamic_group_rejects_dangling_reference(db_session: AsyncSession) -> None:
+    """A ``member_of`` naming a dynamic group is unreachable through the API
+    (``_assert_member_of_resolves`` rejects it), but nothing structural stops the
+    row from existing — a hand-written row or a data migration can mint one. The
+    delete path scans references unconditionally so such a row cannot be orphaned.
+    """
+    svc = _svc()
+    target = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="dangling-target", name="dangling target", group_type="dynamic"),
+    )
+    await settle_after_commit_tasks()
+    # Bypass the service so the otherwise-rejected reference reaches the table.
+    db_session.add(
+        DeviceGroup(
+            key="dangling-ref",
+            name="dangling ref",
+            group_type=GroupType.dynamic,
+            filters={"member_of": [target.key]},
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(device_group_service.GroupReferencedError) as exc:
+        await svc.delete_group(db_session, target.key)
+    assert exc.value.dependents == ["dangling-ref"]

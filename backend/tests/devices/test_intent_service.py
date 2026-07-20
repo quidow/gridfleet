@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import event, select
+from sqlalchemy import inspect as sa_inspect
 
 from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
@@ -319,3 +320,25 @@ async def test_reconcile_now_flushes_before_lock(monkeypatch: pytest.MonkeyPatch
     await service.revoke_intents_and_reconcile(device_id=device_id, sources=[], publisher=publisher)
     assert "flush" not in call_log, f"unexpected flush in revoke path: {call_log}"
     assert "lock" in call_log
+
+
+async def test_lock_device_handle_honours_load_sessions_with_predicates(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """``load_sessions`` must not be silently dropped when predicates are supplied.
+
+    The predicates branch builds its own statement; before this was wired up it
+    ignored ``load_sessions`` entirely, so touching ``locked.device.sessions``
+    triggered a sync lazy load under ``AsyncSession`` and raised ``MissingGreenlet``.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="lock-sessions-predicate")
+
+    locked = await device_locking.lock_device_handle(
+        db_session,
+        device.id,
+        load_sessions=True,
+        predicates=[Device.id == device.id],
+    )
+
+    assert "sessions" not in sa_inspect(locked.device).unloaded
+    assert list(locked.device.sessions) == []

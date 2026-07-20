@@ -2,21 +2,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceReservation, ExclusionKind
+from app.devices.models import Device, DeviceReservation, ExclusionKind
 from app.devices.services.claims import reservation_active
 from app.devices.services.intent import IntentService
 from app.runs.models import TERMINAL_STATES, TestRun
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ColumnElement
 
     from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
@@ -301,3 +303,37 @@ def reservation_gating_run_id(reservation_run: TestRun | None, device_id: uuid.U
     if reservation_entry_is_excluded(entry):
         return None
     return reservation_run.id
+
+
+def reservation_gating_owner_sql(*, now: datetime) -> ColumnElement[object]:
+    """Correlated scalar subquery for ``Device`` selects: the run id gating this
+    device, or NULL when the device is free (no active reservation, terminal run,
+    or excluded entry). SQL twin of :func:`reservation_gating_run_id` so the
+    grid allocator's batch eligible-devices query and lock-time predicate can
+    fold the reservation gate into one read without drifting from the Python
+    projection consumed by the read-side allocatability badge.
+    """
+    return cast(
+        "ColumnElement[object]",
+        (
+            select(DeviceReservation.run_id)
+            .join(TestRun, TestRun.id == DeviceReservation.run_id)
+            .where(
+                DeviceReservation.device_id == Device.id,
+                reservation_active(),
+                TestRun.state.notin_(TERMINAL_STATES),
+                or_(
+                    DeviceReservation.excluded.is_(False),
+                    and_(
+                        DeviceReservation.excluded.is_(True),
+                        DeviceReservation.excluded_until.is_not(None),
+                        DeviceReservation.excluded_until <= now,
+                    ),
+                ),
+            )
+            .order_by(DeviceReservation.created_at.desc())
+            .limit(1)
+            .correlate(Device)
+            .scalar_subquery()
+        ),
+    )

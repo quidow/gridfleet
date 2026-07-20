@@ -13,7 +13,8 @@ EAGER LOADS: ``lock_device`` always eager-loads ``appium_node`` and ``host``.
 Pass ``load_sessions=True`` to additionally eager-load ``Device.sessions`` —
 required by lifecycle_policy callers that read session-related state inside
 the locked transaction. ``lock_device_handle`` joins the two scalar relationships
-into its locked statement and returns transaction-bound proof of ownership.
+into its locked statement, honours ``load_sessions`` with or without
+``predicates``, and returns transaction-bound proof of ownership.
 """
 
 from __future__ import annotations
@@ -22,15 +23,20 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.exc import NoResultFound
+from sqlalchemy.orm import contains_eager, joinedload, selectinload
 
+from app.appium_nodes.models import AppiumNode
 from app.devices.models import Device
+from app.hosts.models.host import Host
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import SessionTransaction
+    from sqlalchemy.sql.elements import ColumnElement
 
 
 _LOCKED_DEVICE_TOKEN = object()
@@ -100,18 +106,54 @@ async def lock_device_handle(
     device_id: uuid.UUID,
     *,
     load_sessions: bool = False,
+    predicates: Sequence[ColumnElement[bool]] = (),
 ) -> LockedDevice:
-    options: list[Any] = [joinedload(Device.appium_node), joinedload(Device.host)]
-    if load_sessions:
-        options.append(selectinload(Device.sessions))
-    stmt = (
-        select(Device)
-        .where(Device.id == device_id)
-        .options(*options)
-        .with_for_update(of=Device)
-        .execution_options(populate_existing=True)
-    )
-    device = (await db.execute(stmt)).scalar_one()
+    """Lock the device row and return a transaction-bound proof of ownership.
+
+    *predicates* are extra WHERE clauses appended to the joined
+    ``SELECT ... FOR UPDATE OF devices`` so callers can fold their lock-time
+    rechecks into the lock query itself (a no-row result means the candidate
+    lost the race or failed the recheck, and the caller declines without an
+    extra read). When predicates are supplied, the AppiumNode/Host relationships
+    are joined explicitly (``contains_eager``) so a predicate referencing their
+    columns resolves against the same joined row rather than minting a second
+    anonymous join (a cartesian product). With no predicates, ``joinedload``
+    keeps the original anonymous-join behavior the existing callers expect.
+
+    ``load_sessions`` is honoured in both branches. It targets a different
+    relationship than the two ``contains_eager`` loads, so its ``selectinload``
+    composes with them: the joined row still populates ``appium_node``/``host``
+    and ``Device.sessions`` is filled by one extra IN query.
+    """
+    if predicates:
+        predicate_options: list[Any] = [contains_eager(Device.appium_node), contains_eager(Device.host)]
+        if load_sessions:
+            predicate_options.append(selectinload(Device.sessions))
+        stmt = (
+            select(Device)
+            .where(Device.id == device_id)
+            .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
+            .outerjoin(Host, Host.id == Device.host_id)
+            .options(*predicate_options)
+            .with_for_update(of=Device)
+            .execution_options(populate_existing=True)
+        )
+        for predicate in predicates:
+            stmt = stmt.where(predicate)
+    else:
+        options: list[Any] = [joinedload(Device.appium_node), joinedload(Device.host)]
+        if load_sessions:
+            options.append(selectinload(Device.sessions))
+        stmt = (
+            select(Device)
+            .where(Device.id == device_id)
+            .options(*options)
+            .with_for_update(of=Device)
+            .execution_options(populate_existing=True)
+        )
+    device = (await db.execute(stmt)).scalar_one_or_none()
+    if device is None:
+        raise NoResultFound
     return LockedDevice._from_lock(db, device)
 
 

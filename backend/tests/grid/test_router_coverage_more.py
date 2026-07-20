@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from starlette.datastructures import QueryParams
 
 from app.core.errors import PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
+from app.devices.models import GroupType
 from app.devices.routers import core as devices_core
 from app.devices.routers import groups as device_groups
 from app.devices.schemas.device import BulkDeviceIds, DevicePatch, DeviceVerificationCreate
@@ -291,73 +291,80 @@ async def test_runs_router_create_and_success_lifecycle_paths(monkeypatch: pytes
 
 async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
-    group_id = uuid.uuid4()
+    group_key = "group"
     device_id = uuid.uuid4()
 
-    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=[])))
+    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
-        await device_groups._group_device_ids_or_404(db, group_id, ds_empty)
+        await device_groups._group_device_ids_or_404(db, group_key, ds_empty)
 
     ds_create = SimpleNamespace(
         groups=SimpleNamespace(
-            create_group=AsyncMock(return_value=SimpleNamespace(id=group_id)),
-            get_group=AsyncMock(return_value={"id": str(group_id), "devices": []}),
+            create_group=AsyncMock(return_value=SimpleNamespace(key=group_key)),
+            get_group=AsyncMock(return_value={"key": group_key, "devices": []}),
         )
     )
-    assert await device_groups.create_group(DeviceGroupCreate(name="g"), db=db, device_services=ds_create) == {
-        "id": str(group_id),
+    assert await device_groups.create_group(
+        DeviceGroupCreate(key=group_key, name="g"), db=db, device_services=ds_create
+    ) == {
+        "key": group_key,
         "devices": [],
     }
     ds_create_with_presenter = SimpleNamespace(
         groups=SimpleNamespace(
-            create_group=AsyncMock(return_value=SimpleNamespace(id=group_id)),
-            get_group=AsyncMock(return_value={"id": str(group_id), "devices": []}),
+            create_group=AsyncMock(return_value=SimpleNamespace(key=group_key)),
+            get_group=AsyncMock(return_value={"key": group_key, "devices": []}),
         ),
         presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})),
     )
-    assert await device_groups.get_group(group_id, db=db, device_services=ds_create_with_presenter) == {
-        "id": str(group_id),
+    assert await device_groups.get_group(group_key, db=db, device_services=ds_create_with_presenter) == {
+        "key": group_key,
         "devices": [],
     }
 
     ds_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
-        await device_groups.get_group(group_id, db=db, device_services=ds_none)
+        await device_groups.get_group(group_key, db=db, device_services=ds_none)
 
     ds_update_none = SimpleNamespace(groups=SimpleNamespace(update_group=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
-        await device_groups.update_group(group_id, DeviceGroupUpdate(name="new"), db=db, device_services=ds_update_none)
+        await device_groups.update_group(
+            group_key, DeviceGroupUpdate(name="new"), db=db, device_services=ds_update_none
+        )
 
     ds_delete_false = SimpleNamespace(groups=SimpleNamespace(delete_group=AsyncMock(return_value=False)))
     with pytest.raises(HTTPException):
-        await device_groups.delete_group(group_id, db=db, device_services=ds_delete_false)
+        await device_groups.delete_group(group_key, db=db, device_services=ds_delete_false)
 
-    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value={"group_type": "dynamic"})))
+    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=GroupType.dynamic)))
     with pytest.raises(HTTPException):
         await device_groups.add_members(
-            group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_dynamic
+            group_key, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_dynamic
         )
     with pytest.raises(HTTPException):
         await device_groups.remove_members(
-            group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_dynamic
+            group_key, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_dynamic
         )
 
     ds_static = SimpleNamespace(
         groups=SimpleNamespace(
-            get_group=AsyncMock(return_value={"group_type": "static"}),
+            get_group_type=AsyncMock(return_value=GroupType.static),
             add_members=AsyncMock(return_value=1),
             remove_members=AsyncMock(return_value=1),
         )
     )
     assert await device_groups.add_members(
-        group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_static
+        group_key, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_static
     ) == {"added": 1}
     assert await device_groups.remove_members(
-        group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_static
+        group_key, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_static
     ) == {"removed": 1}
 
     ds_bulk = SimpleNamespace(
-        groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=[device_id])),
+        groups=SimpleNamespace(
+            get_group_type=AsyncMock(return_value=GroupType.static),
+            get_group_device_ids=AsyncMock(return_value=[device_id]),
+        ),
         bulk=SimpleNamespace(
             bulk_start_nodes=AsyncMock(return_value={"ok": "start"}),
             bulk_stop_nodes=AsyncMock(return_value={"ok": "stop"}),
@@ -365,11 +372,11 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
             bulk_enter_maintenance=AsyncMock(return_value={"ok": "enter"}),
         ),
     )
-    assert await device_groups.group_bulk_start(group_id, db=db, device_services=ds_bulk) == {"ok": "start"}
-    assert await device_groups.group_bulk_stop(group_id, db=db, device_services=ds_bulk) == {"ok": "stop"}
-    assert await device_groups.group_bulk_restart(group_id, db=db, device_services=ds_bulk) == {"ok": "restart"}
+    assert await device_groups.group_bulk_start(group_key, db=db, device_services=ds_bulk) == {"ok": "start"}
+    assert await device_groups.group_bulk_stop(group_key, db=db, device_services=ds_bulk) == {"ok": "stop"}
+    assert await device_groups.group_bulk_restart(group_key, db=db, device_services=ds_bulk) == {"ok": "restart"}
     assert await device_groups.group_bulk_enter_maintenance(
-        group_id,
+        group_key,
         BulkDeviceIds(device_ids=[device_id]),
         db=db,
         device_services=ds_bulk,
@@ -380,9 +387,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     db = MagicMock()
     device_id = uuid.uuid4()
     device = SimpleNamespace(id=device_id, pack_id="pack", platform_id="platform", lifecycle_policy_state=None)
-    request = SimpleNamespace(query_params=QueryParams("tags.pool=smoke&tags.=ignored"))
     filters = devices_core.build_device_query_filters(
-        request,
         pack_id=None,
         platform_id=None,
         status=None,
@@ -404,7 +409,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         sort_by="created_at",
         sort_dir="desc",
     )
-    assert filters.tags == {"pool": "smoke"}
+    assert filters.pack_id is None
 
     _mock_crud = AsyncMock()
     _mock_crud.list_devices_paginated = AsyncMock(return_value=([device], 1))

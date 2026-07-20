@@ -102,7 +102,7 @@ class DevicePresenterService:
         # Distinct from the broad ``is_reserved`` display flag above.
         reservation_blocks_allocation = run_service.reservation_gating_run_id(reservation, device.id) is not None
         # Load the node before the projection: the warm soft-gate reads
-        # AppiumNode.accepting_new_sessions (the same flag _eligible_devices gates on).
+        # AppiumNode.accepting_new_sessions (the flag _eligible_devices_with_facts gates on).
         await _ensure_appium_node_loaded(db, device)
         node_accepting = device_node_accepting_new_sessions(device)
         node_viable = device_node_is_viable(
@@ -168,7 +168,6 @@ class DevicePresenterService:
             "is_reserved": is_reserved,
             "allocatable": allocatability_reason is None,
             "unavailable_reason": allocatability_reason,
-            "tags": device.tags,
             "device_type": device.device_type,
             "connection_type": device.connection_type,
             "ip_address": device.ip_address,

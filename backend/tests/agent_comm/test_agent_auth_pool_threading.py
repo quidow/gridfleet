@@ -50,7 +50,6 @@ async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPa
         ip_address=None,
         connection_target="target",
         identity_value="target",
-        tags={},
         appium_node=None,
     )
 

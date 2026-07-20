@@ -42,7 +42,6 @@ const DEFAULT_DEVICES = [
     os_version: '17.4',
     host_id: 'host-1',
     status: 'available',
-    tags: null,
     device_type: 'simulator',
     connection_type: 'virtual',
     ip_address: null,

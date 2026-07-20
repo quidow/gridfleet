@@ -191,7 +191,7 @@ def test_appium_driver_forwards_client_config(monkeypatch):
         next(generator)
 
 
-def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
+def test_appium_driver_passes_group_capabilities_through(monkeypatch):
     created_drivers = []
     install_fake_appium(monkeypatch, created_drivers)
     RecordingClient.instances.clear()
@@ -201,17 +201,17 @@ def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
         {
             "pack_id": "appium-uiautomator2",
             "platform_id": "android_mobile",
-            "gridfleet:tag:screen_type": "4k",
+            "gridfleet:group:screen-type-4k": True,
         },
-        test_name="test_tag_cap",
+        test_name="test_group_cap",
     )
 
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
     generator = fixture_fn(request, gridfleet_client, None)
     driver = next(generator)
 
-    assert created_drivers[0][1]["gridfleet:tag:screen_type"] == "4k"
-    assert created_drivers[0][1]["gridfleet:testName"] == "test_tag_cap"
+    assert created_drivers[0][1]["gridfleet:group:screen-type-4k"] is True
+    assert created_drivers[0][1]["gridfleet:testName"] == "test_group_cap"
 
     driver.quit()
     with pytest.raises(StopIteration):

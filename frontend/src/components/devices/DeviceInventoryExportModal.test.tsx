@@ -23,13 +23,13 @@ describe("DeviceInventoryExportModal", () => {
   it("persists column selection to localStorage", async () => {
     const spy = vi.spyOn(api, "downloadInventory").mockResolvedValue();
     render(<DeviceInventoryExportModal isOpen onClose={() => {}} filters={{}} />);
-    const checkbox = screen.getByLabelText("tags");
+    const checkbox = screen.getByLabelText("device_config");
     fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole("button", { name: /download/i }));
     await waitFor(() => {
       const stored = localStorage.getItem("gridfleet:inventory-export-columns");
       expect(stored).toBeTruthy();
-      expect(stored).toContain("tags");
+      expect(stored).toContain("device_config");
     });
     spy.mockRestore();
   });

@@ -12,6 +12,8 @@ import pytest
 import pytest_asyncio
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -32,7 +34,9 @@ def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
+async def _stereotype_stub(
+    db: AsyncSession, device: Device, *, template_cache: object | None = None, matching_group_keys: Collection[str] = ()
+) -> dict[str, Any]:
     return {
         "platformName": "Android",
         "appium:udid": device.connection_target,
@@ -122,8 +126,8 @@ async def test_eligible_devices_sets_gauge(
 ) -> None:
     from app.grid.allocation import GRID_ELIGIBLE_DEVICES
 
-    eligible = await allocation_service._eligible_devices(db_session)
-    assert seeded_available_device.id in {d.id for d in eligible}
+    eligible = await allocation_service._eligible_devices_with_facts(db_session, group_keys=())
+    assert seeded_available_device.id in {row.device.id for row in eligible}
     assert GRID_ELIGIBLE_DEVICES._value.get() == len(eligible)  # type: ignore[attr-defined]
 
 
@@ -346,6 +350,112 @@ async def test_legacy_run_id_cap_rejected(
     with pytest.raises(CapabilityMergeError, match="no longer supported"):
         await allocation_service.try_allocate(db_session, ticket=ticket)
     assert ticket.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("value", [False, "true", 1, None])
+async def test_group_capability_requires_json_true_in_try_allocate(
+    db_session: AsyncSession,
+    seeded_available_device: Device,
+    allocation_service: AllocationService,
+    value: object,
+) -> None:
+    """A non-boolean-true group capability cancels the ticket with a descriptive 400 message."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android", **{"gridfleet:group:east-lab": value}))
+    db_session.add(ticket)
+    await db_session.flush()
+    with pytest.raises(CapabilityMergeError, match="boolean true"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert ticket.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+async def test_legacy_tag_cap_rejected_in_try_allocate(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """The retired gridfleet:tag:* capability is rejected loudly, not silently matched."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android", **{"gridfleet:tag:lab": "east"}))
+    db_session.add(ticket)
+    await db_session.flush()
+    with pytest.raises(CapabilityMergeError, match="gridfleet:group:<key>"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert ticket.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+async def test_invalid_group_key_rejected_in_try_allocate(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """A malformed group key cancels the ticket."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android", **{"gridfleet:group:Bad Key": True}))
+    db_session.add(ticket)
+    await db_session.flush()
+    with pytest.raises(CapabilityMergeError, match="invalid device group key"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert ticket.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+async def test_older_waiter_with_legacy_tag_does_not_veto_younger(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """An older ticket carrying the tombstoned gridfleet:tag:* capability is dropped from
+    the FIFO veto (it cannot block younger valid work); it cancels itself on its own poll."""
+    from datetime import UTC, datetime, timedelta
+
+    older = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{"gridfleet:tag:lab": "east"}),
+        created_at=datetime.now(UTC) - timedelta(seconds=10),
+    )
+    younger = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add_all([older, younger])
+    await db_session.flush()
+    older.last_polled_at = datetime.now(UTC)  # live waiter
+    # The younger ticket allocates despite the older one carrying a tombstoned selector.
+    result = await allocation_service.try_allocate(db_session, ticket=younger)
+    assert result is not None
+    # The older ticket self-cancels on its own poll.
+    with pytest.raises(CapabilityMergeError, match="gridfleet:group:<key>"):
+        await allocation_service.try_allocate(db_session, ticket=older)
+    assert older.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+async def test_older_waiter_with_invalid_group_key_does_not_veto_younger(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """An older ticket with a malformed group key is dropped from the FIFO veto."""
+    from datetime import UTC, datetime, timedelta
+
+    older = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{"gridfleet:group:Bad Key": True}),
+        created_at=datetime.now(UTC) - timedelta(seconds=10),
+    )
+    younger = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add_all([older, younger])
+    await db_session.flush()
+    older.last_polled_at = datetime.now(UTC)
+    result = await allocation_service.try_allocate(db_session, ticket=younger)
+    assert result is not None
+
+
+@pytest.mark.db
+async def test_older_waiter_with_non_true_group_value_does_not_veto_younger(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """An older ticket with a non-boolean-true group value is dropped from the FIFO veto."""
+    from datetime import UTC, datetime, timedelta
+
+    older = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{"gridfleet:group:east-lab": "yes"}),
+        created_at=datetime.now(UTC) - timedelta(seconds=10),
+    )
+    younger = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add_all([older, younger])
+    await db_session.flush()
+    older.last_polled_at = datetime.now(UTC)
+    result = await allocation_service.try_allocate(db_session, ticket=younger)
+    assert result is not None
 
 
 @pytest.mark.db

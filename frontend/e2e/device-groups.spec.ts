@@ -18,7 +18,7 @@ test.describe('Device group detail', () => {
         contentType: 'application/json',
         body: JSON.stringify([
           {
-            id: 'group-1',
+            key: 'group-1',
             name: 'QA Devices',
             description: 'Shared devices for QA workflows',
             group_type: 'static',
@@ -35,7 +35,7 @@ test.describe('Device group detail', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          id: 'group-1',
+          key: 'group-1',
           name: 'QA Devices',
           description: 'Shared devices for QA workflows',
           group_type: 'static',
@@ -55,7 +55,6 @@ test.describe('Device group detail', () => {
               host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-              tags: { team: 'qa' },
               device_type: 'real_device',
               connection_type: 'network',
               ip_address: '10.0.0.10',
@@ -92,7 +91,6 @@ test.describe('Device group detail', () => {
             host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-            tags: { team: 'qa' },
             device_type: 'real_device',
             connection_type: 'network',
             ip_address: '10.0.0.10',
@@ -145,7 +143,7 @@ test.describe('Device group detail', () => {
     await expect(page.getByRole('heading', { name: 'Whole Group Actions' })).toBeVisible({ timeout: 10_000 });
     const removedTemplateAction = new RegExp(['Apply', 'Template'].join(' '), 'i');
     await expect(page.getByRole('button', { name: removedTemplateAction })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Update Tags/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Update Tags/i })).toHaveCount(0);
   });
 
   test('groups index empty state includes a create CTA', async ({ page }) => {
@@ -187,7 +185,7 @@ test.describe('Device group detail', () => {
           status: 201,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'dynamic-new',
+            key: 'dynamic-new',
             name: 'QA Android Network',
             description: null,
             group_type: 'dynamic',
@@ -220,7 +218,6 @@ test.describe('Device group detail', () => {
             host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-            tags: { team: 'qa' },
             device_type: 'real_device',
             connection_type: 'network',
             ip_address: '10.0.0.10',
@@ -269,16 +266,19 @@ test.describe('Device group detail', () => {
     await page.getByText('Connection Type').locator('..').getByRole('combobox').selectOption('network');
     await page.getByText('Host').locator('..').getByRole('combobox').selectOption('host-1');
     await page.getByText('OS Version').locator('..').getByRole('combobox').selectOption('14');
-    await page.getByRole('button', { name: /Add tag/i }).click();
-    await page.getByPlaceholder('Tag key').fill('team');
-    await page.getByPlaceholder('Tag value').fill('qa');
-    
+    await expect(page.getByLabel('Group key')).toHaveValue('qa-android-network');
+    await page.getByLabel('Group key').fill('network-qa-android');
+
+    // Test that tags are removed
+    await expect(page.getByText(/tag/i)).toHaveCount(0);
+
     const responsePromise = page.waitForResponse(res => res.url().includes('/api/device-groups') && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Create Group' }).last().click();
     await responsePromise;
 
     expect(createPayload).toBeTruthy();
     expect(createPayload).toMatchObject({
+      key: 'network-qa-android',
       name: 'QA Android Network',
       group_type: 'dynamic',
       filters: {
@@ -286,7 +286,6 @@ test.describe('Device group detail', () => {
         device_type: 'real_device',
         connection_type: 'network',
         os_version: '14',
-        tags: { team: 'qa' },
       },
     });
     expect(createPayload).not.toHaveProperty('filter_rules');
@@ -304,7 +303,7 @@ test.describe('Device group detail', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          id: 'static-empty',
+          key: 'static-empty',
           name: 'Empty Static Group',
           description: null,
           group_type: 'static',

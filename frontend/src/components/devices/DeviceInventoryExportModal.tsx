@@ -48,7 +48,7 @@ const COLUMN_GROUPS: { label: string; columns: string[] }[] = [
       "verification.device_checks_checked_at",
     ],
   },
-  { label: "Tags / Config", columns: ["tags", "device_config", "test_data"] },
+  { label: "Config", columns: ["device_config", "test_data"] },
   { label: "Timestamps", columns: ["id", "created_at", "updated_at"] },
 ];
 

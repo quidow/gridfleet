@@ -49,7 +49,7 @@ export const routes: RouteObject[] = [
               { path: 'analytics', element: <Analytics /> },
               { path: 'notifications', element: <Notifications /> },
               { path: 'groups', element: <DeviceGroups /> },
-              { path: 'groups/:id', element: <DeviceGroupDetail /> },
+              { path: 'groups/:key', element: <DeviceGroupDetail /> },
               { path: 'drivers', element: <Drivers /> },
               { path: 'drivers/:id', element: <DriverDetail /> },
               { path: 'settings', element: <Settings /> },

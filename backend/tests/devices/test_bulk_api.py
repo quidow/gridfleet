@@ -52,41 +52,6 @@ async def test_bulk_set_status_route_removed(
     assert resp.status_code == 404
 
 
-async def test_bulk_update_tags_merge(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    ids = await _create_devices(db_session, default_host_id, 2)
-    # Set initial tags on first device
-    await client.patch(f"/api/devices/{ids[0]}", json={"tags": {"env": "lab"}})
-
-    resp = await client.post(
-        "/api/devices/bulk/update-tags",
-        json={"device_ids": ids, "tags": {"team": "qa"}, "merge": True},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["succeeded"] == 2
-
-    # First device should have both tags
-    r = await client.get(f"/api/devices/{ids[0]}")
-    tags = r.json()["tags"]
-    assert tags["env"] == "lab"
-    assert tags["team"] == "qa"
-
-
-async def test_bulk_update_tags_replace(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    ids = await _create_devices(db_session, default_host_id, 1)
-    await client.patch(f"/api/devices/{ids[0]}", json={"tags": {"env": "lab"}})
-
-    resp = await client.post(
-        "/api/devices/bulk/update-tags",
-        json={"device_ids": ids, "tags": {"team": "qa"}, "merge": False},
-    )
-    assert resp.status_code == 200
-
-    r = await client.get(f"/api/devices/{ids[0]}")
-    tags = r.json()["tags"]
-    assert "env" not in tags
-    assert tags["team"] == "qa"
-
-
 async def test_bulk_delete(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     ids = await _create_devices(db_session, default_host_id, 2)
     resp = await client.post("/api/devices/bulk/delete", json={"device_ids": ids})

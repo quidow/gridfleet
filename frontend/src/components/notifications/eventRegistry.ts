@@ -152,11 +152,11 @@ const REGISTRY: Record<string, RegistryEntry> = {
     render: (data) => `${firstString(data, ['name'], 'Run')} expired${appendReason(data)}`,
   },
   'device_group.updated': {
-    render: (data) => `Device group ${firstString(data, ['group_id'], 'group')}: ${firstString(data, ['action'], 'updated')}`,
+    render: (data) => `Device group ${firstString(data, ['group_key'], 'group')}: ${firstString(data, ['action'], 'updated')}`,
   },
   'device_group.members_changed': {
     render: (data) => {
-      const group = firstString(data, ['group_id'], 'group');
+      const group = firstString(data, ['group_key'], 'group');
       const added = numberValue(data.added);
       const removed = numberValue(data.removed);
       if (added !== null) return `Device group ${group}: added ${added} member(s)`;

@@ -1,13 +1,35 @@
 import enum
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.devices.models import ConnectionType, DeviceType
+from app.core.errors import AppError
+from app.devices.group_keys import GroupKey
+from app.devices.models import ConnectionType, DeviceType, GroupType
+from app.devices.schemas.filters import DeviceGroupFilters
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+UNSUPPORTED_SCHEMA_VERSION_MESSAGE = f"unsupported portability schema version; expected {SCHEMA_VERSION}"
+
+
+class UnsupportedSchemaVersionError(AppError):
+    """Raised while parsing a bundle whose ``schema_version`` this build cannot read.
+
+    Deliberately not a ``ValueError``: Pydantic converts ``ValueError`` into a field
+    error, which would bury the version verdict inside a 422 alongside unrelated
+    complaints about retired keys. Propagating an ``AppError`` instead lets the
+    version gate answer first, with the documented message and status.
+    """
+
+    status_code = 400
+    code = "UNSUPPORTED_SCHEMA_VERSION"
+
+    def __init__(self) -> None:
+        super().__init__(UNSUPPORTED_SCHEMA_VERSION_MESSAGE)
 
 
 class OriginalHost(BaseModel):
@@ -15,6 +37,16 @@ class OriginalHost(BaseModel):
 
     hostname: str
     host_id: uuid.UUID | None = None
+
+
+class ExportedDeviceGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: GroupKey
+    name: str
+    description: str | None = None
+    group_type: GroupType
+    filters: DeviceGroupFilters | None = None
 
 
 class ExportedDevice(BaseModel):
@@ -29,7 +61,7 @@ class ExportedDevice(BaseModel):
     device_type: DeviceType
     connection_type: ConnectionType
     connection_target: str | None = None
-    tags: dict[str, str] = Field(default_factory=dict)
+    static_groups: list[GroupKey] = Field(default_factory=list)
     device_config: dict[str, Any] = Field(default_factory=dict)
     test_data: dict[str, Any] = Field(default_factory=dict)
     original_host: OriginalHost
@@ -38,10 +70,34 @@ class ExportedDevice(BaseModel):
 class ExportBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1]
+    schema_version: int
     exported_at: datetime
     source_instance: str | None = None
+    groups: list[ExportedDeviceGroup] = Field(default_factory=list)
     devices: list[ExportedDevice]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _gate_schema_version(cls, data: object) -> object:
+        """Reject a foreign schema version before field validation runs.
+
+        A real v1 bundle carries a ``tags`` map on every device, which this model's
+        ``extra="forbid"`` would otherwise report as a pile of per-device extra-input
+        errors — never mentioning the version, which is the only thing the operator
+        can act on. Running in ``before`` mode puts the version verdict first.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        raw = data.get("schema_version")
+        if raw is None:
+            return data
+        try:
+            version = int(raw)
+        except TypeError, ValueError:
+            return data  # Let field validation report the type error.
+        if version != SCHEMA_VERSION:
+            raise UnsupportedSchemaVersionError
+        return data
 
 
 class ImportRowStatus(enum.StrEnum):
@@ -71,7 +127,7 @@ class ImportPreviewRow(BaseModel):
 class ImportPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1]
+    schema_version: int
     source_instance: str | None = None
     exported_at: datetime
     bundle_hash: str
@@ -145,7 +201,6 @@ class InventoryColumn(enum.StrEnum):
     MODEL_NUMBER = "model_number"
     SOFTWARE_VERSIONS = "software_versions"
     OPERATIONAL_STATE = "operational_state"
-    TAGS = "tags"
     DEVICE_CONFIG = "device_config"
     TEST_DATA = "test_data"
     HARDWARE_BATTERY_LEVEL = "hardware.battery_level_percent"

@@ -133,7 +133,7 @@ The resolved URLs are also available programmatically via `gridfleet_testkit.gri
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...); returns a list of typed `Device` objects |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, groups, ...); returns a list of typed `Device` objects. `groups` takes device-group keys and is sent as one repeated `group` parameter per key, ANDed by the backend |
 | `GridFleetClient.get_device(device_id)` | Fetch one device as a typed `Device` (curated base fields) by backend device id |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
@@ -276,7 +276,7 @@ device = resolve_device_handle_from_driver(driver, client=client)
 assert device.id
 ```
 
-`Device` exposes the curated base fields (`id`, `identity_value`, `connection_target`, `name`, `pack_id`, `platform_id`, `platform_label`, `os_version`, `os_version_display`, `host_id`, `device_type`, `connection_type`, `manufacturer`, `model`, `tags`, `operational_state`, `is_reserved`). `client.get_device(device_id)` and `client.list_devices(...)` return the same type.
+`Device` exposes the curated base fields (`id`, `identity_value`, `connection_target`, `name`, `pack_id`, `platform_id`, `platform_label`, `os_version`, `os_version_display`, `host_id`, `device_type`, `connection_type`, `manufacturer`, `model`, `operational_state`, `is_reserved`). `client.get_device(device_id)` and `client.list_devices(...)` return the same type. Group membership is not a device field — query it the other way round, by filtering `list_devices(groups=[...])` on the keys you care about.
 
 ## Examples
 

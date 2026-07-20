@@ -19,7 +19,7 @@ from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.routers import nodes as nodes_router
 from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
-from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType, GroupType
 from app.devices.routers import (
     bulk,
 )
@@ -40,7 +40,6 @@ from app.devices.routers import (
 )
 from app.devices.schemas.device import (
     BulkDeviceIds,
-    BulkTagsUpdate,
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
@@ -257,36 +256,36 @@ async def test_lifecycle_incidents_router_returns_paginated_response() -> None:
 
 
 async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    group_id = uuid.uuid4()
+    group_key = "group"
     device_id = uuid.uuid4()
 
     ds_update_none = SimpleNamespace(groups=SimpleNamespace(update_group=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
         await device_groups.update_group(
-            group_id,
+            group_key,
             device_groups.DeviceGroupUpdate(name="new"),
             db=object(),
             device_services=ds_update_none,
         )
     assert exc.value.status_code == 404
-    updated_group = SimpleNamespace(id=group_id)
+    updated_group = SimpleNamespace(key=group_key)
     ds_update_ok = SimpleNamespace(
         groups=SimpleNamespace(
             update_group=AsyncMock(return_value=updated_group),
-            get_group=AsyncMock(return_value={"id": group_id}),
+            get_group=AsyncMock(return_value={"key": group_key}),
         )
     )
     assert await device_groups.update_group(
-        group_id,
+        group_key,
         device_groups.DeviceGroupUpdate(name="new"),
         db=object(),
         device_services=ds_update_ok,
-    ) == {"id": group_id}
+    ) == {"key": group_key}
 
-    ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
+    ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
         await device_groups.add_members(
-            group_id,
+            group_key,
             device_groups.GroupMembershipUpdate(device_ids=[device_id]),
             db=object(),
             device_services=ds_members_none,
@@ -294,7 +293,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     assert exc.value.status_code == 404
     with pytest.raises(HTTPException) as exc:
         await device_groups.remove_members(
-            group_id,
+            group_key,
             device_groups.GroupMembershipUpdate(device_ids=[device_id]),
             db=object(),
             device_services=ds_members_none,
@@ -655,7 +654,6 @@ def _run_read(run: SimpleNamespace) -> RunRead:
 async def test_bulk_router_delegates_all_operations() -> None:
     device_ids = [uuid.uuid4()]
     body = SimpleNamespace(device_ids=device_ids)
-    tags_body = SimpleNamespace(device_ids=device_ids, tags={"lab": "east"}, merge=True)
 
     for call, service_name, payload in (
         (bulk.bulk_start_nodes, "bulk_start_nodes", body),
@@ -665,7 +663,6 @@ async def test_bulk_router_delegates_all_operations() -> None:
         (bulk.bulk_enter_maintenance, "bulk_enter_maintenance", body),
         (bulk.bulk_exit_maintenance, "bulk_exit_maintenance", body),
         (bulk.bulk_reconnect, "bulk_reconnect", body),
-        (bulk.bulk_update_tags, "bulk_update_tags", tags_body),
     ):
         mock_bulk = AsyncMock(**{service_name: AsyncMock(return_value={"ok": service_name})})
         device_services = SimpleNamespace(bulk=mock_bulk)
@@ -1849,18 +1846,18 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
 
 
 async def test_device_group_router_bulk_and_membership_branches() -> None:
-    group_id = uuid.uuid4()
+    group_key = "group"
     device_ids = [uuid.uuid4()]
 
-    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=[])))
+    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
-        await device_groups._group_device_ids_or_404(object(), group_id, ds_empty)
+        await device_groups._group_device_ids_or_404(object(), group_key, ds_empty)
     assert exc.value.status_code == 404
 
-    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value={"group_type": "dynamic"})))
+    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=GroupType.dynamic)))
     with pytest.raises(HTTPException) as exc:
         await device_groups.add_members(
-            group_id,
+            group_key,
             body=SimpleNamespace(device_ids=device_ids),
             db=object(),
             device_services=ds_dynamic,
@@ -1868,7 +1865,7 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     assert exc.value.status_code == 400
     with pytest.raises(HTTPException) as exc:
         await device_groups.remove_members(
-            group_id,
+            group_key,
             body=SimpleNamespace(device_ids=device_ids),
             db=object(),
             device_services=ds_dynamic,
@@ -1882,10 +1879,13 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     ) -> None:
         mock_bulk = AsyncMock(**{bulk_method: AsyncMock(return_value={"ok": 1})})
         ds = SimpleNamespace(
-            groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=device_ids)),
+            groups=SimpleNamespace(
+                get_group_type=AsyncMock(return_value=GroupType.static),
+                get_group_device_ids=AsyncMock(return_value=[device_ids[0]]),
+            ),
             bulk=mock_bulk,
         )
-        assert await call(group_id, *args, db=object(), device_services=ds) == {"ok": 1}
+        assert await call(group_key, *args, db=object(), device_services=ds) == {"ok": 1}
 
     await assert_bulk(device_groups.group_bulk_start, "bulk_start_nodes")
     await assert_bulk(device_groups.group_bulk_stop, "bulk_stop_nodes")
@@ -1898,15 +1898,13 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     await assert_bulk(device_groups.group_bulk_exit_maintenance, "bulk_exit_maintenance")
     mock_bulk_reconnect = AsyncMock(bulk_reconnect=AsyncMock(return_value={"ok": 1}))
     ds_reconnect = SimpleNamespace(
-        groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=device_ids)),
+        groups=SimpleNamespace(
+            get_group_type=AsyncMock(return_value=GroupType.static),
+            get_group_device_ids=AsyncMock(return_value=[device_ids[0]]),
+        ),
         bulk=mock_bulk_reconnect,
     )
-    assert await device_groups.group_bulk_reconnect(group_id, db=object(), device_services=ds_reconnect) == {"ok": 1}
-    await assert_bulk(
-        device_groups.group_bulk_update_tags,
-        "bulk_update_tags",
-        BulkTagsUpdate(device_ids=device_ids, tags={"lab": "east"}, merge=True),
-    )
+    assert await device_groups.group_bulk_reconnect(group_key, db=object(), device_services=ds_reconnect) == {"ok": 1}
     await assert_bulk(device_groups.group_bulk_delete, "bulk_delete")
 
 
@@ -2286,11 +2284,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
 
 
 async def test_devices_core_router_branches() -> None:
-    request = SimpleNamespace(
-        query_params=SimpleNamespace(multi_items=Mock(return_value=[("tags.lab", "east"), ("tags.", "bad")]))
-    )
     filters = devices_core.build_device_query_filters(
-        request,
         pack_id=None,
         platform_id="android_mobile",
         status=None,
@@ -2312,7 +2306,7 @@ async def test_devices_core_router_branches() -> None:
         sort_by="created_at",
         sort_dir="desc",
     )
-    assert filters.tags == {"lab": "east"}
+    assert filters.platform_id == "android_mobile"
 
     device_id = uuid.uuid4()
     device = SimpleNamespace(

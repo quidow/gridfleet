@@ -64,7 +64,7 @@ class GridRouterCounts(BaseModel):
     offline: int
     maintenance: int
     # Devices the allocator could serve right now: available ∧ node-viable ∧ accepting
-    # ∧ no live session — the same gate as ``allocation._eligible_devices`` (reservation
+    # ∧ no live session — the same gate as ``allocation._eligible_devices_with_facts`` (reservation
     # is NOT subtracted; a reserved-but-ready device is still routable to its run). The
     # Router "open" pill renders this, and "not ready" is ``available - eligible``.
     eligible: int

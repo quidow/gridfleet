@@ -135,7 +135,7 @@ def compose_app(
     presenter_svc = DevicePresenterService(settings=settings_svc)
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
-    inventory_export_svc = InventoryExportService()
+    inventory_export_svc = InventoryExportService(settings=settings_svc)
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
@@ -203,7 +203,7 @@ def compose_app(
             pool=http_pool,
         ),
     )
-    groups_svc = DeviceGroupsService(publisher=bus, crud=crud_svc)
+    groups_svc = DeviceGroupsService(publisher=bus, crud=crud_svc, settings=settings_svc)
     bulk_svc = BulkOperationsService(
         publisher=bus,
         settings=settings_svc,

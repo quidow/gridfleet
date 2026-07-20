@@ -11,15 +11,19 @@ import pytest_asyncio
 from sqlalchemy import select
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.packs.models import DriverPack
     from app.packs.services.capability import StereotypeTemplate
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
-from app.grid.allocation import AllocationService
+from app.grid.allocation import AllocationService, _EligibleRow
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+from app.packs.services.capability import load_pack_catalog
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
@@ -31,7 +35,9 @@ def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
+async def _stereotype_stub(
+    db: AsyncSession, device: Device, *, template_cache: object | None = None, matching_group_keys: Collection[str] = ()
+) -> dict[str, Any]:
     return {"platformName": "Android"}
 
 
@@ -50,10 +56,21 @@ async def seeded_available_device(db_session: AsyncSession) -> Device:
     return device
 
 
+async def _pack_catalog(db: AsyncSession, device: Device) -> dict[str, DriverPack]:
+    """The pack catalog ``try_allocate`` hands ``_claim`` — the claim path
+    re-assesses readiness against it under the row lock without a new read."""
+    return await load_pack_catalog(db, {device.pack_id})
+
+
 @pytest.mark.db
 async def test_reap_expired_requires_settings(db_session: AsyncSession) -> None:
     with pytest.raises(RuntimeError, match="settings reader"):
         await _service().reap_expired(db_session)
+
+
+def _eligible_row(device: Device) -> _EligibleRow:
+    """An unreserved eligible-batch row for a device, as ``try_allocate`` builds it."""
+    return _EligibleRow(device=device, reservation_run_id=None, static_group_keys=frozenset())
 
 
 @pytest.mark.db
@@ -64,7 +81,12 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
     seeded_available_device.lifecycle_policy_state = {"maintenance_reason": "operator"}
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(seeded_available_device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -85,7 +107,12 @@ async def test_claim_rechecks_active_sessions_under_lock(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(seeded_available_device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
 
@@ -98,7 +125,14 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
-    result = await _service()._claim(db_session, ticket=ticket, device=device, candidate={}, run_id=None)
+    result = await _service()._claim(
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, device),
+    )
     assert result is None
 
 
@@ -122,7 +156,12 @@ async def test_claim_skips_device_with_live_probe_row(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(seeded_available_device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -150,7 +189,12 @@ async def test_claim_proceeds_over_terminal_probe_row(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(seeded_available_device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is not None
 
@@ -160,7 +204,7 @@ async def test_claim_declines_when_node_not_viable_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
     """_claim re-checks node viability under the row lock: a node with an
-    unsatisfied restart watermark after _eligible_devices ran is declined."""
+    unsatisfied restart watermark after _eligible_devices_with_facts ran is declined."""
     from datetime import UTC, datetime, timedelta
 
     from app.appium_nodes.models import AppiumNode
@@ -176,7 +220,12 @@ async def test_claim_declines_when_node_not_viable_under_lock(
     db_session.add(ticket)
     await db_session.flush()
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(seeded_available_device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
 
@@ -213,14 +262,14 @@ async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, se
         .one()
     )
     # Viable before: the device is eligible.
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id in eligible_ids
 
     node.started_at = datetime.now(UTC) - timedelta(seconds=60)
     node.restart_requested_at = datetime.now(UTC)
     await db_session.flush()
 
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id not in eligible_ids
 
 
@@ -277,7 +326,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Report ⑤ safety net, revised: the pack stereotype base is an open dict[str, Any],
-    # so an uploaded pack could carry a constraining key. Identity/tag keys AND the
+    # so an uploaded pack could carry a constraining key. Identity/group keys AND the
     # pack's appium:platform routing key (the driver-pack platform_id — distinguishes
     # e.g. android_mobile/android_tv/firetv_real, which otherwise share platformName +
     # automationName) MUST survive into the match surface; non-matcher base keys
@@ -295,7 +344,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
             stereotype_base={
                 "appium:platform": "{device.platform_id}",  # constraining + templated -> kept, interpolated
                 "appium:os_version": "{device.os_version}",  # non-constraining -> dropped
-                "gridfleet:tag:pool": "ci",  # constraining literal -> kept verbatim
+                "gridfleet:group:ci": True,  # constraining group literal -> kept verbatim
                 "appium:udid": "{device.identity_value}",  # constraining + templated -> kept, interpolated
             },
         )
@@ -305,7 +354,7 @@ async def test_device_match_surface_keeps_only_matcher_relevant_base_keys(
 
     surface = await allocation_module.device_match_surface(db_session, device)
     assert surface["platformName"] == "Android"
-    assert surface["gridfleet:tag:pool"] == "ci"
+    assert surface["gridfleet:group:ci"] is True
     # A templated identity key must flow through the per-device interpolation path,
     # not merely survive key selection — pins that _interpolate actually substitutes.
     assert surface["appium:udid"] == device.identity_value
@@ -482,13 +531,13 @@ async def test_not_accepting_device_not_grid_eligible(
         .one()
     )
     # Accepting before: the device is eligible.
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id in eligible_ids
 
     node.accepting_new_sessions = False  # not a guard-protected column
     await db_session.flush()
 
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    eligible_ids = {r.device.id for r in await _service()._eligible_devices_with_facts(db_session, group_keys=())}
     assert seeded_available_device.id not in eligible_ids
 
 
@@ -501,7 +550,10 @@ async def test_try_allocate_skips_excluded_device(db_session: AsyncSession, seed
     db_session.add(ticket)
     await db_session.flush()
 
-    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session, exclude_device_ids={dev_a.id})}
+    eligible_ids = {
+        r.device.id
+        for r in await _service()._eligible_devices_with_facts(db_session, group_keys=(), exclude_device_ids={dev_a.id})
+    }
     assert dev_a.id not in eligible_ids
     assert dev_b.id in eligible_ids
 
@@ -516,7 +568,7 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
     """The lock-time recheck must also honor the soft-gate: if a device was
-    eligible at _eligible_devices time but its node flipped to
+    eligible at _eligible_devices_with_facts time but its node flipped to
     accepting_new_sessions=False before the row lock, _claim declines and the
     ticket stays waiting."""
     from app.appium_nodes.models import AppiumNode
@@ -534,7 +586,12 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
     await db_session.flush()
 
     result = await _service()._claim(
-        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+        db_session,
+        ticket=ticket,
+        row=_eligible_row(seeded_available_device),
+        candidate={},
+        run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting

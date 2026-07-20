@@ -18,7 +18,6 @@ def _device(**overrides: object) -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network,
         ip_address="192.168.1.254",
-        tags=None,
         device_config=None,
         identity_value="G070VM2011740KW1",
         connection_target="192.168.1.254:5555",
@@ -80,17 +79,27 @@ def test_minimal_stereotype_drops_sanitized_device_config_appium_caps() -> None:
     assert "appium:another_setting" not in caps
 
 
-def test_minimal_stereotype_emits_tag_fanout() -> None:
-    device = _device(tags={"rack": "A1", "screen_type": "4k"})
+def test_minimal_stereotype_emits_group_caps_from_matching_keys() -> None:
+    device = _device()
+
+    caps = build_grid_stereotype_caps(device, pack_stereotype={}, matching_group_keys={"east-lab", "ci"})
+
+    assert caps["gridfleet:group:east-lab"] is True
+    assert caps["gridfleet:group:ci"] is True
+
+
+def test_minimal_stereotype_emits_no_group_caps_by_default() -> None:
+    device = _device()
 
     caps = build_grid_stereotype_caps(device, pack_stereotype={})
 
-    assert caps["gridfleet:tag:rack"] == "A1"
-    assert caps["gridfleet:tag:screen_type"] == "4k"
+    assert not any(k.startswith("gridfleet:group:") for k in caps)
 
 
-def test_minimal_stereotype_handles_none_tags() -> None:
-    device = _device(tags=None)
+def test_minimal_stereotype_no_longer_emits_tag_fanout() -> None:
+    """The retired gridfleet:tag:* capability is no longer constructed here; routing
+    membership flows through gridfleet:group:<key> via matching_group_keys."""
+    device = _device()
 
     caps = build_grid_stereotype_caps(device, pack_stereotype={})
 

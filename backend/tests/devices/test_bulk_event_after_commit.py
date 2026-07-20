@@ -35,21 +35,6 @@ def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
     )
 
 
-async def test_bulk_update_tags_queues_summary(
-    db_session: AsyncSession,
-    event_bus_capture: list[tuple[str, dict[str, Any]]],
-) -> None:
-    _, device = await seed_host_and_device(db_session, identity="bulk-tags-1")
-    event_bus_capture.clear()
-
-    await _svc().bulk_update_tags(db_session, [device.id], {"suite": "contract"})
-    await settle_after_commit_tasks()
-
-    summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
-    assert len(summary) == 1
-    assert summary[0]["operation"] == "update_tags"
-
-
 async def test_bulk_enter_maintenance_queues_summary(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],

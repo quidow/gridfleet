@@ -24,7 +24,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     readiness_state: 'verified',
     reservation: null,
     missing_setup_fields: [],
-    tags: {},
     identity_value: 'emulator-5554',
     connection_target: null,
     ip_address: null,

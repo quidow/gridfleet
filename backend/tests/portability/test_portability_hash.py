@@ -6,9 +6,10 @@ from app.portability.services.hash import canonical_bundle_json, compute_bundle_
 
 def _bundle_dict() -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": "2026-05-23T00:00:00+00:00",
         "source_instance": "alpha",
+        "groups": [],
         "devices": [
             {
                 "pack_id": "appium-uiautomator2",
@@ -19,7 +20,7 @@ def _bundle_dict() -> dict[str, Any]:
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "tags": {},
+                "static_groups": [],
                 "device_config": {},
                 "test_data": {},
                 "original_host": {"hostname": "lab-04"},

@@ -39,7 +39,6 @@ function makeDevice(): DeviceDetail {
     host_id: 'host-1',
     operational_state: 'available',
     needs_attention: false,
-    tags: null,
     manufacturer: 'Google',
     model: 'Pixel 9',
     model_number: null,

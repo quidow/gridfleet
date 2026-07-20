@@ -1,4 +1,3 @@
-import { Plus, Trash2 } from 'lucide-react';
 import type {
   ConnectionType,
   DeviceChipStatus,
@@ -14,8 +13,10 @@ import {
 } from './devicePageHelpers';
 import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
+import { useDeviceGroups } from '../../hooks/useDeviceGroups';
 import { Select } from '../../components/ui/Select';
 import { TextField } from '../../components/ui/TextField';
+import { Checkbox } from '../../components/ui/Checkbox';
 
 interface Props {
   filters: DeviceGroupFilterDraft;
@@ -25,7 +26,7 @@ interface Props {
   showLabel?: boolean;
 }
 
-function updateOptionalField<K extends keyof Omit<DeviceGroupFilterDraft, 'tags'>>(
+function updateOptionalField<K extends keyof Omit<DeviceGroupFilterDraft, 'member_of'>>(
   filters: DeviceGroupFilterDraft,
   onChange: (filters: DeviceGroupFilterDraft) => void,
   field: K,
@@ -41,22 +42,9 @@ export function FilterBuilder({
   osVersionOptions,
   showLabel = true,
 }: Props) {
-  function addTagRow() {
-    onChange({ ...filters, tags: [...filters.tags, { key: '', value: '' }] });
-  }
-
-  function updateTagRow(index: number, patch: Partial<DeviceGroupFilterDraft['tags'][number]>) {
-    onChange({
-      ...filters,
-      tags: filters.tags.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)),
-    });
-  }
-
-  function removeTagRow(index: number) {
-    onChange({ ...filters, tags: filters.tags.filter((_, rowIndex) => rowIndex !== index) });
-  }
-
   const availableOsVersions = Array.from(new Set([filters.os_version, ...osVersionOptions].filter(Boolean)));
+  const { data: groups = [] } = useDeviceGroups();
+  const staticGroups = groups.filter(g => g.group_type === 'static');
   const { data: catalog = [] } = useDriverPackCatalog();
   const packOptions = catalog.map((pack) => ({ id: pack.id, label: pack.display_name ?? pack.id }));
   const platformSource = filters.pack_id ? catalog.filter((pack) => pack.id === filters.pack_id) : catalog;
@@ -174,43 +162,25 @@ export function FilterBuilder({
       </div>
 
       <div className="space-y-2 rounded-lg border border-dashed border-border-strong p-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-text-2">Tags</div>
-            <div className="text-xs text-text-3">All listed tags must match exactly.</div>
-          </div>
-          <button
-            type="button"
-            onClick={addTagRow}
-            className="inline-flex items-center gap-1 text-sm text-accent hover:text-accent-hover"
-          >
-            <Plus size={14} /> Add tag
-          </button>
-        </div>
-
-        {filters.tags.length === 0 ? (
-          <p className="text-sm text-text-3">No tag filters.</p>
+        <div className="text-sm font-medium text-text-2 mb-2">Member of Groups</div>
+        {staticGroups.length === 0 ? (
+          <p className="text-sm text-text-3">No static groups available.</p>
         ) : (
-          filters.tags.map((row, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <TextField
-                value={row.key}
-                onChange={(value) => updateTagRow(index, { key: value })}
-                placeholder="Tag key"
-                fullWidth={false}
-                className="w-40"
+          <div className="max-h-48 overflow-y-auto space-y-1">
+            {staticGroups.map(group => (
+              <Checkbox
+                key={group.key}
+                checked={filters.member_of.includes(group.key)}
+                onChange={() => {
+                  const next = new Set(filters.member_of);
+                  if (next.has(group.key)) next.delete(group.key);
+                  else next.add(group.key);
+                  onChange({ ...filters, member_of: Array.from(next) });
+                }}
+                label={group.name}
               />
-              <TextField
-                value={row.value}
-                onChange={(value) => updateTagRow(index, { value })}
-                placeholder="Tag value"
-                className="flex-1"
-              />
-              <button type="button" onClick={() => removeTagRow(index)} className="p-1 text-text-3 hover:text-danger-foreground">
-                <Trash2 size={16} />
-              </button>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>

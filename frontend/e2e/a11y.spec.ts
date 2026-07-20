@@ -17,7 +17,6 @@ const DEVICE = {
   host_id: 'host-1',
   operational_state: 'available',
   hold: null,
-  tags: { team: 'qa' },
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.50',
@@ -201,7 +200,7 @@ test.describe('Accessibility', () => {
     await page.route((url) => new URL(url).pathname === '/api/device-groups', async (route) => {
       await fulfillJson(route, [
         {
-          id: 'group-1',
+          key: 'group-1',
           name: 'QA Devices',
           description: 'Shared devices for QA workflows',
           group_type: 'static',
@@ -326,7 +325,7 @@ test.describe('Accessibility', () => {
     // Group detail
     await page.route((url) => new URL(url).pathname === '/api/device-groups/group-1', async (route) => {
       await fulfillJson(route, {
-        id: 'group-1',
+        key: 'group-1',
         name: 'QA Devices',
         description: 'Shared devices for QA workflows',
         group_type: 'static',

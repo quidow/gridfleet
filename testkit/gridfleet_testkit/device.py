@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .types import JsonObject, JsonValue
@@ -41,16 +41,12 @@ class Device:
     connection_type: str
     manufacturer: str | None
     model: str | None
-    tags: dict[str, str] | None
     operational_state: str
     is_reserved: bool
 
     @classmethod
     def from_payload(cls, payload: JsonObject) -> Device:
         """Build a ``Device`` from a manager device row, ignoring unknown keys."""
-        # Preserve manager tags verbatim (GridFleet tags are str->str); cast rather
-        # than comprehension-narrow so no entry is silently dropped.
-        tags = payload.get("tags")
         return cls(
             id=_req_str(payload.get("id")),
             identity_value=_req_str(payload.get("identity_value")),
@@ -66,7 +62,6 @@ class Device:
             connection_type=_req_str(payload.get("connection_type")),
             manufacturer=_opt_str(payload.get("manufacturer")),
             model=_opt_str(payload.get("model")),
-            tags=cast("dict[str, str]", tags) if isinstance(tags, dict) else None,
             operational_state=_req_str(payload.get("operational_state")),
             is_reserved=bool(payload.get("is_reserved", False)),
         )

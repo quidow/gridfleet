@@ -50,11 +50,12 @@ async def test_add_members_races_concurrent_duplicate_insert(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    group = DeviceGroup(name=f"race-{uuid.uuid4().hex[:8]}", group_type=GroupType.static)
+    group = DeviceGroup(key=f"race-{uuid.uuid4().hex[:8]}", name="race", group_type=GroupType.static)
     db_session.add(group)
     await db_session.commit()
 
     group_id = group.id
+    group_key = group.key
     device_id = device.id
 
     original_execute = db_session.execute
@@ -90,7 +91,8 @@ async def test_add_members_races_concurrent_duplicate_insert(
                 crud=DeviceCrudService(
                     settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus
                 ),
-            ).add_members(db_session, group_id, [device_id])
+                settings=_settings,
+            ).add_members(db_session, group_key, [device_id])
         except IntegrityError as exc:
             pytest.fail(f"add_members raised IntegrityError on concurrent duplicate insert: {exc}")
     finally:

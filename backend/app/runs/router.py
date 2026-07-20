@@ -9,6 +9,7 @@ from app.core.error_responses import RESPONSES_422, STANDARD_ERROR_RESPONSES
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.http_errors import found_or_404
 from app.core.pagination import CursorPaginationError
+from app.devices.services.service import UnknownGroupKeysError
 from app.runs import service as run_service
 from app.runs.dependencies import RunServicesDep
 from app.runs.models import RunState
@@ -59,6 +60,8 @@ async def create_run(
         run, device_infos = await run_services.allocator.create_run(db, data)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
+    except UnknownGroupKeysError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 

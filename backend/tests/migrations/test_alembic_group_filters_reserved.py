@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
 PRE_RESERVED_FILTER_REVISION = "c2d3e4f5a6b7"
+# Pinned: the tags-to-groups revision downgrades one-way, so this round-trip
+# must not walk past the revision it is exercising.
+RESERVED_FILTER_REVISION = "7d0a5cd47850"
 
 
 @pytest.mark.db
@@ -72,7 +75,7 @@ async def test_group_filters_reserved_status_rewritten_to_boolean() -> None:
             )
 
         async with engine.connect() as conn:
-            await conn.run_sync(_upgrade_to, "head")
+            await conn.run_sync(_upgrade_to, RESERVED_FILTER_REVISION)
             await conn.commit()
 
         async with engine.connect() as conn:

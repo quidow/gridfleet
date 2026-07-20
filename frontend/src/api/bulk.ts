@@ -2,7 +2,6 @@ import api from './client';
 import type {
   BulkDeviceIds,
   BulkOperationResult,
-  BulkTagsUpdate,
 } from '../types';
 
 const BASE = '/devices/bulk';
@@ -16,8 +15,7 @@ export const bulkStopNodes = (body: BulkDeviceIds) =>
 export const bulkRestartNodes = (body: BulkDeviceIds) =>
   api.post<BulkOperationResult>(`${BASE}/restart-nodes`, body).then(r => r.data);
 
-export const bulkUpdateTags = (body: BulkTagsUpdate) =>
-  api.post<BulkOperationResult>(`${BASE}/update-tags`, body).then(r => r.data);
+
 
 export const bulkDelete = (body: BulkDeviceIds) =>
   api.post<BulkOperationResult>(`${BASE}/delete`, body).then(r => r.data);

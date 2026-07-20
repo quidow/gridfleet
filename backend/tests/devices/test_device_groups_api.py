@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import pytest_asyncio
 
 from tests.helpers import create_device_record, create_host
@@ -70,7 +71,13 @@ async def _create_device(
 
 
 async def _create_group(client: AsyncClient, **overrides: object) -> dict[str, Any]:
-    payload: dict[str, Any] = {"name": "Test Group", "group_type": "static", **overrides}
+    name = str(overrides.get("name", "Test Group"))
+    payload: dict[str, Any] = {
+        "key": name.lower().replace(" ", "-"),
+        "name": name,
+        "group_type": "static",
+        **overrides,
+    }
     resp = await client.post("/api/device-groups", json=payload)
     assert resp.status_code == 201
     return dict(resp.json())
@@ -80,7 +87,63 @@ async def test_create_static_group(client: AsyncClient) -> None:
     data = await _create_group(client)
     assert data["name"] == "Test Group"
     assert data["group_type"] == "static"
-    assert "id" in data
+    assert data["key"] == "test-group"
+    assert "id" not in data
+
+
+async def test_group_key_is_public_immutable_identity(client: AsyncClient) -> None:
+    created = await client.post(
+        "/api/device-groups",
+        json={"key": "east-lab", "name": "East lab", "group_type": "static"},
+    )
+    assert created.status_code == 201
+    assert created.json()["key"] == "east-lab"
+    assert "id" not in created.json()
+
+    duplicate_name = await client.post(
+        "/api/device-groups",
+        json={"key": "west-lab", "name": "East lab", "group_type": "static"},
+    )
+    assert duplicate_name.status_code == 201
+    assert (await client.get("/api/device-groups/east-lab")).status_code == 200
+    assert (await client.patch("/api/device-groups/east-lab", json={"name": "East"})).status_code == 200
+    assert (await client.patch("/api/device-groups/east-lab", json={"key": "renamed"})).status_code == 422
+
+
+@pytest.mark.parametrize("key", ["East", "-east", "east-", "east_lab", "", "a" * 65])
+async def test_create_group_rejects_malformed_key(client: AsyncClient, key: str) -> None:
+    response = await client.post("/api/device-groups", json={"key": key, "name": "East lab", "group_type": "static"})
+    assert response.status_code == 422
+
+
+async def test_group_key_conflicts_and_unknown_keys_are_not_found(client: AsyncClient) -> None:
+    await _create_group(client, key="east-lab", name="East lab")
+    conflict = await client.post(
+        "/api/device-groups", json={"key": "east-lab", "name": "Another east lab", "group_type": "static"}
+    )
+    assert conflict.status_code == 409
+    assert (await client.get("/api/device-groups/unknown-lab")).status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json"),
+    [
+        ("GET", "/api/device-groups/East", None),
+        ("PATCH", "/api/device-groups/East", {"name": "East"}),
+        ("DELETE", "/api/device-groups/East", None),
+        ("POST", "/api/device-groups/East/members", {"device_ids": []}),
+        ("DELETE", "/api/device-groups/East/members", {"device_ids": []}),
+        ("POST", "/api/device-groups/East/bulk/start-nodes", None),
+        ("POST", "/api/device-groups/East/bulk/stop-nodes", None),
+        ("POST", "/api/device-groups/East/bulk/restart-nodes", None),
+        ("POST", "/api/device-groups/East/bulk/enter-maintenance", {"device_ids": []}),
+        ("POST", "/api/device-groups/East/bulk/exit-maintenance", None),
+        ("POST", "/api/device-groups/East/bulk/reconnect", None),
+        ("POST", "/api/device-groups/East/bulk/delete", None),
+    ],
+)
+async def test_group_routes_reject_malformed_keys(client: AsyncClient, method: str, path: str, json: object) -> None:
+    assert (await client.request(method, path, json=json)).status_code == 422
 
 
 async def test_create_dynamic_group(client: AsyncClient) -> None:
@@ -106,7 +169,7 @@ async def test_list_groups(client: AsyncClient) -> None:
 
 async def test_get_group(client: AsyncClient) -> None:
     group = await _create_group(client)
-    resp = await client.get(f"/api/device-groups/{group['id']}")
+    resp = await client.get(f"/api/device-groups/{group['key']}")
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "Test Group"
@@ -114,14 +177,14 @@ async def test_get_group(client: AsyncClient) -> None:
 
 
 async def test_get_group_not_found(client: AsyncClient) -> None:
-    resp = await client.get("/api/device-groups/00000000-0000-0000-0000-000000000000")
+    resp = await client.get("/api/device-groups/unknown-group")
     assert resp.status_code == 404
 
 
 async def test_update_group(client: AsyncClient) -> None:
     group = await _create_group(client)
     resp = await client.patch(
-        f"/api/device-groups/{group['id']}",
+        f"/api/device-groups/{group['key']}",
         json={"name": "Updated Group", "description": "new desc"},
     )
     assert resp.status_code == 200
@@ -132,10 +195,10 @@ async def test_update_group(client: AsyncClient) -> None:
 
 async def test_delete_group(client: AsyncClient) -> None:
     group = await _create_group(client)
-    resp = await client.delete(f"/api/device-groups/{group['id']}")
+    resp = await client.delete(f"/api/device-groups/{group['key']}")
     assert resp.status_code == 204
 
-    resp = await client.get(f"/api/device-groups/{group['id']}")
+    resp = await client.get(f"/api/device-groups/{group['key']}")
     assert resp.status_code == 404
 
 
@@ -145,14 +208,14 @@ async def test_add_members(client: AsyncClient, db_session: AsyncSession, defaul
     d2 = await _create_device(db_session, "grp-002", "D2", default_host_id)
 
     resp = await client.post(
-        f"/api/device-groups/{group['id']}/members",
+        f"/api/device-groups/{group['key']}/members",
         json={"device_ids": [d1["id"], d2["id"]]},
     )
     assert resp.status_code == 200
     assert resp.json()["added"] == 2
 
     # Verify members show in detail
-    detail = await client.get(f"/api/device-groups/{group['id']}")
+    detail = await client.get(f"/api/device-groups/{group['key']}")
     assert detail.json()["device_count"] == 2
 
 
@@ -161,12 +224,12 @@ async def test_remove_members(client: AsyncClient, db_session: AsyncSession, def
     d1 = await _create_device(db_session, "grp-003", "D3", default_host_id)
 
     await client.post(
-        f"/api/device-groups/{group['id']}/members",
+        f"/api/device-groups/{group['key']}/members",
         json={"device_ids": [d1["id"]]},
     )
     resp = await client.request(
         "DELETE",
-        f"/api/device-groups/{group['id']}/members",
+        f"/api/device-groups/{group['key']}/members",
         json={"device_ids": [d1["id"]]},
     )
     assert resp.status_code == 200
@@ -180,7 +243,7 @@ async def test_add_members_to_dynamic_group_fails(
     d1 = await _create_device(db_session, "grp-dyn-001", "D-dyn", default_host_id)
 
     resp = await client.post(
-        f"/api/device-groups/{group['id']}/members",
+        f"/api/device-groups/{group['key']}/members",
         json={"device_ids": [d1["id"]]},
     )
     assert resp.status_code == 400
@@ -205,7 +268,7 @@ async def test_dynamic_group_resolves_members(
         client, name="All Android", group_type="dynamic", filters={"platform_id": "android_mobile"}
     )
 
-    detail = await client.get(f"/api/device-groups/{group['id']}")
+    detail = await client.get(f"/api/device-groups/{group['key']}")
     assert detail.status_code == 200
     data = detail.json()
     assert data["device_count"] == 1
@@ -235,7 +298,7 @@ async def test_dynamic_group_filters_by_pack_id(
         filters={"pack_id": "appium-uiautomator2"},
     )
 
-    detail = await client.get(f"/api/device-groups/{group['id']}")
+    detail = await client.get(f"/api/device-groups/{group['key']}")
     assert detail.status_code == 200
     data = detail.json()
     assert data["device_count"] == 1
@@ -252,7 +315,7 @@ async def test_create_group_rejects_legacy_filter_rules_field(client: AsyncClien
     assert resp.status_code == 422
 
 
-async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
+async def test_dynamic_group_resolves_identity_target_and_lifecycle(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     matching = await create_device_record(
@@ -263,7 +326,6 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
         connection_target="10.10.0.1:5555",
         device_type="real_device",
         connection_type="network",
-        tags={"team": "qa", "lane": "smoke"},
         verified=False,
     )
     non_matching_lifecycle = await create_device_record(
@@ -274,7 +336,6 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
         connection_target="10.10.0.2:5555",
         device_type="real_device",
         connection_type="network",
-        tags={"team": "qa", "lane": "smoke"},
     )
 
     matching.lifecycle_policy_state = {
@@ -302,53 +363,36 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
             "device_type": "real_device",
             "connection_type": "network",
             "status": "offline",
-            "tags": {"team": "qa", "lane": "smoke"},
         },
     )
 
-    detail = await client.get(f"/api/device-groups/{group['id']}")
+    detail = await client.get(f"/api/device-groups/{group['key']}")
     assert detail.status_code == 200
     data = detail.json()
     assert [device["id"] for device in data["devices"]] == [str(matching.id)]
-    assert data["filters"]["tags"] == {"team": "qa", "lane": "smoke"}
+    assert data["filters"]["identity_value"] == "dyn-shared-001"
 
 
 async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     group = await _create_group(client)
     device = await _create_device(db_session, "grp-restart-001", "Restart Me", default_host_id)
-    await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
+    await client.post(f"/api/device-groups/{group['key']}/members", json={"device_ids": [device["id"]]})
 
     start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
     assert start_resp.status_code == 200
 
-    resp = await client.post(f"/api/device-groups/{group['id']}/bulk/restart-nodes")
+    resp = await client.post(f"/api/device-groups/{group['key']}/bulk/restart-nodes")
 
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
-
-
-async def test_group_bulk_update_tags(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
-    device = await _create_device(db_session, "grp-tags-001", "Tags Me", default_host_id)
-    await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
-
-    resp = await client.post(
-        f"/api/device-groups/{group['id']}/bulk/update-tags",
-        json={"device_ids": [], "tags": {"team": "qa"}, "merge": True},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["succeeded"] == 1
-
-    detail = await client.get(f"/api/devices/{device['id']}")
-    assert detail.json()["tags"]["team"] == "qa"
 
 
 async def test_group_bulk_delete_devices(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     group = await _create_group(client)
     device = await _create_device(db_session, "grp-delete-001", "Delete Me", default_host_id)
-    await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
+    await client.post(f"/api/device-groups/{group['key']}/members", json={"device_ids": [device["id"]]})
 
-    resp = await client.post(f"/api/device-groups/{group['id']}/bulk/delete")
+    resp = await client.post(f"/api/device-groups/{group['key']}/bulk/delete")
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
 
@@ -368,7 +412,7 @@ async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSessio
         connection_type="network",
         ip_address="192.168.1.20",
     )
-    await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
+    await client.post(f"/api/device-groups/{group['key']}/members", json={"device_ids": [device["id"]]})
 
     with patch("app.devices.services.bulk.httpx.AsyncClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
@@ -379,7 +423,7 @@ async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSessio
         mock_response.json.return_value = {"success": True}
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        resp = await client.post(f"/api/device-groups/{group['id']}/bulk/reconnect")
+        resp = await client.post(f"/api/device-groups/{group['key']}/bulk/reconnect")
 
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
@@ -388,7 +432,184 @@ async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSessio
 async def test_group_bulk_set_status_route_removed(client: AsyncClient) -> None:
     group = await _create_group(client)
     resp = await client.post(
-        f"/api/device-groups/{group['id']}/bulk/set-status",
+        f"/api/device-groups/{group['key']}/bulk/set-status",
         json={"device_ids": [], "status": "available"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_anded_with_native_filters(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """member_of references static groups ANDed with native filters."""
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    await client.post("/api/device-groups", json={"key": "tv", "name": "TV", "group_type": "static"})
+
+    east_tv = await _create_device(db_session, "mem-tv-1", "TV1", default_host_id, device_type="real_device")
+    east_phone = await _create_device(db_session, "mem-phone-1", "Phone1", default_host_id, device_type="real_device")
+    # Put devices in static groups via the members API.
+    await client.post("/api/device-groups/east/members", json={"device_ids": [east_tv["id"], east_phone["id"]]})
+    await client.post("/api/device-groups/tv/members", json={"device_ids": [east_tv["id"]]})
+
+    resp = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "east-tvs",
+            "name": "East TVs",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["east", "tv"], "device_type": "real_device"},
+        },
+    )
+    assert resp.status_code == 201
+
+    detail = await client.get("/api/device-groups/east-tvs")
+    assert detail.status_code == 200
+    data = detail.json()
+    assert [d["id"] for d in data["devices"]] == [east_tv["id"]]
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_unknown_key_rejected(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "bad",
+            "name": "Bad",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["missing"]},
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_dynamic_key_rejected(client: AsyncClient) -> None:
+    await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dyn-a",
+            "name": "Dyn A",
+            "group_type": "dynamic",
+            "filters": {"device_type": "real_device"},
+        },
+    )
+    resp = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dyn-b",
+            "name": "Dyn B",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["dyn-a"]},
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.db
+async def test_create_static_group_with_filters_rejected_as_422(client: AsyncClient) -> None:
+    """A static group carrying filters is a domain validation failure, not a 500.
+
+    Same class as ``member_of`` naming an unknown key: the body is schema-valid
+    but the payload is invalid, so it must surface as 422 naming the problem.
+    """
+    resp = await client.post(
+        "/api/device-groups",
+        json={"key": "lab", "name": "Lab", "group_type": "static", "filters": {"pack_id": "appium-uiautomator2"}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "filters" in resp.text.lower()
+    assert "static" in resp.text.lower()
+
+
+@pytest.mark.db
+async def test_update_static_group_with_filters_rejected_as_422(client: AsyncClient) -> None:
+    create = await client.post(
+        "/api/device-groups",
+        json={"key": "lab-patch", "name": "Lab", "group_type": "static"},
+    )
+    assert create.status_code == 201
+    resp = await client.patch(
+        "/api/device-groups/lab-patch",
+        json={"filters": {"pack_id": "appium-uiautomator2"}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "filters" in resp.text.lower()
+    assert "static" in resp.text.lower()
+
+
+@pytest.mark.db
+async def test_delete_static_group_referenced_by_dynamic_returns_409(
+    client: AsyncClient,
+) -> None:
+    await client.post("/api/device-groups", json={"key": "ref-static", "name": "Ref", "group_type": "static"})
+    create = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "ref-dyn",
+            "name": "Ref Dyn",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["ref-static"]},
+        },
+    )
+    assert create.status_code == 201
+    resp = await client.delete("/api/device-groups/ref-static")
+    assert resp.status_code == 409
+
+
+@pytest.mark.db
+async def test_static_membership_mutation_preserves_device_state(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Group membership mutation is routing metadata only: no readiness/verified_at/node changes."""
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import readiness as device_readiness
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="preserve-1",
+        connection_target="preserve-1",
+        name="Preserve",
+        verified=True,
+        operational_state="available",
+    )
+    # Give it a node so we can assert desired_state/restart watermark are untouched.
+    node = AppiumNode(
+        device_id=device.id,
+        port=4730,
+        pid=9999,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4730,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device)
+    await db_session.refresh(node)
+
+    verified_before = device.verified_at
+    readiness_before = await device_readiness.assess_device_async(db_session, device)
+    desired_state_before = node.desired_state
+    restart_watermark_before = node.restart_requested_at
+
+    await client.post("/api/device-groups", json={"key": "preserve", "name": "Preserve", "group_type": "static"})
+    add = await client.post("/api/device-groups/preserve/members", json={"device_ids": [str(device.id)]})
+    assert add.status_code == 200
+    remove = await client.request(
+        "DELETE",
+        "/api/device-groups/preserve/members",
+        json={"device_ids": [str(device.id)]},
+    )
+    assert remove.status_code == 200
+
+    await db_session.refresh(device)
+    await db_session.refresh(node)
+    assert device.verified_at == verified_before
+    assert (await device_readiness.assess_device_async(db_session, device)) == readiness_before
+    assert node.desired_state == desired_state_before
+    assert node.restart_requested_at == restart_watermark_before

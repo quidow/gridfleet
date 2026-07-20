@@ -7,10 +7,7 @@ import type {
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS } from '../pages/devices/devicePageHelpers';
 import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from './labels';
 
-type DeviceGroupTagDraft = {
-  key: string;
-  value: string;
-};
+
 
 export type DeviceGroupFilterDraft = {
   pack_id: string;
@@ -24,7 +21,7 @@ export type DeviceGroupFilterDraft = {
   os_version: string;
   reserved: boolean;
   needs_attention: boolean;
-  tags: DeviceGroupTagDraft[];
+  member_of: string[];
 };
 
 type HostNameMap = Map<string, string>;
@@ -48,7 +45,7 @@ export function createEmptyDeviceGroupFilterDraft(): DeviceGroupFilterDraft {
     os_version: '',
     reserved: false,
     needs_attention: false,
-    tags: [],
+    member_of: [],
   };
 }
 
@@ -69,7 +66,7 @@ export function draftFromDeviceGroupFilters(filters: DeviceGroupFilters | null |
     os_version: filters.os_version ?? '',
     reserved: filters.reserved ?? false,
     needs_attention: filters.needs_attention ?? false,
-    tags: Object.entries(filters.tags ?? {}).map(([key, value]) => ({ key, value })),
+    member_of: filters.member_of ?? [],
   };
 }
 
@@ -88,14 +85,8 @@ export function draftToDeviceGroupFilters(draft: DeviceGroupFilterDraft): Device
   if (draft.reserved) filters.reserved = true;
   if (draft.needs_attention) filters.needs_attention = true;
 
-  const tags = Object.fromEntries(
-    draft.tags
-      .map(({ key, value }) => ({ key: key.trim(), value: value.trim() }))
-      .filter(({ key, value }) => key && value)
-      .map(({ key, value }) => [key, value]),
-  );
-  if (Object.keys(tags).length > 0) {
-    filters.tags = tags;
+  if (draft.member_of && draft.member_of.length > 0) {
+    filters.member_of = draft.member_of;
   }
 
   return filters;
@@ -151,8 +142,8 @@ export function describeDeviceGroupFilters(
   if (filters.needs_attention) {
     items.push({ key: 'needs_attention', label: 'Attention', value: 'Needs attention' });
   }
-  for (const [key, value] of Object.entries(filters.tags ?? {})) {
-    items.push({ key: `tag:${key}`, label: `Tag ${key}`, value });
+  if (filters.member_of && filters.member_of.length > 0) {
+    items.push({ key: 'member_of', label: 'Member of Groups', value: filters.member_of.join(', ') });
   }
   return items;
 }

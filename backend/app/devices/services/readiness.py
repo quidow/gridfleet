@@ -128,7 +128,6 @@ READINESS_IMPACTING_FIELDS = frozenset(
         "connection_type",
         "ip_address",
         "device_config",
-        "tags",
     }
 )
 
@@ -152,7 +151,7 @@ async def load_packs_by_ids(session: AsyncSession, pack_ids: Iterable[str]) -> d
     return {pack.id: pack for pack in result.all()}
 
 
-def _assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceReadiness:
+def assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceReadiness:
     pack_id: str | None = getattr(device, "pack_id", None)
     platform_id: str | None = getattr(device, "platform_id", None)
     if not pack_id or not platform_id:
@@ -198,7 +197,7 @@ async def assess_device_async(
     """
     pack_id: str | None = getattr(device, "pack_id", None)
     if not pack_id or not getattr(device, "platform_id", None):
-        return _assess_device_with_pack(device, None)
+        return assess_device_with_pack(device, None)
     caller_supplied = packs is not None
     if packs is None:
         packs = _preloaded_packs.get()
@@ -213,7 +212,7 @@ async def assess_device_async(
         # the verdict matches the per-device path and self-heals, instead of wrongly
         # deriving setup_required (-> offline) from a stale prefetched snapshot.
         pack = (await load_packs_by_ids(session, [pack_id])).get(pack_id)
-    return _assess_device_with_pack(device, pack)
+    return assess_device_with_pack(device, pack)
 
 
 async def assess_devices_async(
@@ -236,7 +235,7 @@ async def assess_devices_async(
     for device in device_list:
         pack_id: str | None = getattr(device, "pack_id", None)
         pack = packs.get(pack_id) if pack_id else None
-        result[device.id] = _assess_device_with_pack(device, pack)
+        result[device.id] = assess_device_with_pack(device, pack)
     return result
 
 

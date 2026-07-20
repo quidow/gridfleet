@@ -74,7 +74,6 @@ const DEFAULT_DEVICE = {
   host_id: 'host-1',
   operational_state: 'available',
   hold: null,
-  tags: { team: 'qa' },
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.50',
@@ -673,7 +672,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -705,7 +703,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'network',
         ip_address: '192.168.1.25',
@@ -785,7 +782,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -839,7 +835,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'emulator',
         connection_type: 'virtual',
         ip_address: null,
@@ -893,7 +888,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -942,7 +936,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1001,7 +994,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1048,7 +1040,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1285,7 +1276,7 @@ test.describe('Devices page', () => {
     const firstDeviceLink = firstDeviceRow(page).getByRole('link').first();
     await firstDeviceLink.click();
 
-    // Triage tab (default) surfaces Device Health + Info/Telemetry/Tags grid.
+    // Triage tab (default) surfaces Device Health + Info/Telemetry grid.
     await expect(page.getByText('Device Health')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: 'Test Session' })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Session Viability')).toBeVisible({ timeout: 10_000 });
@@ -1471,14 +1462,15 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'State History' })).toBeVisible();
   });
 
-  test('bulk toolbar exposes tag action without removed config action', async ({ page }) => {
+  test('bulk toolbar omits the removed config and tag actions', async ({ page }) => {
     await page.goto('/devices');
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
 
     await firstDeviceRow(page).getByRole('checkbox').first().check();
+    await expect(page.getByRole('button', { name: 'Clear selection' })).toBeVisible();
     const removedTemplateAction = new RegExp(['Template'].join(''), 'i');
     await expect(page.getByRole('button', { name: removedTemplateAction })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Tags/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Tags/i })).toHaveCount(0);
   });
 
   test('needs_attention checkbox and URL param narrow the fleet view', async ({ page }) => {
@@ -1524,7 +1516,6 @@ test.describe('Devices page', () => {
         operational_state: 'offline',
         hold: null,
         needs_attention: true,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1555,7 +1546,6 @@ test.describe('Devices page', () => {
         os_version: '14',
         host_id: 'host-1',
         needs_attention: false,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1624,54 +1614,6 @@ test.describe('Devices page', () => {
       identity_scope: 'host',
       identity_value: 'avd:Pixel_6',
       connection_target: 'Pixel_6',
-      tags: null,
-    };
-    const emulatorDeviceDetail = { ...emulatorDevice, appium_node: null, sessions: [] };
-
-    await page.route(
-      (url) => new URL(url).pathname === '/api/devices',
-      async (route) => {
-        if (route.request().method() !== 'GET') { await route.fallback(); return; }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(devicesResponseBody([emulatorDevice], new URL(route.request().url()))) });
-      },
-    );
-    await page.route(
-      (url) => new URL(url).pathname === `/api/devices/${EMULATOR_ID}`,
-      async (route) => {
-        if (route.request().method() !== 'GET') { await route.fallback(); return; }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(emulatorDeviceDetail) });
-      },
-    );
-    await page.route(
-      (url) => url.pathname.startsWith(`/api/devices/${EMULATOR_ID}/`),
-      async (route) => { await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); },
-    );
-
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-    await firstDeviceRow(page).getByRole('link').first().click();
-    await page.getByRole('button', { name: 'Setup', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
-
-    await expect(page.getByLabel('Headless mode')).not.toBeVisible();
-    await expect(page.getByText(/Emulator runs/)).not.toBeVisible();
-  });
-
-  test('device detail ignores legacy emulator headless tag', async ({ page }) => {
-    const EMULATOR_ID = 'emulator-headed-001';
-    const emulatorDevice = {
-      ...DEFAULT_DEVICE,
-      id: EMULATOR_ID,
-      name: 'Pixel 6 Emulator (headed)',
-      platform_id: 'android_mobile',
-      platform_label: 'Android Emulator',
-      device_type: 'emulator',
-      connection_type: 'virtual',
-      identity_scheme: 'manager_generated',
-      identity_scope: 'host',
-      identity_value: 'avd:Pixel_6_headed',
-      connection_target: 'Pixel_6_headed',
-      tags: { emulator_headless: 'false' },
     };
     const emulatorDeviceDetail = { ...emulatorDevice, appium_node: null, sessions: [] };
 
@@ -1719,7 +1661,6 @@ test.describe('Devices page', () => {
       identity_scope: 'host',
       identity_value: '00000000-0000-0000-0000-000000000099',
       connection_target: '00000000-0000-0000-0000-000000000099',
-      tags: null,
     };
     const simulatorDeviceDetail = { ...simulatorDevice, appium_node: null, sessions: [] };
 
@@ -1838,7 +1779,6 @@ test.describe('Devices page', () => {
           host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-          tags: null,
           device_type: 'real_device',
           connection_type: 'usb',
           ip_address: null,
@@ -1910,7 +1850,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'network',
         ip_address: '192.168.1.20',
@@ -1953,7 +1892,6 @@ test.describe('Devices page', () => {
           host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-          tags: null,
           device_type: 'real_device',
           connection_type: 'network',
           ip_address: '10.0.0.15',
@@ -2027,7 +1965,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'network',
         ip_address: '192.168.1.22',
@@ -2109,7 +2046,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         operational_state: 'available',
         hold: null,
-        tags: null,
         device_type: 'emulator',
         connection_type: 'virtual',
         ip_address: null,
@@ -2159,7 +2095,6 @@ test.describe('Devices page', () => {
         operational_state: 'offline',
         hold: null,
         needs_attention: true,
-        tags: null,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -2368,10 +2303,9 @@ test.describe('Devices page', () => {
     await expect(header.getByRole('button', { name: /More actions/i })).toHaveCount(0);
     await expect(header.getByRole('button', { name: /Re-verify|Complete Setup|Verify Device/ })).toHaveCount(0);
 
-    // Device Info carries editable device-level fields and compact tags.
+    // Device Info carries editable device-level fields.
     await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
-    await expect(page.getByText('Tags', { exact: true })).toBeVisible();
-    await expect(page.getByText('team: qa', { exact: true })).toBeVisible();
+    await expect(page.getByText('Tags', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Refresh Properties', exact: true })).toHaveCount(0);
 
     // Setup tab surfaces Danger Zone delete

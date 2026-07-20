@@ -44,7 +44,6 @@ def _device(**overrides: object) -> SimpleNamespace:
         "ip_address": None,
         "connection_target": "target",
         "identity_value": "target",
-        "tags": {},
         "appium_node": None,
     }
     values.update(overrides)

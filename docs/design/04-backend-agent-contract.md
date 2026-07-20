@@ -67,12 +67,14 @@ The `launch` payload inside `GET /agent/appium-nodes/desired`'s response (built 
 
 | Field | Source of truth | Consumer |
 | --- | --- | --- |
-| `extra_caps` | `_build_session_aligned_start_caps(...)` in `app/appium_nodes/services/reconciler_agent.py`: full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent: merged into the Appium `/session` request body |
+| `extra_caps` | `_build_session_aligned_start_caps(...)` in `app/appium_nodes/services/reconciler_agent.py`: full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, allocated caps) | Agent: merged into the Appium `/session` request body |
 | `allocated_caps` | `appium_node_resource_service.get_capabilities(...)` (UDID + reserved ports) | Agent → Appium driver |
 
 The desired-node spec also carries `accepting_new_sessions`, `stop_pending`, and `grid_run_id` alongside `launch`. The agent records these but does not route on them; suppression and run scoping are enforced by the backend allocation service.
 
 **Backend-internal routing surface.** Capability matching happens in the backend, never on the node: `device_match_surface` (`app/grid/allocation.py`, merged with `build_grid_stereotype_caps`) is the per-device routing surface. It carries only the keys the matcher consults and is never sent to the agent.
+
+Device-group routing lives entirely on that surface. `build_grid_stereotype_caps` advertises a `gridfleet:group:<key>` boolean-`true` capability for each **requested** group key the device matches, projected per allocation attempt from the live membership index — not a full listing of the device's groups. The agent is never told which groups a device belongs to, and group membership never reaches the Appium `/session` body: a group is a backend routing concept, not a driver capability.
 
 **Cross-component invariant.** Keep the routing stereotype and the driver caps disjoint: Appium-only device metadata flows to the driver via `extra_caps` only, never into the routing stereotype.
 

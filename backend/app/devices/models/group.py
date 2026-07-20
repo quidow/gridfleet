@@ -22,10 +22,14 @@ class GroupType(enum.StrEnum):
 
 class DeviceGroup(Base):
     __tablename__ = "device_groups"
-    __table_args__ = (Index("ix_device_groups_filters_gin", "filters", postgresql_using="gin"),)
+    __table_args__ = (
+        Index("ix_device_groups_filters_gin", "filters", postgresql_using="gin"),
+        Index("ix_device_groups_key", "key", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     group_type: Mapped[GroupType] = mapped_column(Enum(GroupType), default=GroupType.static, nullable=False)
     filters: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

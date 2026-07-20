@@ -174,7 +174,6 @@ class VerificationPreparationService:
             "os_version": payload.get("os_version", existing.os_version),
             "os_version_display": payload.get("os_version_display", existing.os_version_display),
             "host_id": host_id,
-            "tags": payload.get("tags", existing.tags),
             "manufacturer": payload.get("manufacturer", existing.manufacturer),
             "model": payload.get("model", existing.model),
             "model_number": payload.get("model_number", existing.model_number),

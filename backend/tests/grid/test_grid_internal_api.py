@@ -21,7 +21,7 @@ from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
-    from httpx2 import AsyncClient
+    from httpx2 import AsyncClient, Response
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.devices.models import Device
@@ -529,6 +529,47 @@ async def test_create_session_invalid_body_is_400(client: AsyncClient, seeded_av
     assert resp.status_code == 400
     assert resp.json()["status"] == "invalid"
     assert "firstMatch" in resp.json()["message"]
+
+
+async def _create_session(client: AsyncClient, group_caps: dict[str, object]) -> Response:
+    return await client.post(
+        "/internal/grid/create-session",
+        json={
+            "body": {"capabilities": {"alwaysMatch": group_caps, "firstMatch": [{}]}},
+            "ticket": None,
+            "run_id": None,
+        },
+    )
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("value", [False, "true", 1, None])
+async def test_group_capability_requires_json_true(
+    client: AsyncClient, seeded_available_device: Device, value: object
+) -> None:
+    _ = seeded_available_device
+    response = await _create_session(client, {"gridfleet:group:east-lab": value})
+    assert response.status_code == 400
+    assert response.json()["status"] == "invalid"
+    assert response.json()["message"] == "gridfleet group capabilities must be boolean true"
+
+
+@pytest.mark.db
+async def test_legacy_tag_capability_fails_loudly(client: AsyncClient, seeded_available_device: Device) -> None:
+    _ = seeded_available_device
+    response = await _create_session(client, {"gridfleet:tag:lab": "east"})
+    assert response.status_code == 400
+    assert response.json()["status"] == "invalid"
+    assert "gridfleet:group:<key>" in response.json()["message"]
+
+
+@pytest.mark.db
+async def test_invalid_group_key_is_400(client: AsyncClient, seeded_available_device: Device) -> None:
+    _ = seeded_available_device
+    response = await _create_session(client, {"gridfleet:group:Bad Key": True})
+    assert response.status_code == 400
+    assert response.json()["status"] == "invalid"
+    assert "invalid device group key" in response.json()["message"]
 
 
 @pytest.mark.db

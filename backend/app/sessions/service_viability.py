@@ -504,11 +504,7 @@ _PROBE_ALWAYS_MATCH_KEYS = frozenset(
 
 
 def _filter_probe_always_match(capabilities: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in capabilities.items()
-        if key in _PROBE_ALWAYS_MATCH_KEYS or key.startswith("gridfleet:tag:")
-    }
+    return {key: value for key, value in capabilities.items() if key in _PROBE_ALWAYS_MATCH_KEYS}
 
 
 def _build_session_payload(capabilities: dict[str, Any]) -> dict[str, Any]:

@@ -8,9 +8,22 @@ id, e.g. ``android_mobile`` vs ``android_tv`` vs ``firetv_real``) is matched so 
 that share ``platformName``/``automationName`` but serve different driver-pack platforms
 are not interchangeable. Appium remains the W3C authority for everything else
 (spec §2).
+
+Routable device groups are requested as ``gridfleet:group:<key>`` caps with the JSON
+boolean ``true``. The matcher ANDs them within a single candidate and ORs across
+``firstMatch`` candidates (the W3C disjunction). The retired ``gridfleet:tag:*``
+capability is a tombstoned legacy selector: bodies still carrying it are rejected
+loudly with a pointer to ``gridfleet:group:<key>``.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from app.devices.group_keys import GROUP_PREFIX, is_valid_group_key
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 # Identity keys: if requested, the stereotype must define them with an equal value.
 # appium:platform is the pack-declared platform_id routing key (see driver-pack
@@ -27,7 +40,12 @@ IDENTITY_KEYS = frozenset(
         "appium:platform",
     }
 )
-TAG_PREFIX = "gridfleet:tag:"
+# Tombstone for the retired ``gridfleet:tag:*`` capability namespace. Routing
+# membership is now expressed via ``gridfleet:group:<key>`` caps (boolean true).
+# Bodies still carrying the old tag caps are REJECTED at allocation with a pointer
+# to the new keys — a loud clean break instead of silently ignoring them (the
+# matcher would otherwise treat them as unknown vendor caps and match anything).
+LEGACY_TAG_PREFIX = "gridfleet:tag:"
 # Tombstone for the retired capability-borne run binding (pre run-scoped
 # endpoint). Bodies still carrying it are REJECTED at allocation with a
 # pointer to the /run/{run_id} endpoint — a loud clean break instead of a
@@ -45,11 +63,11 @@ LEGACY_APPIUM_GRIDFLEET_PREFIX = "appium:gridfleet:"
 
 def is_match_relevant_key(key: str) -> bool:
     """Whether *key* is one the allocation matcher constrains on — an identity key or
-    a ``gridfleet:tag:`` key. Single source of truth shared by the matcher
+    a ``gridfleet:group:`` key. Single source of truth shared by the matcher
     (``candidate_matches_stereotype``) and the surface builder
     (``device_match_surface``'s ``_match_relevant_base``), so the keys emitted into a
     device's match surface and the keys the matcher checks cannot drift apart."""
-    return key in IDENTITY_KEYS or key.startswith(TAG_PREFIX)
+    return key in IDENTITY_KEYS or key.startswith(GROUP_PREFIX)
 
 
 class CapabilityMergeError(ValueError):
@@ -75,6 +93,31 @@ def merge_candidates(body: dict[str, Any]) -> list[dict[str, Any]]:
             raise CapabilityMergeError(f"capability present in both alwaysMatch and firstMatch: {sorted(overlap)}")
         merged.append({**always, **fm})
     return merged
+
+
+def requested_group_keys(candidates: Sequence[Mapping[str, Any]]) -> frozenset[str]:
+    """Validate and collect the device-group selectors in *candidates*.
+
+    ``gridfleet:group:<key>`` caps must carry the JSON boolean ``true``; any other
+    value is rejected. The legacy ``gridfleet:tag:*`` prefix is a tombstoned
+    selector and rejected with a pointer to the new keys. Group keys must satisfy
+    ``is_valid_group_key``. Returns the set of requested group keys across all
+    candidates (the matcher ORs across ``firstMatch`` candidates).
+    """
+    keys: set[str] = set()
+    for candidate in candidates:
+        for capability, value in candidate.items():
+            if capability.startswith(LEGACY_TAG_PREFIX):
+                raise CapabilityMergeError("gridfleet:tag:* was removed; use gridfleet:group:<key>")
+            if not capability.startswith(GROUP_PREFIX):
+                continue
+            key = capability.removeprefix(GROUP_PREFIX)
+            if not is_valid_group_key(key):
+                raise CapabilityMergeError(f"invalid device group key: {key!r}")
+            if value is not True:
+                raise CapabilityMergeError("gridfleet group capabilities must be boolean true")
+            keys.add(key)
+    return frozenset(keys)
 
 
 def candidate_matches_stereotype(candidate: dict[str, Any], stereotype: dict[str, Any]) -> bool:

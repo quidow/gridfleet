@@ -12,6 +12,8 @@ import pytest_asyncio
 from app.devices.services.health import DeviceHealthService
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
@@ -31,7 +33,9 @@ def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
+async def _stereotype_stub(
+    db: AsyncSession, device: Device, *, template_cache: object | None = None, matching_group_keys: Collection[str] = ()
+) -> dict[str, Any]:
     return {"platformName": "Android"}
 
 

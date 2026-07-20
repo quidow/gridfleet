@@ -50,19 +50,6 @@ function softwareVersionsList(versions: Record<string, unknown> | null | undefin
   );
 }
 
-function tagsList(tags: DeviceDetail['tags']) {
-  const entries = Object.entries(tags ?? {}).toSorted(([a], [b]) => a.localeCompare(b));
-  if (entries.length === 0) return EMPTY_GLYPH;
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {entries.map(([key, value]) => (
-        <span key={key} className="rounded bg-surface-2 px-2 py-0.5 text-xs text-text-2">
-          {key}: {String(value)}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 export function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
   const reservation = device.reservation;
@@ -103,7 +90,6 @@ export function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
           { term: 'IP Address', definition: device.ip_address ?? EMPTY_GLYPH },
           { term: 'OS Version', definition: device.os_version_display ?? device.os_version },
           { term: 'Software Versions', definition: softwareVersionsList(device.software_versions) },
-          { term: 'Tags', definition: tagsList(device.tags) },
           {
             term: 'Availability',
             definition: DEVICE_STATUS_LABELS[status] ?? status,

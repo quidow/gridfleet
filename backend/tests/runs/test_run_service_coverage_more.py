@@ -23,7 +23,6 @@ from app.runs.models import RunState, TestRun
 from app.runs.schemas import DeviceRequirement
 from app.runs.service_allocator import (
     RunAllocatorService,
-    _find_matching_devices,
     _format_requirement_count,
     _minimum_required_count,
     _select_matching_devices,
@@ -38,7 +37,7 @@ from app.runs.service_reservation import (
 )
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device, create_reserved_run
+from tests.helpers import create_device, create_reserved_run, select_devices_for_requirement
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -68,10 +67,10 @@ _failure_svc = RunFailureService(
 )
 
 
-async def test_find_matching_devices_filters_os_tags_and_allocation(
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_batch_select_devices_filters_os_and_allocation(
     db_session: AsyncSession,
     db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     wanted = await create_device(
         db_session,
@@ -80,7 +79,6 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
         identity_value="run-match-001",
         os_version="14",
         operational_state=DeviceOperationalState.available,
-        tags={"pool": "smoke"},
     )
     await create_device(
         db_session,
@@ -89,29 +87,16 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
         identity_value="run-match-002",
         os_version="13",
         operational_state=DeviceOperationalState.available,
-        tags={"pool": "smoke"},
     )
-    await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="Wrong Tag Device",
-        identity_value="run-match-003",
-        os_version="14",
-        operational_state=DeviceOperationalState.available,
-        tags={"pool": "regression"},
-    )
-    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", AsyncMock(return_value=True))
-
     req = DeviceRequirement(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         os_version="14",
         allocation="all_available",
         min_count=1,
-        tags={"pool": "smoke"},
     )
 
-    matches = await _find_matching_devices(db_session, req)
+    matches = await select_devices_for_requirement(db_session, req)
 
     assert [device.id for device in matches] == [wanted.id]
     assert _minimum_required_count(req) == 1
@@ -119,10 +104,10 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
     assert _format_requirement_count(req) == "allocation=all_available, min_count=1"
 
 
-async def test_find_matching_devices_matches_firetv_routing_major(
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_batch_select_devices_matches_firetv_routing_major(
     db_session: AsyncSession,
     db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Allocator matches Fire TV via routing major even when display version is the long marketing string."""
     wanted = await create_device(
@@ -136,8 +121,6 @@ async def test_find_matching_devices_matches_firetv_routing_major(
         os_version_display="6.7.1.1",
         operational_state=DeviceOperationalState.available,
     )
-    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", AsyncMock(return_value=True))
-
     req = DeviceRequirement(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -146,7 +129,7 @@ async def test_find_matching_devices_matches_firetv_routing_major(
         min_count=1,
     )
 
-    matches = await _find_matching_devices(db_session, req)
+    matches = await select_devices_for_requirement(db_session, req)
 
     assert wanted.id in {device.id for device in matches}
 
