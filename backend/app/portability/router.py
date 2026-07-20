@@ -103,12 +103,17 @@ async def inventory(
         media = "application/json"
         filename = f"gridfleet-inventory-{stamp}.json"
         iterator = portability_services.inventory.iter_inventory_json(db, columns=columns, filters=filters)
+    # Pull the first chunk eagerly so an unknown group key surfaces as 422 before
+    # the response starts streaming. ``anext(..., None)`` rather than ``__anext__``:
+    # a generator that returns without yielding is an empty body, not a 500.
     try:
-        first_chunk = await iterator.__anext__()
+        first_chunk = await anext(iterator, None)
     except UnknownGroupKeysError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     async def chained() -> AsyncIterator[str]:
+        if first_chunk is None:
+            return
         yield first_chunk
         async for chunk in iterator:
             yield chunk

@@ -12,6 +12,8 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -217,3 +219,29 @@ def test_parse_columns_param_deduplicates_preserving_order() -> None:
         InventoryColumn.NAME,
         InventoryColumn.HOST_HOSTNAME,
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_inventory_endpoint_survives_a_generator_that_yields_nothing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An export generator that returns without yielding must be an empty body, not a 500.
+
+    The route pulls the first chunk eagerly so ``UnknownGroupKeysError`` can surface
+    as 422 before streaming starts. Both current generators always emit a header, so
+    this is latent — pin it anyway: any future early return would otherwise turn an
+    empty export into an unhandled ``StopAsyncIteration``.
+    """
+    await seed_host_and_device(db_session, identity="EP-EMPTY")
+
+    async def _empty(*args: object, **kwargs: object) -> AsyncIterator[str]:
+        return
+        yield ""  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(InventoryExportService, "iter_inventory_json", _empty)
+    response = await client.get("/api/portability/inventory")
+    assert response.status_code == 200
+    assert response.text == ""
