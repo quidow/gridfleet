@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -168,17 +168,20 @@ class DeviceGroupsService:
         return group
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
-        # One key-ordered lock over the target and every possible referrer (any
-        # group carrying a ``member_of``), so this never pre-locks the target
-        # and then queues behind a row a concurrent ``update_group`` already
-        # holds. Both operations acquire ``device_groups`` rows in one
-        # ascending-key statement, which makes a lock cycle impossible.
-        stmt = (
-            select(DeviceGroup)
-            .where(or_(DeviceGroup.key == group_key, DeviceGroup.filters["member_of"].is_not(None)))
-            .order_by(DeviceGroup.key)
-            .with_for_update()
-        )
+        # One key-ordered lock over *every* group row. The candidate set must not
+        # be narrowed by a value-dependent predicate: a concurrent
+        # ``update_group`` writing the *first* ``member_of`` reference to the
+        # target has not committed that value when this statement plans, so a
+        # ``member_of IS NOT NULL`` filter would exclude the referring row
+        # *before* ``LockRows`` and Postgres would never reconsider it (under
+        # READ COMMITTED, EvalPlanQual only re-checks rows the statement
+        # actually blocked on). Locking unconditionally makes the referring row
+        # part of the locked set whatever it currently holds, so the re-fetched
+        # tuple carries the committed reference. Group counts are operator-scale,
+        # so the extra rows are cheap. Keeping this to one ascending-key
+        # statement — the same order ``_lock_groups_by_key`` uses — is what makes
+        # a lock cycle against ``update_group``/``create_group`` impossible.
+        stmt = select(DeviceGroup).order_by(DeviceGroup.key).with_for_update()
         rows = list((await db.execute(stmt)).scalars().all())
         group = next((row for row in rows if row.key == group_key), None)
         if group is None:
