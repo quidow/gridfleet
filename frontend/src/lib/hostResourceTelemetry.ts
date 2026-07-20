@@ -1,10 +1,10 @@
-import type { HardwareTelemetryState } from '../types';
+export type HostTelemetryFreshnessState = 'fresh' | 'stale' | 'unknown';
 
 export function deriveHostResourceTelemetryState(
   latestRecordedAt: string | null,
   intervalSec: number,
   nowMs = Date.now(),
-): HardwareTelemetryState {
+): HostTelemetryFreshnessState {
   if (!latestRecordedAt) {
     return 'unknown';
   }
