@@ -59,6 +59,16 @@ async def load_pack_catalog(session: AsyncSession, pack_ids: Collection[str]) ->
     costs three), which matters on the grid allocator's poll path where the
     catalog load is the whole per-poll read budget for pack facts. The result
     feeds both :func:`stereotype_templates_from_packs` and readiness assessment.
+
+    The two ``joinedload``s are a *chain* (pack -> releases -> platforms), not two
+    sibling collections, so they do not form a cartesian product: the statement
+    returns exactly one row per leaf platform, which is the minimum any strategy
+    must transfer. ``.unique()`` deduplicates the repeated parent columns, not
+    multiplied rows. Measured on a synthetic catalog (12 packs x 6 retained
+    releases x 8 platforms): 576 rows in 1 statement, against 660 rows in 3
+    statements for the ``selectinload(...).selectinload(...)`` equivalent — worse
+    on both axes. Row volume is linear and trivial; do not "fix" this to
+    ``selectinload``.
     """
     ids = sorted({pack_id for pack_id in pack_ids if pack_id})
     if not ids:
