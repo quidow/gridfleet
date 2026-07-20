@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import event
 
 from app.devices.group_keys import is_valid_group_key
-from app.devices.models import Device, DeviceGroup, GroupType
+from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
     evaluate_group_memberships,
@@ -371,3 +371,134 @@ def test_group_key_pattern_helper_matches_spec() -> None:
     assert not is_valid_group_key("east_lab")
     assert not is_valid_group_key("a" * 65)
     assert is_valid_group_key("a" * 63)
+
+
+async def _seed_static_groups_and_devices(
+    db_session: AsyncSession,
+    *,
+    static_groups: int,
+    devices: int,
+    host_id: uuid.UUID,
+) -> str:
+    """Seed ``static_groups`` static groups, putting every device in the first."""
+    keys = [f"stat-{uuid.uuid4().hex[:6]}" for _ in range(static_groups)]
+    rows = [DeviceGroup(key=key, name=key, group_type=GroupType.static) for key in keys]
+    for row in rows:
+        db_session.add(row)
+    await db_session.flush()
+    for j in range(devices):
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"sg-{uuid.uuid4().hex[:8]}",
+            connection_target=f"sg-{j}-{uuid.uuid4().hex[:4]}",
+            name=f"SG {j}",
+            os_version="14",
+            host_id=host_id,
+            device_type="real_device",
+            connection_type="usb",
+        )
+        db_session.add(device)
+        await db_session.flush()
+        db_session.add(DeviceGroupMembership(group_id=rows[0].id, device_id=device.id))
+    await db_session.commit()
+    return keys[0]
+
+
+@pytest.mark.db
+async def test_group_list_reads_do_not_scale_with_static_group_count(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    """Static member counts are one aggregate, not a count per group."""
+    await _seed_static_groups_and_devices(db_session, static_groups=1, devices=2, host_id=db_host.id)
+    with _capture_statements(db_session) as statements:
+        assert (await client.get("/api/device-groups")).status_code == 200
+    one = _count_reads(statements)
+
+    await _seed_static_groups_and_devices(db_session, static_groups=20, devices=40, host_id=db_host.id)
+    with _capture_statements(db_session) as statements:
+        assert (await client.get("/api/device-groups")).status_code == 200
+    many = _count_reads(statements)
+    assert many == one, f"group list reads scaled with static group count: {one} -> {many}"
+
+
+@pytest.mark.db
+async def test_static_group_device_query_paginates_in_sql(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    """A ``group=`` filter naming only static groups stays a SQL predicate.
+
+    Static membership is a join, so the page must come back bounded by LIMIT in
+    the same statement that applies the group predicate — not by slicing a
+    fleet-wide result in Python.
+    """
+    key = await _seed_static_groups_and_devices(db_session, static_groups=1, devices=5, host_id=db_host.id)
+    with _capture_statements(db_session) as statements:
+        response = await client.get(f"/api/devices?group={key}&limit=2")
+        assert response.status_code == 200
+    assert len(response.json()["items"]) == 2
+    small = _count_reads(statements)
+    assert any("LIMIT" in stmt and "device_group_memberships" in stmt for stmt in statements), (
+        "group filter and pagination did not land in one statement"
+    )
+
+    await _seed_static_groups_and_devices(db_session, static_groups=1, devices=40, host_id=db_host.id)
+    with _capture_statements(db_session) as statements:
+        response = await client.get(f"/api/devices?group={key}&limit=2")
+        assert response.status_code == 200
+    assert len(response.json()["items"]) == 2
+    large = _count_reads(statements)
+    assert large == small, f"paginated static-group query reads scaled with fleet size: {small} -> {large}"
+
+
+@pytest.mark.db
+async def test_group_device_query_rejects_unknown_keys(client: AsyncClient) -> None:
+    assert (await client.get("/api/devices?group=no-such-group")).status_code == 422
+
+
+@pytest.mark.db
+async def test_group_bulk_route_reads_do_not_scale_with_fleet_size(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    """Bulk routes resolve member ids, never the whole device table."""
+    key = await _seed_static_groups_and_devices(db_session, static_groups=1, devices=2, host_id=db_host.id)
+    with _capture_statements(db_session) as statements:
+        assert (await client.post(f"/api/device-groups/{key}/bulk/exit-maintenance")).status_code == 200
+    small = _count_reads(statements)
+
+    await _seed_static_groups_and_devices(db_session, static_groups=1, devices=40, host_id=db_host.id)
+    with _capture_statements(db_session) as statements:
+        assert (await client.post(f"/api/device-groups/{key}/bulk/exit-maintenance")).status_code == 200
+    large = _count_reads(statements)
+    assert large == small, f"group bulk reads scaled with fleet size: {small} -> {large}"
+
+
+@pytest.mark.db
+async def test_group_bulk_route_contract_for_empty_and_missing_groups(
+    client: AsyncClient,
+    seeded_driver_packs: None,
+) -> None:
+    """An existing group with no members is a zero-count 200; an unknown key 404s."""
+    create = await client.post(
+        "/api/device-groups",
+        json={"key": "empty-bulk", "name": "Empty bulk", "group_type": "static"},
+    )
+    assert create.status_code == 201
+
+    empty = await client.post("/api/device-groups/empty-bulk/bulk/exit-maintenance")
+    assert empty.status_code == 200
+    assert empty.json()["total"] == 0
+
+    missing = await client.post("/api/device-groups/no-such-group/bulk/exit-maintenance")
+    assert missing.status_code == 404
