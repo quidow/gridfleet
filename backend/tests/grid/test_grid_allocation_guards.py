@@ -16,12 +16,14 @@ if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.packs.models import DriverPack
     from app.packs.services.capability import StereotypeTemplate
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService, _EligibleRow
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+from app.packs.services.capability import load_pack_catalog
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
@@ -54,6 +56,12 @@ async def seeded_available_device(db_session: AsyncSession) -> Device:
     return device
 
 
+async def _pack_catalog(db: AsyncSession, device: Device) -> dict[str, DriverPack]:
+    """The pack catalog ``try_allocate`` hands ``_claim`` — the claim path
+    re-assesses readiness against it under the row lock without a new read."""
+    return await load_pack_catalog(db, {device.pack_id})
+
+
 @pytest.mark.db
 async def test_reap_expired_requires_settings(db_session: AsyncSession) -> None:
     with pytest.raises(RuntimeError, match="settings reader"):
@@ -78,6 +86,7 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -103,6 +112,7 @@ async def test_claim_rechecks_active_sessions_under_lock(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
 
@@ -121,6 +131,7 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
         row=_eligible_row(device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, device),
     )
     assert result is None
 
@@ -150,6 +161,7 @@ async def test_claim_skips_device_with_live_probe_row(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting
@@ -182,6 +194,7 @@ async def test_claim_proceeds_over_terminal_probe_row(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is not None
 
@@ -212,6 +225,7 @@ async def test_claim_declines_when_node_not_viable_under_lock(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
 
@@ -577,6 +591,7 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
     assert ticket.status == GridQueueStatus.waiting

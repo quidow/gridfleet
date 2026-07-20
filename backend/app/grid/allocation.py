@@ -310,6 +310,29 @@ def _facts_from_eligible_rows(
     return facts
 
 
+def _ready_rows(
+    rows: Sequence[_EligibleRow],
+    facts_by_device_id: Mapping[uuid.UUID, DeviceGroupFacts],
+) -> list[_EligibleRow]:
+    """Drop eligible rows whose real readiness verdict is not ``verified``.
+
+    ``is_available_sql`` — the eligibility predicate and the claim-lock predicate
+    both — is only an approximation of ``DeviceStateFacts.ready``: ``verified_at``
+    stands in for the pack-manifest setup-fields axis, which is not
+    SQL-expressible. A device missing a ``required_for_session`` field therefore
+    clears SQL on both sides of the lock while the Python evaluator derives
+    ``setup_required`` -> ``offline`` and the Devices page shows it offline;
+    claiming it creates a session against a device that cannot run one.
+
+    The verdict is the one ``_eligible_facts`` already assessed from the poll's
+    pack catalog, so this gate costs no read. Mirrors the run allocator's step-5
+    gate in ``app.runs.service_allocator._batch_select_devices``.
+    """
+    return [
+        row for row in rows if (facts := facts_by_device_id.get(row.device.id)) and facts.readiness_state == "verified"
+    ]
+
+
 def _matching_group_keys_for_device(
     membership: GroupMembershipIndex,
     device_id: uuid.UUID,
@@ -632,6 +655,7 @@ class AllocationService:
             exclude_device_ids=exclude_device_ids,
         )
         templates, facts_by_device_id, pack_catalog = await self._eligible_facts(db, eligible_rows)
+        eligible_rows = _ready_rows(eligible_rows, facts_by_device_id)
         membership = evaluate_group_memberships(
             groups=groups,
             devices=[row.device for row in eligible_rows],
@@ -863,10 +887,17 @@ class AllocationService:
         now: datetime,
     ) -> list[Any]:
         """SQL predicates appended to the joined ``SELECT ... FOR UPDATE OF devices``
-        so the lock-time recheck is folded into the lock query. A no-row result
-        means the candidate lost the race or failed a recheck (state, node
-        viability/acceptance, exclusion, reservation owner) — no separate
-        ``derive_operational_state`` under the lock.
+        so the SQL-expressible half of the lock-time recheck is folded into the
+        lock query. A no-row result means the candidate lost the race or failed
+        one of those rechecks (state, node viability/acceptance, exclusion,
+        reservation owner).
+
+        ``is_available_sql`` here is the same approximation the eligible query
+        uses — ``verified_at`` stands in for the pack-manifest setup-fields axis
+        of ``is_ready_for_use``, which is not SQL-expressible. ``_claim`` closes
+        that gap after the lock by re-running ``assess_device_with_pack`` on the
+        locked row against the poll's already-loaded pack catalog, so no device
+        is claimed on the strength of the approximation alone.
 
         The live-session absence check is intentionally NOT folded here:
         ``FOR UPDATE OF devices`` waits on a device-row lock, but the waiting
@@ -944,12 +975,14 @@ class AllocationService:
         run_id: uuid.UUID | None,
         exclude_device_ids: set[uuid.UUID] | None = None,
         groups: Sequence[DeviceGroup] = (),
-        pack_catalog: dict[str, DriverPack] | None = None,
+        pack_catalog: dict[str, DriverPack],
     ) -> AllocationResult | None:
-        # Fold every lock-time recheck into the lock query: availability, node
-        # viability/acceptance, exclusion, and the reservation-owner gate. A
-        # no-row result means the candidate lost the race or failed a recheck —
-        # no separate ``derive_operational_state`` under the lock.
+        # Fold every SQL-expressible lock-time recheck into the lock query:
+        # availability, node viability/acceptance, exclusion, and the
+        # reservation-owner gate. A no-row result means the candidate lost the
+        # race or failed one of those. The two axes SQL cannot express —
+        # pack-manifest readiness and group membership — are rechecked below
+        # against the locked row.
         device = row.device
         reservation_run_id = row.reservation_run_id
         now = now_utc()
@@ -962,6 +995,15 @@ class AllocationService:
             locked = await device_locking.lock_device_handle(db, device.id, predicates=predicates)
         except NoResultFound:
             return None
+        # Readiness recheck under the lock. ``is_available_sql`` in the lock
+        # predicates is the same SQL approximation the eligible query uses, so a
+        # device that lost a required pack-manifest setup field between the poll
+        # and the claim still clears it. Re-assess the freshly locked row against
+        # the catalog ``_eligible_facts`` already loaded — pure, no extra read,
+        # mirroring the run allocator's step-7b gate in ``_batch_select_devices``.
+        locked_readiness = assess_device_with_pack(locked.device, pack_catalog.get(locked.device.pack_id))
+        if locked_readiness.readiness_state != "verified":
+            return None
         # Group membership is the one gate the lock query cannot fold in: it
         # lives in a separate table the device-row lock does not serialize.
         if not await self._locked_membership_holds(
@@ -970,7 +1012,7 @@ class AllocationService:
             groups=groups,
             candidate_group_keys=requested_group_keys([candidate]),
             reservation_run_id=reservation_run_id,
-            pack_catalog=pack_catalog or {},
+            pack_catalog=pack_catalog,
         ):
             return None
         # Fresh-snapshot live-session recheck under the lock: a concurrent claim

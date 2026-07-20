@@ -105,13 +105,26 @@ async def test_setup_required_device_evaluates_identically_in_both_paths(db_sess
     assert device.id in index.device_ids(group.key)
 
 
-async def test_needs_attention_group_routes_in_grid_allocation(db_session: AsyncSession) -> None:
-    """End to end: a ticket pinning a ``{"needs_attention": true}`` dynamic group
-    allocates the setup_required device instead of hanging in the queue."""
+async def test_needs_attention_group_matches_but_readiness_gate_declines(db_session: AsyncSession) -> None:
+    """A ``{"needs_attention": true}`` dynamic group *does* match the
+    setup_required device — that is the fact-parity guarantee above — but the
+    allocator still declines it.
+
+    Group membership and allocatability are separate axes. A device missing a
+    ``required_for_session`` pack-manifest field cannot host a session, so the
+    claim path's readiness gate refuses it regardless of which groups it belongs
+    to (see ``test_grid_allocation_readiness_gate``). Matching-but-not-claimable
+    is the correct outcome: the ticket keeps waiting rather than being handed a
+    device that would fail at session creation.
+    """
     device = await _seed_setup_required_device(db_session)
     key = f"attn-route-{uuid.uuid4().hex[:8]}"
     db_session.add(DeviceGroup(key=key, name=key, group_type=GroupType.dynamic, filters={"needs_attention": True}))
     await db_session.flush()
+    groups = await load_groups_by_keys(db_session, [key])
+    index = await load_group_membership_index(db_session, groups=groups, devices=[device], settings=_settings)
+    assert device.id in index.device_ids(key), "the group must still match the device"
+
     ticket = GridSessionQueueTicket(
         requested_body={
             "capabilities": {
@@ -125,5 +138,4 @@ async def test_needs_attention_group_routes_in_grid_allocation(db_session: Async
 
     result = await _service().try_allocate(db_session, ticket=ticket)
 
-    assert result is not None
-    assert result.device_id == device.id
+    assert result is None
