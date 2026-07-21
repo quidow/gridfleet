@@ -1,5 +1,6 @@
 import enum
 import uuid
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
@@ -69,21 +70,7 @@ class ExportedDevice(BaseModel):
     @field_validator("static_groups")
     @classmethod
     def _dedupe_static_groups(cls, value: list[GroupKey]) -> list[GroupKey]:
-        """Collapse repeated keys, keeping first-seen order.
-
-        Not a guard against the unique constraint: ``_write_static_memberships``
-        uses ``ON CONFLICT DO NOTHING``, and Postgres tolerates duplicate rows
-        *within* one such INSERT (verified — two identical VALUES insert one row,
-        no error). That was the reason when staging still used ``session.add``;
-        it no longer is.
-
-        What survives is reporting. ``_plan_static_memberships`` derives its
-        ``(index, group key)`` pairs from this list, and a repeat would emit two
-        identical ``MembershipSkip`` entries — colliding on the frontend's
-        ``${index}-${group_key}`` row key and telling the operator twice about
-        one dropped membership. Membership is set-valued, so a repeat carries no
-        meaning worth preserving; collapse it at the edge.
-        """
+        """Keep first-seen order and prevent duplicate skip reports."""
         return list(dict.fromkeys(value))
 
 
@@ -99,10 +86,7 @@ class ExportBundle(BaseModel):
     @field_validator("groups")
     @classmethod
     def _unique_group_keys(cls, value: list[ExportedDeviceGroup]) -> list[ExportedDeviceGroup]:
-        counts: dict[str, int] = {}
-        for group in value:
-            counts[group.key] = counts.get(group.key, 0) + 1
-        duplicates = sorted(key for key, count in counts.items() if count > 1)
+        duplicates = sorted(key for key, count in Counter(group.key for group in value).items() if count > 1)
         if duplicates:
             raise ValueError(f"duplicate device group keys: {', '.join(duplicates)}")
         return value

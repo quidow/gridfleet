@@ -357,21 +357,10 @@ class PortabilityImportService:
         )
 
     async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
-        """Commit a validated import bundle, in dependency order, across several transactions.
+        """Commit definitions, then per-row devices, then memberships.
 
-        Write order: **all** group definitions (static and dynamic together, under the
-        group-mutation advisory lock) commit first; then devices, each with its own
-        savepoint and per-row commit, enqueuing verification; then static membership
-        rows for the devices that were created, committed last.
-
-        Not one transaction. The group definitions commit before the device loop so
-        they survive a per-row failure, which means a group key that collides aborts
-        the whole import before any device row is touched. Releasing the group lock
-        at that commit leaves the device loop unserialised against a concurrent
-        ``delete_group``; ``_stage_static_memberships`` closes that window by
-        re-acquiring the lock and re-checking each static group before the final
-        membership commit. The two acquires are deliberately separate so the device
-        loop does not hold a fleet-global lock.
+        Definitions and memberships use separate group-lock transactions so the
+        device loop does not hold the fleet-global lock.
 
         Raises:
             BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
@@ -392,31 +381,11 @@ class PortabilityImportService:
 
         group_id_by_key: dict[str, uuid.UUID] = {}
         if static_groups or dynamic_groups:
-            # Scoped, not a bare acquire: the lock is released on every exit,
-            # including a key collision raised mid-insert, not only on the paths
-            # enumerated here. Guarded by the `if` so a groupless bundle neither
-            # takes the lock nor issues a commit it has nothing to commit.
             async with group_mutation_lock(session):
-                # Both *definition* inserts land in one transaction. Splitting them —
-                # statics committed here, dynamics only after the device loop — left a
-                # window the width of an entire import in which a concurrent delete_group
-                # could remove a static group the dynamics were about to reference.
-                #
-                # The membership-staging half of the same race is closed by
-                # ``_stage_static_memberships`` below, which re-acquires this lock around
-                # the membership commit and re-checks each static group's existence,
-                # skipping memberships for any group deleted during the device loop. The
-                # two acquires are deliberately separate so the device loop — which can
-                # be long — runs without holding a fleet-global group lock.
-                #
-                # The advisory lock is not strictly required today: _validate_group_references
-                # guarantees a bundle's member_of names only bundle statics, inserted in this
-                # same transaction. It is here so that relaxing that bundle-internal invariant
-                # later cannot silently reopen the hole. Do not delete it as redundant.
+                # Static and dynamic definitions commit atomically so member_of
+                # cannot reference a static deleted midway through the import.
                 group_id_by_key = await self._insert_group_definitions(session, static_groups)
                 await self._insert_dynamic_group_definitions(session, dynamic_groups)
-                # Commit the definitions before the device loop so they survive a
-                # failure of any per-row commit below.
                 await session.commit()
 
         by_index = {row.index: row for row in preview.rows}
@@ -477,20 +446,9 @@ class PortabilityImportService:
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
     ) -> list[MembershipSkip]:
-        """Stage and commit static membership rows, skipping groups deleted or recreated in the window.
+        """Commit memberships after rechecking group ids under the definition lock.
 
-        Re-acquires the group-mutation advisory lock around the staging commit.
-        The definitions block released the lock after committing the group rows;
-        a concurrent ``delete_group`` could remove a static group during the
-        device loop. Under the lock, re-read each static group's current id and
-        skip memberships for any key whose row vanished **or** whose id changed.
-
-        The id-changed arm is the delete+recreate case: a concurrent
-        ``delete_group(key)`` then ``create_group(key)`` (static, no
-        ``member_of``, so no advisory lock) replaces the row with a new id while
-        leaving the key present. A key-only re-check would miss it and reuse the
-        cached id, staging ``DeviceGroupMembership(group_id=<stale>)`` and
-        violating ``device_group_memberships_group_id_fkey`` on the final commit.
+        The id check covers deletion and delete-plus-recreate during the device loop.
         """
         staged, values = self._plan_static_memberships(
             by_index=by_index,
@@ -498,12 +456,7 @@ class PortabilityImportService:
             group_id_by_key=group_id_by_key,
         )
         if not values:
-            # Nothing to stage, but ``validate_bundle``'s reads (and the device
-            # loop's host lookups) left a transaction open and no commit below
-            # will end it. A groups-only bundle, or one whose every row was
-            # skipped, would otherwise leave it idle until request teardown,
-            # holding back the xmin horizon. Same reasoning as the rollbacks on
-            # ``add_members``/``remove_members``' no-op paths.
+            # End any validation/host-lookup transaction when no commit follows.
             if session.in_transaction():
                 await session.rollback()
             return []
@@ -538,28 +491,12 @@ class PortabilityImportService:
                     group_id_by_key=group_id_by_key,
                 )
             try:
-                # The write is inside the guard, not just the commit. These FKs
-                # are non-deferrable, so Postgres raises when the INSERT runs;
-                # guarding only the commit lets the violation escape untouched.
+                # Non-deferrable FKs require the write itself to stay under the lock.
                 await self._write_static_memberships(session, values)
                 await session.commit()
             except IntegrityError as exc:
-                # Deliberately do not absorb broader DBAPI failures here. A
-                # connection loss during COMMIT can leave the outcome unknown;
-                # reporting every staged row as skipped could then be false.
-                # Every device row already committed with its own savepoint, so
-                # an integrity failure here only loses the membership rows.
-                # Preserve the device result while reporting those memberships.
-                #
-                # Name the cause from the constraint rather than assuming one.
-                # The device FK is the expected arm: nothing serialises a device
-                # delete against an import. The group FK is not supposed to be
-                # reachable — delete_group takes the lock this block holds — but
-                # "not supposed to" is not "cannot": a data migration, manual
-                # SQL, or a future writer can remove the row, and the AST writer
-                # contract documents `await db.delete(group)` as a blind spot it
-                # cannot catch. Guessing "a device was deleted" there sends the
-                # operator hunting for a device that is still present.
+                # Preserve committed device results for deterministic FK failures.
+                # Broader commit failures propagate because their outcome is unknown.
                 await session.rollback()
                 memberships_skipped.extend(
                     MembershipSkip(index=idx, group_key=key, reason=_staging_failure_reason(exc)) for idx, key in staged
@@ -592,21 +529,7 @@ class PortabilityImportService:
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
     ) -> tuple[list[tuple[int, str]], list[dict[str, uuid.UUID]]]:
-        """Pair the ``(row index, group key)`` to report with the INSERT values to write.
-
-        Planned before anything executes, and returned rather than staged, so the
-        caller still knows what it was trying to write when the write itself
-        raises. The membership FKs are **non-deferrable**, so a violation
-        surfaces at statement time, not at commit — computing the report inside
-        the executing call would lose it exactly when it is needed.
-
-        ``group_id_by_key`` holds exactly the bundle's static definitions —
-        ``_insert_dynamic_group_definitions`` deliberately returns nothing — so it
-        is the single source of truth for "which statics did this bundle define",
-        and a ``.get`` miss is the only guard needed. A device naming a key
-        outside that set was already marked INVALID by ``_classify_row`` and
-        never reaches ``device_id_by_index``.
-        """
+        """Pair report identifiers with INSERT values before a statement can fail."""
         staged: list[tuple[int, str]] = []
         values: list[dict[str, uuid.UUID]] = []
         if not group_id_by_key:
@@ -622,15 +545,7 @@ class PortabilityImportService:
         return staged, values
 
     async def _write_static_memberships(self, session: AsyncSession, values: list[dict[str, uuid.UUID]]) -> None:
-        """Insert the planned membership rows, tolerating rows a peer already added.
-
-        ``ON CONFLICT DO NOTHING`` on ``(group_id, device_id)`` for the same
-        reason ``add_members`` uses it: an operator adding one of these devices
-        to one of these groups between the device loop and this write would
-        otherwise violate the unique constraint, and this is a single batch, so
-        that one row would take every other membership in the import down with
-        it. The end state a conflict produces is the one we wanted anyway.
-        """
+        """Insert memberships, tolerating rows a peer already added."""
         if not values:
             return
         await session.execute(

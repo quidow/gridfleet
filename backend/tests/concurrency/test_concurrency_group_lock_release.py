@@ -159,6 +159,49 @@ async def test_create_with_unresolvable_member_of_releases_the_lock(
         await _assert_lock_is_free(db_session_maker, after="create_group with an unresolvable member_of")
 
 
+async def test_dynamic_count_scans_run_after_definition_transactions(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_groups_service()
+    original_count = service._dynamic_device_count
+    observed: list[str] = []
+
+    async def count_outside_transaction(db: AsyncSession, group: DeviceGroup) -> int:
+        assert not db.in_transaction(), "dynamic count started before the definition transaction released its lock"
+        key = group.key
+        count = await original_count(db, group)
+        assert not db.in_transaction(), "dynamic count left its read transaction open"
+        observed.append(key)
+        return count
+
+    monkeypatch.setattr(service, "_dynamic_device_count", count_outside_transaction)
+    suffix = uuid.uuid4().hex[:8]
+
+    async with db_session_maker() as session:
+        static = await service.create_group(
+            session,
+            DeviceGroupCreate(key=f"static-{suffix}", name="static", group_type=GroupType.static),
+        )
+        dynamic = await service.create_group(
+            session,
+            DeviceGroupCreate(
+                key=f"dynamic-{suffix}",
+                name="dynamic",
+                group_type=GroupType.dynamic,
+                filters={"member_of": [static["key"]]},  # type: ignore[arg-type]
+            ),
+        )
+        updated = await service.update_group(
+            session,
+            dynamic["key"],
+            DeviceGroupUpdate(description="updated"),
+        )
+
+    assert updated is not None
+    assert observed == [dynamic["key"], dynamic["key"]]
+
+
 async def test_import_with_no_groups_does_not_hold_the_lock(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
