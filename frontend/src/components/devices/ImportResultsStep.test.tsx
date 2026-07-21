@@ -8,6 +8,9 @@ const RESULT: ImportCommitResult = {
   created: [{ index: 0, device_id: 'device-1' }],
   skipped: [{ index: 1, reason: 'conflict' }],
   failed: [{ index: 2, reason: 'invalid' }],
+  memberships_skipped: [
+    { index: 0, group_key: 'stale-group', reason: "static group 'stale-group' deleted during import" },
+  ],
 };
 
 function renderResults(props?: Partial<{ result: ImportCommitResult; onReset: () => void }>) {
@@ -26,14 +29,30 @@ describe('ImportResultsStep', () => {
     expect(screen.getByText(/1 failed/i)).toBeInTheDocument();
   });
 
-  it('renders a row per created/skipped/failed entry', () => {
+  it('renders a row per created/skipped/failed/memberships-skipped entry', () => {
     renderResults();
     const tables = screen.getAllByRole('table');
-    expect(tables).toHaveLength(3);
+    expect(tables).toHaveLength(4);
     tables.forEach((table) => {
       const bodyRows = within(table).getAllByRole('row').slice(1);
       expect(bodyRows).toHaveLength(1);
     });
+  });
+
+  it('renders a memberships-skipped section when memberships were skipped', () => {
+    renderResults();
+    expect(screen.getByText(/1 memberships skipped/i)).toBeInTheDocument();
+    expect(screen.getByText('stale-group')).toBeInTheDocument();
+    expect(
+      screen.getByText(/static group 'stale-group' deleted during import/i),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the memberships-skipped section when none were skipped', () => {
+    renderResults({
+      result: { created: [], skipped: [], failed: [] },
+    });
+    expect(screen.queryByText(/memberships skipped/i)).not.toBeInTheDocument();
   });
 
   it('links created device ids to the device detail page', () => {

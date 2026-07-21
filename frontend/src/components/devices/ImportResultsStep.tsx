@@ -8,6 +8,7 @@ import type { ImportCommitResult } from '../../api/devicesPortability';
 type CreatedRow = ImportCommitResult['created'][number];
 type SkippedRow = ImportCommitResult['skipped'][number];
 type FailedRow = ImportCommitResult['failed'][number];
+type MembershipSkippedRow = NonNullable<ImportCommitResult['memberships_skipped']>[number];
 
 interface Props {
   result: ImportCommitResult;
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function ImportResultsStep({ result, onReset }: Props) {
+  const membershipsSkipped = result.memberships_skipped ?? [];
   const createdColumns: DataTableColumn<CreatedRow>[] = [
     { key: 'index', header: 'Row', width: '4rem', render: (row) => row.index },
     {
@@ -33,6 +35,12 @@ export function ImportResultsStep({ result, onReset }: Props) {
     { key: 'reason', header: 'Reason', render: (row) => row.reason },
   ];
 
+  const membershipsSkippedColumns: DataTableColumn<MembershipSkippedRow>[] = [
+    { key: 'index', header: 'Row', width: '4rem', render: (row) => row.index },
+    { key: 'group_key', header: 'Group', render: (row) => row.group_key },
+    { key: 'reason', header: 'Reason', render: (row) => row.reason },
+  ];
+
   return (
     <div className="space-y-4">
       <SectionHeader
@@ -44,6 +52,9 @@ export function ImportResultsStep({ result, onReset }: Props) {
         <Badge tone="success" size="sm">{result.created.length} created</Badge>
         <Badge tone="warning" size="sm">{result.skipped.length} skipped</Badge>
         <Badge tone="critical" size="sm">{result.failed.length} failed</Badge>
+        {membershipsSkipped.length > 0 && (
+          <Badge tone="warning" size="sm">{membershipsSkipped.length} memberships skipped</Badge>
+        )}
       </div>
 
       <section className="space-y-2">
@@ -78,6 +89,19 @@ export function ImportResultsStep({ result, onReset }: Props) {
           emptyState={<p className="px-5 py-4 text-sm text-text-3">No failures.</p>}
         />
       </section>
+
+      {membershipsSkipped.length > 0 && (
+        <section className="space-y-2">
+          <SectionHeader level={3} title="Memberships skipped" />
+          <DataTable<MembershipSkippedRow>
+            columns={membershipsSkippedColumns}
+            rows={membershipsSkipped}
+            rowKey={(row) => `${row.index}-${row.group_key}`}
+            caption="Memberships skipped during import"
+            emptyState={<p className="px-5 py-4 text-sm text-text-3">No memberships skipped.</p>}
+          />
+        </section>
+      )}
 
       <div className="flex gap-2">
         <Button variant="secondary" onClick={onReset}>
