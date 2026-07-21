@@ -77,8 +77,8 @@ class DeviceGroupsService:
         # row a concurrent transaction has not inserted yet.
         await acquire_group_mutation_lock(db)
         if data.group_type == GroupType.dynamic:
-            locked = await _lock_groups_by_key(db, _member_of_keys(data.filters))
-            _assert_member_of_resolves(data.filters, locked)
+            loaded = await _load_groups_by_key(db, _member_of_keys(data.filters))
+            _assert_member_of_resolves(data.filters, loaded)
         elif _has_filter_values(data.filters):
             raise StaticGroupFiltersError
         group = DeviceGroup(
@@ -158,8 +158,8 @@ class DeviceGroupsService:
 
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
         await acquire_group_mutation_lock(db)
-        locked = await _lock_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
-        group = locked.get(group_key)
+        loaded = await _load_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
+        group = loaded.get(group_key)
         if group is None:
             return None
         if group.group_type == GroupType.static:
@@ -167,7 +167,7 @@ class DeviceGroupsService:
             if _has_filter_values(data.filters):
                 raise StaticGroupFiltersError
         elif data.filters is not None:
-            _assert_member_of_resolves(data.filters, locked)
+            _assert_member_of_resolves(data.filters, loaded)
         updates = data.model_dump(exclude_unset=True)
         if "filters" in updates:
             group.filters = _dump_filters(data.filters)
@@ -185,29 +185,21 @@ class DeviceGroupsService:
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
         await acquire_group_mutation_lock(db)
-        # One key-ordered lock over *every* group row. The candidate set must not
-        # be narrowed by a value-dependent predicate: a concurrent
-        # ``update_group`` writing the *first* ``member_of`` reference to the
-        # target has not committed that value when this statement plans, so a
-        # ``member_of IS NOT NULL`` filter would exclude the referring row
-        # *before* ``LockRows`` and Postgres would never reconsider it (under
-        # READ COMMITTED, EvalPlanQual only re-checks rows the statement
-        # actually blocked on). Locking unconditionally makes the referring row
-        # part of the locked set whatever it currently holds, so the re-fetched
-        # tuple carries the committed reference. Group counts are operator-scale,
-        # so the extra rows are cheap. Keeping this to one ascending-key
-        # statement — the same order ``_lock_groups_by_key`` uses — is what makes
-        # a lock cycle against ``update_group``/``create_group`` impossible.
-        stmt = select(DeviceGroup).order_by(DeviceGroup.key).with_for_update()
-        rows = list((await db.execute(stmt)).scalars().all())
-        group = next((row for row in rows if row.key == group_key), None)
+        group = await _get_group_row(db, group_key)
         if group is None:
             return False
-        # Unconditional: ``_assert_no_references`` scans every group carrying a
-        # ``member_of`` precisely because nothing structurally guarantees only
-        # dynamic groups have one, so gating on the *target*'s type would
-        # contradict that reasoning. The rows are already locked and scanned.
-        _assert_no_references(group_key, rows)
+        # Only groups that actually carry a ``member_of`` can block the delete.
+        # 00a87549 had to scan every row instead, because a concurrent writer
+        # could add the first reference under this statement's snapshot and the
+        # predicate would filter the referring row out below LockRows. The
+        # advisory lock excludes that writer, so the predicate is safe again —
+        # and the whole-table write lock it replaced is gone with it.
+        stmt = select(DeviceGroup).where(DeviceGroup.filters["member_of"].isnot(None))
+        referrers = list((await db.execute(stmt)).scalars().all())
+        # Scans every group carrying a ``member_of``, not just dynamic ones:
+        # nothing enforces that static groups have none, and the tag migration
+        # rewrote ``filters`` for any group with a ``tags`` key regardless of type.
+        _assert_no_references(group_key, referrers)
         await db.delete(group)
         self._publisher.queue_for_session(
             db,
@@ -358,48 +350,40 @@ def _member_of_keys(filters: DeviceGroupFilters | None) -> set[str]:
     return {key for key in filters.member_of if is_valid_group_key(key)}
 
 
-async def _lock_groups_by_key(db: AsyncSession, keys: Collection[str]) -> dict[str, DeviceGroup]:
-    """Lock the named ``device_groups`` rows in one ascending-key statement.
+async def _load_groups_by_key(db: AsyncSession, keys: Collection[str]) -> dict[str, DeviceGroup]:
+    """The named ``device_groups`` rows, keyed by group key.
 
-    Every multi-row ``device_groups`` lock in this service goes through a single
-    key-ordered ``FOR UPDATE`` (``LockRows`` sits above ``Sort``, so rows are
-    locked in key order). One global lock order acquired in one statement is
-    what keeps concurrent group edits from forming a cycle — locking a target
-    row first and its references second is exactly the inversion that deadlocked
-    ``delete_group`` against ``update_group``.
+    No row lock: ``acquire_group_mutation_lock`` has already excluded every
+    other group-definition writer for the life of this transaction, and under
+    READ COMMITTED this statement's fresh snapshot carries whatever the previous
+    holder committed. The ascending-key ordering that used to matter here was
+    deadlock-avoidance between concurrent group edits; none can now overlap.
     """
     wanted = sorted({key for key in keys if key})
     if not wanted:
         return {}
-    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted)).order_by(DeviceGroup.key).with_for_update()
+    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted))
     return {row.key: row for row in (await db.execute(stmt)).scalars().all()}
 
 
-def _assert_member_of_resolves(filters: DeviceGroupFilters | None, locked: Mapping[str, DeviceGroup]) -> None:
-    """Require every referenced ``member_of`` key to name a locked static group."""
+def _assert_member_of_resolves(filters: DeviceGroupFilters | None, loaded: Mapping[str, DeviceGroup]) -> None:
+    """Require every referenced ``member_of`` key to name a known static group."""
     wanted = _member_of_keys(filters)
     if not wanted:
         return
-    missing = sorted(wanted - locked.keys())
+    missing = sorted(wanted - loaded.keys())
     if missing:
         raise UnknownMemberOfError(missing)
-    non_static = sorted({key for key in wanted if locked[key].group_type != GroupType.static})
+    non_static = sorted({key for key in wanted if loaded[key].group_type != GroupType.static})
     if non_static:
         raise UnknownMemberOfError(non_static)
 
 
-def _assert_no_references(target_key: str, locked_rows: Collection[DeviceGroup]) -> None:
-    """Reject deletion if any locked group references *target_key*.
-
-    Scans every group carrying a ``member_of``, not just dynamic ones: nothing
-    enforces that static groups have no ``member_of``, and the tag migration
-    rewrote ``filters`` for any group with a ``tags`` key regardless of type, so
-    a static group can carry one. Skipping those would leave a dangling
-    reference behind.
-    """
+def _assert_no_references(target_key: str, candidates: Collection[DeviceGroup]) -> None:
+    """Reject deletion if any candidate group references *target_key*."""
     dependents = [
         group.key
-        for group in locked_rows
+        for group in candidates
         if group.key != target_key and target_key in DeviceGroupFilters.model_validate(group.filters or {}).member_of
     ]
     if dependents:

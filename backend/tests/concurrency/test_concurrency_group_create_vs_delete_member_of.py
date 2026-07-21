@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import event
 
 from app.devices.models.group import DeviceGroup, GroupType
-from app.devices.schemas.group import DeviceGroupCreate
+from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
 from tests.concurrency.group_lock_helpers import (
     build_groups_service,
@@ -28,6 +30,8 @@ from tests.concurrency.group_lock_helpers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
@@ -126,3 +130,76 @@ async def test_delete_wins_create_is_rejected(
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert static_row is None, "static group must be gone after the winning delete"
     assert dynamic_row is None, "dynamic group must not exist after the rejected create"
+
+
+@contextmanager
+def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    assert bind is not None
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
+
+
+def _assert_locked_before_group_reads(statements: list[str]) -> None:
+    """Every ``device_groups`` read follows the advisory lock, and none takes a row lock.
+
+    A narrow predicate row lock is the construct 00a87549 proved broken, and the
+    whole-table one that replaced it is the N-2 scaling concern; under the
+    advisory lock neither is needed. A read issued *before* the lock would carry
+    a stale snapshot and defeat the serialisation, so ordering is asserted too.
+    """
+    assert any("pg_advisory_xact_lock" in s.lower() for s in statements), statements
+    lock_index = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s.lower())
+    group_reads = [i for i, s in enumerate(statements) if "device_groups" in s.lower()]
+    assert all(i > lock_index for i in group_reads), f"device_groups read before the advisory lock: {statements}"
+    row_locks = [s for s in statements if "device_groups" in s.lower() and "for update" in s.lower()]
+    assert not row_locks, f"device_groups row locks should be gone: {row_locks}"
+
+
+async def test_delete_group_locks_before_reading_and_takes_no_row_lock(db_session: AsyncSession) -> None:
+    static_key, _dynamic_key = await _seed_static(db_session)
+
+    with _capture_statements(db_session) as statements:
+        assert await build_groups_service().delete_group(db_session, static_key) is True
+
+    _assert_locked_before_group_reads(statements)
+
+
+async def test_update_group_locks_before_reading(db_session: AsyncSession) -> None:
+    """Same ordering requirement on the update path."""
+    static_key, dynamic_key = await _seed_static(db_session)
+    db_session.add(
+        DeviceGroup(
+            key=dynamic_key,
+            name=dynamic_key,
+            group_type=GroupType.dynamic,
+            filters={"member_of": [static_key]},
+        )
+    )
+    await db_session.commit()
+
+    with _capture_statements(db_session) as statements:
+        updated = await build_groups_service().update_group(
+            db_session,
+            dynamic_key,
+            DeviceGroupUpdate(description="relabelled"),
+        )
+    assert updated is not None
+
+    _assert_locked_before_group_reads(statements)
