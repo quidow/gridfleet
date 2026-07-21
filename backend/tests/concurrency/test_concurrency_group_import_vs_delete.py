@@ -17,16 +17,20 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import select
 
-from app.devices.models.group import DeviceGroup, GroupType
+from app.devices.models.group import GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.groups import GroupReferencedError
 from app.portability.schemas import ExportBundle, ExportedDeviceGroup, ImportCommitRequest, ImportCommitResult
 from app.portability.services.hash import compute_bundle_hash
 from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
-from tests.concurrency.group_lock_helpers import EVENT_WAIT_TIMEOUT_SEC, HANDOFF_SEC, build_groups_service
+from tests.concurrency.group_lock_helpers import (
+    EVENT_WAIT_TIMEOUT_SEC,
+    HANDOFF_SEC,
+    build_groups_service,
+    fetch_group_rows,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -128,12 +132,8 @@ async def test_delete_during_import_cannot_orphan_a_dynamic_group(
         f"deleter must observe the imported reference, got {delete_result!r}"
     )
 
-    async with db_session_maker() as verify:
-        rows = {
-            row.key: row
-            for row in (await verify.execute(select(DeviceGroup))).scalars().all()
-            if row.key in {static_key, dynamic_key}
-        }
-        assert static_key in rows, "the referenced static group must survive"
-        member_of = (rows[dynamic_key].filters or {}).get("member_of", [])
-        assert static_key in member_of
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is not None, "the referenced static group must survive"
+    assert dynamic_row is not None, "the dynamic group must survive"
+    member_of = (dynamic_row.filters or {}).get("member_of", [])
+    assert static_key in member_of

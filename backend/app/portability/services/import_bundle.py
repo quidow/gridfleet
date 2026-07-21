@@ -338,19 +338,24 @@ class PortabilityImportService:
         static_groups = [g for g in request.bundle.groups if g.group_type == GroupType.static]
         dynamic_groups = [g for g in request.bundle.groups if g.group_type == GroupType.dynamic]
 
-        # Both inserts land in one transaction. Splitting them — statics committed
-        # here, dynamics only after the device loop — left a window the width of an
-        # entire import in which a concurrent delete_group could remove a static
-        # group the dynamics were about to reference.
-        #
-        # The advisory lock is not strictly required today: _validate_group_references
-        # guarantees a bundle's member_of names only bundle statics, inserted in this
-        # same transaction. It is here so that relaxing that bundle-internal invariant
-        # later cannot silently reopen the hole. Do not delete it as redundant.
-        await acquire_group_mutation_lock(session)
-        group_id_by_key = await self._insert_group_definitions(session, static_groups)
-        await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
+        group_id_by_key: dict[str, uuid.UUID] = {}
         if static_groups or dynamic_groups:
+            # Both inserts land in one transaction. Splitting them — statics committed
+            # here, dynamics only after the device loop — left a window the width of an
+            # entire import in which a concurrent delete_group could remove a static
+            # group the dynamics were about to reference.
+            #
+            # The advisory lock is not strictly required today: _validate_group_references
+            # guarantees a bundle's member_of names only bundle statics, inserted in this
+            # same transaction. It is here so that relaxing that bundle-internal invariant
+            # later cannot silently reopen the hole. Do not delete it as redundant.
+            #
+            # Acquired only when there is group work to do: the lock must scale with
+            # group count, not device count, and a groupless bundle has nothing for it
+            # to protect.
+            await acquire_group_mutation_lock(session)
+            group_id_by_key = await self._insert_group_definitions(session, static_groups)
+            await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
             # Commit the definitions before the device loop so they survive a
             # failure of any per-row commit below.
             await session.commit()
@@ -437,6 +442,8 @@ class PortabilityImportService:
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:
+                if key not in static_group_keys:
+                    continue
                 group_id = group_id_by_key.get(key)
                 if group_id is None:
                     continue
