@@ -51,7 +51,7 @@ The agent has no DB. `test_no_driver_imports.py` enforces that the agent core st
 npm ci
 npm run dev                               # Vite on :5173
 npm run lint                              # ESLint
-npx tsc --noEmit                          # type-check (build also runs `tsc -b`)
+npx tsc -b tsconfig.app.json              # type-check — NOT `tsc --noEmit`, see below
 npm run build
 npm run test                              # Vitest unit
 npm run test:e2e:mocked                   # Playwright with mocked backend
@@ -60,6 +60,11 @@ npm run types:generate                    # dump backend OpenAPI + regenerate sr
 npm run types:check                       # regenerate and fail if src/api/openapi.ts drifts
 ```
 Live e2e requires backend, Postgres, and the frontend dev server running.
+
+**`npx tsc --noEmit` is a no-op here.** Root `tsconfig.json` is solution-style (project
+references, no `files`/`include`), so that command type-checks nothing and exits 0 — it
+will "pass" over code that does not compile. Use `npx tsc -b tsconfig.app.json` or
+`npm run build`; CI type-checks via the build.
 
 ### Testkit
 ```bash
