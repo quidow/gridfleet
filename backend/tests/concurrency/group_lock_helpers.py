@@ -143,9 +143,25 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
     assertion against code that never issued it (and the reverse pollution
     could mask a real violation). Pin the listener to this session's own
     connection.
+
+    That pin has to *follow* the session, not snapshot it. A Session returns its
+    connection to the pool on commit or rollback and checks out a fresh
+    ``Connection`` for the next statement, so an identity check against the
+    connection held at entry silently stops recording after the first commit —
+    and a dropped statement makes ``_assert_locked_before_group_reads``' negative
+    assertion pass vacuously, the one direction a contract test must never fail
+    in. ``after_begin`` fires with the connection backing each new transaction,
+    and every 2.0-style statement begins one, so re-pinning there tracks the
+    session across its whole lifetime without ever widening to the pool.
     """
     statements: list[str] = []
-    own_connection = (await session.connection()).sync_connection
+    # Single-element holder rather than a set: a connection this session has
+    # released is no longer ours, and matching it would re-admit the pool
+    # pollution the pin exists to prevent.
+    own_connection = [(await session.connection()).sync_connection]
+
+    def track_begin(_session: object, _transaction: object, connection: object) -> None:
+        own_connection[0] = connection
 
     def listener(
         conn: object,
@@ -155,14 +171,17 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
         context: object,
         executemany: bool,
     ) -> None:
-        if conn is own_connection:
+        if conn is own_connection[0]:
             statements.append(statement)
 
     bind = session.bind
     assert bind is not None
     sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    sync_session = session.sync_session
+    event.listen(sync_session, "after_begin", track_begin)
     event.listen(sync_engine, "before_cursor_execute", listener)
     try:
         yield statements
     finally:
         event.remove(sync_engine, "before_cursor_execute", listener)
+        event.remove(sync_session, "after_begin", track_begin)

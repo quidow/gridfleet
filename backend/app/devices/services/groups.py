@@ -73,6 +73,18 @@ class DeviceGroupsService:
     ``update_group``/``delete_group`` signal rejection by return value rather
     than by raising. A caller needing several group writes in one transaction
     needs a different entry point, not these.
+
+    **The ``DeviceGroup`` that ``create_group``/``update_group`` return is good
+    for its identity only** — read ``key`` or ``id``, nothing else. ``created_at``
+    and ``updated_at`` are SQL-side (``server_default``/``onupdate``
+    ``func.now()``), so SQLAlchemy expires them after the flush; touching one
+    outside a transaction fires a lazy load and raises ``MissingGreenlet`` under
+    async. The obvious cure — ``await db.refresh(group)`` after the commit — is
+    what these methods deliberately dropped: it runs after the advisory lock is
+    released, so a concurrent ``delete_group`` turns a write that already
+    succeeded into an ``InvalidRequestError`` 500. Callers wanting the full row
+    re-read it (both routers call ``get_group(db, group.key)``), which also
+    surfaces that peer delete honestly as a 404.
     """
 
     def __init__(
@@ -427,7 +439,9 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     """Reject deletion if any candidate ``(key, filters)`` pair references *target_key*.
 
     Candidates are every group carrying a ``member_of`` other than the target
-    itself. References are read from the raw stored ``filters`` dict, not parsed
+    itself; excluding the target is the caller's job, and ``delete_group`` does
+    it when it partitions the scan. References are read from the raw stored
+    ``filters`` dict, not parsed
     through ``DeviceGroupFilters``: validating every candidate would let one
     malformed stored row — a bare-string ``member_of`` from an older schema or
     manual SQL on a group that does not even name the target — raise and block
@@ -449,8 +463,6 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     """
     dependents: list[str] = []
     for key, filters in candidates:
-        if key == target_key:
-            continue
         raw_member_of = (filters or {}).get("member_of")
         if isinstance(raw_member_of, list):
             if target_key in raw_member_of:

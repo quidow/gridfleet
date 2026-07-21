@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.errors import AppError
 from app.devices.group_keys import GroupKey
@@ -65,6 +65,21 @@ class ExportedDevice(BaseModel):
     device_config: dict[str, Any] = Field(default_factory=dict)
     test_data: dict[str, Any] = Field(default_factory=dict)
     original_host: OriginalHost
+
+    @field_validator("static_groups")
+    @classmethod
+    def _dedupe_static_groups(cls, value: list[GroupKey]) -> list[GroupKey]:
+        """Collapse repeated keys, keeping first-seen order.
+
+        ``device_group_memberships`` is unique on ``(group_id, device_id)``, so a
+        bundle listing the same key twice would stage two identical rows and fail
+        the importer's membership commit on that constraint. Membership is
+        set-valued — a repeat carries no extra meaning — so collapse it at the
+        edge rather than making every consumer of ``static_groups`` defend
+        against it. ``_insert_static_memberships`` and the ``MembershipSkip``
+        generator both iterate this list raw and both rely on this.
+        """
+        return list(dict.fromkeys(value))
 
 
 class ExportBundle(BaseModel):

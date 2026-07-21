@@ -478,6 +478,60 @@ async def test_commit_persists_static_groups_and_memberships(
 
 @pytest.mark.asyncio
 @pytest.mark.db
+async def test_commit_dedupes_a_repeated_static_group_key(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """A key listed twice stages one membership row, not two.
+
+    ``device_group_memberships`` is unique on ``(group_id, device_id)``, so the
+    second row would fail the staging commit's constraint after every device row
+    had already committed.
+    """
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle(
+        [_device(identity_value="R58", static_groups=["shelf-a", "shelf-a"])],
+        groups=[_static_group("shelf-a")],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
+    assert len(result.created) == 1
+    assert result.memberships_skipped == []
+
+    persisted = await _committed_group_keys(db_session_maker)
+    async with db_session_maker() as verify_session:
+        memberships = (await verify_session.execute(select(DeviceGroupMembership))).scalars().all()
+    assert [(m.group_id, m.device_id) for m in memberships] == [(persisted["shelf-a"].id, result.created[0].device_id)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_leaves_no_open_transaction_when_nothing_is_staged(
+    db_session: AsyncSession,
+    seeded_driver_packs: None,
+) -> None:
+    """A bundle that stages no memberships must not leave a read transaction open.
+
+    ``validate_bundle`` reads before any write, and on this path no commit
+    follows it. An open transaction surviving to request teardown sits idle
+    holding back the xmin horizon.
+    """
+    bundle = _bundle([], groups=[_static_group("shelf-a")])
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=[])
+    await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
+
+    assert not db_session.in_transaction()
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
 async def test_commit_persists_static_and_dynamic_groups(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

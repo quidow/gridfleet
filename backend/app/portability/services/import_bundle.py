@@ -340,9 +340,12 @@ class PortabilityImportService:
 
         Not one transaction. The group definitions commit before the device loop so
         they survive a per-row failure, which means a group key that collides aborts
-        the whole import before any device row is touched — and, conversely, that the
-        membership commit at the end runs outside the group lock. See the comment on
-        that acquire for the window that leaves open.
+        the whole import before any device row is touched. Releasing the group lock
+        at that commit leaves the device loop unserialised against a concurrent
+        ``delete_group``; ``_stage_static_memberships`` closes that window by
+        re-acquiring the lock and re-checking each static group before the final
+        membership commit. The two acquires are deliberately separate so the device
+        loop does not hold a fleet-global lock.
 
         Raises:
             BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
@@ -464,6 +467,14 @@ class PortabilityImportService:
         violating ``device_group_memberships_group_id_fkey`` on the final commit.
         """
         if not group_id_by_key or not device_id_by_index:
+            # Nothing to stage, but ``validate_bundle``'s reads (and the device
+            # loop's host lookups) left a transaction open and no commit below
+            # will end it. A groups-only bundle, or one whose every row was
+            # skipped, would otherwise leave it idle until request teardown,
+            # holding back the xmin horizon. Same reasoning as the rollbacks on
+            # ``add_members``/``remove_members``' no-op paths.
+            if session.in_transaction():
+                await session.rollback()
             return []
         memberships_skipped: list[MembershipSkip] = []
         async with group_mutation_lock(session):
@@ -490,13 +501,31 @@ class PortabilityImportService:
                     if key in stale_keys
                 )
                 group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key not in stale_keys}
-            self._insert_static_memberships(
+            staged = self._insert_static_memberships(
                 session,
                 by_index=by_index,
                 device_id_by_index=device_id_by_index,
                 group_id_by_key=group_id_by_key,
             )
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Every device row already committed with its own savepoint, so
+                # only the membership rows are lost here. Letting this propagate
+                # would discard `created`/`skipped`/`failed` along with them and
+                # leave the operator no record of which devices the import made.
+                # Reachable when a device is deleted between the device loop and
+                # this commit (device_group_memberships_device_id_fkey); the
+                # group arm of the same race is caught by the re-read above.
+                await session.rollback()
+                memberships_skipped.extend(
+                    MembershipSkip(
+                        index=idx,
+                        group_key=key,
+                        reason="membership staging failed: group or device no longer exists",
+                    )
+                    for idx, key in staged
+                )
         return memberships_skipped
 
     async def _insert_group_definitions(
@@ -524,8 +553,11 @@ class PortabilityImportService:
         by_index: dict[int, ImportPreviewRow],
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
-    ) -> None:
+    ) -> list[tuple[int, str]]:
         """Stage membership rows for each created device's bundle static groups.
+
+        Returns the ``(row index, group key)`` pairs staged, so the caller can
+        name them if the commit fails.
 
         ``group_id_by_key`` holds exactly the bundle's static definitions —
         ``_insert_dynamic_group_definitions`` deliberately returns nothing — so it
@@ -534,8 +566,9 @@ class PortabilityImportService:
         outside that set was already marked INVALID by ``_classify_row`` and
         never reaches ``device_id_by_index``.
         """
+        staged: list[tuple[int, str]] = []
         if not group_id_by_key:
-            return
+            return staged
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:
@@ -543,6 +576,8 @@ class PortabilityImportService:
                 if group_id is None:
                     continue
                 session.add(DeviceGroupMembership(group_id=group_id, device_id=device_id))
+                staged.append((idx, key))
+        return staged
 
     async def _insert_dynamic_group_definitions(
         self,
