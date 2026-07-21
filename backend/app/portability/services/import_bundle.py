@@ -238,13 +238,13 @@ async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> No
 
 def _staging_failure_reason(exc: IntegrityError) -> str:
     """Name the constraint that killed the membership batch, in operator terms."""
-    match constraint_name(exc):
+    constraint = constraint_name(exc)
+    match constraint:
         case "device_group_memberships_device_id_fkey":
             return "membership staging rolled back: a device was deleted during import"
         case "device_group_memberships_group_id_fkey":
             return "membership staging rolled back: a static group was deleted during import"
-        case other:
-            return f"membership staging rolled back: {other or 'constraint violation'}"
+    return f"membership staging rolled back: {constraint or 'constraint violation'}"
 
 
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:

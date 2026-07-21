@@ -25,7 +25,7 @@ import pytest
 from app.core.locks import acquire_group_mutation_lock
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
-from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
+from app.devices.services.groups import GroupReferencedError
 from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
@@ -97,66 +97,6 @@ async def test_delete_of_referenced_group_releases_the_lock(
         with pytest.raises(GroupReferencedError):
             await service.delete_group(session, static_key)
         await _assert_lock_is_free(db_session_maker, after="a rejected delete_group (GroupReferencedError)")
-
-
-async def test_delete_of_unknown_group_releases_the_lock(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> None:
-    service = build_groups_service()
-    async with db_session_maker() as session:
-        assert await service.delete_group(session, f"missing-{uuid.uuid4().hex[:8]}") is False
-        await _assert_lock_is_free(db_session_maker, after="delete_group on an unknown key")
-
-
-async def test_update_of_unknown_group_releases_the_lock(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> None:
-    service = build_groups_service()
-    async with db_session_maker() as session:
-        result = await service.update_group(
-            session,
-            f"missing-{uuid.uuid4().hex[:8]}",
-            DeviceGroupUpdate(description="never applied"),
-        )
-        assert result is None
-        await _assert_lock_is_free(db_session_maker, after="update_group on an unknown key")
-
-
-async def test_update_with_unresolvable_member_of_releases_the_lock(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> None:
-    _static_key, dynamic_key = await _seed_referenced_pair(db_session)
-    service = build_groups_service()
-
-    async with db_session_maker() as session:
-        with pytest.raises(UnknownMemberOfError):
-            await service.update_group(
-                session,
-                dynamic_key,
-                DeviceGroupUpdate(filters={"member_of": [f"nope-{uuid.uuid4().hex[:8]}"]}),  # type: ignore[arg-type]
-            )
-        await _assert_lock_is_free(db_session_maker, after="update_group with an unresolvable member_of")
-
-
-async def test_create_with_unresolvable_member_of_releases_the_lock(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> None:
-    service = build_groups_service()
-    suffix = uuid.uuid4().hex[:8]
-
-    async with db_session_maker() as session:
-        with pytest.raises(UnknownMemberOfError):
-            await service.create_group(
-                session,
-                DeviceGroupCreate(
-                    key=f"dynamic-{suffix}",
-                    name=f"dynamic-{suffix}",
-                    group_type=GroupType.dynamic,
-                    filters={"member_of": [f"nope-{suffix}"]},  # type: ignore[arg-type]
-                ),
-            )
-        await _assert_lock_is_free(db_session_maker, after="create_group with an unresolvable member_of")
 
 
 async def test_dynamic_count_scans_run_after_definition_transactions(

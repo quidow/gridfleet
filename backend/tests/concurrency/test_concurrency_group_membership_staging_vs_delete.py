@@ -41,6 +41,7 @@ from sqlalchemy import delete, select
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership
 from app.devices.models.group import GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
+from app.devices.schemas.group import DeviceGroupCreate
 from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
@@ -224,6 +225,63 @@ async def test_delete_during_membership_staging_does_not_500(
     async with db_session_maker() as verify_session:
         surviving = (await verify_session.execute(select(DeviceGroupMembership))).scalars().all()
     assert surviving == [], f"no membership row may survive the deleted group: {surviving!r}"
+
+
+async def test_delete_and_recreate_during_membership_staging_does_not_500(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    _ = seeded_driver_packs
+    suffix = uuid.uuid4().hex[:8]
+    static_key = f"static-{suffix}"
+    dynamic_key = f"dynamic-{suffix}"
+    host = await seed_host_named(db_session, "import-host")
+    bundle, mappings = _bundle_with_device(static_key, dynamic_key, host.id)
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=mappings)
+    device_committed = asyncio.Event()
+
+    async def run_import() -> ImportCommitResult:
+        async with db_session_maker() as session:
+            _signal_after_device_loop_commit(session, device_committed)
+            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+                session, request
+            )
+
+    async def delete_and_recreate_static() -> bool:
+        await _wait_for_device_commit(device_committed)
+        async with db_session_maker() as session:
+            deleted = await build_groups_service().delete_group(session, static_key)
+        if not deleted:
+            return False
+        async with db_session_maker() as session:
+            await build_groups_service().create_group(
+                session,
+                DeviceGroupCreate(key=static_key, name=static_key, group_type=GroupType.static),
+            )
+        return True
+
+    import_result, recreate_result = await asyncio.gather(
+        run_import(), delete_and_recreate_static(), return_exceptions=True
+    )
+
+    assert not isinstance(import_result, Exception), import_result
+    assert recreate_result is True
+    assert [(skip.index, skip.group_key) for skip in import_result.memberships_skipped] == [(0, static_key)]
+    assert "recreated during import" in import_result.memberships_skipped[0].reason
+
+    static_row, _dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is not None
+    device_id = import_result.created[0].device_id
+    async with db_session_maker() as verify:
+        rows = (
+            await verify.execute(
+                select(DeviceGroupMembership.id)
+                .join(DeviceGroup, DeviceGroupMembership.group_id == DeviceGroup.id)
+                .where(DeviceGroupMembership.device_id == device_id, DeviceGroup.key == static_key)
+            )
+        ).all()
+    assert rows == []
 
 
 async def test_concurrent_add_members_during_staging_keeps_the_memberships(
