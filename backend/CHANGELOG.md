@@ -14,6 +14,93 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.5.0...gridfleet-backend-v0.6.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** GET /api/portability/inventory is removed.
+* **testkit:** `GridFleetClient.list_devices` no longer accepts the `hardware_telemetry_state` or `hardware_health_status` keyword arguments. Both filters were removed from `GET /api/devices` along with the device telemetry feature, so passing them raises `TypeError`. Remove the arguments from callers; there is no replacement filter.
+* **backend:** drop device telemetry columns, enums, and settings
+* **backend:** migrate device tags to groups
+* **backend:** export device groups in portability v2
+* **backend:** route sessions by device group
+* **backend:** add public device group keys
+* **backend:** remove boot-during-verification and emulator_headless tag plumbing
+* **backend:** drop allow_boot/headless/lifecycle_state_capable from probe targets
+* **backend:** drop emulator_state fold pipeline and columns
+* **backend:** reject boot/shutdown/state in manifest lifecycle_action ingest
+
+### Features
+
+* **backend:** add public device group keys ([cc9cb01](https://github.com/quidow/gridfleet/commit/cc9cb01f6433901655e5f9f24b5932b05a4504e7))
+* **backend:** drop allow_boot/headless/lifecycle_state_capable from probe targets ([c73fc38](https://github.com/quidow/gridfleet/commit/c73fc3826f0cf7a9118a679c4091c3d27d6cf84a))
+* **backend:** drop device telemetry columns, enums, and settings ([77d9931](https://github.com/quidow/gridfleet/commit/77d993105ce0cf9d66ca58b0581b5ad668751859))
+* **backend:** drop emulator_state fold pipeline and columns ([b56327a](https://github.com/quidow/gridfleet/commit/b56327ac10e1211edfa205adad386a97d7e67379))
+* **backend:** export device groups in portability v2 ([2f0e079](https://github.com/quidow/gridfleet/commit/2f0e07931a49d03a3000a232d18f1593f49dbfdc))
+* **backend:** migrate device tags to groups ([a6b111f](https://github.com/quidow/gridfleet/commit/a6b111f8a053c89fb9b196fb308c7a1b5a18a8f3))
+* **backend:** reject boot/shutdown/state in manifest lifecycle_action ingest ([d21b965](https://github.com/quidow/gridfleet/commit/d21b96528e3e7024e7c9224952c2df79e2b783fc))
+* **backend:** remove boot-during-verification and emulator_headless tag plumbing ([381f7c7](https://github.com/quidow/gridfleet/commit/381f7c733664912f783c3f469e812c6a8e49c305))
+* **backend:** remove GET /api/portability/inventory endpoint ([1f5624d](https://github.com/quidow/gridfleet/commit/1f5624df1d43d7d29ce35c09caff9678888fafe2))
+* **backend:** route sessions by device group ([6111733](https://github.com/quidow/gridfleet/commit/6111733e677f18efcad9854cc8cdab3ce556f48c))
+* **backend:** target runs and device queries by group ([245c8a3](https://github.com/quidow/gridfleet/commit/245c8a3f46eb90871d0144e6e149e3dfb1b9650e))
+* **testkit:** drop hardware telemetry filters from list_devices ([0279208](https://github.com/quidow/gridfleet/commit/027920803fa2bddfc4e14bfbbfedb22b6296a475))
+
+
+### Bug Fixes
+
+* **backend:** accept JSONB null in tag-to-group migration ([207295e](https://github.com/quidow/gridfleet/commit/207295efe123ed8ce8ede60fe73a17a9183d8397))
+* **backend:** address code review on device telemetry removal ([673984f](https://github.com/quidow/gridfleet/commit/673984fdbfc931ea95a77e7e05dce64ff867df27))
+* **backend:** address portability v2 import schema and db findings ([556bd49](https://github.com/quidow/gridfleet/commit/556bd49d0f807e66b695aba3e037d5c37a27dda3))
+* **backend:** batch run shortfall and drop tag filter from group path ([45ffa97](https://github.com/quidow/gridfleet/commit/45ffa9728130876cc053ba438247d08abc45c22a))
+* **backend:** commit imported device groups independently of devices ([83e2e6c](https://github.com/quidow/gridfleet/commit/83e2e6ca1c5091939e79f4a03db4f7cb39115b88))
+* **backend:** commit imported group definitions before the device loop ([f5342e3](https://github.com/quidow/gridfleet/commit/f5342e3ddbacf1f6b653a982b7972bb5286615cd))
+* **backend:** derive readiness for grid allocation group facts ([2b9c06c](https://github.com/quidow/gridfleet/commit/2b9c06c21c8fc6f0db6b0c8641b29d9a8792acff))
+* **backend:** fold group member_of closure into one CTE ([ce998b2](https://github.com/quidow/gridfleet/commit/ce998b230519b02871968266df485fd7ce4e7911))
+* **backend:** gate the grid claim path on the real readiness verdict ([5a8a572](https://github.com/quidow/gridfleet/commit/5a8a572fcb71c42a5d23c46e85ee2014374f336f))
+* **backend:** honour load_sessions in lock_device_handle's predicates branch ([e6a24bf](https://github.com/quidow/gridfleet/commit/e6a24bfab8e38583f3653fb5c8203cc1305e7ae0))
+* **backend:** keep spare candidates through the run allocation lock ([50ac472](https://github.com/quidow/gridfleet/commit/50ac47226dfd367620caf4a37d04d462787559f8))
+* **backend:** key the allocator pack catalog off every device pack_id ([47d35f1](https://github.com/quidow/gridfleet/commit/47d35f1d90cb27855cd7d719d52ff7a3eb0f7d07))
+* **backend:** lock all groups when deleting a referenced group ([00a8754](https://github.com/quidow/gridfleet/commit/00a87549e486c31fd9cfee1b47e2586f11ad9ab6))
+* **backend:** make portability v1 rejection reachable ([07fd2e2](https://github.com/quidow/gridfleet/commit/07fd2e20acc69436c66c53025f8248a888951727))
+* **backend:** order device group row locks consistently ([45f066d](https://github.com/quidow/gridfleet/commit/45f066d411e47a86903d475da6094049353bac2e))
+* **backend:** recheck group membership on grid claim ([a11aa2e](https://github.com/quidow/gridfleet/commit/a11aa2ef1de4b1d0112ecc54e8f62396deb45786))
+* **backend:** recheck group membership under run-allocation lock ([27d870e](https://github.com/quidow/gridfleet/commit/27d870e93b08c969c09f850f287a87218c0ad521))
+* **backend:** reject static group filters with a typed error ([75053c4](https://github.com/quidow/gridfleet/commit/75053c4119e566f9b28fbffb4263680d49d18555))
+* **backend:** remove stale submodule exports flagged by codeql ([d1296ec](https://github.com/quidow/gridfleet/commit/d1296ec9e7222f3b54c6af381a915bb35bc749d1))
+* **backend:** report the real cause when a stereotype template is missing ([9b1732e](https://github.com/quidow/gridfleet/commit/9b1732e1bdd1ca89ad30b256087bc02c74620fce))
+* **backend:** return 409 when an import bundle loses a group-key race ([a0561a4](https://github.com/quidow/gridfleet/commit/a0561a49d30afb7c3b9d661c81ae03224fa5dc17))
+* **backend:** return an empty inventory export instead of a 500 ([ca4086c](https://github.com/quidow/gridfleet/commit/ca4086c8986e081a6c31700291f53d87c4792d53))
+* **backend:** scan group references on every delete, not just static targets ([e762167](https://github.com/quidow/gridfleet/commit/e7621671641f408efd0ee037dfbcbdabce787e22))
+* **backend:** scrub removed telemetry keys from stored group filters ([17ca73c](https://github.com/quidow/gridfleet/commit/17ca73c657b97bd32e997bf8e6cfdf844f958732))
+* **backend:** single-source device reservation semantics ([821c75d](https://github.com/quidow/gridfleet/commit/821c75d0b77c9dae5daff2ee3ec08c3ef0282502))
+* **backend:** strip retired driver pack actions ([47cdbd4](https://github.com/quidow/gridfleet/commit/47cdbd4264393312a86e1fda5dd8ed30c3352fa2))
+* **backend:** strip retired driver pack actions ([2316dc3](https://github.com/quidow/gridfleet/commit/2316dc32e2fe8312fc0601821fcaea42ef29218b))
+* **backend:** validate public device group keys ([4de10bf](https://github.com/quidow/gridfleet/commit/4de10bfb964099ef6ada9de9831f97d96537c3fc))
+* **main:** align virtual device resolution contracts ([8c123fd](https://github.com/quidow/gridfleet/commit/8c123fdaf4e013360c126f1820cd66422c6a6bcc))
+* **main:** complete virtual device state removal ([d457be1](https://github.com/quidow/gridfleet/commit/d457be103b3b8d95e9549ae6aa93f7d4abb03a97))
+
+
+### Performance Improvements
+
+* **backend:** batch device group membership evaluation ([d00dc32](https://github.com/quidow/gridfleet/commit/d00dc32afeaf46257b9bc9ee56ea5ec2e1a8a887))
+* **backend:** bound group allocation database reads ([2ae9b59](https://github.com/quidow/gridfleet/commit/2ae9b5996ac5f9433c4a6c7a8eae551ca2728981))
+* **backend:** count static group members with one aggregate ([a4d9af7](https://github.com/quidow/gridfleet/commit/a4d9af7693eaca86dc7c3f8a70e4f076a4796060))
+* **backend:** filter static device groups in SQL ([88c6095](https://github.com/quidow/gridfleet/commit/88c609598c27cb2308a03b0a0d95f858bbe24ea3))
+* **backend:** keep the allocator poll's group surface and read budget tight ([f08300e](https://github.com/quidow/gridfleet/commit/f08300e957598a1c98f2c6826e8a7e6db18cb74d))
+* **backend:** resolve group bulk routes without a member load ([6bbdead](https://github.com/quidow/gridfleet/commit/6bbdead68d4d1b643c4f3a42306092e8a734a1fc))
+
+
+### Dependencies
+
+* **deps:** bump datamodel-code-generator ([#859](https://github.com/quidow/gridfleet/issues/859)) ([fe73aae](https://github.com/quidow/gridfleet/commit/fe73aaeedc9880924e89a8261f2b338bf50eb78b))
+
+
+### Documentation
+
+* **backend:** describe how group caps are actually advertised ([70e505f](https://github.com/quidow/gridfleet/commit/70e505f4a3d0433816fb154ac9a3a3754058944b))
+* **backend:** record why load_pack_catalog uses chained joinedload ([fb3d448](https://github.com/quidow/gridfleet/commit/fb3d448e36bb33b382b93db0749e9f484efd0657))
+
 ## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.4.0...gridfleet-backend-v0.5.0) (2026-07-17)
 
 
