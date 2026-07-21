@@ -228,6 +228,19 @@ async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> se
     return {row[0] for row in result.all()}
 
 
+async def _load_existing_group_ids(session: AsyncSession, keys: set[str]) -> dict[str, uuid.UUID]:
+    """The named ``device_groups`` rows keyed by group key, with their current ids.
+
+    Used by ``_stage_static_memberships`` to detect a delete+recreate: a static
+    group deleted and recreated during the device loop keeps its key but gets a
+    new row id, so a key-only re-check misses it and the cached id goes stale.
+    """
+    if not keys:
+        return {}
+    result = await session.execute(select(DeviceGroup.key, DeviceGroup.id).where(DeviceGroup.key.in_(keys)))
+    return {row[0]: row[1] for row in result.all()}
+
+
 async def _validate_group_references(session: AsyncSession, bundle: ExportBundle) -> set[str]:
     """Validate bundle group definitions and references.
 
@@ -435,33 +448,48 @@ class PortabilityImportService:
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
     ) -> list[MembershipSkip]:
-        """Stage and commit static membership rows, skipping groups deleted in the window.
+        """Stage and commit static membership rows, skipping groups deleted or recreated in the window.
 
         Re-acquires the group-mutation advisory lock around the staging commit.
         The definitions block released the lock after committing the group rows;
         a concurrent ``delete_group`` could remove a static group during the
-        device loop. Under the lock, re-check which static groups still exist
-        and skip memberships for any group deleted in the window — rather than
-        letting the final commit violate ``device_group_memberships_group_id_fkey``.
+        device loop. Under the lock, re-read each static group's current id and
+        skip memberships for any key whose row vanished **or** whose id changed.
+
+        The id-changed arm is the delete+recreate case: a concurrent
+        ``delete_group(key)`` then ``create_group(key)`` (static, no
+        ``member_of``, so no advisory lock) replaces the row with a new id while
+        leaving the key present. A key-only re-check would miss it and reuse the
+        cached id, staging ``DeviceGroupMembership(group_id=<stale>)`` and
+        violating ``device_group_memberships_group_id_fkey`` on the final commit.
         """
         if not group_id_by_key or not device_id_by_index:
             return []
         memberships_skipped: list[MembershipSkip] = []
         async with group_mutation_lock(session):
-            surviving_keys = await _load_existing_group_keys(session, set(group_id_by_key))
-            deleted_keys = set(group_id_by_key) - surviving_keys
-            if deleted_keys:
+            current_ids = await _load_existing_group_ids(session, set(group_id_by_key))
+            stale_keys: set[str] = set()
+            for key, cached_id in group_id_by_key.items():
+                current_id = current_ids.get(key)
+                if current_id is None or current_id != cached_id:
+                    stale_keys.add(key)
+            if stale_keys:
+                recreated_keys = {key for key in stale_keys if key in current_ids}
                 memberships_skipped.extend(
                     MembershipSkip(
                         index=idx,
                         group_key=key,
-                        reason=f"static group '{key}' deleted during import",
+                        reason=(
+                            f"static group '{key}' deleted and recreated during import"
+                            if key in recreated_keys
+                            else f"static group '{key}' deleted during import"
+                        ),
                     )
                     for idx in device_id_by_index
                     for key in by_index[idx].device.static_groups
-                    if key in deleted_keys
+                    if key in stale_keys
                 )
-                group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key in surviving_keys}
+                group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key not in stale_keys}
             self._insert_static_memberships(
                 session,
                 by_index=by_index,
