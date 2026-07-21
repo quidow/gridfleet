@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
 
-from app.agent_comm import operations as agent_operations
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import (
@@ -65,8 +64,6 @@ RESTART_BACKOFF_BASE = 2
 
 
 RESTART_MAX_RETRIES = 3
-
-appium_status = agent_operations.appium_status
 
 
 @dataclass(frozen=True, slots=True)
