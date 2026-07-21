@@ -63,6 +63,7 @@ def signal_after_group_lock(session: AsyncSession, locked: asyncio.Event) -> Non
         result = await original_execute(stmt, *args, **kwargs)
         if not fired and "pg_advisory_xact_lock" in str(stmt).lower():
             fired = True
+            session.execute = original_execute  # type: ignore[assignment, method-assign]
             locked.set()
             await asyncio.sleep(HANDOFF_SEC)
         return result
@@ -154,11 +155,12 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
     and every 2.0-style statement begins one, so re-pinning there tracks the
     session across its whole lifetime without ever widening to the pool.
     """
+    assert not session.in_transaction(), "capture_statements requires a session with no active transaction"
     statements: list[str] = []
     # Single-element holder rather than a set: a connection this session has
     # released is no longer ours, and matching it would re-admit the pool
     # pollution the pin exists to prevent.
-    own_connection = [(await session.connection()).sync_connection]
+    own_connection: list[object | None] = [None]
 
     def track_begin(_session: object, _transaction: object, connection: object) -> None:
         own_connection[0] = connection

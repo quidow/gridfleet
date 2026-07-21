@@ -147,14 +147,12 @@ class DeviceGroupsService:
             "device_group.updated",
             {"group_key": group.key, "action": "created"},
         )
-        payload = _serialize_group(group, device_count=await self._initial_device_count(db, group))
+        device_count = 0 if _is_static(group) else await self._dynamic_device_count(db, group)
+        payload = _serialize_group(group, device_count=device_count)
         await db.commit()
         return payload
 
-    async def _initial_device_count(self, db: AsyncSession, group: DeviceGroup) -> int:
-        """The member count of a just-inserted, not-yet-committed group."""
-        if _is_static(group):
-            return 0
+    async def _dynamic_device_count(self, db: AsyncSession, group: DeviceGroup) -> int:
         devices = await _load_devices_in_scope(db, [group])
         index = await load_group_membership_index(db, groups=[group], devices=devices)
         return len(index.device_ids(group.key))
@@ -242,8 +240,16 @@ class DeviceGroupsService:
                 "device_group.updated",
                 {"group_key": group.key, "action": "updated"},
             )
-            payload = await self.get_group(db, group.key)
-            assert payload is not None
+            await db.flush()
+            await db.refresh(group)
+            if _is_static(group):
+                count_stmt = select(func.count(DeviceGroupMembership.device_id)).where(
+                    DeviceGroupMembership.group_id == group.id
+                )
+                device_count = int(await db.scalar(count_stmt) or 0)
+            else:
+                device_count = await self._dynamic_device_count(db, group)
+            payload = _serialize_group(group, device_count=device_count)
             await db.commit()
         return payload
 
@@ -476,33 +482,16 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     """Reject deletion if any candidate ``(key, filters)`` pair references *target_key*.
 
     Candidates are every group carrying a ``member_of`` other than the target
-    itself; excluding the target is the caller's job, and ``delete_group`` does
-    it when it partitions the scan. References are read from the raw stored
-    ``filters`` dict, not parsed
-    through ``DeviceGroupFilters``: validating every candidate would let one
-    malformed stored row — a bare-string ``member_of`` from an older schema or
-    manual SQL on a group that does not even name the target — raise and block
-    every unrelated fleet delete. Reading the raw value narrows the blast radius
-    to rows that actually reference the target.
+    itself; excluding the target is the caller's job. References are read from
+    the raw stored value so one malformed row cannot block unrelated deletes.
 
     Exactly two shapes are read: the well-formed list form
     (``{"member_of": ["target"]}``) and the legacy bare-string form
-    (``{"member_of": "target"}``). **Any other shape is skipped, including one
-    that names the target** — a dict, a nested list, a number. Such a row cannot
-    be produced by the application (``DeviceGroupFilters`` validates every write
-    path); only a migration or manual SQL can leave one. Skipping it is the
-    deliberate side of the trade this scan makes: parsing every candidate
-    through ``DeviceGroupFilters`` instead would let one malformed row block
-    every unrelated fleet delete, which is the worse failure. The cost is that
-    deleting a group such a row references leaves it dangling, which
-    ``get_group``/``list_groups`` surface when they serialize it.
+    (``{"member_of": "target"}``). Other shapes are skipped; only migrations or
+    manual SQL can produce them because application writes are schema-validated.
 
-    ``device_group_memberships`` rows are a second class of dependent this
-    deliberately ignores: they carry ``ON DELETE CASCADE``, so deleting a group
-    with members is a supported operation, not a referential error. The
-    importer's membership-staging race is closed by ``_stage_static_memberships``
-    re-acquiring the group-mutation lock and re-checking each static group's
-    existence and id before the final commit; no wider scan is needed here.
+    Membership rows are deliberately ignored because their foreign key carries
+    ``ON DELETE CASCADE``.
     """
     dependents: list[str] = []
     for key, filters in candidates:

@@ -39,7 +39,7 @@ class DeviceGroup(Base):
     )
 
     memberships: Mapped[list[DeviceGroupMembership]] = relationship(
-        "DeviceGroupMembership", back_populates="group", cascade="all, delete-orphan"
+        "DeviceGroupMembership", back_populates="group", cascade="all, delete-orphan", passive_deletes=True
     )
 
 

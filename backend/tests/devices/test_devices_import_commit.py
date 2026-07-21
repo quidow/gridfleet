@@ -23,6 +23,7 @@ from app.portability.services import import_bundle as import_bundle_module
 from app.portability.services.hash import compute_bundle_hash
 from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
 from app.verification.services.service import VerificationService
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import seed_existing_device, seed_host_named
 
 if TYPE_CHECKING:
@@ -531,6 +532,34 @@ async def test_commit_leaves_no_open_transaction_when_nothing_is_staged(
     await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
 
     assert not db_session.in_transaction()
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_skips_membership_lock_when_the_plan_is_empty(
+    db_session: AsyncSession,
+    seeded_driver_packs: None,
+) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    host_id = host.id
+    # seed_host_named refreshes the row after committing, which opens a read
+    # transaction; the import endpoint itself starts with a clean session.
+    await db_session.rollback()
+    bundle = _bundle([_device(static_groups=[])], groups=[_static_group("shelf-a")])
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host_id)],
+    )
+
+    async with capture_statements(db_session) as statements:
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
+
+    assert len(result.created) == 1
+    lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
+    assert len(lock_statements) == 1, statements
 
 
 @pytest.mark.asyncio

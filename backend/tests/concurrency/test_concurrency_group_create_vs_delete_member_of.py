@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from app.core.locks import acquire_group_mutation_lock
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
@@ -176,3 +177,22 @@ async def test_update_group_locks_before_reading(db_session: AsyncSession) -> No
     assert updated is not None
 
     _assert_locked_before_group_reads(statements)
+
+
+async def test_capture_statements_does_not_open_a_transaction(db_session: AsyncSession) -> None:
+    assert not db_session.in_transaction()
+
+    async with capture_statements(db_session):
+        assert not db_session.in_transaction()
+
+
+async def test_signal_after_group_lock_restores_session_execute(db_session: AsyncSession) -> None:
+    locked = asyncio.Event()
+    original_execute = db_session.execute
+    signal_after_group_lock(db_session, locked)
+
+    await acquire_group_mutation_lock(db_session)
+
+    assert locked.is_set()
+    assert db_session.execute == original_execute
+    await db_session.rollback()

@@ -492,7 +492,12 @@ class PortabilityImportService:
         cached id, staging ``DeviceGroupMembership(group_id=<stale>)`` and
         violating ``device_group_memberships_group_id_fkey`` on the final commit.
         """
-        if not group_id_by_key or not device_id_by_index:
+        staged, values = self._plan_static_memberships(
+            by_index=by_index,
+            device_id_by_index=device_id_by_index,
+            group_id_by_key=group_id_by_key,
+        )
+        if not values:
             # Nothing to stage, but ``validate_bundle``'s reads (and the device
             # loop's host lookups) left a transaction open and no commit below
             # will end it. A groups-only bundle, or one whose every row was
@@ -527,11 +532,11 @@ class PortabilityImportService:
                     if key in stale_keys
                 )
                 group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key not in stale_keys}
-            staged, values = self._plan_static_memberships(
-                by_index=by_index,
-                device_id_by_index=device_id_by_index,
-                group_id_by_key=group_id_by_key,
-            )
+                staged, values = self._plan_static_memberships(
+                    by_index=by_index,
+                    device_id_by_index=device_id_by_index,
+                    group_id_by_key=group_id_by_key,
+                )
             try:
                 # The write is inside the guard, not just the commit. These FKs
                 # are non-deferrable, so Postgres raises when the INSERT runs;
@@ -539,10 +544,12 @@ class PortabilityImportService:
                 await self._write_static_memberships(session, values)
                 await session.commit()
             except IntegrityError as exc:
+                # Deliberately do not absorb broader DBAPI failures here. A
+                # connection loss during COMMIT can leave the outcome unknown;
+                # reporting every staged row as skipped could then be false.
                 # Every device row already committed with its own savepoint, so
-                # only the membership rows are lost here. Letting this propagate
-                # would discard `created`/`skipped`/`failed` along with them and
-                # leave the operator no record of which devices the import made.
+                # an integrity failure here only loses the membership rows.
+                # Preserve the device result while reporting those memberships.
                 #
                 # Name the cause from the constraint rather than assuming one.
                 # The device FK is the expected arm: nothing serialises a device

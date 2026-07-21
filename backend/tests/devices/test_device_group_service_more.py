@@ -12,6 +12,7 @@ from app.devices.services import groups as device_group_service
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -71,6 +72,39 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     assert await svc.delete_group(db_session, group["key"]) is False
     assert await svc.get_group(db_session, group["key"]) is None
     assert await svc.update_group(db_session, group["key"], DeviceGroupUpdate(name="missing")) is None
+
+
+async def test_update_static_group_counts_without_loading_member_devices(db_session: AsyncSession) -> None:
+    _host, device = await seed_host_and_device(db_session, identity="group-update-count")
+    svc = _svc()
+    group = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="update-count", name="update count", group_type="static"),
+    )
+    await svc.add_members(db_session, group["key"], [device.id])
+
+    async with capture_statements(db_session) as statements:
+        updated = await svc.update_group(db_session, group["key"], DeviceGroupUpdate(name="renamed"))
+
+    assert updated is not None
+    assert updated["device_count"] == 1
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert not [statement for statement in normalized if " from devices " in statement], statements
+
+
+async def test_delete_static_group_leaves_membership_cascade_to_postgres(db_session: AsyncSession) -> None:
+    _host, device = await seed_host_and_device(db_session, identity="group-delete-cascade")
+    svc = _svc()
+    group = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="delete-cascade", name="delete cascade", group_type="static"),
+    )
+    await svc.add_members(db_session, group["key"], [device.id])
+
+    async with capture_statements(db_session) as statements:
+        assert await svc.delete_group(db_session, group["key"]) is True
+
+    assert not [statement for statement in statements if "device_group_memberships" in statement.lower()], statements
 
 
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
@@ -197,14 +231,16 @@ async def test_delete_group_survives_a_non_object_filters_row(db_session: AsyncS
     advisory lock and take down every group delete in the fleet.
     """
     victim = DeviceGroup(key="victim", name="victim", group_type=GroupType.static, filters=None)
-    db_session.add(victim)
-    db_session.add(DeviceGroup(key="malformed-arr", name="malformed-arr", group_type=GroupType.dynamic))
+    malformed = DeviceGroup(key="malformed-arr", name="malformed-arr", group_type=GroupType.dynamic)
+    db_session.add_all([victim, malformed])
     await db_session.commit()
     # Bypass the ORM's dict typing the way manual SQL would.
     await db_session.execute(
         text("UPDATE device_groups SET filters = '[\"member_of\"]'::jsonb WHERE key = 'malformed-arr'")
     )
     await db_session.commit()
+    await db_session.refresh(malformed)
+    assert malformed.filters == ["member_of"]
 
     assert await _svc().delete_group(db_session, "victim") is True
 
