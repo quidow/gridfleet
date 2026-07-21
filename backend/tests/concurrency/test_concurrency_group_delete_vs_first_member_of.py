@@ -172,7 +172,8 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     This is the ordering the review argued was unguarded, and it is: at the
     moment the deleter's statement plans, the referring row still has a NULL
     ``member_of`` and so falls outside its predicate, and nothing brings it back
-    into consideration. Currently FAILS — see the module docstring.
+    into consideration. Closed by the group-mutation advisory lock — see the
+    module docstring.
     """
     static_key, dynamic_key = await _seed_unreferenced_pair(db_session)
     service = _service()
