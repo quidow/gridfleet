@@ -213,12 +213,23 @@ class DeviceGroupsService:
         # predicate would filter the referring row out below LockRows. The
         # advisory lock excludes that writer, so the predicate is safe again —
         # and the whole-table write lock it replaced is gone with it.
-        stmt = select(DeviceGroup).where(DeviceGroup.filters["member_of"].isnot(None))
+        # ``has_key`` renders ``filters ? 'member_of'``, which ix_device_groups_filters_gin
+        # serves directly; ``filters -> 'member_of' IS NOT NULL`` is not a jsonb_ops
+        # operator and would seq-scan. Equivalent because _dump_filters drops the key
+        # whenever it is empty, so it is present iff a reference exists.
+        stmt = select(DeviceGroup).where(DeviceGroup.filters.has_key("member_of"))
         referrers = list((await db.execute(stmt)).scalars().all())
-        # Scans every group carrying a ``member_of``, not just dynamic ones:
-        # nothing enforces that static groups have none, and the tag migration
-        # rewrote ``filters`` for any group with a ``tags`` key regardless of type.
-        _assert_no_references(group_key, referrers)
+        try:
+            # Scans every group carrying a ``member_of``, not just dynamic ones:
+            # nothing enforces that static groups have none, and the tag migration
+            # rewrote ``filters`` for any group with a ``tags`` key regardless of type.
+            _assert_no_references(group_key, referrers)
+        except ValueError:
+            # Same reasoning as the unknown-key exit above: a rejected delete wrote
+            # nothing, so drop the fleet-global lock rather than holding it until
+            # the session closes at request teardown.
+            await db.rollback()
+            raise
         await db.delete(group)
         self._publisher.queue_for_session(
             db,
@@ -378,7 +389,7 @@ async def _load_groups_by_key(db: AsyncSession, keys: Collection[str]) -> dict[s
     holder committed. The ascending-key ordering that used to matter here was
     deadlock-avoidance between concurrent group edits; none can now overlap.
     """
-    wanted = sorted({key for key in keys if key})
+    wanted = {key for key in keys if key}
     if not wanted:
         return {}
     stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted))

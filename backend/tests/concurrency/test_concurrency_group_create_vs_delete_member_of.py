@@ -148,7 +148,7 @@ def _assert_locked_before_group_reads(statements: list[str]) -> None:
 async def test_delete_group_locks_before_reading_and_takes_no_row_lock(db_session: AsyncSession) -> None:
     static_key, _dynamic_key = await _seed_static(db_session)
 
-    with capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         assert await build_groups_service().delete_group(db_session, static_key) is True
 
     _assert_locked_before_group_reads(statements)
@@ -167,7 +167,7 @@ async def test_update_group_locks_before_reading(db_session: AsyncSession) -> No
     )
     await db_session.commit()
 
-    with capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         updated = await build_groups_service().update_group(
             db_session,
             dynamic_key,

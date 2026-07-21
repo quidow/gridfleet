@@ -25,12 +25,22 @@ SANCTIONED_WRITERS = frozenset(
     }
 )
 
-# ORM construction plus the Core-SQL forms that write definitions without ever
-# instantiating the model. Without the Core patterns a module could
-# `insert(DeviceGroup).values(...)` straight past this contract.
+# Three ways to write a group definition, all of which must stay inside the
+# sanctioned modules:
+#   1. ORM construction — `DeviceGroup(...)`. Cannot match DeviceGroupMembership(
+#      or DeviceGroupCreate(: the paren must follow the name immediately.
+#   2. Core SQL — `insert(DeviceGroup)`, which never instantiates the model.
+#   3. Attribute mutation on a loaded row — `group.filters = ...`. This is the
+#      idiom update_group itself uses, so it is the likeliest way a new writer
+#      would appear, and neither pattern above sees it. `filters` is assigned
+#      exactly once in app/ today (inside groups.py), so scanning the bare
+#      attribute costs no false positives; if an unrelated model ever grows a
+#      `filters` column, add a SCAN_EXEMPT_FILES table as
+#      test_no_direct_device_state_writes.py does.
 _WRITE_RES = (
     re.compile(r"\bDeviceGroup\("),
     re.compile(r"\b(?:insert|update|delete)\(\s*DeviceGroup\s*[,)]"),
+    re.compile(r"\.filters\s*=(?!=)"),
 )
 _LOCK_RE = re.compile(r"\bacquire_group_mutation_lock\s*\(")
 
@@ -45,12 +55,10 @@ def test_device_group_constructed_only_by_sanctioned_writers() -> None:
             stripped = line.lstrip()
             if stripped.startswith("#"):
                 continue
-            # `DeviceGroup(` cannot match DeviceGroupMembership( / DeviceGroupCreate(:
-            # the paren must follow the name immediately.
             if any(pattern.search(line) for pattern in _WRITE_RES):
                 findings.append(f"  {rel}:{lineno}: {line.strip()}")
     assert not findings, (
-        "device_groups rows may only be created by modules that take the "
+        "device_groups definitions may only be written by modules that take the "
         "group-mutation advisory lock (see SANCTIONED_WRITERS above, "
         "app/core/locks.py, and the advisory-lock paragraph in CLAUDE.md):\n" + "\n".join(findings)
     )

@@ -12,7 +12,7 @@ here so the two test modules stay in lockstep instead of drifting apart.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -25,7 +25,7 @@ from app.devices.services.service import DeviceCrudService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -131,9 +131,21 @@ async def assert_no_dangling_reference(
         assert static_key not in member_of, f"dynamic group {dynamic_key} references deleted static group {static_key}"
 
 
-@contextmanager
-def capture_statements(session: AsyncSession) -> Iterator[list[str]]:
+@asynccontextmanager
+async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
+    """Collect the SQL *session* issues, and only what *session* issues.
+
+    ``before_cursor_execute`` fires per engine, not per session, so a listener
+    registered on the bare engine also collects statements from every other
+    connection in the pool — a second session, a fixture's cleanup query, an
+    event-bus flush. Callers here assert on statement *ordering*, so a stray
+    ``device_groups`` read from an unrelated connection would fail the
+    assertion against code that never issued it (and the reverse pollution
+    could mask a real violation). Pin the listener to this session's own
+    connection.
+    """
     statements: list[str] = []
+    own_connection = (await session.connection()).sync_connection
 
     def listener(
         conn: object,
@@ -143,7 +155,8 @@ def capture_statements(session: AsyncSession) -> Iterator[list[str]]:
         context: object,
         executemany: bool,
     ) -> None:
-        statements.append(statement)
+        if conn is own_connection:
+            statements.append(statement)
 
     bind = session.bind
     assert bind is not None
