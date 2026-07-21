@@ -251,15 +251,11 @@ async def _load_existing_group_ids(session: AsyncSession, keys: set[str]) -> dic
     Used by ``_stage_static_memberships`` to detect a delete+recreate: a static
     group deleted and recreated during the device loop keeps its key but gets a
     new row id, so a key-only re-check misses it and the cached id goes stale.
-    Key-share locks keep the verified ids alive through the batch insert.
+    The enclosing advisory lock keeps application definition writers out.
     """
     if not keys:
         return {}
-    result = await session.execute(
-        select(DeviceGroup.key, DeviceGroup.id)
-        .where(DeviceGroup.key.in_(keys))
-        .with_for_update(read=True, key_share=True)
-    )
+    result = await session.execute(select(DeviceGroup.key, DeviceGroup.id).where(DeviceGroup.key.in_(keys)))
     return {row[0]: row[1] for row in result.all()}
 
 
@@ -268,7 +264,10 @@ async def _lock_existing_device_ids(session: AsyncSession, device_ids: set[uuid.
     if not device_ids:
         return set()
     result = await session.execute(
-        select(Device.id).where(Device.id.in_(device_ids)).with_for_update(read=True, key_share=True)
+        select(Device.id)
+        .where(Device.id.in_(device_ids))
+        .order_by(Device.id)
+        .with_for_update(read=True, key_share=True)
     )
     return set(result.scalars().all())
 

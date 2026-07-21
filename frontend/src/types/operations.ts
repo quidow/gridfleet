@@ -35,6 +35,8 @@ export type DeviceGroupRead = Omit<Schemas['DeviceGroupRead'], 'group_type' | 'f
   group_type: DeviceGroupType;
   filters: DeviceGroupFilters | null;
 };
+export type DeviceGroupMutationRead = Omit<Schemas['DeviceGroupMutationRead'], 'group_type' | 'filters'> &
+  Pick<DeviceGroupRead, 'group_type' | 'filters'>;
 export type DeviceGroupDetail = Omit<Schemas['DeviceGroupDetail'], 'devices' | 'group_type' | 'filters'> & {
   devices: DeviceRead[];
   group_type: DeviceGroupType;

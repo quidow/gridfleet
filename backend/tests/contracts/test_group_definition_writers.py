@@ -1,4 +1,9 @@
-"""Keep DeviceGroup definition writes behind the group-mutation lock."""
+"""Keep discoverable DeviceGroup definition writes behind the group-mutation lock.
+
+This deliberately scans only construction and SQLAlchemy Core writes. Python's
+AST cannot infer the model type behind an arbitrary ORM variable, so pretending
+to cover ``session.delete(row)`` or same-named attributes creates false safety.
+"""
 
 from __future__ import annotations
 
@@ -28,16 +33,15 @@ def _writes_device_group(node: ast.AST) -> str | None:
             first = node.args[0]
             if isinstance(first, ast.Name) and first.id == "DeviceGroup":
                 return f"Core-SQL {name}(DeviceGroup)"
-    if isinstance(node, ast.Assign):
-        for target in node.targets:
-            if isinstance(target, ast.Attribute) and target.attr == "filters":
-                return "assigns .filters on a loaded row"
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute) and node.target.attr == "filters":
-        return "assigns .filters on a loaded row"
     return None
 
 
-def test_device_group_written_only_by_sanctioned_writers() -> None:
+def test_writer_scan_ignores_untyped_filters_assignments() -> None:
+    tree = ast.parse("self.filters = filters")
+    assert all(_writes_device_group(node) is None for node in ast.walk(tree))
+
+
+def test_discoverable_device_group_writes_only_in_sanctioned_modules() -> None:
     findings: list[str] = []
     for path in BACKEND_APP.rglob("*.py"):
         rel = str(path.relative_to(BACKEND_APP.parent))
@@ -49,7 +53,7 @@ def test_device_group_written_only_by_sanctioned_writers() -> None:
             if described is not None:
                 findings.append(f"  {rel}:{getattr(node, 'lineno', '?')}: {described}")
     assert not findings, (
-        "device_groups definitions may only be written by modules that take the "
+        "DeviceGroup construction and Core-SQL writes may only occur in modules that take the "
         "group-mutation advisory lock (see SANCTIONED_WRITERS above, "
         "app/core/locks.py, and the advisory-lock paragraph in CLAUDE.md):\n" + "\n".join(findings)
     )

@@ -597,6 +597,16 @@ async def test_commit_bounds_membership_lock_to_batches(
     assert len(result.created) == 2
     lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
     assert len(lock_statements) == 3, statements
+    device_locks = [
+        statement.lower()
+        for statement in statements
+        if "from devices" in statement.lower() and "for key share" in statement.lower()
+    ]
+    assert len(device_locks) == 2, statements
+    assert all("order by devices.id" in statement for statement in device_locks), device_locks
+    assert not any(
+        "from device_groups" in statement.lower() and "for key share" in statement.lower() for statement in statements
+    ), statements
 
 
 @pytest.mark.asyncio

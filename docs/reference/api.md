@@ -98,7 +98,7 @@ Groups are addressed by key throughout the bundle; no group UUID is exported, so
 - Auto-matched host suggestions based on case-insensitive hostname comparison against registered hosts.
 - A canonical `bundle_hash` to pass back on commit.
 
-`POST /api/portability/import` commits a previously-validated bundle. The server recomputes the canonical bundle hash; a mismatch returns `409`. `mappings` overrides the auto-suggested host assignment per row (identified by `index`). Per-row transaction: device insert and verification job enqueue happen atomically. Response arrays (`created`, `skipped`, `failed`) contain per-index entries with reasons for non-created rows.
+`POST /api/portability/import` commits a previously-validated bundle. The server recomputes the canonical bundle hash; a mismatch returns `409`. `mappings` overrides the auto-suggested host assignment per row (identified by `index`). Per-row transaction: device insert and verification job enqueue happen atomically. The `created`, `skipped`, and `failed` response arrays describe device-row outcomes; `memberships_skipped` describes static memberships omitted from otherwise-created devices.
 
 Group definitions commit before device rows. If an infrastructure failure interrupts the import afterward, those groups remain and retrying the unchanged bundle returns `409`; remove the partial groups or change their bundle keys, then re-validate before retrying.
 

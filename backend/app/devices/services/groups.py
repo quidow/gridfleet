@@ -118,7 +118,7 @@ class DeviceGroupsService:
         await db.commit()
         return group, payload
 
-    async def _dynamic_device_count(self, db: AsyncSession, group: DeviceGroup) -> int:
+    async def _dynamic_device_count(self, db: AsyncSession, group: DeviceGroup) -> int | None:
         if db.in_transaction():
             raise RuntimeError("dynamic device counts must run outside definition transactions")
         try:
@@ -128,7 +128,7 @@ class DeviceGroupsService:
                 return len(index.device_ids(group.key))
         except Exception:
             logger.exception("device_group_dynamic_count_failed", extra={"group_key": group.key})
-            return 0
+            return None
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
         stmt = select(DeviceGroup).order_by(DeviceGroup.name)

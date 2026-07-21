@@ -17,6 +17,7 @@ from app.devices.schemas.device import (
 from app.devices.schemas.group import (
     DeviceGroupCreate,
     DeviceGroupDetail,
+    DeviceGroupMutationRead,
     DeviceGroupRead,
     DeviceGroupUpdate,
     GroupMembershipUpdate,
@@ -58,7 +59,7 @@ async def _group_device_ids_or_404(
     return await device_services.groups.get_group_device_ids(db, group_key)
 
 
-@router.post("", response_model=DeviceGroupRead, response_model_exclude_none=True, status_code=201)
+@router.post("", response_model=DeviceGroupMutationRead, response_model_exclude_none=True, status_code=201)
 async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     try:
         # The service serializes stable fields before commit, avoiding a racy re-read.
@@ -121,7 +122,7 @@ async def get_group(group_key: GroupKey, db: DbDep, device_services: DeviceServi
     return payload
 
 
-@router.patch("/{group_key}", response_model=DeviceGroupRead, response_model_exclude_none=True)
+@router.patch("/{group_key}", response_model=DeviceGroupMutationRead, response_model_exclude_none=True)
 async def update_group(
     group_key: GroupKey,
     data: DeviceGroupUpdate,

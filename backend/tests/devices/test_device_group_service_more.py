@@ -160,7 +160,7 @@ async def test_dynamic_count_failure_does_not_hide_a_committed_create(
         DeviceGroupCreate(key="count-failure", name="count failure", group_type=GroupType.dynamic),
     )
 
-    assert created["device_count"] == 0
+    assert created["device_count"] is None
     assert await _svc().get_group_type(db_session, "count-failure") == GroupType.dynamic
 
 
