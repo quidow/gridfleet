@@ -26,10 +26,9 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-# Long enough for the peer's blocked advisory-lock acquire (or, in the
-# delete-vs-first-member_of file, ``FOR UPDATE``) to reach the lock manager
-# before the holder commits. Only widens the race window; correctness does
-# not depend on the exact value.
+# Long enough for the peer's blocked advisory-lock acquire to reach the lock
+# manager before the holder commits. Only widens the race window; correctness
+# does not depend on the exact value.
 HANDOFF_SEC = 0.5
 
 # A safety net, not a race parameter: comfortably above HANDOFF_SEC so it
@@ -88,6 +87,26 @@ async def wait_for_group_lock(locked: asyncio.Event, *, label: str) -> None:
         )
 
 
+async def fetch_group_rows(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    *,
+    static_key: str,
+    dynamic_key: str,
+) -> tuple[DeviceGroup | None, DeviceGroup | None]:
+    """Fetch both the static and dynamic group rows by their keys.
+
+    Returns a tuple of (static_row, dynamic_row), either of which may be None.
+    """
+    async with db_session_maker() as verify:
+        static_row = (
+            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == static_key))
+        ).scalar_one_or_none()
+        dynamic_row = (
+            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))
+        ).scalar_one_or_none()
+        return static_row, dynamic_row
+
+
 async def assert_no_dangling_reference(
     db_session_maker: async_sessionmaker[AsyncSession],
     *,
@@ -102,16 +121,8 @@ async def assert_no_dangling_reference(
     interleavings where one of the two outcomes always makes the guard
     vacuous — pin the exact expected end state there instead.
     """
-    async with db_session_maker() as verify:
-        static_row = (
-            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == static_key))
-        ).scalar_one_or_none()
-        dynamic_row = (
-            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))
-        ).scalar_one_or_none()
-        assert dynamic_row is not None
-        if static_row is None:
-            member_of = (dynamic_row.filters or {}).get("member_of", [])
-            assert static_key not in member_of, (
-                f"dynamic group {dynamic_key} references deleted static group {static_key}"
-            )
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert dynamic_row is not None
+    if static_row is None:
+        member_of = (dynamic_row.filters or {}).get("member_of", [])
+        assert static_key not in member_of, f"dynamic group {dynamic_key} references deleted static group {static_key}"

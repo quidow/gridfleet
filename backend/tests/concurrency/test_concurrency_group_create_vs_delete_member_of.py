@@ -16,13 +16,13 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupCreate
 from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
 from tests.concurrency.group_lock_helpers import (
     build_groups_service,
+    fetch_group_rows,
     signal_after_group_lock,
     wait_for_group_lock,
 )
@@ -41,22 +41,6 @@ async def _seed_static(db_session: AsyncSession) -> tuple[str, str]:
     db_session.add(DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static))
     await db_session.commit()
     return static_key, dynamic_key
-
-
-async def _fetch_group_rows(
-    db_session_maker: async_sessionmaker[AsyncSession],
-    *,
-    static_key: str,
-    dynamic_key: str,
-) -> tuple[DeviceGroup | None, DeviceGroup | None]:
-    async with db_session_maker() as verify:
-        static_row = (
-            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == static_key))
-        ).scalar_one_or_none()
-        dynamic_row = (
-            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))
-        ).scalar_one_or_none()
-        return static_row, dynamic_row
 
 
 async def test_create_wins_delete_is_rejected(
@@ -95,7 +79,7 @@ async def test_create_wins_delete_is_rejected(
 
     # Pin the exact end state: the create won, so the static group must survive
     # the rejected delete and the dynamic group must exist referencing it.
-    static_row, dynamic_row = await _fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert static_row is not None, "static group must survive the rejected delete"
     assert dynamic_row is not None, "dynamic group must exist after the winning create"
     assert (dynamic_row.filters or {}).get("member_of") == [static_key], (
@@ -139,6 +123,6 @@ async def test_delete_wins_create_is_rejected(
 
     # Pin the exact end state: the delete won, so the static group must be gone
     # and the rejected create must never have left a dynamic row behind.
-    static_row, dynamic_row = await _fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert static_row is None, "static group must be gone after the winning delete"
     assert dynamic_row is None, "dynamic group must not exist after the rejected create"
