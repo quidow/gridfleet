@@ -43,13 +43,16 @@ async def group_mutation_lock(db: AsyncSession, *, when: bool = True) -> AsyncIt
     create with no ``member_of`` resolves no peer rows), so the caller does not
     have to choose between a nested conditional and locking for nothing.
     """
-    if not when:
-        yield
-        return
-    await acquire_group_mutation_lock(db)
+    if when:
+        await acquire_group_mutation_lock(db)
     try:
         yield
     finally:
+        # Ends the transaction on *both* branches. When ``when`` is False no lock
+        # was taken, but the body still opens a transaction that would otherwise
+        # sit idle until the session closes — and callers are documented to get
+        # the same transaction-ending guarantee either way, so the unlocked path
+        # must not quietly opt out of it.
         if db.in_transaction():
             await db.rollback()
 

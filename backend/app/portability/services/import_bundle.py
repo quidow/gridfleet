@@ -464,6 +464,8 @@ class PortabilityImportService:
         outside that set was already marked INVALID by ``_classify_row`` and
         never reaches ``device_id_by_index``.
         """
+        if not group_id_by_key:
+            return
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:

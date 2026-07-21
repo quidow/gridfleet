@@ -213,22 +213,20 @@ class DeviceGroupsService:
                 return False
             # 00a87549 had to scan every row under FOR UPDATE, because a concurrent
             # writer could add the first reference below LockRows; the advisory lock
-            # excludes that writer, so a predicate is safe again.
+            # excludes that writer, so a predicate is safe again. ``has_key`` renders
+            # ``filters ? 'member_of'``, which ix_device_groups_filters_gin serves —
+            # ``-> 'member_of' IS NOT NULL`` is not a jsonb_ops operator and seq-scans.
             #
-            # ``contains`` renders ``filters @> '{"member_of": ["<key>"]}'``, a
-            # jsonb_ops operator that ix_device_groups_filters_gin serves, and jsonb
-            # array containment is per-element — so this returns exactly the groups
-            # that name this key, rather than every group carrying any member_of for
-            # Python to sift. Matches every group type on purpose: nothing enforces
-            # that static groups have no member_of, and the tag migration rewrote
-            # filters for any group with a tags key regardless of type.
-            stmt = select(DeviceGroup.key).where(
-                DeviceGroup.filters.contains({"member_of": [group_key]}),
-                DeviceGroup.key != group_key,
-            )
-            dependents = list((await db.execute(stmt)).scalars().all())
-            if dependents:
-                raise GroupReferencedError(sorted(dependents))
+            # Deliberately NOT the narrower ``filters @> '{"member_of": ["<key>"]}'``.
+            # Containment is an exact structural match, so a row stored as
+            # ``{"member_of": "grp-a"}`` — a bare string rather than a list — does not
+            # match, and the delete would silently leave a dangling reference. Loading
+            # the candidates and validating them through DeviceGroupFilters makes a
+            # malformed row fail loudly instead. Group counts are operator-scale; the
+            # per-row validation is worth the invariant.
+            stmt = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.filters.has_key("member_of"))
+            referrers = (await db.execute(stmt)).tuples().all()
+            _assert_no_references(group_key, referrers)
             await db.delete(group)
             self._publisher.queue_for_session(
                 db,
