@@ -9,7 +9,7 @@ from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
-from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.groups import DeviceGroupsService, StaticGroupFiltersError
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from tests.concurrency.group_lock_helpers import capture_statements
@@ -18,7 +18,7 @@ from tests.helpers import create_device_record, seed_host_and_device, settle_aft
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 def _svc(settings: object | None = None) -> DeviceGroupsService:
@@ -145,6 +145,46 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     assert updated["device_count"] == 0
     # No iOS device is seeded, so membership is empty after the filter change.
     assert await svc.get_group_device_ids(db_session, group["key"]) == []
+
+
+async def test_dynamic_count_failure_does_not_hide_a_committed_create(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_count(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("count failed")
+
+    monkeypatch.setattr(device_group_service, "_load_devices_in_scope", fail_count)
+    created = await _svc().create_group(
+        db_session,
+        DeviceGroupCreate(key="count-failure", name="count failure", group_type=GroupType.dynamic),
+    )
+
+    assert created["device_count"] == 0
+    assert await _svc().get_group_type(db_session, "count-failure") == GroupType.dynamic
+
+
+async def test_update_group_refreshes_a_preloaded_identity_after_the_lock(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    target = DeviceGroup(key="stale-target", name="stale target", group_type=GroupType.dynamic)
+    db_session.add(target)
+    await db_session.commit()
+
+    async with db_session_maker() as peer:
+        current = await peer.get(DeviceGroup, target.id)
+        assert current is not None
+        current.group_type = GroupType.static
+        await peer.commit()
+
+    assert target.group_type == GroupType.dynamic
+    with pytest.raises(StaticGroupFiltersError):
+        await _svc().update_group(
+            db_session,
+            target.key,
+            DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
+        )
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:

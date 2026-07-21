@@ -564,6 +564,43 @@ async def test_commit_skips_membership_lock_when_the_plan_is_empty(
 
 @pytest.mark.asyncio
 @pytest.mark.db
+async def test_commit_bounds_membership_lock_to_batches(
+    db_session: AsyncSession,
+    seeded_driver_packs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    host_id = host.id
+    await db_session.rollback()
+    bundle = _bundle(
+        [
+            _device(identity_value="batch-1", static_groups=["shelf-a"]),
+            _device(identity_value="batch-2", static_groups=["shelf-a"]),
+        ],
+        groups=[_static_group("shelf-a")],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[
+            ImportMapping(index=0, target_host_id=host_id),
+            ImportMapping(index=1, target_host_id=host_id),
+        ],
+    )
+    monkeypatch.setattr(import_bundle_module, "MEMBERSHIP_BATCH_SIZE", 1, raising=False)
+
+    async with capture_statements(db_session) as statements:
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
+
+    assert len(result.created) == 2
+    lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
+    assert len(lock_statements) == 3, statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
 async def test_commit_persists_static_and_dynamic_groups(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

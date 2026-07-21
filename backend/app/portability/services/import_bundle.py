@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from itertools import batched
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from app.portability.protocols import VerificationEnqueuer
 
 logger = logging.getLogger(__name__)
+MEMBERSHIP_BATCH_SIZE = 1000  # ponytail: bounds group-lock hold; tune only from measured import contention
 
 
 class BundleHashMismatchError(ValueError):
@@ -236,17 +238,6 @@ async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> No
         raise GroupKeyCollisionError(sorted(collided)) from exc
 
 
-def _staging_failure_reason(exc: IntegrityError) -> str:
-    """Name the constraint that killed the membership batch, in operator terms."""
-    constraint = constraint_name(exc)
-    match constraint:
-        case "device_group_memberships_device_id_fkey":
-            return "membership staging rolled back: a device was deleted during import"
-        case "device_group_memberships_group_id_fkey":
-            return "membership staging rolled back: a static group was deleted during import"
-    return f"membership staging rolled back: {constraint or 'constraint violation'}"
-
-
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
     if not keys:
         return set()
@@ -260,11 +251,26 @@ async def _load_existing_group_ids(session: AsyncSession, keys: set[str]) -> dic
     Used by ``_stage_static_memberships`` to detect a delete+recreate: a static
     group deleted and recreated during the device loop keeps its key but gets a
     new row id, so a key-only re-check misses it and the cached id goes stale.
+    Key-share locks keep the verified ids alive through the batch insert.
     """
     if not keys:
         return {}
-    result = await session.execute(select(DeviceGroup.key, DeviceGroup.id).where(DeviceGroup.key.in_(keys)))
+    result = await session.execute(
+        select(DeviceGroup.key, DeviceGroup.id)
+        .where(DeviceGroup.key.in_(keys))
+        .with_for_update(read=True, key_share=True)
+    )
     return {row[0]: row[1] for row in result.all()}
+
+
+async def _lock_existing_device_ids(session: AsyncSession, device_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """Return present device ids and prevent their deletion through the batch insert."""
+    if not device_ids:
+        return set()
+    result = await session.execute(
+        select(Device.id).where(Device.id.in_(device_ids)).with_for_update(read=True, key_share=True)
+    )
+    return set(result.scalars().all())
 
 
 async def _validate_group_references(session: AsyncSession, bundle: ExportBundle) -> set[str]:
@@ -446,61 +452,49 @@ class PortabilityImportService:
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
     ) -> list[MembershipSkip]:
-        """Commit memberships after rechecking group ids under the definition lock.
+        """Commit memberships in bounded, referentially stable batches."""
+        planned = [
+            (idx, key, device_id, group_id)
+            for idx, device_id in device_id_by_index.items()
+            for key in by_index[idx].device.static_groups
+            if (group_id := group_id_by_key.get(key)) is not None
+        ]
+        if not planned:
+            async with group_mutation_lock(session, when=False):
+                return []
 
-        The id check covers deletion and delete-plus-recreate during the device loop.
-        """
-        staged, values = self._plan_static_memberships(
-            by_index=by_index,
-            device_id_by_index=device_id_by_index,
-            group_id_by_key=group_id_by_key,
-        )
-        if not values:
-            # End any validation/host-lookup transaction when no commit follows.
-            if session.in_transaction():
-                await session.rollback()
-            return []
         memberships_skipped: list[MembershipSkip] = []
-        async with group_mutation_lock(session):
-            current_ids = await _load_existing_group_ids(session, set(group_id_by_key))
-            stale_keys: set[str] = set()
-            for key, cached_id in group_id_by_key.items():
-                current_id = current_ids.get(key)
-                if current_id is None or current_id != cached_id:
-                    stale_keys.add(key)
-            if stale_keys:
-                recreated_keys = {key for key in stale_keys if key in current_ids}
-                memberships_skipped.extend(
-                    MembershipSkip(
-                        index=idx,
-                        group_key=key,
-                        reason=(
-                            f"static group '{key}' deleted and recreated during import"
-                            if key in recreated_keys
-                            else f"static group '{key}' deleted during import"
-                        ),
+        for batch in batched(planned, MEMBERSHIP_BATCH_SIZE, strict=False):
+            async with group_mutation_lock(session):
+                current_group_ids = await _load_existing_group_ids(session, {key for _, key, _, _ in batch})
+                existing_device_ids = await _lock_existing_device_ids(
+                    session, {device_id for _, _, device_id, _ in batch}
+                )
+                values: list[dict[str, uuid.UUID]] = []
+                for idx, key, device_id, cached_group_id in batch:
+                    current_group_id = current_group_ids.get(key)
+                    if current_group_id != cached_group_id:
+                        reason = (
+                            f"static group '{key}' deleted during import"
+                            if current_group_id is None
+                            else f"static group '{key}' deleted and recreated during import"
+                        )
+                        memberships_skipped.append(MembershipSkip(index=idx, group_key=key, reason=reason))
+                    elif device_id not in existing_device_ids:
+                        memberships_skipped.append(
+                            MembershipSkip(index=idx, group_key=key, reason="device was deleted during import")
+                        )
+                    else:
+                        values.append({"group_id": cached_group_id, "device_id": device_id})
+                if values:
+                    await session.execute(
+                        pg_insert(DeviceGroupMembership)
+                        .values(values)
+                        .on_conflict_do_nothing(
+                            index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id]
+                        )
                     )
-                    for idx in device_id_by_index
-                    for key in by_index[idx].device.static_groups
-                    if key in stale_keys
-                )
-                group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key not in stale_keys}
-                staged, values = self._plan_static_memberships(
-                    by_index=by_index,
-                    device_id_by_index=device_id_by_index,
-                    group_id_by_key=group_id_by_key,
-                )
-            try:
-                # Non-deferrable FKs require the write itself to stay under the lock.
-                await self._write_static_memberships(session, values)
                 await session.commit()
-            except IntegrityError as exc:
-                # Preserve committed device results for deterministic FK failures.
-                # Broader commit failures propagate because their outcome is unknown.
-                await session.rollback()
-                memberships_skipped.extend(
-                    MembershipSkip(index=idx, group_key=key, reason=_staging_failure_reason(exc)) for idx, key in staged
-                )
         return memberships_skipped
 
     async def _insert_group_definitions(
@@ -522,38 +516,6 @@ class PortabilityImportService:
         await _flush_groups_or_collide(session, [g.key for g in groups])
         return {group.key: group.id for group in groups}
 
-    def _plan_static_memberships(
-        self,
-        *,
-        by_index: dict[int, ImportPreviewRow],
-        device_id_by_index: dict[int, uuid.UUID],
-        group_id_by_key: dict[str, uuid.UUID],
-    ) -> tuple[list[tuple[int, str]], list[dict[str, uuid.UUID]]]:
-        """Pair report identifiers with INSERT values before a statement can fail."""
-        staged: list[tuple[int, str]] = []
-        values: list[dict[str, uuid.UUID]] = []
-        if not group_id_by_key:
-            return staged, values
-        for idx, device_id in device_id_by_index.items():
-            row = by_index[idx]
-            for key in row.device.static_groups:
-                group_id = group_id_by_key.get(key)
-                if group_id is None:
-                    continue
-                values.append({"group_id": group_id, "device_id": device_id})
-                staged.append((idx, key))
-        return staged, values
-
-    async def _write_static_memberships(self, session: AsyncSession, values: list[dict[str, uuid.UUID]]) -> None:
-        """Insert memberships, tolerating rows a peer already added."""
-        if not values:
-            return
-        await session.execute(
-            pg_insert(DeviceGroupMembership)
-            .values(values)
-            .on_conflict_do_nothing(index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id])
-        )
-
     async def _insert_dynamic_group_definitions(
         self,
         session: AsyncSession,
@@ -563,8 +525,8 @@ class PortabilityImportService:
 
         Deliberately returns nothing. Dynamic groups have no membership rows —
         their members are derived — so folding their ids into the static
-        ``group_id_by_key`` map would only give ``_plan_static_memberships``
-        a chance to resolve a key it must never resolve.
+        ``group_id_by_key`` map would only let membership staging resolve a key
+        it must never resolve.
         """
         if not dynamic_groups:
             return

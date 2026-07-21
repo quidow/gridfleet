@@ -86,7 +86,7 @@ def test_hash_handles_empty_devices_bundle() -> None:
 def test_exported_device_dedupes_static_groups() -> None:
     """Repeated group keys collapse at the schema edge, preserving first-seen order.
 
-    ``_plan_static_memberships`` derives its ``(index, group key)`` report pairs
+    Membership staging derives its ``(index, group key)`` report pairs
     from this list, so a repeat would emit two identical ``MembershipSkip``
     entries — colliding on the frontend's ``${index}-${group_key}`` row key and
     double-reporting one dropped membership.

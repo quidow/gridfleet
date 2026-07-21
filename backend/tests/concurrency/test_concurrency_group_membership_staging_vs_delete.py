@@ -97,23 +97,30 @@ def _dynamic_group(key: str, member_of: list[str]) -> ExportedDeviceGroup:
 
 
 def _bundle_with_device(
-    static_key: str, dynamic_key: str, host_id: uuid.UUID
+    static_key: str,
+    dynamic_key: str,
+    host_id: uuid.UUID,
+    *,
+    device_count: int = 1,
 ) -> tuple[ExportBundle, list[ImportMapping]]:
-    """A bundle with one static, one dynamic group, and one device in the static group.
+    """A bundle with one static, one dynamic group, and devices in the static group.
 
     The dynamic group does NOT reference the static group (its ``member_of`` is
     empty), so a concurrent ``delete_group(static_key)`` has no referrer and
     succeeds — opening the membership-staging window the test exercises. The
-    device's ``static_groups`` is what drives ``_plan_static_memberships``
-    to stage a row. Without a device row the membership-staging commit is a
-    no-op and the race cannot be exercised.
+    device's ``static_groups`` is what drives membership staging. Without a
+    device row the membership-staging commit is a no-op and the race cannot be
+    exercised.
     """
-    device = _device(
-        identity_value=f"device-{uuid.uuid4().hex[:8]}",
-        hostname="import-host",
-        host_id=host_id,
-        static_groups=[static_key],
-    )
+    devices = [
+        _device(
+            identity_value=f"device-{uuid.uuid4().hex[:8]}",
+            hostname="import-host",
+            host_id=host_id,
+            static_groups=[static_key],
+        )
+        for _ in range(device_count)
+    ]
     bundle = ExportBundle(
         schema_version=2,
         exported_at=datetime.now(UTC),
@@ -122,20 +129,17 @@ def _bundle_with_device(
             _static_group(static_key),
             _dynamic_group(dynamic_key, member_of=[]),
         ],
-        devices=[device],
+        devices=devices,
     )
-    mappings = [ImportMapping(index=0, target_host_id=host_id)]
+    mappings = [ImportMapping(index=index, target_host_id=host_id) for index in range(device_count)]
     return bundle, mappings
 
 
 def _signal_after_device_loop_commit(session: AsyncSession, fired: asyncio.Event) -> None:
     """Set *fired* once the device-row commit lands, then hold for HANDOFF_SEC.
 
-    The bundle has exactly one device, so the commit sequence in
-    ``commit_import`` is: (1) group definitions [inside lock], (2) the one
-    device row, (3) staged memberships. We fire on commit #2 — the device row
-    commit — and hold inside the interception so the deleter runs before
-    commit #3 (memberships) executes.
+    Commit #1 carries group definitions and commit #2 the first device row.
+    Firing there lets the peer act before membership staging.
     """
     original_commit = session.commit
     count = 0
@@ -360,11 +364,9 @@ async def test_device_deleted_during_staging_does_not_500(
 ) -> None:
     """A device deleted mid-import must cost its memberships, not the whole result.
 
-    ``device_group_memberships.device_id`` is a plain, non-deferrable FK, so the
-    violation fires when the staging INSERT executes, not when the transaction
-    commits. Nothing serialises a device delete against an import, so this is
-    the one IntegrityError the staging block still has to absorb — and the
-    device rows it would discard have already committed.
+    Nothing serialises a device delete against the per-device import loop. The
+    membership stage must therefore recheck device ids in each batch and omit
+    only the deleted device; every surviving device still gets its memberships.
     """
     _ = seeded_driver_packs
     suffix = uuid.uuid4().hex[:8]
@@ -372,7 +374,7 @@ async def test_device_deleted_during_staging_does_not_500(
     dynamic_key = f"dynamic-{suffix}"
 
     host = await seed_host_named(db_session, "import-host")
-    bundle, mappings = _bundle_with_device(static_key, dynamic_key, host.id)
+    bundle, mappings = _bundle_with_device(static_key, dynamic_key, host.id, device_count=2)
     request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=mappings)
     device_committed = asyncio.Event()
 
@@ -392,9 +394,15 @@ async def test_device_deleted_during_staging_does_not_500(
     import_result, _ = await asyncio.gather(run_import(), delete_the_device(), return_exceptions=True)
 
     assert not isinstance(import_result, Exception), (
-        f"import must absorb the membership FK violation and still report its device rows; got {import_result!r}"
+        f"import must skip the deleted device's membership and still report its device rows; got {import_result!r}"
     )
-    assert len(import_result.created) == 1, "the device row committed before the delete and must still be reported"
+    assert len(import_result.created) == 2, "both device rows committed and must still be reported"
     assert [(s.index, s.group_key) for s in import_result.memberships_skipped] == [(0, static_key)], (
         f"the dropped membership must be reported: {import_result.memberships_skipped!r}"
     )
+    survivor_id = next(row.device_id for row in import_result.created if row.index == 1)
+    async with db_session_maker() as verify:
+        memberships = (
+            await verify.execute(select(DeviceGroupMembership).where(DeviceGroupMembership.device_id == survivor_id))
+        ).scalars()
+    assert len(list(memberships)) == 1, "the surviving device must keep its static-group membership"

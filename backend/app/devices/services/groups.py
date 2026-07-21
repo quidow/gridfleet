@@ -122,12 +122,13 @@ class DeviceGroupsService:
         if db.in_transaction():
             raise RuntimeError("dynamic device counts must run outside definition transactions")
         try:
-            devices = await _load_devices_in_scope(db, [group])
-            index = await load_group_membership_index(db, groups=[group], devices=devices)
-            return len(index.device_ids(group.key))
-        finally:
-            if db.in_transaction():
-                await db.rollback()
+            async with group_mutation_lock(db, when=False):
+                devices = await _load_devices_in_scope(db, [group])
+                index = await load_group_membership_index(db, groups=[group], devices=devices)
+                return len(index.device_ids(group.key))
+        except Exception:
+            logger.exception("device_group_dynamic_count_failed", extra={"group_key": group.key})
+            return 0
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
         stmt = select(DeviceGroup).order_by(DeviceGroup.name)
@@ -223,25 +224,25 @@ class DeviceGroupsService:
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
         async with group_mutation_lock(db):
             # One GIN-backed read loads the target and all member_of candidates.
-            stmt = select(DeviceGroup).where(
+            stmt = select(DeviceGroup.key, DeviceGroup.filters).where(
                 or_(DeviceGroup.key == group_key, DeviceGroup.filters.has_key("member_of"))
             )
-            rows = list((await db.execute(stmt)).scalars().all())
-            target: DeviceGroup | None = None
+            rows = (await db.execute(stmt)).all()
+            target_exists = False
             referrers: list[tuple[str, dict[str, Any] | None]] = []
-            for row in rows:
-                if row.key == group_key:
-                    target = row
+            for key, filters in rows:
+                if key == group_key:
+                    target_exists = True
                 else:
-                    referrers.append((row.key, row.filters))
-            if target is None:
+                    referrers.append((key, filters))
+            if not target_exists:
                 return False
             _assert_no_references(group_key, referrers)
-            await db.delete(target)
+            await db.execute(delete(DeviceGroup).where(DeviceGroup.key == group_key))
             self._publisher.queue_for_session(
                 db,
                 "device_group.updated",
-                {"group_key": target.key, "action": "deleted"},
+                {"group_key": group_key, "action": "deleted"},
             )
             await db.commit()
             return True
@@ -402,7 +403,7 @@ async def _load_groups_by_key(db: AsyncSession, keys: Collection[str]) -> dict[s
     wanted = {key for key in keys if key}
     if not wanted:
         return {}
-    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted))
+    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted)).execution_options(populate_existing=True)
     return {row.key: row for row in (await db.execute(stmt)).scalars().all()}
 
 
