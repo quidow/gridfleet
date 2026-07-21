@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import ValidationError
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -60,25 +59,6 @@ class UnknownMemberOfError(ValueError):
     def __init__(self, keys: list[str]) -> None:
         self.keys = keys
         super().__init__(f"unknown device groups: {', '.join(keys)}")
-
-
-class GroupFiltersMalformedError(ValueError):
-    """Raised when a stored ``device_groups.filters`` row fails validation.
-
-    A row carrying a ``member_of`` key is loaded by every ``delete_group`` scan;
-    validating it through ``DeviceGroupFilters`` (``extra="forbid"``) makes one
-    malformed stored row — from an older schema, a migration, or manual SQL —
-    surface as a pydantic ``ValidationError`` rather than silently dropping the
-    reference check. That is the loud failure the scan wants, but an unhandled
-    exception on an unrelated delete is not actionable. Catching it here and
-    re-raising as a typed error lets the router map it to a 422 naming the
-    offending row, so an operator can repair it without every fleet delete
-    returning 500 in the meantime.
-    """
-
-    def __init__(self, group_key: str, detail: str) -> None:
-        self.group_key = group_key
-        super().__init__(f"device group {group_key!r} has malformed filters: {detail}")
 
 
 class DeviceGroupsService:
@@ -226,30 +206,39 @@ class DeviceGroupsService:
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
         async with group_mutation_lock(db):
-            group = await _get_group_row(db, group_key)
-            if group is None:
-                return False
-            # 00a87549 had to scan every row under FOR UPDATE, because a concurrent
-            # writer could add the first reference below LockRows; the advisory lock
-            # excludes that writer, so a predicate is safe again. ``has_key`` renders
-            # ``filters ? 'member_of'``, which ix_device_groups_filters_gin serves —
-            # ``-> 'member_of' IS NOT NULL`` is not a jsonb_ops operator and seq-scans.
+            # One round trip loads both the target row and every group carrying a
+            # ``member_of`` (the referrer candidates), instead of a keyed read
+            # plus a separate scan — two RTTs in this fleet-wide serialisation
+            # point collapsed to one. The advisory lock excludes every other
+            # definition writer, so a predicate scan is safe: no peer can insert
+            # the first reference below this read. ``has_key`` renders
+            # ``filters ? 'member_of'``, which ix_device_groups_filters_gin
+            # serves; ``-> 'member_of' IS NOT NULL`` is not a jsonb_ops operator
+            # and would seq-scan.
             #
-            # Deliberately NOT the narrower ``filters @> '{"member_of": ["<key>"]}'``.
-            # Containment is an exact structural match, so a row stored as
-            # ``{"member_of": "grp-a"}`` — a bare string rather than a list — does not
-            # match, and the delete would silently leave a dangling reference. Loading
-            # the candidates and validating them through DeviceGroupFilters makes a
-            # malformed row fail loudly instead. Group counts are operator-scale; the
-            # per-row validation is worth the invariant.
-            stmt = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.filters.has_key("member_of"))
-            referrers = (await db.execute(stmt)).tuples().all()
+            # ``ix_device_groups_key`` is unique, so at most one row matches the
+            # key arm; a row that is both the target and carries ``member_of``
+            # (a dynamic group deleting itself) appears once and is taken as the
+            # target, never as its own referrer.
+            stmt = select(DeviceGroup).where(
+                or_(DeviceGroup.key == group_key, DeviceGroup.filters.has_key("member_of"))
+            )
+            rows = list((await db.execute(stmt)).scalars().all())
+            target: DeviceGroup | None = None
+            referrers: list[tuple[str, dict[str, Any] | None]] = []
+            for row in rows:
+                if row.key == group_key:
+                    target = row
+                else:
+                    referrers.append((row.key, row.filters))
+            if target is None:
+                return False
             _assert_no_references(group_key, referrers)
-            await db.delete(group)
+            await db.delete(target)
             self._publisher.queue_for_session(
                 db,
                 "device_group.updated",
-                {"group_key": group.key, "action": "deleted"},
+                {"group_key": target.key, "action": "deleted"},
             )
             await db.commit()
             return True
@@ -437,28 +426,36 @@ def _assert_member_of_resolves(filters: DeviceGroupFilters | None, loaded: Mappi
 def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dict[str, Any] | None]]) -> None:
     """Reject deletion if any candidate ``(key, filters)`` pair references *target_key*.
 
-    Candidates are every group carrying a ``member_of``, not just dynamic ones:
-    nothing enforces that static groups have none, and the tag migration rewrote
-    ``filters`` for any group with a ``tags`` key regardless of type. Skipping
-    those would leave a dangling reference behind.
+    Candidates are every group carrying a ``member_of`` other than the target
+    itself. References are read from the raw stored ``filters`` dict, not parsed
+    through ``DeviceGroupFilters``: validating every candidate would let one
+    malformed stored row — a bare-string ``member_of`` from an older schema or
+    manual SQL on a group that does not even name the target — raise and block
+    every unrelated fleet delete. Reading the raw value narrows the blast radius
+    to rows that actually reference the target.
 
-    Scans ``member_of`` only. ``device_group_memberships`` rows are a second
-    class of dependent this deliberately ignores: they carry ``ON DELETE
-    CASCADE``, so deleting a group with members is a supported operation, not a
-    referential error. The importer's membership-staging race it used to leave
-    open is closed by ``_stage_static_memberships`` re-acquiring the
-    group-mutation lock and re-checking each static group's existence before
-    the final commit; no wider scan is needed here.
+    Both the well-formed list form (``{"member_of": ["target"]}``) and the
+    legacy bare-string form (``{"member_of": "target"}``) are checked, so a
+    malformed row that names the target still blocks the delete instead of
+    silently dangling. A malformed row that does not name the target is skipped
+    here and surfaces when ``get_group``/``list_groups`` serialize it.
+
+    ``device_group_memberships`` rows are a second class of dependent this
+    deliberately ignores: they carry ``ON DELETE CASCADE``, so deleting a group
+    with members is a supported operation, not a referential error. The
+    importer's membership-staging race is closed by ``_stage_static_memberships``
+    re-acquiring the group-mutation lock and re-checking each static group's
+    existence and id before the final commit; no wider scan is needed here.
     """
     dependents: list[str] = []
     for key, filters in candidates:
         if key == target_key:
             continue
-        try:
-            parsed = DeviceGroupFilters.model_validate(filters or {})
-        except ValidationError as exc:
-            raise GroupFiltersMalformedError(key, str(exc)) from exc
-        if target_key in parsed.member_of:
+        raw_member_of = (filters or {}).get("member_of")
+        if isinstance(raw_member_of, list):
+            if target_key in raw_member_of:
+                dependents.append(key)
+        elif raw_member_of == target_key:
             dependents.append(key)
     if dependents:
         raise GroupReferencedError(sorted(dependents))

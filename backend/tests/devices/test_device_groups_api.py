@@ -560,6 +560,63 @@ async def test_delete_static_group_referenced_by_dynamic_returns_409(
 
 
 @pytest.mark.db
+async def test_delete_unrelated_group_not_blocked_by_malformed_member_of_row(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A malformed stored ``member_of`` that does not name the target must not
+    block an unrelated delete.
+
+    The old scan validated every candidate through ``DeviceGroupFilters``
+    (``extra="forbid"``), so one bare-string ``member_of`` row anywhere in the
+    fleet 422'd every unrelated delete. The raw-dict check skips rows whose
+    ``member_of`` cannot reference the target; the malformed row still surfaces
+    later when ``get_group``/``list_groups`` serialize it.
+    """
+    from app.devices.models.group import DeviceGroup, GroupType
+
+    await client.post("/api/device-groups", json={"key": "unrelated", "name": "Unrelated", "group_type": "static"})
+    db_session.add(
+        DeviceGroup(
+            key="malformed-dyn",
+            name="Malformed",
+            group_type=GroupType.dynamic,
+            filters={"member_of": "other-group"},  # bare string, does not name "unrelated"
+        )
+    )
+    await db_session.commit()
+    resp = await client.delete("/api/device-groups/unrelated")
+    assert resp.status_code == 204, resp.text
+
+
+@pytest.mark.db
+async def test_delete_group_referenced_by_bare_string_member_of_returns_409(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A legacy bare-string ``member_of`` naming the target still blocks the delete.
+
+    The raw-dict check matches both the list form and the bare-string form, so a
+    malformed referencer cannot silently leave a dangling ``member_of`` when its
+    target is deleted.
+    """
+    from app.devices.models.group import DeviceGroup, GroupType
+
+    await client.post("/api/device-groups", json={"key": "target", "name": "Target", "group_type": "static"})
+    db_session.add(
+        DeviceGroup(
+            key="bare-dyn",
+            name="Bare",
+            group_type=GroupType.dynamic,
+            filters={"member_of": "target"},  # bare string naming the target
+        )
+    )
+    await db_session.commit()
+    resp = await client.delete("/api/device-groups/target")
+    assert resp.status_code == 409, resp.text
+
+
+@pytest.mark.db
 async def test_static_membership_mutation_preserves_device_state(
     client: AsyncClient,
     db_session: AsyncSession,
