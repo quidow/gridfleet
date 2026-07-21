@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.core.type_defs import SettingType
+
 
 class SettingValidation(BaseModel):
     min: float | None = None
@@ -20,7 +22,7 @@ class SettingRead(BaseModel):
     is_overridden: bool
     category: str
     description: str
-    type: str
+    type: SettingType
     validation: SettingValidation | None = None
 
 

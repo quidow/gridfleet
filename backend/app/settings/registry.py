@@ -7,14 +7,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.core.type_defs import SettingValue
+    from app.core.type_defs import SettingType, SettingValue
 
 
 @dataclass(frozen=True)
 class SettingDefinition:
     key: str
     category: str
-    setting_type: str  # "int", "float", "string", "bool", "json"
+    setting_type: SettingType
     default: SettingValue
     description: str
     min_value: int | float | None = None

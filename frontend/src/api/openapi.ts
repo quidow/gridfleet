@@ -4773,12 +4773,13 @@ export interface components {
             is_overridden: boolean;
             /** Key */
             key: string;
-            /** Type */
-            type: string;
+            type: components["schemas"]["SettingType"];
             validation?: components["schemas"]["SettingValidation"] | null;
             /** Value */
             value: unknown;
         };
+        /** @enum {string} */
+        SettingType: "int" | "float" | "string" | "bool" | "json";
         /** SettingUpdate */
         SettingUpdate: {
             /** Value */

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 type SettingValue = Any
+type SettingType = Literal["int", "float", "string", "bool", "json"]
 type ControlPlaneValue = Any
 type AsyncTaskFactory = Callable[..., Coroutine[object, object, None]]
 
