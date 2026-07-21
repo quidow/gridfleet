@@ -1,29 +1,24 @@
 """Deleting a static group must never race a concurrent *first* ``member_of``
 reference to it into a dangling reference.
 
-``delete_group`` locks the target plus every group whose ``filters['member_of']``
-is already non-NULL. A review claimed that a concurrent ``update_group`` adding
-the *first* reference to the target escapes that predicate — the referring row
-does not yet carry a ``member_of``, so the deleter never locks it — leaving a
-dynamic group pointing at a deleted key.
+Both orderings are closed by the group-mutation advisory lock
+(``app/core/locks.py``): ``update_group`` and ``delete_group`` cannot overlap,
+so the deleter's scan always runs against a snapshot carrying the updater's
+committed reference, and an updater that loses the race re-reads a target that
+is already gone.
 
-The target's row lock closes only *one* of the two orderings:
-
-* deleter first — the updater blocks on the target's row lock, and its select
-  returns *without* the deleted target once the deleter commits, so
-  ``_assert_member_of_resolves`` raises ``UnknownMemberOfError``. Guarded.
-* updater first — NOT guarded. The updater locks the dynamic group and the
-  target, but does not write the dynamic row until commit. The deleter's
-  statement then plans against a snapshot in which the dynamic row still has a
-  NULL ``member_of``, so the ``member_of IS NOT NULL`` predicate filters it out
-  *before* any locking. The deleter blocks on the target only, and under READ
-  COMMITTED, Postgres re-evaluates (EvalPlanQual) just that one row when the
-  updater commits — the excluded dynamic row is never reconsidered. Both
-  transactions commit and the dynamic group is left referencing a deleted key.
-
-Both orderings are now closed by the group-mutation advisory lock
-(``app/core/locks.py``): the two writers cannot overlap, so the deleter's scan
-always runs against a snapshot carrying the updater's committed reference.
+Historical note, because it is why this file exists and why row locks are not
+the answer here. ``delete_group`` used to take ``FOR UPDATE`` over the target
+plus every group whose ``filters['member_of']`` was already non-NULL. That
+closed the deleter-first ordering only. Updater-first escaped it: the updater
+does not write the dynamic row until commit, so the deleter's statement planned
+against a snapshot in which that row still had a NULL ``member_of``, the
+predicate filtered it out *before* ``LockRows``, and under READ COMMITTED
+EvalPlanQual re-checks only rows the statement actually blocked on — never the
+excluded one. Both transactions committed and the dynamic group was left
+pointing at a deleted key. Neither ``delete_group`` nor ``update_group`` takes
+any ``device_groups`` row lock today; the shared helper this file imports
+intercepts ``pg_advisory_xact_lock``, not ``FOR UPDATE``.
 """
 
 from __future__ import annotations
@@ -40,6 +35,7 @@ from app.devices.services.groups import GroupReferencedError, UnknownMemberOfErr
 from tests.concurrency.group_lock_helpers import (
     assert_no_dangling_reference,
     build_groups_service,
+    fetch_group_rows,
     signal_after_group_lock,
     wait_for_group_lock,
 )
@@ -77,8 +73,8 @@ async def test_delete_wins_first_member_of_reference_is_rejected(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Deleter takes the target's row lock first; the updater blocks, then
-    re-reads the target and finds it gone."""
+    """The deleter serialises first; the updater then re-reads the target and
+    finds it gone."""
     static_key, dynamic_key = await _seed_unreferenced_pair(db_session)
     service = build_groups_service()
     deleter_locked = asyncio.Event()
@@ -110,14 +106,12 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Updater takes the target's row lock first; the deleter must then observe
-    the reference rather than deleting out from under it.
+    """The updater serialises first; the deleter must then observe the
+    reference rather than deleting out from under it.
 
-    This is the ordering the review argued was unguarded, and it is: at the
-    moment the deleter's statement plans, the referring row still has a NULL
-    ``member_of`` and so falls outside its predicate, and nothing brings it back
-    into consideration. Closed by the group-mutation advisory lock — see the
-    module docstring.
+    Historically the unguarded ordering: the deleter's predicate excluded the
+    referring row before any locking, and nothing brought it back into
+    consideration. The advisory lock closes it — see the module docstring.
     """
     static_key, dynamic_key = await _seed_unreferenced_pair(db_session)
     service = build_groups_service()
@@ -143,4 +137,14 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     assert isinstance(delete_result, GroupReferencedError), (
         f"deleter must observe the committed reference, got {delete_result!r}"
     )
-    await assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    # assert_no_dangling_reference is vacuous on this ordering — the delete is
+    # rejected, so its ``static_row is None`` guard never fires. Pin the exact
+    # end state instead: both rows survive AND the updater's reference landed.
+    # Without the last assertion an update_group regression that silently drops
+    # the filters payload still leaves this test green.
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is not None, "the referenced static group must survive a rejected delete"
+    assert dynamic_row is not None, "the referring dynamic group must survive"
+    assert (dynamic_row.filters or {}).get("member_of") == [static_key], (
+        f"the updater's member_of reference must have landed, got {dynamic_row.filters!r}"
+    )

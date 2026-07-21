@@ -76,11 +76,17 @@ class DeviceGroupsService:
         # single row. Row locks cannot close this race: FOR UPDATE is blind to a
         # row a concurrent transaction has not inserted yet.
         await acquire_group_mutation_lock(db)
-        if data.group_type == GroupType.dynamic:
-            loaded = await _load_groups_by_key(db, _member_of_keys(data.filters))
-            _assert_member_of_resolves(data.filters, loaded)
-        elif _has_filter_values(data.filters):
-            raise StaticGroupFiltersError
+        try:
+            if data.group_type == GroupType.dynamic:
+                loaded = await _load_groups_by_key(db, _member_of_keys(data.filters))
+                _assert_member_of_resolves(data.filters, loaded)
+            elif _has_filter_values(data.filters):
+                raise StaticGroupFiltersError
+        except ValueError:
+            # A rejected payload wrote nothing; drop the fleet-global lock before
+            # unwinding rather than holding it until request teardown.
+            await db.rollback()
+            raise
         group = DeviceGroup(
             key=data.key,
             name=data.name,
@@ -161,13 +167,23 @@ class DeviceGroupsService:
         loaded = await _load_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
         group = loaded.get(group_key)
         if group is None:
+            # Release the fleet-global lock now rather than at request teardown:
+            # this transaction wrote nothing, and an unknown key must not
+            # serialise every other group writer for the tail of the request.
+            await db.rollback()
             return None
-        if group.group_type == GroupType.static:
-            # Static groups must not carry filters; reject any filters payload.
-            if _has_filter_values(data.filters):
-                raise StaticGroupFiltersError
-        elif data.filters is not None:
-            _assert_member_of_resolves(data.filters, loaded)
+        try:
+            if group.group_type == GroupType.static:
+                # Static groups must not carry filters; reject any filters payload.
+                if _has_filter_values(data.filters):
+                    raise StaticGroupFiltersError
+            elif data.filters is not None:
+                _assert_member_of_resolves(data.filters, loaded)
+        except ValueError:
+            # Same reasoning as the unknown-key exit: a rejected payload wrote
+            # nothing, so drop the fleet-global lock before unwinding.
+            await db.rollback()
+            raise
         updates = data.model_dump(exclude_unset=True)
         if "filters" in updates:
             group.filters = _dump_filters(data.filters)
@@ -187,6 +203,9 @@ class DeviceGroupsService:
         await acquire_group_mutation_lock(db)
         group = await _get_group_row(db, group_key)
         if group is None:
+            # See update_group: an unknown key must not hold the fleet-global
+            # lock until the session closes at request teardown.
+            await db.rollback()
             return False
         # Only groups that actually carry a ``member_of`` can block the delete.
         # 00a87549 had to scan every row instead, because a concurrent writer

@@ -13,25 +13,22 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import event
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
 from tests.concurrency.group_lock_helpers import (
     build_groups_service,
+    capture_statements,
     fetch_group_rows,
     signal_after_group_lock,
     wait_for_group_lock,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
@@ -132,30 +129,6 @@ async def test_delete_wins_create_is_rejected(
     assert dynamic_row is None, "dynamic group must not exist after the rejected create"
 
 
-@contextmanager
-def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = session.bind
-    assert bind is not None
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
-
-
 def _assert_locked_before_group_reads(statements: list[str]) -> None:
     """Every ``device_groups`` read follows the advisory lock, and none takes a row lock.
 
@@ -175,7 +148,7 @@ def _assert_locked_before_group_reads(statements: list[str]) -> None:
 async def test_delete_group_locks_before_reading_and_takes_no_row_lock(db_session: AsyncSession) -> None:
     static_key, _dynamic_key = await _seed_static(db_session)
 
-    with _capture_statements(db_session) as statements:
+    with capture_statements(db_session) as statements:
         assert await build_groups_service().delete_group(db_session, static_key) is True
 
     _assert_locked_before_group_reads(statements)
@@ -194,7 +167,7 @@ async def test_update_group_locks_before_reading(db_session: AsyncSession) -> No
     )
     await db_session.commit()
 
-    with _capture_statements(db_session) as statements:
+    with capture_statements(db_session) as statements:
         updated = await build_groups_service().update_group(
             db_session,
             dynamic_key,

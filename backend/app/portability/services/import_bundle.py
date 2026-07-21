@@ -355,7 +355,7 @@ class PortabilityImportService:
             # to protect.
             await acquire_group_mutation_lock(session)
             group_id_by_key = await self._insert_group_definitions(session, static_groups)
-            await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
+            await self._insert_dynamic_group_definitions(session, dynamic_groups)
             # Commit the definitions before the device loop so they survive a
             # failure of any per-row commit below.
             await session.commit()
@@ -442,8 +442,10 @@ class PortabilityImportService:
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:
-                if key not in static_group_keys:
-                    continue
+                # group_id_by_key holds static definitions only, and _classify_row
+                # already marked INVALID any device naming a key outside the
+                # bundle's statics — so a miss here means a bundle static whose
+                # insert did not land, not a dynamic key leaking through.
                 group_id = group_id_by_key.get(key)
                 if group_id is None:
                     continue
@@ -453,8 +455,14 @@ class PortabilityImportService:
         self,
         session: AsyncSession,
         dynamic_groups: list[ExportedDeviceGroup],
-        group_id_by_key: dict[str, uuid.UUID],
     ) -> None:
+        """Insert the bundle's dynamic group definitions.
+
+        Deliberately returns nothing. Dynamic groups have no membership rows —
+        their members are derived — so folding their ids into the static
+        ``group_id_by_key`` map would only give ``_insert_static_memberships``
+        a chance to resolve a key it must never resolve.
+        """
         if not dynamic_groups:
             return
         groups = [
@@ -469,8 +477,6 @@ class PortabilityImportService:
         ]
         session.add_all(groups)
         await _flush_groups_or_collide(session, [g.key for g in groups])
-        for group in groups:
-            group_id_by_key[group.key] = group.id
 
     async def _insert_row_with_savepoint(
         self,

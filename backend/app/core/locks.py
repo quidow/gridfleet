@@ -28,10 +28,21 @@ async def acquire_group_mutation_lock(db: AsyncSession) -> None:
     Transaction-scoped: Postgres releases the lock on commit or rollback, so
     there is no unlock call and no leak path.
 
-    Must be taken *before* any ``device_groups`` read. Under READ COMMITTED each
-    statement takes a fresh snapshot, so a read issued after this call sees
-    everything the previous holder committed — which is the whole guarantee. A
-    read taken before the lock carries a stale snapshot and defeats it.
+    Take this before any ``device_groups`` read whose result you act on. Under
+    READ COMMITTED each statement takes a fresh snapshot, so a read issued after
+    this call sees everything the previous holder committed; a read taken before
+    it carries a stale snapshot. That ordering is what makes the ``member_of``
+    invariant hold in :mod:`app.devices.services.groups`.
+
+    The portability importer deliberately reads ``device_groups`` *before*
+    taking this lock: ``validate_bundle`` issues per-row queries, and holding a
+    fleet-global lock for the length of a large bundle's validation would cost
+    far more than the race it closes. That is sound there because a bundle's
+    ``member_of`` may only name static groups defined in the same bundle and
+    inserted in the same transaction, and because the loser of a key-collision
+    race is caught by the ``ix_device_groups_key`` unique index and surfaced as
+    a 409 rather than by this lock. A new caller that does not satisfy both
+    conditions must take the lock first.
     """
     await db.execute(
         text("SELECT pg_advisory_xact_lock(:namespace, :lock_id)"),

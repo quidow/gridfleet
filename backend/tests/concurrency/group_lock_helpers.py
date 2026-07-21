@@ -12,10 +12,11 @@ here so the two test modules stay in lockstep instead of drifting apart.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.devices.models.group import DeviceGroup
 from app.devices.services.groups import DeviceGroupsService
@@ -24,6 +25,8 @@ from app.devices.services.service import DeviceCrudService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Long enough for the peer's blocked advisory-lock acquire to reach the lock
@@ -126,3 +129,27 @@ async def assert_no_dangling_reference(
     if static_row is None:
         member_of = (dynamic_row.filters or {}).get("member_of", [])
         assert static_key not in member_of, f"dynamic group {dynamic_key} references deleted static group {static_key}"
+
+
+@contextmanager
+def capture_statements(session: AsyncSession) -> Iterator[list[str]]:
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    assert bind is not None
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
