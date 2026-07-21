@@ -2524,7 +2524,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             session_services=_session_svc_failed,
         )
     assert health["node"]["state"] == "error"
-    assert health["device_checks"]["detail"] == "Agent unreachable: down"
+    assert health["device_checks"]["detail"] == "Agent unreachable: error"
     assert health["healthy"] is False
 
     reconnect_device = SimpleNamespace(

@@ -181,7 +181,9 @@ async def device_health(
             pool=agent_comm.http_pool,
         )
     except AgentCallError as e:
-        result["device_checks"] = {"healthy": False, "detail": f"Agent unreachable: {e}"}
+        # Report the bounded transport classification, not str(e): the raw message carries
+        # the agent host IP and the underlying httpx error text into an API response.
+        result["device_checks"] = {"healthy": False, "detail": f"Agent unreachable: {e.transport_outcome or 'error'}"}
 
     result["session_viability"] = await session_services.viability.get_session_viability(db, device)
     session_viability_failed = (
