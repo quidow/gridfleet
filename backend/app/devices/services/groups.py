@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
+from app.core.locks import acquire_group_mutation_lock
 from app.devices.group_keys import is_valid_group_key
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
@@ -71,6 +72,10 @@ class DeviceGroupsService:
         self._crud = crud
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
+        # Serialise against every other group-definition writer before reading a
+        # single row. Row locks cannot close this race: FOR UPDATE is blind to a
+        # row a concurrent transaction has not inserted yet.
+        await acquire_group_mutation_lock(db)
         if data.group_type == GroupType.dynamic:
             locked = await _lock_groups_by_key(db, _member_of_keys(data.filters))
             _assert_member_of_resolves(data.filters, locked)
@@ -152,9 +157,7 @@ class DeviceGroupsService:
         return None if group is None else group.group_type
 
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
-        # One key-ordered lock over the target plus every group its filters
-        # reference. Locking the target first and the references second would
-        # invert ``delete_group``'s order and deadlock against it.
+        await acquire_group_mutation_lock(db)
         locked = await _lock_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
         group = locked.get(group_key)
         if group is None:
@@ -181,6 +184,7 @@ class DeviceGroupsService:
         return group
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
+        await acquire_group_mutation_lock(db)
         # One key-ordered lock over *every* group row. The candidate set must not
         # be narrowed by a value-dependent predicate: a concurrent
         # ``update_group`` writing the *first* ``member_of`` reference to the

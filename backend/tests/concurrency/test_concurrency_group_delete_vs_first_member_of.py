@@ -21,9 +21,9 @@ The target's row lock closes only *one* of the two orderings:
   updater commits — the excluded dynamic row is never reconsidered. Both
   transactions commit and the dynamic group is left referencing a deleted key.
 
-``test_first_member_of_reference_wins_delete_is_rejected`` currently FAILS,
-reproducing that dangling reference. It is written against the intended
-invariant, not the current behaviour, and should go green with the fix.
+Both orderings are now closed by the group-mutation advisory lock
+(``app/core/locks.py``): the two writers cannot overlap, so the deleter's scan
+always runs against a snapshot carrying the updater's committed reference.
 """
 
 from __future__ import annotations
@@ -88,11 +88,10 @@ async def _seed_unreferenced_pair(db_session: AsyncSession) -> tuple[str, str]:
 
 
 def _signal_after_group_lock(session: AsyncSession, locked: asyncio.Event) -> None:
-    """Set *locked* once *session* has issued its ``device_groups`` ``FOR UPDATE``.
+    """Set *locked* once *session* holds the group-mutation advisory lock.
 
     Then hold inside the interception for ``_HANDOFF_SEC`` so the peer
-    transaction can start its own statement and block on the row lock this
-    session now holds.
+    transaction reaches its own ``pg_advisory_xact_lock`` and blocks there.
     """
     original_execute = session.execute
     fired = False
@@ -100,8 +99,7 @@ def _signal_after_group_lock(session: AsyncSession, locked: asyncio.Event) -> No
     async def _intercepted(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         nonlocal fired
         result = await original_execute(stmt, *args, **kwargs)
-        text = str(stmt).lower()
-        if not fired and "device_groups" in text and "for update" in text:
+        if not fired and "pg_advisory_xact_lock" in str(stmt).lower():
             fired = True
             locked.set()
             await asyncio.sleep(_HANDOFF_SEC)
