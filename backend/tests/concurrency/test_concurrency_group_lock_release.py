@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,7 +26,19 @@ from app.core.locks import acquire_group_mutation_lock
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
+from app.portability.schemas import (
+    ExportBundle,
+    ExportedDevice,
+    ExportedDeviceGroup,
+    ImportCommitRequest,
+    ImportMapping,
+    OriginalHost,
+)
+from app.portability.services.hash import compute_bundle_hash
+from app.portability.services.import_bundle import PortabilityImportService
+from app.verification.services.service import VerificationService
 from tests.concurrency.group_lock_helpers import build_groups_service
+from tests.helpers import seed_host_named
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -144,3 +157,73 @@ async def test_create_with_unresolvable_member_of_releases_the_lock(
                 ),
             )
         await _assert_lock_is_free(db_session_maker, after="create_group with an unresolvable member_of")
+
+
+async def test_import_with_no_groups_does_not_hold_the_lock(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A groupless bundle takes no group-mutation lock and must not leave one held.
+
+    The new membership-staging acquire in ``commit_import`` is guarded by an
+    ``if group_id_by_key:`` check (the same guard the definition block already
+    uses), so a bundle with no groups never acquires. A peer must be able to
+    take the lock immediately after a groupless import returns.
+    """
+    bundle = ExportBundle(
+        schema_version=2,
+        exported_at=datetime.now(UTC),
+        source_instance="alpha",
+        groups=[],
+        devices=[],
+    )
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=[])
+    async with db_session_maker() as session:
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            session, request
+        )
+    assert result.created == [] and result.skipped == [] and result.failed == []
+    await _assert_lock_is_free(db_session_maker, after="a groupless commit_import")
+
+
+async def test_import_releases_the_lock_after_membership_staging(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """The membership-staging acquire is released after the final commit.
+
+    Pins that the new acquire (Task 7) does not leak past ``commit_import``'s
+    return. A bundle with one static group and one device exercises the
+    membership-staging path; on success the lock must be free.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    static_key = f"static-{suffix}"
+    host = await seed_host_named(db_session, "import-host")
+    bundle = ExportBundle(
+        schema_version=2,
+        exported_at=datetime.now(UTC),
+        source_instance="alpha",
+        groups=[ExportedDeviceGroup(key=static_key, name=static_key, group_type=GroupType.static)],
+        devices=[
+            ExportedDevice(
+                pack_id="appium-uiautomator2",
+                platform_id="android_mobile",
+                identity_scheme="android_serial",
+                identity_scope="host",
+                identity_value=f"device-{suffix}",
+                name="Pixel",
+                device_type="real_device",
+                connection_type="usb",
+                static_groups=[static_key],
+                original_host=OriginalHost(hostname="import-host", host_id=str(host.id)),
+            ),
+        ],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+    async with db_session_maker() as session:
+        await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(session, request)
+    await _assert_lock_is_free(db_session_maker, after="commit_import with membership staging")
