@@ -43,6 +43,7 @@ from app.portability.schemas import (
     ImportPreview,
     ImportPreviewRow,
     ImportRowStatus,
+    MembershipSkip,
 )
 from app.portability.services.hash import compute_bundle_hash
 
@@ -416,18 +417,63 @@ class PortabilityImportService:
             else:
                 failed.append(result)
 
-        self._insert_static_memberships(
+        memberships_skipped = await self._stage_static_memberships(
             session,
             by_index=by_index,
             device_id_by_index=device_id_by_index,
             group_id_by_key=group_id_by_key,
         )
 
-        # Static memberships are staged, not committed, by the helper above. Commit
-        # unconditionally so they land even when no device row committed.
-        await session.commit()
+        return ImportCommitResult(
+            created=created,
+            skipped=skipped,
+            failed=failed,
+            memberships_skipped=memberships_skipped,
+        )
 
-        return ImportCommitResult(created=created, skipped=skipped, failed=failed)
+    async def _stage_static_memberships(
+        self,
+        session: AsyncSession,
+        *,
+        by_index: dict[int, ImportPreviewRow],
+        device_id_by_index: dict[int, uuid.UUID],
+        group_id_by_key: dict[str, uuid.UUID],
+    ) -> list[MembershipSkip]:
+        """Stage and commit static membership rows, skipping groups deleted in the window.
+
+        Re-acquires the group-mutation advisory lock around the staging commit.
+        The definitions block released the lock after committing the group rows;
+        a concurrent ``delete_group`` could remove a static group during the
+        device loop. Under the lock, re-check which static groups still exist
+        and skip memberships for any group deleted in the window — rather than
+        letting the final commit violate ``device_group_memberships_group_id_fkey``.
+        """
+        if not group_id_by_key or not device_id_by_index:
+            return []
+        memberships_skipped: list[MembershipSkip] = []
+        async with group_mutation_lock(session):
+            surviving_keys = await _load_existing_group_keys(session, set(group_id_by_key))
+            deleted_keys = set(group_id_by_key) - surviving_keys
+            if deleted_keys:
+                memberships_skipped.extend(
+                    MembershipSkip(
+                        index=idx,
+                        group_key=key,
+                        reason=f"static group '{key}' deleted during import",
+                    )
+                    for idx in device_id_by_index
+                    for key in by_index[idx].device.static_groups
+                    if key in deleted_keys
+                )
+                group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key in surviving_keys}
+            self._insert_static_memberships(
+                session,
+                by_index=by_index,
+                device_id_by_index=device_id_by_index,
+                group_id_by_key=group_id_by_key,
+            )
+            await session.commit()
+        return memberships_skipped
 
     async def _insert_group_definitions(
         self,

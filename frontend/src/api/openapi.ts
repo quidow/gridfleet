@@ -3872,6 +3872,8 @@ export interface components {
             created: components["schemas"]["ImportCommitCreatedRow"][];
             /** Failed */
             failed: components["schemas"]["ImportCommitFailedRow"][];
+            /** Memberships Skipped */
+            memberships_skipped?: components["schemas"]["MembershipSkip"][];
             /** Skipped */
             skipped: components["schemas"]["ImportCommitSkippedRow"][];
         };
@@ -4056,6 +4058,15 @@ export interface components {
             };
             /** Id */
             id: string;
+        };
+        /** MembershipSkip */
+        MembershipSkip: {
+            /** Group Key */
+            group_key: string;
+            /** Index */
+            index: number;
+            /** Reason */
+            reason: string;
         };
         /** NodeDesiredSpecOut */
         NodeDesiredSpecOut: {

@@ -171,9 +171,18 @@ class ImportCommitFailedRow(BaseModel):
     reason: str
 
 
+class MembershipSkip(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    index: int
+    group_key: str
+    reason: str
+
+
 class ImportCommitResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     created: list[ImportCommitCreatedRow]
     skipped: list[ImportCommitSkippedRow]
     failed: list[ImportCommitFailedRow]
+    memberships_skipped: list[MembershipSkip] = Field(default_factory=list)
