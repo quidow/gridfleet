@@ -4,11 +4,12 @@ FK when a concurrent delete removes the static group mid-import.
 ``commit_import`` commits group definitions under the group-mutation lock, then
 runs the device loop (per-row commits, no lock), then stages and commits
 ``device_group_memberships`` rows for each created device's bundle static
-groups. That last commit is outside the lock, so a ``delete_group`` landing
-between the device-loop commits and the membership commit removes a static
-group the membership rows are about to reference — and the final commit
-violates ``device_group_memberships_group_id_fkey``, surfacing as a 500 with
-the device rows already committed.
+groups. The definition lock is released before the device loop, so a
+``delete_group`` landing between the device-loop commits and the membership
+write removes a static group the membership rows are about to reference — and
+that write violates ``device_group_memberships_group_id_fkey``, surfacing as a
+500 with the device rows already committed. (The violation lands on the INSERT,
+not the commit: these FKs are non-deferrable.)
 
 The bundle here carries a single static group listed in the device's
 ``static_groups`` and NO dynamic group referencing it, so the concurrent
@@ -17,11 +18,14 @@ hits the FK violation. (A dynamic group with ``member_of=[static_key]`` would
 make ``delete_group`` raise ``GroupReferencedError`` and the race would be
 unreachable; see the task-4 brief's "failing the right way" note.)
 
-The fix (Task 7) re-acquires the group-mutation lock around the
-membership-staging commit and re-checks that each static group still exists,
-skipping memberships for any group deleted in the window. This test pins that
-behaviour: the import must succeed (device rows committed, memberships skipped
-gracefully) rather than 500.
+The fix re-acquires the group-mutation lock around the membership write and
+re-checks that each static group still exists, skipping memberships for any
+group deleted in the window. These tests pin that behaviour: the import must
+succeed (device rows committed, memberships reported as skipped) rather than
+500 — and must report *which* memberships it dropped, not merely survive.
+
+The device-deleted case is the residual the lock cannot close, since nothing
+serialises a device delete against an import; it is covered here too.
 """
 
 from __future__ import annotations
@@ -32,12 +36,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership
 from app.devices.models.group import GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
-from app.devices.services.groups import GroupReferencedError
 from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
@@ -100,7 +103,7 @@ def _bundle_with_device(
     The dynamic group does NOT reference the static group (its ``member_of`` is
     empty), so a concurrent ``delete_group(static_key)`` has no referrer and
     succeeds — opening the membership-staging window the test exercises. The
-    device's ``static_groups`` is what drives ``_insert_static_memberships``
+    device's ``static_groups`` is what drives ``_plan_static_memberships``
     to stage a row. Without a device row the membership-staging commit is a
     no-op and the race cannot be exercised.
     """
@@ -198,21 +201,29 @@ async def test_delete_during_membership_staging_does_not_500(
         f"import must not raise when a concurrent delete removes a static group "
         f"during membership staging; got {import_result!r}"
     )
-    assert isinstance(delete_result, GroupReferencedError) or delete_result is True, (
-        f"deleter must either be rejected (GroupReferencedError) or succeed; got {delete_result!r}"
-    )
+    # The deleter always wins here, and deliberately so: `_bundle_with_device`
+    # gives the dynamic group `member_of=[]`, which `_group_filters_payload`
+    # collapses to `filters=None`, so `delete_group`'s `has_key("member_of")`
+    # scan finds no referrer. A `GroupReferencedError` branch would be dead
+    # code — the reference case belongs to the tests that seed one.
+    assert delete_result is True, f"deleter must succeed against an unreferenced static group; got {delete_result!r}"
 
-    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
-    # The two legitimate end states:
-    # - deleter won: static gone, device row committed, no membership row.
-    # - deleter lost (GroupReferencedError): static and dynamic both survive,
-    #   device row committed, membership row present.
-    if isinstance(delete_result, GroupReferencedError):
-        assert static_row is not None, "static group must survive when delete was rejected"
-        assert dynamic_row is not None, "dynamic group must survive when delete was rejected"
-    else:
-        assert delete_result is True
-        assert static_row is None, "static group must be gone when delete succeeded"
+    static_row, _dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is None, "static group must be gone when delete succeeded"
+
+    # Not raising is only half the contract. The operator has to be told which
+    # memberships were dropped, and no row may survive pointing at the deleted
+    # group. Without these, stripping the `stale_keys` reporting from
+    # `_stage_static_memberships` and keeping only the filtering stays green.
+    assert len(import_result.created) == 1, "the device row committed before the delete and must still be reported"
+    assert [(s.index, s.group_key) for s in import_result.memberships_skipped] == [(0, static_key)], (
+        f"the skipped membership must name the deleted group: {import_result.memberships_skipped!r}"
+    )
+    assert "deleted during import" in import_result.memberships_skipped[0].reason
+
+    async with db_session_maker() as verify_session:
+        surviving = (await verify_session.execute(select(DeviceGroupMembership))).scalars().all()
+    assert surviving == [], f"no membership row may survive the deleted group: {surviving!r}"
 
 
 async def test_concurrent_add_members_during_staging_keeps_the_memberships(
@@ -282,3 +293,50 @@ async def test_concurrent_add_members_during_staging_keeps_the_memberships(
             .all()
         )
     assert len(rows) == 1, f"expected exactly one membership row, got {len(rows)}"
+
+
+async def test_device_deleted_during_staging_does_not_500(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """A device deleted mid-import must cost its memberships, not the whole result.
+
+    ``device_group_memberships.device_id`` is a plain, non-deferrable FK, so the
+    violation fires when the staging INSERT executes, not when the transaction
+    commits. Nothing serialises a device delete against an import, so this is
+    the one IntegrityError the staging block still has to absorb — and the
+    device rows it would discard have already committed.
+    """
+    _ = seeded_driver_packs
+    suffix = uuid.uuid4().hex[:8]
+    static_key = f"static-{suffix}"
+    dynamic_key = f"dynamic-{suffix}"
+
+    host = await seed_host_named(db_session, "import-host")
+    bundle, mappings = _bundle_with_device(static_key, dynamic_key, host.id)
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=mappings)
+    device_committed = asyncio.Event()
+
+    async def run_import() -> ImportCommitResult:
+        async with db_session_maker() as session:
+            _signal_after_device_loop_commit(session, device_committed)
+            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+                session, request
+            )
+
+    async def delete_the_device() -> None:
+        await _wait_for_device_commit(device_committed)
+        async with db_session_maker() as session:
+            await session.execute(delete(Device).where(Device.identity_value == bundle.devices[0].identity_value))
+            await session.commit()
+
+    import_result, _ = await asyncio.gather(run_import(), delete_the_device(), return_exceptions=True)
+
+    assert not isinstance(import_result, Exception), (
+        f"import must absorb the membership FK violation and still report its device rows; got {import_result!r}"
+    )
+    assert len(import_result.created) == 1, "the device row committed before the delete and must still be reported"
+    assert [(s.index, s.group_key) for s in import_result.memberships_skipped] == [(0, static_key)], (
+        f"the dropped membership must be reported: {import_result.memberships_skipped!r}"
+    )

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -53,7 +53,7 @@ async def test_create_wins_delete_is_rejected(
     service = build_groups_service()
     creator_locked = asyncio.Event()
 
-    async def create_dynamic() -> DeviceGroup:
+    async def create_dynamic() -> dict[str, Any]:
         async with db_session_maker() as session:
             signal_after_group_lock(session, creator_locked)
             return await service.create_group(
@@ -67,7 +67,7 @@ async def test_create_wins_delete_is_rejected(
             )
 
     async def delete_static() -> bool:
-        await wait_for_group_lock(creator_locked, label="creator")
+        await wait_for_group_lock(creator_locked, label="deleter")
         async with db_session_maker() as session:
             return await service.delete_group(session, static_key)
 
@@ -102,8 +102,8 @@ async def test_delete_wins_create_is_rejected(
             signal_after_group_lock(session, deleter_locked)
             return await service.delete_group(session, static_key)
 
-    async def create_dynamic() -> DeviceGroup:
-        await wait_for_group_lock(deleter_locked, label="deleter")
+    async def create_dynamic() -> dict[str, Any]:
+        await wait_for_group_lock(deleter_locked, label="creator")
         async with db_session_maker() as session:
             return await service.create_group(
                 session,

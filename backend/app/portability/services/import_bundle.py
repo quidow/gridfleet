@@ -516,13 +516,16 @@ class PortabilityImportService:
                     if key in stale_keys
                 )
                 group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key not in stale_keys}
-            staged = await self._insert_static_memberships(
-                session,
+            staged, values = self._plan_static_memberships(
                 by_index=by_index,
                 device_id_by_index=device_id_by_index,
                 group_id_by_key=group_id_by_key,
             )
             try:
+                # The write is inside the guard, not just the commit. These FKs
+                # are non-deferrable, so Postgres raises when the INSERT runs;
+                # guarding only the commit lets the violation escape untouched.
+                await self._write_static_memberships(session, values)
                 await session.commit()
             except IntegrityError:
                 # Every device row already committed with its own savepoint, so
@@ -533,7 +536,7 @@ class PortabilityImportService:
                 # One cause survives to here. The unique constraint is handled by
                 # ON CONFLICT DO NOTHING; the group_id FK cannot fire because
                 # delete_group takes the lock this block holds. That leaves a
-                # device deleted between the device loop and this commit
+                # device deleted between the device loop and this write
                 # (device_group_memberships_device_id_fkey), which nothing
                 # serialises against the import — so name that cause rather than
                 # a vaguer one, and say the batch went, since it did.
@@ -567,17 +570,20 @@ class PortabilityImportService:
         await _flush_groups_or_collide(session, [g.key for g in groups])
         return {group.key: group.id for group in groups}
 
-    async def _insert_static_memberships(
+    def _plan_static_memberships(
         self,
-        session: AsyncSession,
+        *,
         by_index: dict[int, ImportPreviewRow],
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
-    ) -> list[tuple[int, str]]:
-        """Stage membership rows for each created device's bundle static groups.
+    ) -> tuple[list[tuple[int, str]], list[dict[str, uuid.UUID]]]:
+        """Pair the ``(row index, group key)`` to report with the INSERT values to write.
 
-        Returns the ``(row index, group key)`` pairs staged, so the caller can
-        name them if the commit fails.
+        Planned before anything executes, and returned rather than staged, so the
+        caller still knows what it was trying to write when the write itself
+        raises. The membership FKs are **non-deferrable**, so a violation
+        surfaces at statement time, not at commit — computing the report inside
+        the executing call would lose it exactly when it is needed.
 
         ``group_id_by_key`` holds exactly the bundle's static definitions —
         ``_insert_dynamic_group_definitions`` deliberately returns nothing — so it
@@ -585,18 +591,11 @@ class PortabilityImportService:
         and a ``.get`` miss is the only guard needed. A device naming a key
         outside that set was already marked INVALID by ``_classify_row`` and
         never reaches ``device_id_by_index``.
-
-        ``ON CONFLICT DO NOTHING`` on ``(group_id, device_id)`` for the same
-        reason ``add_members`` uses it: an operator adding one of these devices
-        to one of these groups between the device loop and this commit would
-        otherwise violate the unique constraint, and this is a single batch, so
-        that one row would take every other membership in the import down with
-        it. The end state a conflict produces is the one we wanted anyway.
         """
         staged: list[tuple[int, str]] = []
-        if not group_id_by_key:
-            return staged
         values: list[dict[str, uuid.UUID]] = []
+        if not group_id_by_key:
+            return staged, values
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:
@@ -605,15 +604,25 @@ class PortabilityImportService:
                     continue
                 values.append({"group_id": group_id, "device_id": device_id})
                 staged.append((idx, key))
-        if values:
-            await session.execute(
-                pg_insert(DeviceGroupMembership)
-                .values(values)
-                .on_conflict_do_nothing(
-                    index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id]
-                )
-            )
-        return staged
+        return staged, values
+
+    async def _write_static_memberships(self, session: AsyncSession, values: list[dict[str, uuid.UUID]]) -> None:
+        """Insert the planned membership rows, tolerating rows a peer already added.
+
+        ``ON CONFLICT DO NOTHING`` on ``(group_id, device_id)`` for the same
+        reason ``add_members`` uses it: an operator adding one of these devices
+        to one of these groups between the device loop and this write would
+        otherwise violate the unique constraint, and this is a single batch, so
+        that one row would take every other membership in the import down with
+        it. The end state a conflict produces is the one we wanted anyway.
+        """
+        if not values:
+            return
+        await session.execute(
+            pg_insert(DeviceGroupMembership)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id])
+        )
 
     async def _insert_dynamic_group_definitions(
         self,
@@ -624,7 +633,7 @@ class PortabilityImportService:
 
         Deliberately returns nothing. Dynamic groups have no membership rows —
         their members are derived — so folding their ids into the static
-        ``group_id_by_key`` map would only give ``_insert_static_memberships``
+        ``group_id_by_key`` map would only give ``_plan_static_memberships``
         a chance to resolve a key it must never resolve.
         """
         if not dynamic_groups:

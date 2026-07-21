@@ -95,7 +95,12 @@ def test_device_group_written_only_by_sanctioned_writers() -> None:
 # have quietly dropped the call.
 LOCKED_FUNCTIONS: dict[str, frozenset[str]] = {
     "app/devices/services/groups.py": frozenset({"create_group", "update_group", "delete_group"}),
-    "app/portability/services/import_bundle.py": frozenset({"commit_import"}),
+    # The importer acquires twice, and both are load-bearing. ``commit_import``
+    # covers the definition inserts; ``_stage_static_memberships`` covers the
+    # membership write, and it is the one that closes the delete and
+    # delete+recreate races. Pinning only the former leaves the latter free to
+    # disappear with this contract still green.
+    "app/portability/services/import_bundle.py": frozenset({"commit_import", "_stage_static_memberships"}),
 }
 
 

@@ -181,8 +181,10 @@ async def test_import_with_no_groups_does_not_hold_the_lock(
         result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
             session, request
         )
-    assert result.created == [] and result.skipped == [] and result.failed == []
-    await _assert_lock_is_free(db_session_maker, after="a groupless commit_import")
+        assert result.created == [] and result.skipped == [] and result.failed == []
+        # Inside the session, per this module's docstring: the context manager's
+        # exit rolls back, which would release a leaked lock and pass vacuously.
+        await _assert_lock_is_free(db_session_maker, after="a groupless commit_import")
 
 
 async def test_import_releases_the_lock_after_membership_staging(
@@ -226,4 +228,5 @@ async def test_import_releases_the_lock_after_membership_staging(
     )
     async with db_session_maker() as session:
         await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(session, request)
-    await _assert_lock_is_free(db_session_maker, after="commit_import with membership staging")
+        # Inside the session: see the sibling test and this module's docstring.
+        await _assert_lock_is_free(db_session_maker, after="commit_import with membership staging")

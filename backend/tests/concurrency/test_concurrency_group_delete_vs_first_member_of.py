@@ -50,8 +50,15 @@ async def _seed_unreferenced_pair(db_session: AsyncSession) -> tuple[str, str]:
     """A static group with *no* referrers and a dynamic group with no ``member_of``.
 
     This is precisely the state the review's interleaving starts from: the
-    dynamic group is invisible to ``delete_group``'s ``member_of IS NOT NULL``
-    predicate until the concurrent update commits.
+    dynamic group is invisible to ``delete_group``'s referrer scan until the
+    concurrent update commits.
+
+    That scan is ``filters.has_key("member_of")`` (the ``member_of IS NOT NULL``
+    form this file's module docstring describes is history). The seeded row
+    carries ``filters={"device_type": ...}`` and no ``member_of`` key at all, so
+    ``has_key`` does not match it — and a row seeded with an *empty*
+    ``member_of`` would not match either, because ``_dump_filters`` pops the key
+    rather than storing ``[]``.
     """
     suffix = uuid.uuid4().hex[:8]
     static_key = f"static-{suffix}"

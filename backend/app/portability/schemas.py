@@ -76,7 +76,7 @@ class ExportedDevice(BaseModel):
         the importer's membership commit on that constraint. Membership is
         set-valued — a repeat carries no extra meaning — so collapse it at the
         edge rather than making every consumer of ``static_groups`` defend
-        against it. ``_insert_static_memberships`` and the ``MembershipSkip``
+        against it. ``_plan_static_memberships`` and the ``MembershipSkip``
         generator both iterate this list raw and both rely on this.
         """
         return list(dict.fromkeys(value))

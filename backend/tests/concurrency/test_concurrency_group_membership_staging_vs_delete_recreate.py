@@ -10,7 +10,7 @@ Re-checking **by key** is not enough: a concurrent ``delete_group(key)`` then
 ``create_group(key)`` (static, no ``member_of`` -> no advisory lock) replaces
 the row with a new id while leaving the key present. The key still exists so
 the old code skips it, but ``group_id_by_key`` still holds the stale id, and
-``_insert_static_memberships`` stages ``DeviceGroupMembership(group_id=<stale>)``
+``_plan_static_memberships`` plans ``DeviceGroupMembership(group_id=<stale>)``
 -> the final commit violates ``device_group_memberships_group_id_fkey`` -> 500,
 with the device rows already committed and their memberships lost.
 
