@@ -44,8 +44,8 @@ def test_device_group_constructed_only_by_sanctioned_writers() -> None:
                 findings.append(f"  {rel}:{lineno}: {line.strip()}")
     assert not findings, (
         "device_groups rows may only be created by modules that take the "
-        "group-mutation advisory lock (see SANCTIONED_WRITERS and "
-        ".superpowers/specs/2026-07-20-group-mutation-serialization.md):\n" + "\n".join(findings)
+        "group-mutation advisory lock (see SANCTIONED_WRITERS above, "
+        "app/core/locks.py, and the advisory-lock paragraph in CLAUDE.md):\n" + "\n".join(findings)
     )
 
 
