@@ -71,7 +71,7 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "js-yaml": "^4.2.0",
     "openapi-typescript": {
       "typescript": "$typescript"
