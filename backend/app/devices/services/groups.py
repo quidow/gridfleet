@@ -74,17 +74,19 @@ class DeviceGroupsService:
     than by raising. A caller needing several group writes in one transaction
     needs a different entry point, not these.
 
-    **The ``DeviceGroup`` that ``create_group``/``update_group`` return is good
-    for its identity only** — read ``key`` or ``id``, nothing else. ``created_at``
-    and ``updated_at`` are SQL-side (``server_default``/``onupdate``
+    **The ``DeviceGroup`` that ``update_group`` returns is good for its identity
+    only** — read ``key`` or ``id``, nothing else. ``created_at`` and
+    ``updated_at`` are SQL-side (``server_default``/``onupdate``
     ``func.now()``), so SQLAlchemy expires them after the flush; touching one
     outside a transaction fires a lazy load and raises ``MissingGreenlet`` under
     async. The obvious cure — ``await db.refresh(group)`` after the commit — is
-    what these methods deliberately dropped: it runs after the advisory lock is
+    what this method deliberately dropped: it runs after the advisory lock is
     released, so a concurrent ``delete_group`` turns a write that already
-    succeeded into an ``InvalidRequestError`` 500. Callers wanting the full row
-    re-read it (both routers call ``get_group(db, group.key)``), which also
-    surfaces that peer delete honestly as a 404.
+    succeeded into an ``InvalidRequestError`` 500. A caller wanting the full row
+    re-reads it, as the PATCH route does; that re-read is load-bearing there
+    because ``device_count`` cannot be derived from the instance. ``create_group``
+    has no such constraint and serializes inside its own transaction instead —
+    see ``_insert_group``.
     """
 
     def __init__(
@@ -96,7 +98,7 @@ class DeviceGroupsService:
         self._publisher = publisher
         self._crud = crud
 
-    async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
+    async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> dict[str, Any]:
         # Serialise only a create that actually resolves peer rows. That read is
         # what FOR UPDATE cannot protect — it is blind to a row a peer has not
         # inserted yet — and it is the only thing here that can end up referencing
@@ -114,8 +116,21 @@ class DeviceGroupsService:
             group = await self._insert_group(db, data)
         return group
 
-    async def _insert_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
-        """Insert and commit the row. Caller holds the lock scope, if one is needed."""
+    async def _insert_group(self, db: AsyncSession, data: DeviceGroupCreate) -> dict[str, Any]:
+        """Insert and commit the row, returning it serialized. Caller holds the lock scope, if needed.
+
+        Serialized here, inside the transaction, rather than handed back as an
+        ORM instance for the router to re-read after the commit. Two things fall
+        out of that. ``created_at``/``updated_at`` are SQL-side, so they are only
+        readable after a fetch; doing it here fetches them while the row is still
+        ours and uncommitted, where no peer can delete it — which is exactly what
+        made the old post-commit ``db.refresh`` unsafe. And the route no longer
+        has to answer a 404 for a create that succeeded, because it no longer
+        depends on the row still being there when it builds the response.
+
+        ``device_count`` is 0 by construction: memberships reference this row by
+        id, and no one else has seen the id yet.
+        """
         group = DeviceGroup(
             key=data.key,
             name=data.name,
@@ -131,13 +146,15 @@ class DeviceGroupsService:
             if constraint_name(exc) == "ix_device_groups_key":
                 raise GroupKeyConflictError(f"Device group key '{data.key}' already exists") from exc
             raise
+        await db.refresh(group)
         self._publisher.queue_for_session(
             db,
             "device_group.updated",
             {"group_key": group.key, "action": "created"},
         )
+        payload = _serialize_group(group, device_count=0)
         await db.commit()
-        return group
+        return payload
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
         stmt = select(DeviceGroup).order_by(DeviceGroup.name)
@@ -191,6 +208,15 @@ class DeviceGroupsService:
         return None if group is None else group.group_type
 
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
+        # Locks unconditionally, unlike create_group. The payload can carry
+        # ``filters``, and that arm resolves peer rows exactly as a create with a
+        # ``member_of`` does, so the lock is genuinely required for part of this
+        # method's input space. Narrowing it to ``"filters" in
+        # data.model_fields_set`` would be sound — a rename resolves nothing and
+        # can dangle nothing — but it buys contention relief only on renames,
+        # which are cold operator actions, at the cost of a second conditional on
+        # the ``member_of`` invariant. The writer list in CLAUDE.md records this
+        # asymmetry deliberately; change both together or not at all.
         async with group_mutation_lock(db):
             loaded = await _load_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
             group = loaded.get(group_key)
@@ -448,11 +474,17 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     every unrelated fleet delete. Reading the raw value narrows the blast radius
     to rows that actually reference the target.
 
-    Both the well-formed list form (``{"member_of": ["target"]}``) and the
-    legacy bare-string form (``{"member_of": "target"}``) are checked, so a
-    malformed row that names the target still blocks the delete instead of
-    silently dangling. A malformed row that does not name the target is skipped
-    here and surfaces when ``get_group``/``list_groups`` serialize it.
+    Exactly two shapes are read: the well-formed list form
+    (``{"member_of": ["target"]}``) and the legacy bare-string form
+    (``{"member_of": "target"}``). **Any other shape is skipped, including one
+    that names the target** — a dict, a nested list, a number. Such a row cannot
+    be produced by the application (``DeviceGroupFilters`` validates every write
+    path); only a migration or manual SQL can leave one. Skipping it is the
+    deliberate side of the trade this scan makes: parsing every candidate
+    through ``DeviceGroupFilters`` instead would let one malformed row block
+    every unrelated fleet delete, which is the worse failure. The cost is that
+    deleting a group such a row references leaves it dangling, which
+    ``get_group``/``list_groups`` surface when they serialize it.
 
     ``device_group_memberships`` rows are a second class of dependent this
     deliberately ignores: they carry ``ON DELETE CASCADE``, so deleting a group

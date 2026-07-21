@@ -12,6 +12,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
@@ -63,11 +64,19 @@ class BundleHashMismatchError(ValueError):
 
 
 class GroupKeyCollisionError(ValueError):
-    """Raised when a bundle group key already exists in the target database."""
+    """Raised when a bundle group key already exists in the target database.
+
+    ``keys`` may be empty: the flush path re-reads to name the colliding keys
+    after its rollback has released the group-mutation lock, so a peer can
+    delete the row that won between the collision and the re-read. Report the
+    conflict without naming keys rather than guessing at them — the operator's
+    next step (re-validate and retry) is the same either way.
+    """
 
     def __init__(self, keys: list[str]) -> None:
         self.keys = keys
-        super().__init__(f"device group keys already exist in target: {', '.join(sorted(keys))}")
+        detail = f": {', '.join(sorted(keys))}" if keys else " (the colliding key was removed before it was read back)"
+        super().__init__(f"device group keys already exist in target{detail}")
 
 
 class UnknownGroupReferenceError(ValueError):
@@ -217,8 +226,14 @@ async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> No
             raise
         # The transaction is gone, so re-read to name the keys that actually landed
         # rather than blaming every key the bundle carried.
+        #
+        # No `or keys` fallback on an empty read. The rollback above released the
+        # group-mutation lock, so the winner's row can be deleted before this
+        # re-read runs; an empty result means the collision resolved itself, not
+        # that every key in the bundle collided. Naming them all would send the
+        # operator to edit groups that are fine.
         collided = await _load_existing_group_keys(session, set(keys))
-        raise GroupKeyCollisionError(sorted(collided or keys)) from exc
+        raise GroupKeyCollisionError(sorted(collided)) from exc
 
 
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
@@ -501,7 +516,7 @@ class PortabilityImportService:
                     if key in stale_keys
                 )
                 group_id_by_key = {key: gid for key, gid in group_id_by_key.items() if key not in stale_keys}
-            staged = self._insert_static_memberships(
+            staged = await self._insert_static_memberships(
                 session,
                 by_index=by_index,
                 device_id_by_index=device_id_by_index,
@@ -514,15 +529,20 @@ class PortabilityImportService:
                 # only the membership rows are lost here. Letting this propagate
                 # would discard `created`/`skipped`/`failed` along with them and
                 # leave the operator no record of which devices the import made.
-                # Reachable when a device is deleted between the device loop and
-                # this commit (device_group_memberships_device_id_fkey); the
-                # group arm of the same race is caught by the re-read above.
+                #
+                # One cause survives to here. The unique constraint is handled by
+                # ON CONFLICT DO NOTHING; the group_id FK cannot fire because
+                # delete_group takes the lock this block holds. That leaves a
+                # device deleted between the device loop and this commit
+                # (device_group_memberships_device_id_fkey), which nothing
+                # serialises against the import — so name that cause rather than
+                # a vaguer one, and say the batch went, since it did.
                 await session.rollback()
                 memberships_skipped.extend(
                     MembershipSkip(
                         index=idx,
                         group_key=key,
-                        reason="membership staging failed: group or device no longer exists",
+                        reason="membership staging rolled back: a device was deleted during import",
                     )
                     for idx, key in staged
                 )
@@ -547,7 +567,7 @@ class PortabilityImportService:
         await _flush_groups_or_collide(session, [g.key for g in groups])
         return {group.key: group.id for group in groups}
 
-    def _insert_static_memberships(
+    async def _insert_static_memberships(
         self,
         session: AsyncSession,
         by_index: dict[int, ImportPreviewRow],
@@ -565,18 +585,34 @@ class PortabilityImportService:
         and a ``.get`` miss is the only guard needed. A device naming a key
         outside that set was already marked INVALID by ``_classify_row`` and
         never reaches ``device_id_by_index``.
+
+        ``ON CONFLICT DO NOTHING`` on ``(group_id, device_id)`` for the same
+        reason ``add_members`` uses it: an operator adding one of these devices
+        to one of these groups between the device loop and this commit would
+        otherwise violate the unique constraint, and this is a single batch, so
+        that one row would take every other membership in the import down with
+        it. The end state a conflict produces is the one we wanted anyway.
         """
         staged: list[tuple[int, str]] = []
         if not group_id_by_key:
             return staged
+        values: list[dict[str, uuid.UUID]] = []
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:
                 group_id = group_id_by_key.get(key)
                 if group_id is None:
                     continue
-                session.add(DeviceGroupMembership(group_id=group_id, device_id=device_id))
+                values.append({"group_id": group_id, "device_id": device_id})
                 staged.append((idx, key))
+        if values:
+            await session.execute(
+                pg_insert(DeviceGroupMembership)
+                .values(values)
+                .on_conflict_do_nothing(
+                    index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id]
+                )
+            )
         return staged
 
     async def _insert_dynamic_group_definitions(

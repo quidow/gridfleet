@@ -19,6 +19,7 @@ from app.portability.schemas import (
     ImportMapping,
     OriginalHost,
 )
+from app.portability.services import import_bundle as import_bundle_module
 from app.portability.services.hash import compute_bundle_hash
 from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
 from app.verification.services.service import VerificationService
@@ -610,6 +611,11 @@ async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurren
     nothing, so two operators committing the same bundle both pass validation. Patch
     the pre-check to return empty, which is exactly what the loser of that race sees,
     and assert the unique-index violation surfaces as the documented 409.
+
+    Only the *pre-check* is stubbed. ``_flush_groups_or_collide`` calls the same
+    helper again after its rollback to name the keys that actually collided, and
+    that call must run for real — stubbing it too would assert against a
+    fallback rather than against the re-read.
     """
     await seed_host_named(db_session, "lab-04")
     db_session.add(DeviceGroup(key="lab-fleet", name="lab fleet", group_type=GroupType.static))
@@ -624,8 +630,15 @@ async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurren
     bundle = ExportBundle.model_validate(bundle_body)
     body = {"bundle": bundle_body, "bundle_hash": compute_bundle_hash(bundle), "mappings": []}
 
+    real_load = import_bundle_module._load_existing_group_keys
+    calls = 0
+
     async def _sees_no_existing_keys(*args: object, **kwargs: object) -> set[str]:
-        return set()
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return set()
+        return await real_load(*args, **kwargs)  # type: ignore[arg-type]
 
     with patch("app.portability.services.import_bundle._load_existing_group_keys", _sees_no_existing_keys):
         response = await client.post("/api/portability/import", json=body)

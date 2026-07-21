@@ -32,7 +32,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from sqlalchemy import select
 
+from app.devices.models import Device, DeviceGroup, DeviceGroupMembership
 from app.devices.models.group import GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.groups import GroupReferencedError
@@ -211,3 +213,72 @@ async def test_delete_during_membership_staging_does_not_500(
     else:
         assert delete_result is True
         assert static_row is None, "static group must be gone when delete succeeded"
+
+
+async def test_concurrent_add_members_during_staging_keeps_the_memberships(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """An operator adding an imported device to its bundle group must not void the batch.
+
+    Same window as the delete test, different peer: ``add_members`` inserts the
+    exact ``(group_id, device_id)`` pair the import is about to stage. A plain
+    INSERT would violate the unique constraint and roll back *every* membership
+    in the import, so a bundle importing many devices loses all of them to one
+    operator click. Staging uses ``ON CONFLICT DO NOTHING`` — the same idiom
+    ``add_members`` itself uses — so the row survives exactly once and the rest
+    of the batch commits.
+    """
+    _ = seeded_driver_packs
+    suffix = uuid.uuid4().hex[:8]
+    static_key = f"static-{suffix}"
+    dynamic_key = f"dynamic-{suffix}"
+
+    host = await seed_host_named(db_session, "import-host")
+    bundle, mappings = _bundle_with_device(static_key, dynamic_key, host.id)
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=mappings)
+    device_committed = asyncio.Event()
+
+    async def run_import() -> ImportCommitResult:
+        async with db_session_maker() as session:
+            _signal_after_device_loop_commit(session, device_committed)
+            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+                session, request
+            )
+
+    async def add_the_same_member() -> int | None:
+        await _wait_for_device_commit(device_committed)
+        async with db_session_maker() as session:
+            device_id = (
+                await session.execute(
+                    select(Device.id).where(Device.identity_value == bundle.devices[0].identity_value)
+                )
+            ).scalar_one()
+            return await build_groups_service().add_members(session, static_key, [device_id])
+
+    import_result, add_result = await asyncio.gather(run_import(), add_the_same_member(), return_exceptions=True)
+
+    assert not isinstance(import_result, Exception), (
+        f"import must not raise on a conflicting peer add; got {import_result!r}"
+    )
+    assert not isinstance(add_result, Exception), f"add_members must not raise; got {add_result!r}"
+    assert import_result.memberships_skipped == [], (
+        f"a benign unique-constraint conflict must not be reported as a skipped membership: "
+        f"{import_result.memberships_skipped!r}"
+    )
+
+    # Exactly one membership row, whichever writer laid it down.
+    async with db_session_maker() as verify_session:
+        rows = (
+            (
+                await verify_session.execute(
+                    select(DeviceGroupMembership)
+                    .join(DeviceGroup, DeviceGroup.id == DeviceGroupMembership.group_id)
+                    .where(DeviceGroup.key == static_key)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1, f"expected exactly one membership row, got {len(rows)}"

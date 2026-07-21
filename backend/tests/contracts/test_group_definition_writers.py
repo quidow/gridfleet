@@ -103,9 +103,26 @@ LOCKED_FUNCTIONS: dict[str, frozenset[str]] = {
 _LOCK_NAMES = frozenset({"group_mutation_lock", "acquire_group_mutation_lock"})
 
 
+def _lock_call_is_live(call: ast.Call) -> bool:
+    """False for an acquire whose ``when=`` is pinned to a constant falsy value.
+
+    ``when=`` is the one argument that can void the acquire without removing the
+    call, so a name-only match would stay green against
+    ``group_mutation_lock(db, when=False)``. A non-constant ``when=`` (the real
+    ``bool(member_of)`` form) is accepted — deciding whether an expression can
+    ever be true is the reachability analysis this file declines to attempt.
+    """
+    return not any(
+        kw.arg == "when" and isinstance(kw.value, ast.Constant) and not kw.value.value for kw in call.keywords
+    )
+
+
 def _takes_the_lock(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
     return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _LOCK_NAMES
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _LOCK_NAMES
+        and _lock_call_is_live(node)
         for node in ast.walk(func)
     )
 

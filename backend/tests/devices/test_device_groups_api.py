@@ -670,3 +670,34 @@ async def test_static_membership_mutation_preserves_device_state(
     assert (await device_readiness.assess_device_async(db_session, device)) == readiness_before
     assert node.desired_state == desired_state_before
     assert node.restart_requested_at == restart_watermark_before
+
+
+async def test_create_group_survives_a_peer_delete_landing_after_the_commit(client: AsyncClient) -> None:
+    """A create that committed must report 201, not 404, if the row is deleted immediately after.
+
+    The route used to re-read the row after the service committed and released
+    the group lock, so a peer ``DELETE`` in that gap turned a create that had
+    already succeeded — and already published ``device_group.updated`` — into a
+    404. A client retrying that 404 either recreates a group the operator
+    deliberately deleted or gets a 409 for a create it believes never happened.
+
+    Stubbing ``get_group`` to ``None`` is that peer delete: the row is gone by
+    the time anything could re-read it. The route must still describe what its
+    own request did.
+    """
+    with patch(
+        "app.devices.services.groups.DeviceGroupsService.get_group",
+        AsyncMock(return_value=None),
+    ):
+        resp = await client.post(
+            "/api/device-groups",
+            json={"key": "vanishes", "name": "Vanishes", "group_type": "static"},
+        )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["key"] == "vanishes"
+    assert body["device_count"] == 0
+    # Populated inside the service transaction; reading them here proves the
+    # response needs no post-commit fetch.
+    assert body["created_at"] and body["updated_at"]

@@ -61,15 +61,18 @@ async def _group_device_ids_or_404(
 @router.post("", response_model=DeviceGroupRead, response_model_exclude_none=True, status_code=201)
 async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     try:
-        group = await device_services.groups.create_group(db, data)
+        # Serialized by the service inside its own transaction, so there is no
+        # post-commit re-read to race. A peer delete landing right after the
+        # commit used to turn a create that succeeded — and had already published
+        # `device_group.updated` — into a 404, which a retrying client reads as
+        # "never created": it then either recreates a group the operator
+        # deliberately deleted, or gets a 409 for a create it believes never
+        # happened. 201 reports what this request actually did.
+        return await device_services.groups.create_group(db, data)
     except GroupKeyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # The re-read runs after the service committed and released the group lock, so
-    # a peer delete can land in between. `or {}` would fail DeviceGroupRead
-    # validation as a 500; the group genuinely no longer exists, so say so.
-    return found_or_404(await device_services.groups.get_group(db, group.key), "Group not found")
 
 
 @router.get("", response_model=list[DeviceGroupRead], response_model_exclude_none=True)
