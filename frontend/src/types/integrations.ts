@@ -16,8 +16,7 @@ export type LifecycleIncidentRead = Omit<
 
 export type SettingValidation = Schemas['SettingValidation'];
 
-export type SettingRead = Omit<Schemas['SettingRead'], 'type' | 'validation'> & {
-  type: 'int' | 'string' | 'bool' | 'json';
+export type SettingRead = Omit<Schemas['SettingRead'], 'validation'> & {
   validation?: SettingValidation | null;
 };
 export type SettingsGrouped = Omit<Schemas['SettingsGrouped'], 'settings'> & {

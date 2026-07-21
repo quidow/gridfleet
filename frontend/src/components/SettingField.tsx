@@ -70,6 +70,7 @@ function formatDefault(value: unknown): string {
 function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown) => void, id: string) {
   switch (setting.type) {
     case 'int':
+    case 'float':
       return (
         <NumberField
           id={id}
@@ -78,6 +79,7 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
           onChange={(v) => onChange(v === null ? '' : v)}
           min={setting.validation?.min ?? undefined}
           max={setting.validation?.max ?? undefined}
+          step={setting.type === 'float' ? 'any' : undefined}
           fullWidth={false}
           className="w-48"
         />
@@ -161,12 +163,18 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
         />
       );
     default:
-      return null;
+      // Unreachable while the union matches the backend; guards against version skew.
+      setting.type satisfies never;
+      return (
+        <p className="text-xs text-danger-foreground">
+          Unsupported setting type: {setting.type}. Edit this value via the API.
+        </p>
+      );
   }
 }
 
 function validateField(setting: SettingRead, value: unknown): string | null {
-  if (setting.type === 'int') {
+  if (setting.type === 'int' || setting.type === 'float') {
     if (typeof value !== 'number') return null;
     if (setting.validation?.min != null && value < setting.validation.min)
       return `Minimum value is ${setting.validation.min}`;
