@@ -17,6 +17,7 @@ from app.devices.schemas.device import (
 from app.devices.schemas.group import (
     DeviceGroupCreate,
     DeviceGroupDetail,
+    DeviceGroupMutationRead,
     DeviceGroupRead,
     DeviceGroupUpdate,
     GroupMembershipUpdate,
@@ -58,15 +59,15 @@ async def _group_device_ids_or_404(
     return await device_services.groups.get_group_device_ids(db, group_key)
 
 
-@router.post("", response_model=DeviceGroupRead, response_model_exclude_none=True, status_code=201)
+@router.post("", response_model=DeviceGroupMutationRead, response_model_exclude_none=True, status_code=201)
 async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     try:
-        group = await device_services.groups.create_group(db, data)
+        # The service serializes stable fields before commit, avoiding a racy re-read.
+        return await device_services.groups.create_group(db, data)
     except GroupKeyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return await device_services.groups.get_group(db, group.key) or {}
 
 
 @router.get("", response_model=list[DeviceGroupRead], response_model_exclude_none=True)
@@ -121,7 +122,7 @@ async def get_group(group_key: GroupKey, db: DbDep, device_services: DeviceServi
     return payload
 
 
-@router.patch("/{group_key}", response_model=DeviceGroupRead, response_model_exclude_none=True)
+@router.patch("/{group_key}", response_model=DeviceGroupMutationRead, response_model_exclude_none=True)
 async def update_group(
     group_key: GroupKey,
     data: DeviceGroupUpdate,
@@ -129,10 +130,9 @@ async def update_group(
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
     try:
-        group = found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
+        return found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return await device_services.groups.get_group(db, group.key) or {}
 
 
 @router.delete("/{group_key}", status_code=204)

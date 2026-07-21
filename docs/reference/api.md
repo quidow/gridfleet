@@ -76,7 +76,7 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/portability/export` | Export the full registered fleet as a versioned JSON bundle | none | portability bundle (`schema_version=2`) |
 | `POST` | `/api/portability/import/validate` | Preview an uploaded bundle without writing to the DB | bundle body | per-row classification, host suggestions, `bundle_hash` |
-| `POST` | `/api/portability/import` | Commit a previously-validated bundle | `{ bundle, bundle_hash, mappings: [{ index, target_host_id }] }` | `{ created, skipped, failed }` arrays |
+| `POST` | `/api/portability/import` | Commit a previously-validated bundle | `{ bundle, bundle_hash, mappings: [{ index, target_host_id }] }` | `{ created, skipped, failed, memberships_skipped }` arrays |
 
 `GET /api/portability/export` returns the full registered fleet as a `schema_version=2` JSON bundle. Intended to seed a fresh GridFleet install after a DB wipe or migration. Runtime state is excluded (operational_state, telemetry, lifecycle policy state, verification stamps). The bundle preserves identity, name, device group membership, device_config, test_data, and the original host hostname.
 
@@ -98,7 +98,11 @@ Groups are addressed by key throughout the bundle; no group UUID is exported, so
 - Auto-matched host suggestions based on case-insensitive hostname comparison against registered hosts.
 - A canonical `bundle_hash` to pass back on commit.
 
-`POST /api/portability/import` commits a previously-validated bundle. The server recomputes the canonical bundle hash; a mismatch returns `409`. `mappings` overrides the auto-suggested host assignment per row (identified by `index`). Per-row transaction: device insert and verification job enqueue happen atomically. Response arrays (`created`, `skipped`, `failed`) contain per-index entries with reasons for non-created rows.
+`POST /api/portability/import` commits a previously-validated bundle. The server recomputes the canonical bundle hash; a mismatch returns `409`. `mappings` overrides the auto-suggested host assignment per row (identified by `index`). Per-row transaction: device insert and verification job enqueue happen atomically. The `created`, `skipped`, and `failed` response arrays describe device-row outcomes; `memberships_skipped` describes static memberships omitted from otherwise-created devices.
+
+Group definitions commit before device rows. If an infrastructure failure interrupts the import afterward, those groups remain and retrying the unchanged bundle returns `409`; remove the partial groups or change their bundle keys, then re-validate before retrying.
+
+A fourth array, `memberships_skipped`, reports static group memberships the import could not write even though the device row itself was created — entries carry `index`, `group_key`, and `reason`. Group definitions commit before the device loop and memberships commit after it, so a group deleted (or deleted and recreated under the same key) while the import runs loses its memberships rather than failing the whole import. An import can therefore succeed with devices that belong to fewer groups than the bundle listed; the array is the record of that, and it is empty on a clean import.
 
 ## Bulk Device Actions
 

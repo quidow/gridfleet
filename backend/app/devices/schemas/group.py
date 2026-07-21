@@ -27,7 +27,7 @@ class DeviceGroupUpdate(BaseModel):
     filters: DeviceGroupFilters | None = None
 
 
-class DeviceGroupRead(BaseModel):
+class _DeviceGroupReadBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     key: str
@@ -35,9 +35,16 @@ class DeviceGroupRead(BaseModel):
     description: str | None
     group_type: GroupType
     filters: DeviceGroupFilters | None
-    device_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class DeviceGroupRead(_DeviceGroupReadBase):
+    device_count: int = 0
+
+
+class DeviceGroupMutationRead(_DeviceGroupReadBase):
+    device_count: int | None = None
 
 
 class DeviceGroupDetail(DeviceGroupRead):

@@ -2260,6 +2260,29 @@ export interface components {
         "DeviceGroupFilters-Output": {
             [key: string]: unknown;
         };
+        /** DeviceGroupMutationRead */
+        DeviceGroupMutationRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string | null;
+            /** Device Count */
+            device_count?: number | null;
+            filters: components["schemas"]["DeviceGroupFilters-Output"] | null;
+            group_type: components["schemas"]["GroupType"];
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** DeviceGroupRead */
         DeviceGroupRead: {
             /**
@@ -3872,6 +3895,8 @@ export interface components {
             created: components["schemas"]["ImportCommitCreatedRow"][];
             /** Failed */
             failed: components["schemas"]["ImportCommitFailedRow"][];
+            /** Memberships Skipped */
+            memberships_skipped?: components["schemas"]["MembershipSkip"][];
             /** Skipped */
             skipped: components["schemas"]["ImportCommitSkippedRow"][];
         };
@@ -4056,6 +4081,15 @@ export interface components {
             };
             /** Id */
             id: string;
+        };
+        /** MembershipSkip */
+        MembershipSkip: {
+            /** Group Key */
+            group_key: string;
+            /** Index */
+            index: number;
+            /** Reason */
+            reason: string;
         };
         /** NodeDesiredSpecOut */
         NodeDesiredSpecOut: {
@@ -5399,7 +5433,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeviceGroupRead"];
+                    "application/json": components["schemas"]["DeviceGroupMutationRead"];
                 };
             };
             /** @description Validation error */
@@ -5602,7 +5636,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeviceGroupRead"];
+                    "application/json": components["schemas"]["DeviceGroupMutationRead"];
                 };
             };
             /** @description Validation error */

@@ -9,7 +9,9 @@ from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.devices.schemas.group import DeviceGroupUpdate
 
 HOST_PAYLOAD = {
     "hostname": "group-host",
@@ -560,6 +562,63 @@ async def test_delete_static_group_referenced_by_dynamic_returns_409(
 
 
 @pytest.mark.db
+async def test_delete_unrelated_group_not_blocked_by_malformed_member_of_row(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A malformed stored ``member_of`` that does not name the target must not
+    block an unrelated delete.
+
+    The old scan validated every candidate through ``DeviceGroupFilters``
+    (``extra="forbid"``), so one bare-string ``member_of`` row anywhere in the
+    fleet 422'd every unrelated delete. The raw-dict check skips rows whose
+    ``member_of`` cannot reference the target; the malformed row still surfaces
+    later when ``get_group``/``list_groups`` serialize it.
+    """
+    from app.devices.models.group import DeviceGroup, GroupType
+
+    await client.post("/api/device-groups", json={"key": "unrelated", "name": "Unrelated", "group_type": "static"})
+    db_session.add(
+        DeviceGroup(
+            key="malformed-dyn",
+            name="Malformed",
+            group_type=GroupType.dynamic,
+            filters={"member_of": "other-group"},  # bare string, does not name "unrelated"
+        )
+    )
+    await db_session.commit()
+    resp = await client.delete("/api/device-groups/unrelated")
+    assert resp.status_code == 204, resp.text
+
+
+@pytest.mark.db
+async def test_delete_group_referenced_by_bare_string_member_of_returns_409(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A legacy bare-string ``member_of`` naming the target still blocks the delete.
+
+    The raw-dict check matches both the list form and the bare-string form, so a
+    malformed referencer cannot silently leave a dangling ``member_of`` when its
+    target is deleted.
+    """
+    from app.devices.models.group import DeviceGroup, GroupType
+
+    await client.post("/api/device-groups", json={"key": "target", "name": "Target", "group_type": "static"})
+    db_session.add(
+        DeviceGroup(
+            key="bare-dyn",
+            name="Bare",
+            group_type=GroupType.dynamic,
+            filters={"member_of": "target"},  # bare string naming the target
+        )
+    )
+    await db_session.commit()
+    resp = await client.delete("/api/device-groups/target")
+    assert resp.status_code == 409, resp.text
+
+
+@pytest.mark.db
 async def test_static_membership_mutation_preserves_device_state(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -613,3 +672,97 @@ async def test_static_membership_mutation_preserves_device_state(
     assert (await device_readiness.assess_device_async(db_session, device)) == readiness_before
     assert node.desired_state == desired_state_before
     assert node.restart_requested_at == restart_watermark_before
+
+
+async def test_create_group_survives_a_peer_delete_landing_after_the_commit(client: AsyncClient) -> None:
+    """A create that committed must report 201, not 404, if the row is deleted immediately after.
+
+    The route used to re-read the row after the service committed and released
+    the group lock, so a peer ``DELETE`` in that gap turned a create that had
+    already succeeded — and already published ``device_group.updated`` — into a
+    404. A client retrying that 404 either recreates a group the operator
+    deliberately deleted or gets a 409 for a create it believes never happened.
+
+    Stubbing ``get_group`` to ``None`` is that peer delete: the row is gone by
+    the time anything could re-read it. The route must still describe what its
+    own request did.
+    """
+    with patch(
+        "app.devices.services.groups.DeviceGroupsService.get_group",
+        AsyncMock(return_value=None),
+    ):
+        resp = await client.post(
+            "/api/device-groups",
+            json={"key": "vanishes", "name": "Vanishes", "group_type": "static"},
+        )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["key"] == "vanishes"
+    assert body["device_count"] == 0
+    # Populated inside the service transaction; reading them here proves the
+    # response needs no post-commit fetch.
+    assert body["created_at"] and body["updated_at"]
+
+
+async def test_update_group_survives_a_peer_delete_landing_after_the_commit(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services.groups import DeviceGroupsService
+
+    created = await _create_group(client, key="updated-then-deleted")
+    original_update = DeviceGroupsService.update_group
+
+    async def update_then_delete(
+        self: DeviceGroupsService,
+        db: AsyncSession,
+        group_key: str,
+        data: DeviceGroupUpdate,
+    ) -> dict[str, Any] | None:
+        result = await original_update(self, db, group_key, data)
+        assert result is not None
+        async with db_session_maker() as peer:
+            assert await self.delete_group(peer, group_key) is True
+        return result
+
+    monkeypatch.setattr(DeviceGroupsService, "update_group", update_then_delete)
+
+    response = await client.patch(f"/api/device-groups/{created['key']}", json={"name": "Updated"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Updated"
+    assert (await client.get(f"/api/device-groups/{created['key']}")).status_code == 404
+
+
+async def test_create_dynamic_group_reports_the_same_device_count_as_a_read(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """The create response's device_count must agree with an immediate GET.
+
+    A dynamic group's membership is derived from its filters over devices that
+    already exist, so unlike a static group it is not empty at creation. The
+    create path cannot assume 0 the way it can for statics, where membership
+    rows reference an id nobody has seen yet.
+    """
+    await _create_device(db_session, "DYN-1", "dyn-device", default_host_id)
+
+    created = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dc-dyn",
+            "name": "DC dyn",
+            "group_type": "dynamic",
+            "filters": {"platform_id": "android_mobile"},
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    fetched = await client.get("/api/device-groups/dc-dyn")
+    assert fetched.status_code == 200, fetched.text
+
+    assert created.json()["device_count"] == fetched.json()["device_count"], (
+        f"create said {created.json()['device_count']}, read says {fetched.json()['device_count']}"
+    )
+    assert fetched.json()["device_count"] == 1

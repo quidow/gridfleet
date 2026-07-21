@@ -1,10 +1,11 @@
 import enum
 import uuid
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.errors import AppError
 from app.devices.group_keys import GroupKey
@@ -66,6 +67,12 @@ class ExportedDevice(BaseModel):
     test_data: dict[str, Any] = Field(default_factory=dict)
     original_host: OriginalHost
 
+    @field_validator("static_groups")
+    @classmethod
+    def _dedupe_static_groups(cls, value: list[GroupKey]) -> list[GroupKey]:
+        """Keep first-seen order and prevent duplicate skip reports."""
+        return list(dict.fromkeys(value))
+
 
 class ExportBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -75,6 +82,14 @@ class ExportBundle(BaseModel):
     source_instance: str | None = None
     groups: list[ExportedDeviceGroup] = Field(default_factory=list)
     devices: list[ExportedDevice]
+
+    @field_validator("groups")
+    @classmethod
+    def _unique_group_keys(cls, value: list[ExportedDeviceGroup]) -> list[ExportedDeviceGroup]:
+        duplicates = sorted(key for key, count in Counter(group.key for group in value).items() if count > 1)
+        if duplicates:
+            raise ValueError(f"duplicate device group keys: {', '.join(duplicates)}")
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -171,9 +186,18 @@ class ImportCommitFailedRow(BaseModel):
     reason: str
 
 
+class MembershipSkip(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    index: int
+    group_key: str
+    reason: str
+
+
 class ImportCommitResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     created: list[ImportCommitCreatedRow]
     skipped: list[ImportCommitSkippedRow]
     failed: list[ImportCommitFailedRow]
+    memberships_skipped: list[MembershipSkip] = Field(default_factory=list)

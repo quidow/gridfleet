@@ -298,23 +298,22 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(HTTPException):
         await device_groups._group_device_ids_or_404(db, group_key, ds_empty)
 
+    # The create route returns what the service serialized inside its own
+    # transaction; there is no post-commit re-read to mock.
+    created_payload = {"key": group_key, "device_count": 0}
     ds_create = SimpleNamespace(
         groups=SimpleNamespace(
-            create_group=AsyncMock(return_value=SimpleNamespace(key=group_key)),
-            get_group=AsyncMock(return_value={"key": group_key, "devices": []}),
+            create_group=AsyncMock(return_value=created_payload),
+            get_group=AsyncMock(return_value=None),
         )
     )
-    assert await device_groups.create_group(
-        DeviceGroupCreate(key=group_key, name="g"), db=db, device_services=ds_create
-    ) == {
-        "key": group_key,
-        "devices": [],
-    }
+    assert (
+        await device_groups.create_group(DeviceGroupCreate(key=group_key, name="g"), db=db, device_services=ds_create)
+        == created_payload
+    )
+    ds_create.groups.get_group.assert_not_awaited()
     ds_create_with_presenter = SimpleNamespace(
-        groups=SimpleNamespace(
-            create_group=AsyncMock(return_value=SimpleNamespace(key=group_key)),
-            get_group=AsyncMock(return_value={"key": group_key, "devices": []}),
-        ),
+        groups=SimpleNamespace(get_group=AsyncMock(return_value={"key": group_key, "devices": []})),
         presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})),
     )
     assert await device_groups.get_group(group_key, db=db, device_services=ds_create_with_presenter) == {

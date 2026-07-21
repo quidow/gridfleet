@@ -4,6 +4,7 @@ import type {
   BulkOperationResult,
   DeviceGroupCreate,
   DeviceGroupDetail,
+  DeviceGroupMutationRead,
   DeviceGroupRead,
   DeviceGroupUpdate,
 } from '../types';
@@ -15,10 +16,10 @@ export const fetchDeviceGroup = (key: string) =>
   api.get<DeviceGroupDetail>(`/device-groups/${encodeURIComponent(key)}`).then(r => r.data);
 
 export const createDeviceGroup = (data: DeviceGroupCreate) =>
-  api.post<DeviceGroupRead>('/device-groups', data).then(r => r.data);
+  api.post<DeviceGroupMutationRead>('/device-groups', data).then(r => r.data);
 
 export const updateDeviceGroup = (key: string, data: DeviceGroupUpdate) =>
-  api.patch<DeviceGroupRead>(`/device-groups/${encodeURIComponent(key)}`, data).then(r => r.data);
+  api.patch<DeviceGroupMutationRead>(`/device-groups/${encodeURIComponent(key)}`, data).then(r => r.data);
 
 export const deleteDeviceGroup = (key: string) =>
   api.delete(`/device-groups/${encodeURIComponent(key)}`);

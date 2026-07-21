@@ -19,9 +19,11 @@ from app.portability.schemas import (
     ImportMapping,
     OriginalHost,
 )
+from app.portability.services import import_bundle as import_bundle_module
 from app.portability.services.hash import compute_bundle_hash
 from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
 from app.verification.services.service import VerificationService
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import seed_existing_device, seed_host_named
 
 if TYPE_CHECKING:
@@ -478,6 +480,137 @@ async def test_commit_persists_static_groups_and_memberships(
 
 @pytest.mark.asyncio
 @pytest.mark.db
+async def test_commit_dedupes_a_repeated_static_group_key(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
+    """A key listed twice yields one membership row and no skip entries.
+
+    This pins the end state, not the dedup validator — ``ON CONFLICT DO NOTHING``
+    would collapse the duplicate on its own, so this passes with the validator
+    removed. The validator's actual job is keeping duplicate ``MembershipSkip``
+    entries out of the report; ``test_exported_device_dedupes_static_groups``
+    guards that directly.
+    """
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle(
+        [_device(identity_value="R58", static_groups=["shelf-a", "shelf-a"])],
+        groups=[_static_group("shelf-a")],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
+    assert len(result.created) == 1
+    assert result.memberships_skipped == []
+
+    persisted = await _committed_group_keys(db_session_maker)
+    async with db_session_maker() as verify_session:
+        memberships = (await verify_session.execute(select(DeviceGroupMembership))).scalars().all()
+    assert [(m.group_id, m.device_id) for m in memberships] == [(persisted["shelf-a"].id, result.created[0].device_id)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_leaves_no_open_transaction_when_nothing_is_staged(
+    db_session: AsyncSession,
+    seeded_driver_packs: None,
+) -> None:
+    """A bundle that stages no memberships must not leave a read transaction open.
+
+    ``validate_bundle`` reads before any write, and on this path no commit
+    follows it. An open transaction surviving to request teardown sits idle
+    holding back the xmin horizon.
+    """
+    bundle = _bundle([], groups=[_static_group("shelf-a")])
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=[])
+    await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
+
+    assert not db_session.in_transaction()
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_skips_membership_lock_when_the_plan_is_empty(
+    db_session: AsyncSession,
+    seeded_driver_packs: None,
+) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    host_id = host.id
+    # seed_host_named refreshes the row after committing, which opens a read
+    # transaction; the import endpoint itself starts with a clean session.
+    await db_session.rollback()
+    bundle = _bundle([_device(static_groups=[])], groups=[_static_group("shelf-a")])
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host_id)],
+    )
+
+    async with capture_statements(db_session) as statements:
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
+
+    assert len(result.created) == 1
+    lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
+    assert len(lock_statements) == 1, statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_bounds_membership_lock_to_batches(
+    db_session: AsyncSession,
+    seeded_driver_packs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    host_id = host.id
+    await db_session.rollback()
+    bundle = _bundle(
+        [
+            _device(identity_value="batch-1", static_groups=["shelf-a"]),
+            _device(identity_value="batch-2", static_groups=["shelf-a"]),
+        ],
+        groups=[_static_group("shelf-a")],
+    )
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[
+            ImportMapping(index=0, target_host_id=host_id),
+            ImportMapping(index=1, target_host_id=host_id),
+        ],
+    )
+    monkeypatch.setattr(import_bundle_module, "MEMBERSHIP_BATCH_SIZE", 1, raising=False)
+
+    async with capture_statements(db_session) as statements:
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
+
+    assert len(result.created) == 2
+    lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
+    assert len(lock_statements) == 3, statements
+    device_locks = [
+        statement.lower()
+        for statement in statements
+        if "from devices" in statement.lower() and "for key share" in statement.lower()
+    ]
+    assert len(device_locks) == 2, statements
+    assert all("order by devices.id" in statement for statement in device_locks), device_locks
+    assert not any(
+        "from device_groups" in statement.lower() and "for key share" in statement.lower() for statement in statements
+    ), statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
 async def test_commit_persists_static_and_dynamic_groups(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
@@ -556,6 +689,11 @@ async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurren
     nothing, so two operators committing the same bundle both pass validation. Patch
     the pre-check to return empty, which is exactly what the loser of that race sees,
     and assert the unique-index violation surfaces as the documented 409.
+
+    Only the *pre-check* is stubbed. ``_flush_groups_or_collide`` calls the same
+    helper again after its rollback to name the keys that actually collided, and
+    that call must run for real — stubbing it too would assert against a
+    fallback rather than against the re-read.
     """
     await seed_host_named(db_session, "lab-04")
     db_session.add(DeviceGroup(key="lab-fleet", name="lab fleet", group_type=GroupType.static))
@@ -570,8 +708,15 @@ async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurren
     bundle = ExportBundle.model_validate(bundle_body)
     body = {"bundle": bundle_body, "bundle_hash": compute_bundle_hash(bundle), "mappings": []}
 
+    real_load = import_bundle_module._load_existing_group_keys
+    calls = 0
+
     async def _sees_no_existing_keys(*args: object, **kwargs: object) -> set[str]:
-        return set()
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return set()
+        return await real_load(*args, **kwargs)  # type: ignore[arg-type]
 
     with patch("app.portability.services.import_bundle._load_existing_group_keys", _sees_no_existing_keys):
         response = await client.post("/api/portability/import", json=body)

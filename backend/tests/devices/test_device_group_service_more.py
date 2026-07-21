@@ -3,20 +3,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import text
 
 from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
-from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.groups import DeviceGroupsService, StaticGroupFiltersError
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 def _svc(settings: object | None = None) -> DeviceGroupsService:
@@ -42,33 +44,67 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     )
     await settle_after_commit_tasks()
 
-    assert await svc.add_members(db_session, group.key, [first_device.id, second_device.id]) == 2
-    assert await svc.add_members(db_session, group.key, [first_device.id]) == 0
+    assert await svc.add_members(db_session, group["key"], [first_device.id, second_device.id]) == 2
+    assert await svc.add_members(db_session, group["key"], [first_device.id]) == 0
 
     groups = await svc.list_groups(db_session)
     assert groups[0]["device_count"] == 2
 
-    detail = await svc.get_group(db_session, group.key)
+    detail = await svc.get_group(db_session, group["key"])
     assert detail is not None
     assert [device.id for device in detail["devices"]] == [first_device.id, second_device.id]
-    assert await svc.get_group_device_ids(db_session, group.key) == [first_device.id, second_device.id]
+    assert await svc.get_group_device_ids(db_session, group["key"]) == [first_device.id, second_device.id]
 
-    assert await svc.remove_members(db_session, group.key, [first_device.id]) == 1
-    assert await svc.remove_members(db_session, group.key, [first_device.id]) == 0
+    assert await svc.remove_members(db_session, group["key"], [first_device.id]) == 1
+    assert await svc.remove_members(db_session, group["key"], [first_device.id]) == 0
 
     updated = await svc.update_group(
         db_session,
-        group.key,
+        group["key"],
         DeviceGroupUpdate(name="static phones updated", description="renamed"),
     )
     assert updated is not None
-    assert updated.name == "static phones updated"
-    assert updated.description == "renamed"
+    assert updated["name"] == "static phones updated"
+    assert updated["description"] == "renamed"
+    assert updated["device_count"] == 1
 
-    assert await svc.delete_group(db_session, group.key) is True
-    assert await svc.delete_group(db_session, group.key) is False
-    assert await svc.get_group(db_session, group.key) is None
-    assert await svc.update_group(db_session, group.key, DeviceGroupUpdate(name="missing")) is None
+    assert await svc.delete_group(db_session, group["key"]) is True
+    assert await svc.delete_group(db_session, group["key"]) is False
+    assert await svc.get_group(db_session, group["key"]) is None
+    assert await svc.update_group(db_session, group["key"], DeviceGroupUpdate(name="missing")) is None
+
+
+async def test_update_static_group_counts_without_loading_member_devices(db_session: AsyncSession) -> None:
+    _host, device = await seed_host_and_device(db_session, identity="group-update-count")
+    svc = _svc()
+    group = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="update-count", name="update count", group_type="static"),
+    )
+    await svc.add_members(db_session, group["key"], [device.id])
+
+    async with capture_statements(db_session) as statements:
+        updated = await svc.update_group(db_session, group["key"], DeviceGroupUpdate(name="renamed"))
+
+    assert updated is not None
+    assert updated["device_count"] == 1
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert not [statement for statement in normalized if " from devices " in statement], statements
+
+
+async def test_delete_static_group_leaves_membership_cascade_to_postgres(db_session: AsyncSession) -> None:
+    _host, device = await seed_host_and_device(db_session, identity="group-delete-cascade")
+    svc = _svc()
+    group = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="delete-cascade", name="delete cascade", group_type="static"),
+    )
+    await svc.add_members(db_session, group["key"], [device.id])
+
+    async with capture_statements(db_session) as statements:
+        assert await svc.delete_group(db_session, group["key"]) is True
+
+    assert not [statement for statement in statements if "device_group_memberships" in statement.lower()], statements
 
 
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
@@ -88,8 +124,8 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     await settle_after_commit_tasks()
 
     groups = await svc.list_groups(db_session)
-    detail = await svc.get_group(db_session, group.key)
-    device_ids = await svc.get_group_device_ids(db_session, group.key)
+    detail = await svc.get_group(db_session, group["key"])
+    device_ids = await svc.get_group_device_ids(db_session, group["key"])
 
     assert groups[0]["group_type"] == "dynamic"
     assert groups[0]["filters"] == {"platform_id": "android_mobile", "member_of": ["tier-smoke"]}
@@ -101,13 +137,54 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
 
     updated = await svc.update_group(
         db_session,
-        group.key,
+        group["key"],
         DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
     )
     assert updated is not None
-    assert updated.filters == {"platform_id": "ios"}
+    assert updated["filters"] == {"platform_id": "ios"}
+    assert updated["device_count"] == 0
     # No iOS device is seeded, so membership is empty after the filter change.
-    assert await svc.get_group_device_ids(db_session, group.key) == []
+    assert await svc.get_group_device_ids(db_session, group["key"]) == []
+
+
+async def test_dynamic_count_failure_does_not_hide_a_committed_create(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_count(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("count failed")
+
+    monkeypatch.setattr(device_group_service, "_load_devices_in_scope", fail_count)
+    created = await _svc().create_group(
+        db_session,
+        DeviceGroupCreate(key="count-failure", name="count failure", group_type=GroupType.dynamic),
+    )
+
+    assert created["device_count"] is None
+    assert await _svc().get_group_type(db_session, "count-failure") == GroupType.dynamic
+
+
+async def test_update_group_refreshes_a_preloaded_identity_after_the_lock(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    target = DeviceGroup(key="stale-target", name="stale target", group_type=GroupType.dynamic)
+    db_session.add(target)
+    await db_session.commit()
+
+    async with db_session_maker() as peer:
+        current = await peer.get(DeviceGroup, target.id)
+        assert current is not None
+        current.group_type = GroupType.static
+        await peer.commit()
+
+    assert target.group_type == GroupType.dynamic
+    with pytest.raises(StaticGroupFiltersError):
+        await _svc().update_group(
+            db_session,
+            target.key,
+            DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
+        )
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
@@ -152,8 +229,8 @@ async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: Async
     )
     await settle_after_commit_tasks()
 
-    assert await svc.delete_group(db_session, dynamic.key) is True
-    assert await svc.get_group(db_session, dynamic.key) is None
+    assert await svc.delete_group(db_session, dynamic["key"]) is True
+    assert await svc.get_group(db_session, dynamic["key"]) is None
 
 
 async def test_delete_dynamic_group_rejects_dangling_reference(db_session: AsyncSession) -> None:
@@ -174,11 +251,53 @@ async def test_delete_dynamic_group_rejects_dangling_reference(db_session: Async
             key="dangling-ref",
             name="dangling ref",
             group_type=GroupType.dynamic,
-            filters={"member_of": [target.key]},
+            filters={"member_of": [target["key"]]},
         )
     )
     await db_session.commit()
 
     with pytest.raises(device_group_service.GroupReferencedError) as exc:
-        await svc.delete_group(db_session, target.key)
+        await svc.delete_group(db_session, target["key"])
     assert exc.value.dependents == ["dangling-ref"]
+
+
+async def test_delete_group_survives_a_non_object_filters_row(db_session: AsyncSession) -> None:
+    """A JSONB array in `filters` must not 500 unrelated deletes.
+
+    `delete_group`'s referrer scan uses `filters ? 'member_of'`, and Postgres
+    matches that against a JSONB array containing the string and against the
+    bare string, not only against objects. Such a row can only come from a
+    migration or manual SQL, but reading `.get` off it would raise inside the
+    advisory lock and take down every group delete in the fleet.
+    """
+    victim = DeviceGroup(key="victim", name="victim", group_type=GroupType.static, filters=None)
+    malformed = DeviceGroup(key="malformed-arr", name="malformed-arr", group_type=GroupType.dynamic)
+    db_session.add_all([victim, malformed])
+    await db_session.commit()
+    # Bypass the ORM's dict typing the way manual SQL would.
+    await db_session.execute(
+        text("UPDATE device_groups SET filters = '[\"member_of\"]'::jsonb WHERE key = 'malformed-arr'")
+    )
+    await db_session.commit()
+    await db_session.refresh(malformed)
+    assert malformed.filters == ["member_of"]
+
+    assert await _svc().delete_group(db_session, "victim") is True
+
+
+async def test_remove_members_with_no_device_ids_releases_the_row_lock(db_session: AsyncSession) -> None:
+    """An empty list must not hold the group row lock through a no-op DELETE.
+
+    ``add_members`` short-circuits the same degenerate input. That row lock is
+    what ``delete_group``'s DELETE blocks on, so holding it across a statement
+    that provably matches nothing only delays an unrelated writer.
+    """
+    svc = _svc()
+    group = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="empty-remove", name="empty remove", group_type="static"),
+    )
+    await settle_after_commit_tasks()
+
+    assert await svc.remove_members(db_session, group["key"], []) == 0
+    assert not db_session.in_transaction(), "the row lock must be released, not carried to teardown"
