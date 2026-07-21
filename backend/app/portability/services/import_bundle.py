@@ -360,16 +360,12 @@ class PortabilityImportService:
                 # window the width of an entire import in which a concurrent delete_group
                 # could remove a static group the dynamics were about to reference.
                 #
-                # This closes the definitions half only. Static *membership* rows are
-                # still staged after the device loop, outside this lock: if a concurrent
-                # delete_group removes one of these static groups while the loop runs,
-                # the final commit violates device_group_memberships_group_id_fkey and
-                # surfaces as a 500 with the device rows already committed. Closing that
-                # needs a second acquire plus an existence recheck before the membership
-                # staging, and a way to report "device imported, membership skipped" —
-                # deliberately out of scope here, since holding this lock across the
-                # device loop would trade a rare race for permanent fleet-wide
-                # serialisation of every group write.
+                # The membership-staging half of the same race is closed by
+                # ``_stage_static_memberships`` below, which re-acquires this lock around
+                # the membership commit and re-checks each static group's existence,
+                # skipping memberships for any group deleted during the device loop. The
+                # two acquires are deliberately separate so the device loop — which can
+                # be long — runs without holding a fleet-global group lock.
                 #
                 # The advisory lock is not strictly required today: _validate_group_references
                 # guarantees a bundle's member_of names only bundle statics, inserted in this

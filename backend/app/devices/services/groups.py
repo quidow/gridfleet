@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError, InvalidRequestError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.core.locks import group_mutation_lock
@@ -61,6 +62,25 @@ class UnknownMemberOfError(ValueError):
         super().__init__(f"unknown device groups: {', '.join(keys)}")
 
 
+class GroupFiltersMalformedError(ValueError):
+    """Raised when a stored ``device_groups.filters`` row fails validation.
+
+    A row carrying a ``member_of`` key is loaded by every ``delete_group`` scan;
+    validating it through ``DeviceGroupFilters`` (``extra="forbid"``) makes one
+    malformed stored row — from an older schema, a migration, or manual SQL —
+    surface as a pydantic ``ValidationError`` rather than silently dropping the
+    reference check. That is the loud failure the scan wants, but an unhandled
+    exception on an unrelated delete is not actionable. Catching it here and
+    re-raising as a typed error lets the router map it to a 422 naming the
+    offending row, so an operator can repair it without every fleet delete
+    returning 500 in the meantime.
+    """
+
+    def __init__(self, group_key: str, detail: str) -> None:
+        self.group_key = group_key
+        super().__init__(f"device group {group_key!r} has malformed filters: {detail}")
+
+
 class DeviceGroupsService:
     """Group definition and membership operations.
 
@@ -100,7 +120,6 @@ class DeviceGroupsService:
             elif not is_dynamic and _has_filter_values(data.filters):
                 raise StaticGroupFiltersError
             group = await self._insert_group(db, data)
-        await _refresh_if_still_present(db, group)
         return group
 
     async def _insert_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
@@ -203,7 +222,6 @@ class DeviceGroupsService:
                 {"group_key": group.key, "action": "updated"},
             )
             await db.commit()
-        await _refresh_if_still_present(db, group)
         return group
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
@@ -427,17 +445,21 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     Scans ``member_of`` only. ``device_group_memberships`` rows are a second
     class of dependent this deliberately ignores: they carry ``ON DELETE
     CASCADE``, so deleting a group with members is a supported operation, not a
-    referential error. The gap that leaves is the portability importer, which
-    stages membership rows after its group-definition lock is released — a
-    delete landing in that window makes the importer's final commit violate
-    ``device_group_memberships_group_id_fkey`` and surface as a 500. Closing it
-    needs a re-acquire-and-recheck in the importer, not a wider scan here.
+    referential error. The importer's membership-staging race it used to leave
+    open is closed by ``_stage_static_memberships`` re-acquiring the
+    group-mutation lock and re-checking each static group's existence before
+    the final commit; no wider scan is needed here.
     """
-    dependents = [
-        key
-        for key, filters in candidates
-        if key != target_key and target_key in DeviceGroupFilters.model_validate(filters or {}).member_of
-    ]
+    dependents: list[str] = []
+    for key, filters in candidates:
+        if key == target_key:
+            continue
+        try:
+            parsed = DeviceGroupFilters.model_validate(filters or {})
+        except ValidationError as exc:
+            raise GroupFiltersMalformedError(key, str(exc)) from exc
+        if target_key in parsed.member_of:
+            dependents.append(key)
     if dependents:
         raise GroupReferencedError(sorted(dependents))
 
@@ -484,32 +506,6 @@ def _serialize_group(group: DeviceGroup, *, device_count: int) -> dict[str, Any]
         "created_at": group.created_at,
         "updated_at": group.updated_at,
     }
-
-
-async def _refresh_if_still_present(db: AsyncSession, group: DeviceGroup) -> None:
-    """Reload server-generated columns, tolerating a concurrent delete.
-
-    The refresh runs *after* the commit that released the group-mutation lock,
-    so a delete can remove the row in between. ``AsyncSession.refresh`` then
-    raises ``InvalidRequestError`` — turning a write that genuinely succeeded
-    into a 500. The write is already durable at this point and the session uses
-    ``expire_on_commit=False``, so the in-memory object stays valid; the only
-    loss is that ``updated_at`` may be a moment stale on a row that no longer
-    exists. Callers get the object they just wrote either way.
-    """
-    try:
-        await db.refresh(group)
-    except InvalidRequestError:
-        # Deliberately the base class, not ObjectDeletedError. A refresh whose
-        # SELECT returns no row raises plain
-        # ``InvalidRequestError("Could not refresh instance ...")`` — narrowing to
-        # ObjectDeletedError lets the concurrent-delete case straight through
-        # again (observed: the deadlock test fails ~2 runs in 8 with the narrow
-        # catch). The cost is that genuine session misuse — a detached instance,
-        # an instance with no identity — is caught here too, so log it rather
-        # than swallowing it silently.
-        logger.info("group_refresh_skipped", exc_info=True)
-        await db.rollback()
 
 
 async def _get_group_row(db: AsyncSession, group_key: str, *, for_update: bool = False) -> DeviceGroup | None:

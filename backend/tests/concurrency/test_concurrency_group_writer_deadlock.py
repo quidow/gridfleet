@@ -113,10 +113,14 @@ async def test_concurrent_group_writers_do_not_deadlock(
     # delete is unopposed and therefore must succeed.
     assert delete_result is True, f"the delete must reach its flush and succeed, got {delete_result!r}"
     # Either ordering is legitimate: the update lands if it won the advisory
-    # lock, or returns None once the delete has removed the row.
-    assert isinstance(update_result, DeviceGroup) or update_result is None, (
-        f"the update must land or find the group gone, got {update_result!r}"
-    )
-    # 1 if it took the row lock before the delete's flush, None if the delete
-    # committed first. Anything else means it failed for another reason.
+    # lock, or returns None once the delete has removed the row. Dereference
+    # ``.key`` on the success branch — the router path (routers/groups.py:140)
+    # reads ``group.key`` to re-fetch the row, so an instance whose attributes
+    # cannot be accessed (an expired state handed back from a refresh that found
+    # no row) is a real 500 the test must catch, not just an isinstance pass.
+    if update_result is not None:
+        assert isinstance(update_result, DeviceGroup), (
+            f"the update must land or find the group gone, got {update_result!r}"
+        )
+        assert update_result.key == static_key, f"the updated group must carry its key, got {update_result!r}"
     assert members_result in (1, None), f"add_members must succeed or find the group gone, got {members_result!r}"

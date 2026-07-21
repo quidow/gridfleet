@@ -24,6 +24,7 @@ from app.devices.schemas.group import (
 from app.devices.services import health as device_health
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services.groups import (
+    GroupFiltersMalformedError,
     GroupKeyConflictError,
     GroupReferencedError,
     StaticGroupFiltersError,
@@ -146,6 +147,8 @@ async def delete_group(group_key: GroupKey, db: DbDep, device_services: DeviceSe
         deleted = await device_services.groups.delete_group(db, group_key)
     except GroupReferencedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except GroupFiltersMalformedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Group not found")
 

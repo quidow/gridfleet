@@ -43,9 +43,9 @@ async def group_mutation_lock(db: AsyncSession, *, when: bool = True) -> AsyncIt
     create with no ``member_of`` resolves no peer rows), so the caller does not
     have to choose between a nested conditional and locking for nothing.
     """
-    if when:
-        await acquire_group_mutation_lock(db)
     try:
+        if when:
+            await acquire_group_mutation_lock(db)
         yield
     finally:
         # Ends the transaction on *both* branches. When ``when`` is False no lock
