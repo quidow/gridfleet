@@ -53,7 +53,9 @@ export function ImportResultsStep({ result, onReset }: Props) {
         <Badge tone="warning" size="sm">{result.skipped.length} skipped</Badge>
         <Badge tone="critical" size="sm">{result.failed.length} failed</Badge>
         {membershipsSkipped.length > 0 && (
-          <Badge tone="warning" size="sm">{membershipsSkipped.length} memberships skipped</Badge>
+          <Badge tone="warning" size="sm">
+            {membershipsSkipped.length} {membershipsSkipped.length === 1 ? 'membership' : 'memberships'} skipped
+          </Badge>
         )}
       </div>
 
@@ -98,7 +100,6 @@ export function ImportResultsStep({ result, onReset }: Props) {
             rows={membershipsSkipped}
             rowKey={(row) => `${row.index}-${row.group_key}`}
             caption="Memberships skipped during import"
-            emptyState={<p className="px-5 py-4 text-sm text-text-3">No memberships skipped.</p>}
           />
         </section>
       )}

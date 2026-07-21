@@ -41,11 +41,24 @@ describe('ImportResultsStep', () => {
 
   it('renders a memberships-skipped section when memberships were skipped', () => {
     renderResults();
-    expect(screen.getByText(/1 memberships skipped/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 membership skipped/i)).toBeInTheDocument();
     expect(screen.getByText('stale-group')).toBeInTheDocument();
     expect(
       screen.getByText(/static group 'stale-group' deleted during import/i),
     ).toBeInTheDocument();
+  });
+
+  it('pluralizes the memberships-skipped badge only above one', () => {
+    renderResults({
+      result: {
+        ...RESULT,
+        memberships_skipped: [
+          ...(RESULT.memberships_skipped ?? []),
+          { index: 3, group_key: 'other-group', reason: "static group 'other-group' deleted during import" },
+        ],
+      },
+    });
+    expect(screen.getByText(/2 memberships skipped/i)).toBeInTheDocument();
   });
 
   it('hides the memberships-skipped section when none were skipped', () => {
