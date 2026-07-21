@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.4.0...gridfleet-router-v0.5.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** `GridFleetClient.list_devices` no longer accepts the `hardware_telemetry_state` or `hardware_health_status` keyword arguments. Both filters were removed from `GET /api/devices` along with the device telemetry feature, so passing them raises `TypeError`. Remove the arguments from callers; there is no replacement filter.
+* **testkit:** target devices with group keys
+
+### Features
+
+* **testkit:** drop hardware telemetry filters from list_devices ([0279208](https://github.com/quidow/gridfleet/commit/027920803fa2bddfc4e14bfbbfedb22b6296a475))
+* **testkit:** target devices with group keys ([d094681](https://github.com/quidow/gridfleet/commit/d0946817f6bbd5a2707bf07877d30d9a6de1de9d))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.3.0...gridfleet-router-v0.4.0) (2026-07-16)
 
 
