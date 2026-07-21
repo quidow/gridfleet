@@ -167,15 +167,13 @@ async def test_control_plane_state_store_round_trip(db_session: AsyncSession) ->
     await control_plane_state_store.set_many(db_session, "demo", {"b": 2, "c": 3})
     assert await control_plane_state_store.get_values(db_session, "demo", keys=[]) == {}
     assert await control_plane_state_store.get_values(db_session, "demo", keys=["a", "b"]) == {"a": {"x": 1}, "b": 2}
-    assert await control_plane_state_store.try_claim_value(db_session, "demo", "claimed", 1) is True
-    assert await control_plane_state_store.try_claim_value(db_session, "demo", "claimed", 2) is False
     await control_plane_state_store.delete_value(db_session, "demo", "a")
     await db_session.commit()
     assert await control_plane_state_store.get_value(db_session, "demo", "a") is None
     remaining = await db_session.execute(
         select(ControlPlaneStateEntry).where(ControlPlaneStateEntry.namespace == "demo")
     )
-    assert sorted(row.key for row in remaining.scalars().all()) == ["b", "c", "claimed"]
+    assert sorted(row.key for row in remaining.scalars().all()) == ["b", "c"]
 
 
 async def test_type_def_protocol_defaults_raise() -> None:

@@ -162,17 +162,3 @@ async def delete_value(db: AsyncSession, namespace: str, key: str) -> None:
         )
         .execution_options(synchronize_session=False)
     )
-
-
-async def try_claim_value(db: AsyncSession, namespace: str, key: str, value: ControlPlaneValue) -> bool:
-    # After this call the row exists whether we inserted it or it was already there,
-    # so a snapshotted namespace must record the key as present either way.
-    snap = _snapshot_for(namespace)
-    if snap is not None:
-        snap.present.add((namespace, key))
-    stmt = insert(ControlPlaneStateEntry).values(namespace=namespace, key=key, value=value)
-    returning_stmt = stmt.on_conflict_do_nothing(constraint="uq_control_plane_state_entries_namespace_key").returning(
-        ControlPlaneStateEntry.key
-    )
-    result = await db.execute(returning_stmt)
-    return result.scalar_one_or_none() is not None

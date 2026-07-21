@@ -14,24 +14,19 @@ from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.models.event import DeviceEventType
 from app.devices.schemas.device_health_push import DeviceHealthItem, parse_device_health_items
 from app.devices.services import link_repair
-from app.devices.services.claims import device_is_reserved
 from app.devices.services.device_health_fold_context import (
     DeviceHealthFoldReceipt,
     DeviceHealthFoldScope,
     LockedDeviceFold,
 )
-from app.devices.services.event import record_event
-from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.state import derive_operational_state
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
     import uuid
@@ -85,14 +80,6 @@ async def _resolve_platform_or_none(db: AsyncSession, device: Device) -> Resolve
         return None
 
 
-async def _is_held_or_reserved(db: AsyncSession, device: Device) -> bool:
-    return (
-        in_maintenance(device)
-        or await device_has_live_session(db, device.id)
-        or await device_is_reserved(db, device.id)
-    )
-
-
 logger = get_logger(__name__)
 # DB-backed flag (control_plane_state_store, namespace key per device identity_value).
 # Written here when a device goes offline or reconnect is attempted; read here to pick
@@ -105,11 +92,6 @@ IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 PROBE_FAILED_NAMESPACE = "device_checks.probe_failed"
 IP_PING_CHECK_ID = "ip_ping"
-
-
-def _audit_label(operational_state: DeviceOperationalState) -> str:
-    """Flat label for log output only — operational_state now carries maintenance."""
-    return operational_state.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,55 +404,6 @@ class ConnectivityService:
             await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
         else:
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
-
-    async def _record_disconnect_if_stable(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        held: bool,
-        observed_at: datetime | None = None,
-        revision: int | None = None,
-    ) -> None:
-        """Record a device disconnect unless its held/reserved classification flipped under the lock.
-
-        ``held`` is the pre-lock classification (busy/maintenance or actively
-        reserved). The durable writes are identical on both sides; the post-lock
-        re-check only guards against acting on a stale classification (TOCTOU
-        across the lock acquisition).
-
-        Writes the ``connectivity_lost`` audit row here — the observation site that
-        knows the cause — once per disconnect episode, edge-gated on
-        ``device_checks_healthy`` flipping to False (analytics reliability counts
-        this type; repeats would inflate it).
-        """
-        first_detection = device.device_checks_healthy is not False
-        applied = await self._health.update_device_checks(
-            db, device, healthy=False, summary="Disconnected", observed_at=observed_at, revision=revision
-        )
-        if not applied:
-            return
-        locked_device = await device_locking.lock_device(db, device.id)
-        held_after = await _is_held_or_reserved(db, locked_device)
-        locked_state = await derive_operational_state(db, locked_device, now=now_utc())
-        if held_after != held:
-            logger.info(
-                "Device %s (%s) changed held/reserved classification to %s before disconnect write — skipping",
-                locked_device.name,
-                locked_device.identity_value,
-                _audit_label(locked_state),
-            )
-            return
-        if first_detection:
-            await record_event(
-                db, locked_device.id, DeviceEventType.connectivity_lost, {"reason": "Device disconnected"}
-            )
-        await IntentService(db).reconcile_now(
-            locked_device.id,
-            publisher=self._publisher,
-        )
-        await self._lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
-        await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)
 
     async def fold_host_devices(
         self,

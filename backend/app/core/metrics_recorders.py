@@ -271,19 +271,9 @@ device_repair_attempts_total = Counter(
     ["action", "outcome"],
 )
 
-probe_unanswered_failing_seconds = Gauge(
-    "gridfleet_probe_unanswered_failing_seconds",
-    "Elapsed seconds in the current unanswered health-probe failure episode, per device.",
-    ["device_identity", "host"],
-)
-
 
 def record_device_repair_attempt(*, action: str, outcome: str) -> None:
     device_repair_attempts_total.labels(action=action, outcome=outcome).inc()
-
-
-def set_probe_unanswered_failing_seconds(*, device_identity: str, host: str, value: float) -> None:
-    probe_unanswered_failing_seconds.labels(device_identity=device_identity, host=host).set(value)
 
 
 HOST_STATUS_PUSHES = Counter(

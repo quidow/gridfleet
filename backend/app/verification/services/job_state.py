@@ -40,10 +40,6 @@ _DB_JOB_ID_KEY = "_db_job_id"
 _PUBLISHER_KEY = "_publisher"
 
 
-def enum_value(value: object) -> object:
-    return getattr(value, "value", value)
-
-
 def now_iso() -> str:
     return now_utc().isoformat()
 

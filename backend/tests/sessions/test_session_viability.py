@@ -1030,7 +1030,6 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     # After Task 10: no SESSION_STARTED/SESSION_ENDED transitions; reconcile_now
     # calls reconcile_device which calls lock_device again. Provide extra mocks.
     locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available, hold=None)
-    monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
@@ -1216,7 +1215,6 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     await db_session.commit()
 
     locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline, hold=None)
-    monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))

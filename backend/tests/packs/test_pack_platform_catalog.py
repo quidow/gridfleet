@@ -1,33 +1,8 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
-from app.packs.services.platform_catalog import device_is_virtual, platform_has_lifecycle_action
-
-
-def _make_device(*, device_type: str = "real_device", identity_scope: str = "global") -> MagicMock:
-    d = MagicMock()
-    d.device_type = MagicMock(value=device_type) if device_type else None
-    d.identity_scope = identity_scope
-    return d
-
-
-def test_device_is_virtual_emulator() -> None:
-    assert device_is_virtual(_make_device(device_type="emulator")) is True
-
-
-def test_device_is_virtual_simulator() -> None:
-    assert device_is_virtual(_make_device(device_type="simulator")) is True
-
-
-def test_device_is_virtual_real() -> None:
-    assert device_is_virtual(_make_device(device_type="real_device")) is False
-
-
-def test_device_is_virtual_none() -> None:
-    assert device_is_virtual(_make_device(device_type="")) is False
+from app.packs.services.platform_catalog import platform_has_lifecycle_action
 
 
 @pytest.fixture
