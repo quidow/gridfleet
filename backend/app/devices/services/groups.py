@@ -62,6 +62,19 @@ class UnknownMemberOfError(ValueError):
 
 
 class DeviceGroupsService:
+    """Group definition and membership operations.
+
+    **These methods own the transaction they are handed.** Each commits on its
+    success path and rolls back on its reject paths — the rollback is not
+    incidental, it is how the transaction-scoped ``group_mutation`` advisory
+    lock gets released; Postgres offers no way to drop an xact-scoped lock
+    without ending the transaction. Do not call them with uncommitted work
+    staged on the same session: a rejected payload or unknown key will discard
+    it, and ``update_group``/``delete_group`` signal rejection by return value
+    rather than by raising. A caller needing several group writes in one
+    transaction needs a different entry point, not these.
+    """
+
     def __init__(
         self,
         *,
@@ -74,15 +87,19 @@ class DeviceGroupsService:
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
         try:
             if data.group_type == GroupType.dynamic:
-                # Only the dynamic path needs serialising: it reads other groups
-                # to resolve member_of, and FOR UPDATE cannot close that race
-                # because it is blind to rows a peer has not inserted yet. A
-                # static group carries no member_of, reads nothing, and is
-                # already guarded against duplicate keys by ix_device_groups_key
-                # — locking it would serialise the common case for nothing.
-                await acquire_group_mutation_lock(db)
-                loaded = await _load_groups_by_key(db, _member_of_keys(data.filters))
-                _assert_member_of_resolves(data.filters, loaded)
+                member_of = _member_of_keys(data.filters)
+                if member_of:
+                    # Serialise only a create that actually resolves peer rows.
+                    # That read is what FOR UPDATE cannot protect — it is blind to
+                    # a row a peer has not inserted yet — and it is the only thing
+                    # here that can end up referencing a deleted group. A create
+                    # with no member_of (every static group, and a dynamic group
+                    # filtered on platform/tags alone) reads nothing and can dangle
+                    # nothing; its only guard is ix_device_groups_key, which the
+                    # IntegrityError handler below already translates. Locking
+                    # those would serialise the common case for no invariant.
+                    await acquire_group_mutation_lock(db)
+                    _assert_member_of_resolves(data.filters, await _load_groups_by_key(db, member_of))
             elif _has_filter_values(data.filters):
                 raise StaticGroupFiltersError
         except ValueError:
@@ -414,9 +431,14 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     ``filters`` for any group with a ``tags`` key regardless of type. Skipping
     those would leave a dangling reference behind.
 
-    Note this scans ``member_of`` only. Membership rows are a separate class of
-    dependent that this check does not consider — see
-    ``.superpowers/specs/2026-07-21-import-membership-delete-race.md``.
+    Scans ``member_of`` only. ``device_group_memberships`` rows are a second
+    class of dependent this deliberately ignores: they carry ``ON DELETE
+    CASCADE``, so deleting a group with members is a supported operation, not a
+    referential error. The gap that leaves is the portability importer, which
+    stages membership rows after its group-definition lock is released — a
+    delete landing in that window makes the importer's final commit violate
+    ``device_group_memberships_group_id_fkey`` and surface as a 500. Closing it
+    needs a re-acquire-and-recheck in the importer, not a wider scan here.
     """
     dependents = [
         key
