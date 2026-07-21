@@ -12,6 +12,40 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.5.0...gridfleet-frontend-v0.6.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** GET /api/portability/inventory is removed.
+* **testkit:** `GridFleetClient.list_devices` no longer accepts the `hardware_telemetry_state` or `hardware_health_status` keyword arguments. Both filters were removed from `GET /api/devices` along with the device telemetry feature, so passing them raises `TypeError`. Remove the arguments from callers; there is no replacement filter.
+* **frontend:** device tag surfaces are gone from the generated client — the BulkTagsUpdate schema, POST /api/devices/bulk/update-tags, and POST /api/device-groups/{group_id}/bulk/update-tags no longer exist, and DeviceRead carries no tags field. Device group routes are now keyed by the public immutable group key ({group_key}) instead of {group_id}. Device group schemas gain `key` and dynamic `member_of`; the device list gains a repeated `group` query parameter; DeviceRequirement gains `groups`; and the portability ExportBundle is schema_version 2 with group definitions plus per-device static_groups.
+* **frontend:** remove EmulatorStateBadge, boot/shutdown UI, and emulator_state gating
+
+### Features
+
+* **backend:** remove GET /api/portability/inventory endpoint ([1f5624d](https://github.com/quidow/gridfleet/commit/1f5624df1d43d7d29ce35c09caff9678888fafe2))
+* **frontend:** regenerate device group contracts ([4f3b62f](https://github.com/quidow/gridfleet/commit/4f3b62fd9014328663f323ef1b241fe0c07f5616))
+* **frontend:** regenerate openapi types; drop emulator_state from device factories ([d1441d5](https://github.com/quidow/gridfleet/commit/d1441d5fccc07973ddb48ec8a7137ba479ddf377))
+* **frontend:** remove EmulatorStateBadge, boot/shutdown UI, and emulator_state gating ([a92ad55](https://github.com/quidow/gridfleet/commit/a92ad55f168542c329c785324f4ae73d3f315200))
+* **frontend:** remove Export Inventory button from Devices page ([468bc46](https://github.com/quidow/gridfleet/commit/468bc46eff59dba500d95714a287a7ca6b431915))
+* **frontend:** switch device groups to routable keys and remove tag UX ([76c4ea6](https://github.com/quidow/gridfleet/commit/76c4ea6be99ef1c262f4fe302719b49a2cc771a2))
+* **testkit:** drop hardware telemetry filters from list_devices ([0279208](https://github.com/quidow/gridfleet/commit/027920803fa2bddfc4e14bfbbfedb22b6296a475))
+
+
+### Bug Fixes
+
+* **backend:** address code review on device telemetry removal ([673984f](https://github.com/quidow/gridfleet/commit/673984fdbfc931ea95a77e7e05dce64ff867df27))
+* **backend:** commit imported device groups independently of devices ([83e2e6c](https://github.com/quidow/gridfleet/commit/83e2e6ca1c5091939e79f4a03db4f7cb39115b88))
+* **backend:** scrub removed telemetry keys from stored group filters ([17ca73c](https://github.com/quidow/gridfleet/commit/17ca73c657b97bd32e997bf8e6cfdf844f958732))
+* **frontend:** align device group filter types with split openapi schemas ([a1bacf4](https://github.com/quidow/gridfleet/commit/a1bacf4a4d17bf3ddc1ead680a3186169ddb5bbf))
+* **frontend:** complete tag removal and add group device filter ([0a9773e](https://github.com/quidow/gridfleet/commit/0a9773e8b0329b819001d1da7ddd2b6677314277))
+* **frontend:** probe container health over ipv4 ([f16c404](https://github.com/quidow/gridfleet/commit/f16c404f54dbaef273e8574f77e9f97de16f16b9))
+* **frontend:** render an input for float settings ([fd677e1](https://github.com/quidow/gridfleet/commit/fd677e1843c4a442d0665ab86679cdcc8a5615b4))
+* **frontend:** route group detail by key instead of id ([8f34843](https://github.com/quidow/gridfleet/commit/8f34843d3c856019f020dcbabfc87a8ad7d1f6e9))
+* **main:** align virtual device resolution contracts ([8c123fd](https://github.com/quidow/gridfleet/commit/8c123fdaf4e013360c126f1820cd66422c6a6bcc))
+* **main:** complete virtual device state removal ([d457be1](https://github.com/quidow/gridfleet/commit/d457be103b3b8d95e9549ae6aa93f7d4abb03a97))
+
 ## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.4.0...gridfleet-frontend-v0.5.0) (2026-07-17)
 
 
