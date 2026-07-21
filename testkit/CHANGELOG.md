@@ -2,6 +2,22 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.16.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.15.0...gridfleet-testkit-v0.16.0) (2026-07-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** `GridFleetClient.list_devices` no longer accepts the `hardware_telemetry_state` or `hardware_health_status` keyword arguments. Both filters were removed from `GET /api/devices` along with the device telemetry feature, so passing them raises `TypeError`. Remove the arguments from callers; there is no replacement filter.
+
+### Features
+
+* **testkit:** drop hardware telemetry filters from list_devices ([0279208](https://github.com/quidow/gridfleet/commit/027920803fa2bddfc4e14bfbbfedb22b6296a475))
+
+
+### Bug Fixes
+
+* **backend:** address code review on device telemetry removal ([673984f](https://github.com/quidow/gridfleet/commit/673984fdbfc931ea95a77e7e05dce64ff867df27))
+
 ## [0.15.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.14.6...gridfleet-testkit-v0.15.0) (2026-07-20)
 
 
