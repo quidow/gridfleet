@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.core.locks import acquire_group_mutation_lock
 from app.devices.models import (
     Device,
     DeviceGroup,
@@ -201,10 +202,8 @@ def _group_filters_payload(group: ExportedDeviceGroup) -> dict[str, Any] | None:
 async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> None:
     """Flush staged ``device_groups`` rows, turning a key collision into a typed error.
 
-    ``_load_existing_group_keys`` takes ``FOR UPDATE``, but a row lock cannot reserve
-    a key that is not yet in the table — on the normal path (every bundle key new) it
-    locks nothing and provides no mutual exclusion. Two operators committing the same
-    bundle therefore both pass validation, and the loser's flush violates
+    Nothing reserves a key that is not yet in the table, so two operators committing
+    the same bundle both pass validation and the loser's flush violates
     ``ix_device_groups_key``. The unique index is the real guarantee; this translates
     it into the ``GroupKeyCollisionError`` the route already maps to 409, so the loser
     gets the documented conflict rather than an unhandled 500 on a dead transaction.
@@ -224,9 +223,7 @@ async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> No
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
     if not keys:
         return set()
-    result = await session.execute(
-        select(DeviceGroup.key).where(DeviceGroup.key.in_(keys)).order_by(DeviceGroup.key).with_for_update()
-    )
+    result = await session.execute(select(DeviceGroup.key).where(DeviceGroup.key.in_(keys)))
     return {row[0] for row in result.all()}
 
 
@@ -341,13 +338,21 @@ class PortabilityImportService:
         static_groups = [g for g in request.bundle.groups if g.group_type == GroupType.static]
         dynamic_groups = [g for g in request.bundle.groups if g.group_type == GroupType.dynamic]
 
+        # Both inserts land in one transaction. Splitting them — statics committed
+        # here, dynamics only after the device loop — left a window the width of an
+        # entire import in which a concurrent delete_group could remove a static
+        # group the dynamics were about to reference.
+        #
+        # The advisory lock is not strictly required today: _validate_group_references
+        # guarantees a bundle's member_of names only bundle statics, inserted in this
+        # same transaction. It is here so that relaxing that bundle-internal invariant
+        # later cannot silently reopen the hole. Do not delete it as redundant.
+        await acquire_group_mutation_lock(session)
         group_id_by_key = await self._insert_group_definitions(session, static_groups)
-        if static_groups:
-            # Commit the static definitions before the device loop so they survive a
-            # failure of any per-row commit below. Otherwise a mid-loop commit failure
-            # rolls the staged definitions back while the dynamic groups inserted
-            # afterwards commit normally, leaving their ``member_of`` pointing at rows
-            # that no longer exist.
+        await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
+        if static_groups or dynamic_groups:
+            # Commit the definitions before the device loop so they survive a
+            # failure of any per-row commit below.
             await session.commit()
 
         by_index = {row.index: row for row in preview.rows}
@@ -394,12 +399,8 @@ class PortabilityImportService:
             group_id_by_key=group_id_by_key,
         )
 
-        await self._insert_dynamic_group_definitions(session, dynamic_groups, group_id_by_key)
-
-        # Group definitions and memberships are staged, not committed, by the helpers above.
-        # Commit unconditionally: the group writes are what the operator asked this endpoint
-        # to create, and they must land even when no device row committed (every row a
-        # duplicate/conflict/invalid, or a groups-only bundle carrying no devices at all).
+        # Static memberships are staged, not committed, by the helper above. Commit
+        # unconditionally so they land even when no device row committed.
         await session.commit()
 
         return ImportCommitResult(created=created, skipped=skipped, failed=failed)
