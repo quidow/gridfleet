@@ -13,37 +13,24 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupCreate
-from app.devices.services.groups import (
-    DeviceGroupsService,
-    GroupReferencedError,
-    UnknownMemberOfError,
+from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
+from tests.concurrency.group_lock_helpers import (
+    build_groups_service,
+    signal_after_group_lock,
+    wait_for_group_lock,
 )
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.service import DeviceCrudService
-from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
-
-# Long enough for the peer's blocked advisory-lock acquire to reach the lock
-# manager before the holder commits. Only widens the race window.
-_HANDOFF_SEC = 0.5
-
-
-def _service() -> DeviceGroupsService:
-    return DeviceGroupsService(
-        publisher=event_bus,
-        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-    )
 
 
 async def _seed_static(db_session: AsyncSession) -> tuple[str, str]:
@@ -56,33 +43,12 @@ async def _seed_static(db_session: AsyncSession) -> tuple[str, str]:
     return static_key, dynamic_key
 
 
-def _signal_after_group_lock(session: AsyncSession, locked: asyncio.Event) -> None:
-    """Set *locked* once *session* holds the group-mutation advisory lock.
-
-    Then hold inside the interception for ``_HANDOFF_SEC`` so the peer
-    transaction reaches its own ``pg_advisory_xact_lock`` and blocks there.
-    """
-    original_execute = session.execute
-    fired = False
-
-    async def _intercepted(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-        nonlocal fired
-        result = await original_execute(stmt, *args, **kwargs)
-        if not fired and "pg_advisory_xact_lock" in str(stmt).lower():
-            fired = True
-            locked.set()
-            await asyncio.sleep(_HANDOFF_SEC)
-        return result
-
-    session.execute = _intercepted  # type: ignore[assignment, method-assign]
-
-
-async def _assert_no_dangling_reference(
+async def _fetch_group_rows(
     db_session_maker: async_sessionmaker[AsyncSession],
     *,
     static_key: str,
     dynamic_key: str,
-) -> None:
+) -> tuple[DeviceGroup | None, DeviceGroup | None]:
     async with db_session_maker() as verify:
         static_row = (
             await verify.execute(select(DeviceGroup).where(DeviceGroup.key == static_key))
@@ -90,11 +56,7 @@ async def _assert_no_dangling_reference(
         dynamic_row = (
             await verify.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))
         ).scalar_one_or_none()
-        if static_row is None and dynamic_row is not None:
-            member_of = (dynamic_row.filters or {}).get("member_of", [])
-            assert static_key not in member_of, (
-                f"dynamic group {dynamic_key} references deleted static group {static_key}"
-            )
+        return static_row, dynamic_row
 
 
 async def test_create_wins_delete_is_rejected(
@@ -103,12 +65,12 @@ async def test_create_wins_delete_is_rejected(
 ) -> None:
     """The creator serialises first; the deleter must then observe the new reference."""
     static_key, dynamic_key = await _seed_static(db_session)
-    service = _service()
+    service = build_groups_service()
     creator_locked = asyncio.Event()
 
     async def create_dynamic() -> DeviceGroup:
         async with db_session_maker() as session:
-            _signal_after_group_lock(session, creator_locked)
+            signal_after_group_lock(session, creator_locked)
             return await service.create_group(
                 session,
                 DeviceGroupCreate(
@@ -120,7 +82,7 @@ async def test_create_wins_delete_is_rejected(
             )
 
     async def delete_static() -> bool:
-        await creator_locked.wait()
+        await wait_for_group_lock(creator_locked, label="creator")
         async with db_session_maker() as session:
             return await service.delete_group(session, static_key)
 
@@ -130,7 +92,15 @@ async def test_create_wins_delete_is_rejected(
     assert isinstance(delete_result, GroupReferencedError), (
         f"deleter must observe the committed reference, got {delete_result!r}"
     )
-    await _assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+
+    # Pin the exact end state: the create won, so the static group must survive
+    # the rejected delete and the dynamic group must exist referencing it.
+    static_row, dynamic_row = await _fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is not None, "static group must survive the rejected delete"
+    assert dynamic_row is not None, "dynamic group must exist after the winning create"
+    assert (dynamic_row.filters or {}).get("member_of") == [static_key], (
+        f"dynamic group {dynamic_key} must reference the surviving static group {static_key}"
+    )
 
 
 async def test_delete_wins_create_is_rejected(
@@ -139,16 +109,16 @@ async def test_delete_wins_create_is_rejected(
 ) -> None:
     """The deleter serialises first; the creator must then find its target gone."""
     static_key, dynamic_key = await _seed_static(db_session)
-    service = _service()
+    service = build_groups_service()
     deleter_locked = asyncio.Event()
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            _signal_after_group_lock(session, deleter_locked)
+            signal_after_group_lock(session, deleter_locked)
             return await service.delete_group(session, static_key)
 
     async def create_dynamic() -> DeviceGroup:
-        await deleter_locked.wait()
+        await wait_for_group_lock(deleter_locked, label="deleter")
         async with db_session_maker() as session:
             return await service.create_group(
                 session,
@@ -166,4 +136,9 @@ async def test_delete_wins_create_is_rejected(
     assert isinstance(create_result, UnknownMemberOfError), (
         f"creator must reject a reference to the just-deleted group, got {create_result!r}"
     )
-    await _assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+
+    # Pin the exact end state: the delete won, so the static group must be gone
+    # and the rejected create must never have left a dynamic row behind.
+    static_row, dynamic_row = await _fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is None, "static group must be gone after the winning delete"
+    assert dynamic_row is None, "dynamic group must not exist after the rejected create"

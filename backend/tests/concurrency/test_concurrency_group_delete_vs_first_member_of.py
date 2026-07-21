@@ -30,38 +30,24 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupUpdate
-from app.devices.services.groups import (
-    DeviceGroupsService,
-    GroupReferencedError,
-    UnknownMemberOfError,
+from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
+from tests.concurrency.group_lock_helpers import (
+    assert_no_dangling_reference,
+    build_groups_service,
+    signal_after_group_lock,
+    wait_for_group_lock,
 )
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.service import DeviceCrudService
-from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
-
-# Long enough for the peer's blocked ``FOR UPDATE`` to reach the lock manager
-# before the holder commits. Only widens the race window; correctness does not
-# depend on the exact value.
-_HANDOFF_SEC = 0.5
-
-
-def _service() -> DeviceGroupsService:
-    return DeviceGroupsService(
-        publisher=event_bus,
-        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-    )
 
 
 async def _seed_unreferenced_pair(db_session: AsyncSession) -> tuple[str, str]:
@@ -87,48 +73,6 @@ async def _seed_unreferenced_pair(db_session: AsyncSession) -> tuple[str, str]:
     return static_key, dynamic_key
 
 
-def _signal_after_group_lock(session: AsyncSession, locked: asyncio.Event) -> None:
-    """Set *locked* once *session* holds the group-mutation advisory lock.
-
-    Then hold inside the interception for ``_HANDOFF_SEC`` so the peer
-    transaction reaches its own ``pg_advisory_xact_lock`` and blocks there.
-    """
-    original_execute = session.execute
-    fired = False
-
-    async def _intercepted(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-        nonlocal fired
-        result = await original_execute(stmt, *args, **kwargs)
-        if not fired and "pg_advisory_xact_lock" in str(stmt).lower():
-            fired = True
-            locked.set()
-            await asyncio.sleep(_HANDOFF_SEC)
-        return result
-
-    session.execute = _intercepted  # type: ignore[assignment, method-assign]
-
-
-async def _assert_no_dangling_reference(
-    db_session_maker: async_sessionmaker[AsyncSession],
-    *,
-    static_key: str,
-    dynamic_key: str,
-) -> None:
-    async with db_session_maker() as verify:
-        static_row = (
-            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == static_key))
-        ).scalar_one_or_none()
-        dynamic_row = (
-            await verify.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))
-        ).scalar_one_or_none()
-        assert dynamic_row is not None
-        if static_row is None:
-            member_of = (dynamic_row.filters or {}).get("member_of", [])
-            assert static_key not in member_of, (
-                f"dynamic group {dynamic_key} references deleted static group {static_key}"
-            )
-
-
 async def test_delete_wins_first_member_of_reference_is_rejected(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
@@ -136,16 +80,16 @@ async def test_delete_wins_first_member_of_reference_is_rejected(
     """Deleter takes the target's row lock first; the updater blocks, then
     re-reads the target and finds it gone."""
     static_key, dynamic_key = await _seed_unreferenced_pair(db_session)
-    service = _service()
+    service = build_groups_service()
     deleter_locked = asyncio.Event()
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            _signal_after_group_lock(session, deleter_locked)
+            signal_after_group_lock(session, deleter_locked)
             return await service.delete_group(session, static_key)
 
     async def add_first_reference() -> DeviceGroup | None:
-        await deleter_locked.wait()
+        await wait_for_group_lock(deleter_locked, label="updater")
         async with db_session_maker() as session:
             return await service.update_group(
                 session,
@@ -159,7 +103,7 @@ async def test_delete_wins_first_member_of_reference_is_rejected(
     assert isinstance(update_result, UnknownMemberOfError), (
         f"updater must reject a reference to the just-deleted group, got {update_result!r}"
     )
-    await _assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    await assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
 
 
 async def test_first_member_of_reference_wins_delete_is_rejected(
@@ -176,12 +120,12 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     module docstring.
     """
     static_key, dynamic_key = await _seed_unreferenced_pair(db_session)
-    service = _service()
+    service = build_groups_service()
     updater_locked = asyncio.Event()
 
     async def add_first_reference() -> DeviceGroup | None:
         async with db_session_maker() as session:
-            _signal_after_group_lock(session, updater_locked)
+            signal_after_group_lock(session, updater_locked)
             return await service.update_group(
                 session,
                 dynamic_key,
@@ -189,7 +133,7 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
             )
 
     async def delete_static() -> bool:
-        await updater_locked.wait()
+        await wait_for_group_lock(updater_locked, label="deleter")
         async with db_session_maker() as session:
             return await service.delete_group(session, static_key)
 
@@ -199,4 +143,4 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     assert isinstance(delete_result, GroupReferencedError), (
         f"deleter must observe the committed reference, got {delete_result!r}"
     )
-    await _assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    await assert_no_dangling_reference(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
