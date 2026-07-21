@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import selectinload
 
-from app.core.locks import acquire_group_mutation_lock
+from app.core.locks import group_mutation_lock
 from app.devices.group_keys import is_valid_group_key
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
@@ -65,14 +65,14 @@ class DeviceGroupsService:
     """Group definition and membership operations.
 
     **These methods own the transaction they are handed.** Each commits on its
-    success path and rolls back on its reject paths — the rollback is not
-    incidental, it is how the transaction-scoped ``group_mutation`` advisory
-    lock gets released; Postgres offers no way to drop an xact-scoped lock
-    without ending the transaction. Do not call them with uncommitted work
-    staged on the same session: a rejected payload or unknown key will discard
-    it, and ``update_group``/``delete_group`` signal rejection by return value
-    rather than by raising. A caller needing several group writes in one
-    transaction needs a different entry point, not these.
+    success path, and ``group_mutation_lock`` ends the transaction on every
+    other exit — that is how the transaction-scoped advisory lock is released,
+    since Postgres offers no way to drop an xact-scoped lock without ending the
+    transaction. Do not call them with uncommitted work staged on the same
+    session: a rejected payload or unknown key will discard it, and
+    ``update_group``/``delete_group`` signal rejection by return value rather
+    than by raising. A caller needing several group writes in one transaction
+    needs a different entry point, not these.
     """
 
     def __init__(
@@ -85,26 +85,26 @@ class DeviceGroupsService:
         self._crud = crud
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
-        try:
-            if data.group_type == GroupType.dynamic:
-                member_of = _member_of_keys(data.filters)
-                if member_of:
-                    # Serialise only a create that actually resolves peer rows.
-                    # That read is what FOR UPDATE cannot protect — it is blind to
-                    # a row a peer has not inserted yet — and it is the only thing
-                    # here that can end up referencing a deleted group. A create
-                    # with no member_of (every static group, and a dynamic group
-                    # filtered on platform/tags alone) reads nothing and can dangle
-                    # nothing; its only guard is ix_device_groups_key, which the
-                    # IntegrityError handler below already translates. Locking
-                    # those would serialise the common case for no invariant.
-                    await acquire_group_mutation_lock(db)
-                    _assert_member_of_resolves(data.filters, await _load_groups_by_key(db, member_of))
-            elif _has_filter_values(data.filters):
+        # Serialise only a create that actually resolves peer rows. That read is
+        # what FOR UPDATE cannot protect — it is blind to a row a peer has not
+        # inserted yet — and it is the only thing here that can end up referencing
+        # a deleted group. A create with no member_of (every static group, and a
+        # dynamic group filtered on platform/tags alone) reads nothing and can
+        # dangle nothing; its only guard is ix_device_groups_key, which the
+        # IntegrityError handler below already translates.
+        is_dynamic = data.group_type == GroupType.dynamic
+        member_of = _member_of_keys(data.filters) if is_dynamic else set()
+        async with group_mutation_lock(db, when=bool(member_of)):
+            if member_of:
+                _assert_member_of_resolves(data.filters, await _load_groups_by_key(db, member_of))
+            elif not is_dynamic and _has_filter_values(data.filters):
                 raise StaticGroupFiltersError
-        except ValueError:
-            await db.rollback()
-            raise
+            group = await self._insert_group(db, data)
+        await _refresh_if_still_present(db, group)
+        return group
+
+    async def _insert_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
+        """Insert and commit the row. Caller holds the lock scope, if one is needed."""
         group = DeviceGroup(
             key=data.key,
             name=data.name,
@@ -126,7 +126,6 @@ class DeviceGroupsService:
             {"group_key": group.key, "action": "created"},
         )
         await db.commit()
-        await _refresh_if_still_present(db, group)
         return group
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
@@ -181,79 +180,75 @@ class DeviceGroupsService:
         return None if group is None else group.group_type
 
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
-        await acquire_group_mutation_lock(db)
-        loaded = await _load_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
-        group = loaded.get(group_key)
-        if group is None:
-            # Release the fleet-global lock now rather than at request teardown:
-            # this transaction wrote nothing, and an unknown key must not
-            # serialise every other group writer for the tail of the request.
-            await db.rollback()
-            return None
-        try:
+        async with group_mutation_lock(db):
+            loaded = await _load_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
+            group = loaded.get(group_key)
+            if group is None:
+                return None
             if group.group_type == GroupType.static:
                 # Static groups must not carry filters; reject any filters payload.
                 if _has_filter_values(data.filters):
                     raise StaticGroupFiltersError
             elif data.filters is not None:
                 _assert_member_of_resolves(data.filters, loaded)
-        except ValueError:
-            # Same reasoning as the unknown-key exit: a rejected payload wrote
-            # nothing, so drop the fleet-global lock before unwinding.
-            await db.rollback()
-            raise
-        updates = data.model_dump(exclude_unset=True)
-        if "filters" in updates:
-            group.filters = _dump_filters(data.filters)
-            updates.pop("filters")
-        for field, value in updates.items():
-            setattr(group, field, value)
-        self._publisher.queue_for_session(
-            db,
-            "device_group.updated",
-            {"group_key": group.key, "action": "updated"},
-        )
-        await db.commit()
+            updates = data.model_dump(exclude_unset=True)
+            if "filters" in updates:
+                group.filters = _dump_filters(data.filters)
+                updates.pop("filters")
+            for field, value in updates.items():
+                setattr(group, field, value)
+            self._publisher.queue_for_session(
+                db,
+                "device_group.updated",
+                {"group_key": group.key, "action": "updated"},
+            )
+            await db.commit()
         await _refresh_if_still_present(db, group)
         return group
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
-        await acquire_group_mutation_lock(db)
-        group = await _get_group_row(db, group_key)
-        if group is None:
-            await db.rollback()
-            return False
-        # 00a87549 had to scan every row under FOR UPDATE, because a concurrent
-        # writer could add the first reference below LockRows; the advisory lock
-        # excludes that writer, so a predicate is safe again. ``has_key`` renders
-        # ``filters ? 'member_of'``, which ix_device_groups_filters_gin serves —
-        # ``-> 'member_of' IS NOT NULL`` is not a jsonb_ops operator and seq-scans.
-        # Two columns, not entities: the referrers are read, never mutated.
-        stmt = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.filters.has_key("member_of"))
-        referrers = (await db.execute(stmt)).tuples().all()
-        try:
-            _assert_no_references(group_key, referrers)
-        except ValueError:
-            await db.rollback()
-            raise
-        await db.delete(group)
-        self._publisher.queue_for_session(
-            db,
-            "device_group.updated",
-            {"group_key": group.key, "action": "deleted"},
-        )
-        await db.commit()
-        return True
+        async with group_mutation_lock(db):
+            group = await _get_group_row(db, group_key)
+            if group is None:
+                return False
+            # 00a87549 had to scan every row under FOR UPDATE, because a concurrent
+            # writer could add the first reference below LockRows; the advisory lock
+            # excludes that writer, so a predicate is safe again.
+            #
+            # ``contains`` renders ``filters @> '{"member_of": ["<key>"]}'``, a
+            # jsonb_ops operator that ix_device_groups_filters_gin serves, and jsonb
+            # array containment is per-element — so this returns exactly the groups
+            # that name this key, rather than every group carrying any member_of for
+            # Python to sift. Matches every group type on purpose: nothing enforces
+            # that static groups have no member_of, and the tag migration rewrote
+            # filters for any group with a tags key regardless of type.
+            stmt = select(DeviceGroup.key).where(
+                DeviceGroup.filters.contains({"member_of": [group_key]}),
+                DeviceGroup.key != group_key,
+            )
+            dependents = list((await db.execute(stmt)).scalars().all())
+            if dependents:
+                raise GroupReferencedError(sorted(dependents))
+            await db.delete(group)
+            self._publisher.queue_for_session(
+                db,
+                "device_group.updated",
+                {"group_key": group.key, "action": "deleted"},
+            )
+            await db.commit()
+            return True
 
     async def add_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
         group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
-            # The FOR UPDATE row lock is already held; release it here rather
-            # than at request teardown. Narrower than the advisory lock, but the
-            # same leak — a concurrent delete_group blocks at its DELETE flush.
+            # No row matched, so ``FOR UPDATE`` locked nothing — but the read
+            # opened a transaction that would otherwise sit until request
+            # teardown. End it here.
             await db.rollback()
             return None
         if not device_ids:
+            # A row *is* locked on this path. Drop it rather than carrying it
+            # through teardown, where it blocks delete_group's DELETE flush.
             await db.rollback()
             return 0
         # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
@@ -281,15 +276,10 @@ class DeviceGroupsService:
     async def remove_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
         group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
-            # See add_members: drop the held row lock rather than carrying it to
-            # request teardown.
+            # See add_members: no row matched, so nothing is locked, but the open
+            # transaction still has to end here rather than at teardown.
             await db.rollback()
             return None
-        if not device_ids:
-            # Mirrors add_members: an empty list provably removes nothing, so do
-            # not hold the row lock through a round trip to prove it.
-            await db.rollback()
-            return 0
         stmt = delete(DeviceGroupMembership).where(
             DeviceGroupMembership.group_id == group.id, DeviceGroupMembership.device_id.in_(device_ids)
         )
@@ -512,6 +502,15 @@ async def _refresh_if_still_present(db: AsyncSession, group: DeviceGroup) -> Non
     try:
         await db.refresh(group)
     except InvalidRequestError:
+        # Deliberately the base class, not ObjectDeletedError. A refresh whose
+        # SELECT returns no row raises plain
+        # ``InvalidRequestError("Could not refresh instance ...")`` — narrowing to
+        # ObjectDeletedError lets the concurrent-delete case straight through
+        # again (observed: the deadlock test fails ~2 runs in 8 with the narrow
+        # catch). The cost is that genuine session misuse — a detached instance,
+        # an instance with no identity — is caught here too, so log it rather
+        # than swallowing it silently.
+        logger.info("group_refresh_skipped", exc_info=True)
         await db.rollback()
 
 

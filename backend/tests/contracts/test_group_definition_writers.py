@@ -99,9 +99,13 @@ LOCKED_FUNCTIONS: dict[str, frozenset[str]] = {
 }
 
 
+# Either the scope (preferred — releases on every exit) or the bare acquire.
+_LOCK_NAMES = frozenset({"group_mutation_lock", "acquire_group_mutation_lock"})
+
+
 def _takes_the_lock(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
     return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "acquire_group_mutation_lock"
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _LOCK_NAMES
         for node in ast.walk(func)
     )
 
@@ -125,7 +129,7 @@ def test_each_sanctioned_writer_takes_the_lock() -> None:
         }
         missing.extend(f"  {rel}: {name} is gone (renamed?)" for name in sorted(expected - found))
         missing.extend(
-            f"  {rel}: {node.name} no longer calls acquire_group_mutation_lock"
+            f"  {rel}: {node.name} no longer takes the group-mutation lock"
             for node in ast.walk(tree)
             if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
             and node.name in expected

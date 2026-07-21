@@ -66,7 +66,10 @@ async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: Devi
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return await device_services.groups.get_group(db, group.key) or {}
+    # The re-read runs after the service committed and released the group lock, so
+    # a peer delete can land in between. `or {}` would fail DeviceGroupRead
+    # validation as a 500; the group genuinely no longer exists, so say so.
+    return found_or_404(await device_services.groups.get_group(db, group.key), "Group not found")
 
 
 @router.get("", response_model=list[DeviceGroupRead], response_model_exclude_none=True)
@@ -132,7 +135,9 @@ async def update_group(
         group = found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return await device_services.groups.get_group(db, group.key) or {}
+    # See create_group: a peer delete between the service commit and this re-read
+    # must surface as 404, not as a validation failure on an empty body.
+    return found_or_404(await device_services.groups.get_group(db, group.key), "Group not found")
 
 
 @router.delete("/{group_key}", status_code=204)

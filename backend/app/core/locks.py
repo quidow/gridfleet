@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 # Postgres keeps two independent advisory-lock spaces: one keyed by a single
@@ -20,6 +23,35 @@ LOCK_NAMESPACE = 6000
 
 #: Serialises every writer of ``device_groups`` *definitions*.
 GROUP_MUTATION_LOCK_ID = 1
+
+
+@asynccontextmanager
+async def group_mutation_lock(db: AsyncSession, *, when: bool = True) -> AsyncIterator[None]:
+    """Hold the group-mutation lock for the block, releasing it on *any* exit.
+
+    The lock is transaction-scoped, so releasing it means ending the
+    transaction — there is no unlock call. Enumerating rollbacks on each reject
+    path leaves the next reject path, and any exception the enumeration did not
+    anticipate, holding a fleet-global lock until the session closes at request
+    teardown. This covers the class instead: whatever leaves the block — an
+    early return, a rejected payload, a publisher failure — the transaction is
+    ended if the body did not already end it.
+
+    A body that commits leaves no transaction open, so the exit is a no-op.
+
+    *when* is False for callers that only conditionally need serialising (a
+    create with no ``member_of`` resolves no peer rows), so the caller does not
+    have to choose between a nested conditional and locking for nothing.
+    """
+    if not when:
+        yield
+        return
+    await acquire_group_mutation_lock(db)
+    try:
+        yield
+    finally:
+        if db.in_transaction():
+            await db.rollback()
 
 
 async def acquire_group_mutation_lock(db: AsyncSession) -> None:

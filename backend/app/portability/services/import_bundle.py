@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
-from app.core.locks import acquire_group_mutation_lock
+from app.core.locks import group_mutation_lock
 from app.devices.models import (
     Device,
     DeviceGroup,
@@ -349,36 +349,36 @@ class PortabilityImportService:
 
         group_id_by_key: dict[str, uuid.UUID] = {}
         if static_groups or dynamic_groups:
-            # Both *definition* inserts land in one transaction. Splitting them —
-            # statics committed here, dynamics only after the device loop — left a
-            # window the width of an entire import in which a concurrent delete_group
-            # could remove a static group the dynamics were about to reference.
-            #
-            # This closes the definitions half only. Static *membership* rows are
-            # still staged after the device loop, outside this lock: if a concurrent
-            # delete_group removes one of these static groups while the loop runs,
-            # the final commit violates device_group_memberships_group_id_fkey and
-            # surfaces as a 500 with the device rows already committed. Closing that
-            # needs a second acquire plus an existence recheck before the membership
-            # staging, and a way to report "device imported, membership skipped" —
-            # deliberately out of scope here, since holding this lock across the
-            # device loop would trade a rare race for permanent fleet-wide
-            # serialisation of every group write.
-            #
-            # The advisory lock is not strictly required today: _validate_group_references
-            # guarantees a bundle's member_of names only bundle statics, inserted in this
-            # same transaction. It is here so that relaxing that bundle-internal invariant
-            # later cannot silently reopen the hole. Do not delete it as redundant.
-            #
-            # Acquired only when there is group work to do: the lock must scale with
-            # group count, not device count, and a groupless bundle has nothing for it
-            # to protect.
-            await acquire_group_mutation_lock(session)
-            group_id_by_key = await self._insert_group_definitions(session, static_groups)
-            await self._insert_dynamic_group_definitions(session, dynamic_groups)
-            # Commit the definitions before the device loop so they survive a
-            # failure of any per-row commit below.
-            await session.commit()
+            # Scoped, not a bare acquire: the lock is released on every exit,
+            # including a key collision raised mid-insert, not only on the paths
+            # enumerated here. Guarded by the `if` so a groupless bundle neither
+            # takes the lock nor issues a commit it has nothing to commit.
+            async with group_mutation_lock(session):
+                # Both *definition* inserts land in one transaction. Splitting them —
+                # statics committed here, dynamics only after the device loop — left a
+                # window the width of an entire import in which a concurrent delete_group
+                # could remove a static group the dynamics were about to reference.
+                #
+                # This closes the definitions half only. Static *membership* rows are
+                # still staged after the device loop, outside this lock: if a concurrent
+                # delete_group removes one of these static groups while the loop runs,
+                # the final commit violates device_group_memberships_group_id_fkey and
+                # surfaces as a 500 with the device rows already committed. Closing that
+                # needs a second acquire plus an existence recheck before the membership
+                # staging, and a way to report "device imported, membership skipped" —
+                # deliberately out of scope here, since holding this lock across the
+                # device loop would trade a rare race for permanent fleet-wide
+                # serialisation of every group write.
+                #
+                # The advisory lock is not strictly required today: _validate_group_references
+                # guarantees a bundle's member_of names only bundle statics, inserted in this
+                # same transaction. It is here so that relaxing that bundle-internal invariant
+                # later cannot silently reopen the hole. Do not delete it as redundant.
+                group_id_by_key = await self._insert_group_definitions(session, static_groups)
+                await self._insert_dynamic_group_definitions(session, dynamic_groups)
+                # Commit the definitions before the device loop so they survive a
+                # failure of any per-row commit below.
+                await session.commit()
 
         by_index = {row.index: row for row in preview.rows}
         mappings_by_index = {m.index: m for m in request.mappings}
