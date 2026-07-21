@@ -6,6 +6,13 @@ concurrent create and delete and a dangling ``filters.member_of`` — the row
 locks that used to sit alongside it were removed precisely because they could
 not close the race. A new module constructing ``DeviceGroup`` without taking the
 lock silently reopens it, with no test failure anywhere else to catch it.
+
+Known blind spot, stated rather than papered over: this is a regex over source,
+so it cannot see ``await db.delete(group)`` — the ORM row-delete form, which
+``delete_group`` itself uses. Detecting it needs the variable's *type*, and
+scanning bare ``.delete(`` matches sixteen unrelated call sites in ``app/``
+(router decorators, ``db.delete(pack)``), which would make this contract cry
+wolf and get suppressed. A new delete-side writer is caught by review, not here.
 """
 
 from __future__ import annotations
@@ -37,9 +44,12 @@ SANCTIONED_WRITERS = frozenset(
 #      attribute costs no false positives; if an unrelated model ever grows a
 #      `filters` column, add a SCAN_EXEMPT_FILES table as
 #      test_no_direct_device_state_writes.py does.
+# The Core pattern allows a prefixed constructor: `pg_insert` is the house idiom
+# (groups.py uses it for the ON CONFLICT membership insert), and a bare \b would
+# not match it — the underscore is a word character, so there is no boundary.
 _WRITE_RES = (
     re.compile(r"\bDeviceGroup\("),
-    re.compile(r"\b(?:insert|update|delete)\(\s*DeviceGroup\s*[,)]"),
+    re.compile(r"(?:\w*_)?(?:insert|update|delete)\(\s*DeviceGroup\s*[,)]"),
     re.compile(r"\.filters\s*=(?!=)"),
 )
 _LOCK_RE = re.compile(r"\bacquire_group_mutation_lock\s*\(")

@@ -32,9 +32,12 @@ import pytest
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupUpdate
+from app.devices.services.groups import GroupReferencedError
 from tests.concurrency.group_lock_helpers import build_groups_service
+from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
@@ -66,10 +69,15 @@ async def _seed_referenced_pair(db_session: AsyncSession) -> tuple[str, str]:
 async def test_concurrent_group_writers_do_not_deadlock(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
 ) -> None:
     """A delete, an update, and a membership edit racing the same pair of rows
     all settle without Postgres aborting one as a deadlock victim."""
     static_key, dynamic_key = await _seed_referenced_pair(db_session)
+    host = await create_host(client)
+    device = await create_device(db_session, host_id=uuid.UUID(host["id"]), name=f"dl-{uuid.uuid4().hex[:6]}")
+    await db_session.commit()
+    device_id = device.id
     service = build_groups_service()
 
     async def delete_static() -> bool:
@@ -85,16 +93,28 @@ async def test_concurrent_group_writers_do_not_deadlock(
             )
 
     async def touch_members() -> int | None:
-        # Empty device list still takes the ``FOR UPDATE`` row lock before it
-        # returns — that lock, not the insert, is what could form a cycle.
+        # A real device, so add_members takes its ``FOR UPDATE`` row lock and
+        # holds it through an actual insert and commit. That lock, not the
+        # insert, is what could form a cycle — an empty device list would
+        # release it immediately and barely contend.
         async with db_session_maker() as session:
-            return await service.add_members(session, static_key, [])
+            return await service.add_members(session, static_key, [device_id])
 
-    results = await asyncio.gather(delete_static(), update_dynamic(), touch_members(), return_exceptions=True)
+    delete_result, update_result, members_result = await asyncio.gather(
+        delete_static(), update_dynamic(), touch_members(), return_exceptions=True
+    )
 
-    for result in results:
+    for result in (delete_result, update_result, members_result):
         if isinstance(result, Exception):
-            # GroupReferencedError is a legitimate outcome — the delete lost the
-            # race to a group that still references the target. A deadlock abort
-            # is not.
             assert "deadlock" not in str(result).lower(), f"group writers deadlocked: {result!r}"
+
+    # Absence of the word "deadlock" is not enough on its own: if every writer
+    # failed for some unrelated reason, the loop above would still pass. Pin
+    # each outcome to the set that is actually legitimate here.
+    assert delete_result is True or isinstance(delete_result, GroupReferencedError), (
+        f"delete must either succeed or lose to the live reference, got {delete_result!r}"
+    )
+    assert isinstance(update_result, DeviceGroup), f"the update must land, got {update_result!r}"
+    # 1 if the group survived to receive the member, None if the delete won and
+    # add_members found nothing. Anything else means it failed for another reason.
+    assert members_result in (1, None), f"add_members must succeed or find the group gone, got {members_result!r}"

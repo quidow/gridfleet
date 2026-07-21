@@ -340,10 +340,15 @@ class PortabilityImportService:
 
         group_id_by_key: dict[str, uuid.UUID] = {}
         if static_groups or dynamic_groups:
-            # Both inserts land in one transaction. Splitting them — statics committed
-            # here, dynamics only after the device loop — left a window the width of an
-            # entire import in which a concurrent delete_group could remove a static
-            # group the dynamics were about to reference.
+            # Both *definition* inserts land in one transaction. Splitting them —
+            # statics committed here, dynamics only after the device loop — left a
+            # window the width of an entire import in which a concurrent delete_group
+            # could remove a static group the dynamics were about to reference.
+            #
+            # This closes the definitions half only. Static *membership* rows are still
+            # staged after the device loop, outside this lock, so the same delete can
+            # still strand them on a deleted group id — see
+            # .superpowers/specs/2026-07-21-import-membership-delete-race.md.
             #
             # The advisory lock is not strictly required today: _validate_group_references
             # guarantees a bundle's member_of names only bundle statics, inserted in this
