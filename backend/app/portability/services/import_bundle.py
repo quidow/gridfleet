@@ -317,9 +317,18 @@ class PortabilityImportService:
         )
 
     async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
-        """Commit a validated import bundle in dependency order within one transaction:
-        static group definitions, devices (with verification enqueue), static memberships
-        for created devices, dynamic group definitions.
+        """Commit a validated import bundle, in dependency order, across several transactions.
+
+        Write order: **all** group definitions (static and dynamic together, under the
+        group-mutation advisory lock) commit first; then devices, each with its own
+        savepoint and per-row commit, enqueuing verification; then static membership
+        rows for the devices that were created, committed last.
+
+        Not one transaction. The group definitions commit before the device loop so
+        they survive a per-row failure, which means a group key that collides aborts
+        the whole import before any device row is touched — and, conversely, that the
+        membership commit at the end runs outside the group lock. See the comment on
+        that acquire for the window that leaves open.
 
         Raises:
             BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
@@ -409,7 +418,6 @@ class PortabilityImportService:
 
         self._insert_static_memberships(
             session,
-            static_group_keys={g.key for g in static_groups},
             by_index=by_index,
             device_id_by_index=device_id_by_index,
             group_id_by_key=group_id_by_key,
@@ -443,20 +451,22 @@ class PortabilityImportService:
     def _insert_static_memberships(
         self,
         session: AsyncSession,
-        static_group_keys: set[str],
         by_index: dict[int, ImportPreviewRow],
         device_id_by_index: dict[int, uuid.UUID],
         group_id_by_key: dict[str, uuid.UUID],
     ) -> None:
-        if not static_group_keys:
-            return
+        """Stage membership rows for each created device's bundle static groups.
+
+        ``group_id_by_key`` holds exactly the bundle's static definitions —
+        ``_insert_dynamic_group_definitions`` deliberately returns nothing — so it
+        is the single source of truth for "which statics did this bundle define",
+        and a ``.get`` miss is the only guard needed. A device naming a key
+        outside that set was already marked INVALID by ``_classify_row`` and
+        never reaches ``device_id_by_index``.
+        """
         for idx, device_id in device_id_by_index.items():
             row = by_index[idx]
             for key in row.device.static_groups:
-                # group_id_by_key holds static definitions only, and _classify_row
-                # already marked INVALID any device naming a key outside the
-                # bundle's statics — so a miss here means a bundle static whose
-                # insert did not land, not a dynamic key leaking through.
                 group_id = group_id_by_key.get(key)
                 if group_id is None:
                     continue

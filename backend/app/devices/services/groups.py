@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import selectinload
 
 from app.core.locks import acquire_group_mutation_lock
@@ -126,7 +126,7 @@ class DeviceGroupsService:
             {"group_key": group.key, "action": "created"},
         )
         await db.commit()
-        await db.refresh(group)
+        await _refresh_if_still_present(db, group)
         return group
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
@@ -214,7 +214,7 @@ class DeviceGroupsService:
             {"group_key": group.key, "action": "updated"},
         )
         await db.commit()
-        await db.refresh(group)
+        await _refresh_if_still_present(db, group)
         return group
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
@@ -230,7 +230,7 @@ class DeviceGroupsService:
         # ``-> 'member_of' IS NOT NULL`` is not a jsonb_ops operator and seq-scans.
         # Two columns, not entities: the referrers are read, never mutated.
         stmt = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.filters.has_key("member_of"))
-        referrers = [(key, filters) for key, filters in (await db.execute(stmt)).all()]
+        referrers = (await db.execute(stmt)).tuples().all()
         try:
             _assert_no_references(group_key, referrers)
         except ValueError:
@@ -285,6 +285,11 @@ class DeviceGroupsService:
             # request teardown.
             await db.rollback()
             return None
+        if not device_ids:
+            # Mirrors add_members: an empty list provably removes nothing, so do
+            # not hold the row lock through a round trip to prove it.
+            await db.rollback()
+            return 0
         stmt = delete(DeviceGroupMembership).where(
             DeviceGroupMembership.group_id == group.id, DeviceGroupMembership.device_id.in_(device_ids)
         )
@@ -491,6 +496,23 @@ def _serialize_group(group: DeviceGroup, *, device_count: int) -> dict[str, Any]
         "created_at": group.created_at,
         "updated_at": group.updated_at,
     }
+
+
+async def _refresh_if_still_present(db: AsyncSession, group: DeviceGroup) -> None:
+    """Reload server-generated columns, tolerating a concurrent delete.
+
+    The refresh runs *after* the commit that released the group-mutation lock,
+    so a delete can remove the row in between. ``AsyncSession.refresh`` then
+    raises ``InvalidRequestError`` — turning a write that genuinely succeeded
+    into a 500. The write is already durable at this point and the session uses
+    ``expire_on_commit=False``, so the in-memory object stays valid; the only
+    loss is that ``updated_at`` may be a moment stale on a row that no longer
+    exists. Callers get the object they just wrote either way.
+    """
+    try:
+        await db.refresh(group)
+    except InvalidRequestError:
+        await db.rollback()
 
 
 async def _get_group_row(db: AsyncSession, group_key: str, *, for_update: bool = False) -> DeviceGroup | None:

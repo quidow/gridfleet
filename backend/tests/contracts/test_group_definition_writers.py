@@ -90,23 +90,45 @@ def test_device_group_written_only_by_sanctioned_writers() -> None:
     )
 
 
-def test_sanctioned_writers_take_the_lock() -> None:
-    """An allowlisted module that stopped taking the lock is the same defect.
+# The individual functions that must each contain an acquire, not merely the
+# modules that hold them. A module-level check passes while two of three writers
+# have quietly dropped the call.
+LOCKED_FUNCTIONS: dict[str, frozenset[str]] = {
+    "app/devices/services/groups.py": frozenset({"create_group", "update_group", "delete_group"}),
+    "app/portability/services/import_bundle.py": frozenset({"commit_import"}),
+}
 
-    Deliberately coarse: this asserts the call survives *somewhere* in each
-    sanctioned module, not that every writer inside one takes it. Proving the
-    latter needs per-function reachability analysis, which is more machinery
-    than a two-module allowlist justifies. The behavioural coverage lives in
-    ``tests/concurrency/``.
+
+def _takes_the_lock(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
+    return any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "acquire_group_mutation_lock"
+        for node in ast.walk(func)
+    )
+
+
+def test_each_sanctioned_writer_takes_the_lock() -> None:
+    """Every named writer must acquire the lock, checked per function.
+
+    Still not reachability analysis: a writer that acquires inside a branch
+    satisfies this, which is intentional — ``create_group`` only locks when the
+    payload carries a ``member_of``, and ``commit_import`` only when the bundle
+    defines groups. What this does catch is the call disappearing from one
+    writer while its siblings keep theirs, which a module-wide scan cannot see.
     """
-    missing = [
-        rel
-        for rel in sorted(SANCTIONED_WRITERS)
-        if not any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "acquire_group_mutation_lock"
-            for node in ast.walk(ast.parse((BACKEND_APP.parent / rel).read_text(encoding="utf-8")))
+    missing: list[str] = []
+    for rel, expected in LOCKED_FUNCTIONS.items():
+        tree = ast.parse((BACKEND_APP.parent / rel).read_text(encoding="utf-8"))
+        found = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and node.name in expected
+        }
+        missing.extend(f"  {rel}: {name} is gone (renamed?)" for name in sorted(expected - found))
+        missing.extend(
+            f"  {rel}: {node.name} no longer calls acquire_group_mutation_lock"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+            and node.name in expected
+            and not _takes_the_lock(node)
         )
-    ]
-    assert not missing, f"sanctioned group writers no longer take the mutation lock: {missing}"
+    assert not missing, "sanctioned group writers no longer take the mutation lock:\n" + "\n".join(sorted(missing))

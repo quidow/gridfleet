@@ -32,7 +32,6 @@ import pytest
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupUpdate
-from app.devices.services.groups import GroupReferencedError
 from tests.concurrency.group_lock_helpers import build_groups_service
 from tests.helpers import create_device, create_host
 
@@ -43,27 +42,20 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
 
 
-async def _seed_referenced_pair(db_session: AsyncSession) -> tuple[str, str]:
-    """A static group and a dynamic group already referencing it.
+async def _seed_unreferenced_static(db_session: AsyncSession) -> str:
+    """A static group with no ``member_of`` referrer.
 
-    Keys are chosen so the dynamic key sorts *before* the static one: under the
-    retired discipline that ordering was what a reference-directed lock order
-    would have inverted, so it remains the shape most likely to expose a cycle.
+    Unreferenced on purpose. A referenced group makes ``delete_group`` raise
+    ``GroupReferencedError`` from ``_assert_no_references`` *before* it ever
+    reaches ``db.delete(group)`` — so the DELETE's row write lock is never taken
+    and the delete-versus-membership contention this file exists to test never
+    happens. The delete arm has to be able to reach its flush.
     """
     suffix = uuid.uuid4().hex[:8]
-    static_key = f"z-static-{suffix}"
-    dynamic_key = f"a-dynamic-{suffix}"
+    static_key = f"static-{suffix}"
     db_session.add(DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static))
-    db_session.add(
-        DeviceGroup(
-            key=dynamic_key,
-            name=dynamic_key,
-            group_type=GroupType.dynamic,
-            filters={"member_of": [static_key], "device_type": "real_device"},
-        )
-    )
     await db_session.commit()
-    return static_key, dynamic_key
+    return static_key
 
 
 async def test_concurrent_group_writers_do_not_deadlock(
@@ -71,9 +63,16 @@ async def test_concurrent_group_writers_do_not_deadlock(
     db_session_maker: async_sessionmaker[AsyncSession],
     client: AsyncClient,
 ) -> None:
-    """A delete, an update, and a membership edit racing the same pair of rows
-    all settle without Postgres aborting one as a deadlock victim."""
-    static_key, dynamic_key = await _seed_referenced_pair(db_session)
+    """A delete, an update, and a membership edit racing the same group row all
+    settle without Postgres aborting one as a deadlock victim.
+
+    All three target the *same* row on purpose. The delete reaches its DELETE
+    flush (the group has no referrer to reject it), so its row write lock
+    genuinely contends with ``add_members``' ``FOR UPDATE`` while both
+    ``delete_group`` and ``update_group`` hold the advisory lock in turn — the
+    cycle shape described in the module docstring.
+    """
+    static_key = await _seed_unreferenced_static(db_session)
     host = await create_host(client)
     device = await create_device(db_session, host_id=uuid.UUID(host["id"]), name=f"dl-{uuid.uuid4().hex[:6]}")
     await db_session.commit()
@@ -84,24 +83,24 @@ async def test_concurrent_group_writers_do_not_deadlock(
         async with db_session_maker() as session:
             return await service.delete_group(session, static_key)
 
-    async def update_dynamic() -> DeviceGroup | None:
+    async def rename_static() -> DeviceGroup | None:
         async with db_session_maker() as session:
             return await service.update_group(
                 session,
-                dynamic_key,
+                static_key,
                 DeviceGroupUpdate(description=f"touched-{uuid.uuid4().hex[:6]}"),
             )
 
     async def touch_members() -> int | None:
         # A real device, so add_members takes its ``FOR UPDATE`` row lock and
         # holds it through an actual insert and commit. That lock, not the
-        # insert, is what could form a cycle — an empty device list would
-        # release it immediately and barely contend.
+        # insert, is what could form a cycle — an empty device list now
+        # short-circuits and would barely contend.
         async with db_session_maker() as session:
             return await service.add_members(session, static_key, [device_id])
 
     delete_result, update_result, members_result = await asyncio.gather(
-        delete_static(), update_dynamic(), touch_members(), return_exceptions=True
+        delete_static(), rename_static(), touch_members(), return_exceptions=True
     )
 
     for result in (delete_result, update_result, members_result):
@@ -109,12 +108,15 @@ async def test_concurrent_group_writers_do_not_deadlock(
             assert "deadlock" not in str(result).lower(), f"group writers deadlocked: {result!r}"
 
     # Absence of the word "deadlock" is not enough on its own: if every writer
-    # failed for some unrelated reason, the loop above would still pass. Pin
-    # each outcome to the set that is actually legitimate here.
-    assert delete_result is True or isinstance(delete_result, GroupReferencedError), (
-        f"delete must either succeed or lose to the live reference, got {delete_result!r}"
+    # failed for some unrelated reason, the loop above would still pass. Pin each
+    # outcome to the set that is legitimate for *this* interleaving, where the
+    # delete is unopposed and therefore must succeed.
+    assert delete_result is True, f"the delete must reach its flush and succeed, got {delete_result!r}"
+    # Either ordering is legitimate: the update lands if it won the advisory
+    # lock, or returns None once the delete has removed the row.
+    assert isinstance(update_result, DeviceGroup) or update_result is None, (
+        f"the update must land or find the group gone, got {update_result!r}"
     )
-    assert isinstance(update_result, DeviceGroup), f"the update must land, got {update_result!r}"
-    # 1 if the group survived to receive the member, None if the delete won and
-    # add_members found nothing. Anything else means it failed for another reason.
+    # 1 if it took the row lock before the delete's flush, None if the delete
+    # committed first. Anything else means it failed for another reason.
     assert members_result in (1, None), f"add_members must succeed or find the group gone, got {members_result!r}"
