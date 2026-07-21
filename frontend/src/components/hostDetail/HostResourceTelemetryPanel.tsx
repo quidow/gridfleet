@@ -85,7 +85,7 @@ function MetricCard({
           <XAxis dataKey="timestamp" tick={{ fontSize: 12 }} tickFormatter={formatTick} minTickGap={24} />
           <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} tickFormatter={(value) => `${value}%`} width={44} />
           <Tooltip
-            labelFormatter={(label) => formatDateTime(label)}
+            labelFormatter={(label) => formatDateTime(typeof label === 'string' ? label : null)}
             formatter={(value) => formatPercent(typeof value === 'number' ? value : null)}
           />
           <Line
