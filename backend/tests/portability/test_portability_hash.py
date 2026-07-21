@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.portability.schemas import ExportBundle
+from app.portability.schemas import ExportBundle, ExportedDevice
 from app.portability.services.hash import canonical_bundle_json, compute_bundle_hash
 
 
@@ -78,3 +78,20 @@ def test_hash_handles_empty_devices_bundle() -> None:
     assert digest.startswith("sha256:")
     # Stable across recomputation.
     assert digest == compute_bundle_hash(bundle)
+
+
+def test_exported_device_dedupes_static_groups() -> None:
+    """Repeated group keys collapse at the schema edge, preserving first-seen order.
+
+    ``_plan_static_memberships`` derives its ``(index, group key)`` report pairs
+    from this list, so a repeat would emit two identical ``MembershipSkip``
+    entries — colliding on the frontend's ``${index}-${group_key}`` row key and
+    double-reporting one dropped membership.
+    """
+    device = ExportedDevice.model_validate(
+        {
+            **_bundle_dict()["devices"][0],
+            "static_groups": ["lab-b", "lab-a", "lab-b", "lab-a"],
+        }
+    )
+    assert device.static_groups == ["lab-b", "lab-a"]

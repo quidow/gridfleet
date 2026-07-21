@@ -313,10 +313,7 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     )
     ds_create.groups.get_group.assert_not_awaited()
     ds_create_with_presenter = SimpleNamespace(
-        groups=SimpleNamespace(
-            create_group=AsyncMock(return_value=SimpleNamespace(key=group_key)),
-            get_group=AsyncMock(return_value={"key": group_key, "devices": []}),
-        ),
+        groups=SimpleNamespace(get_group=AsyncMock(return_value={"key": group_key, "devices": []})),
         presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})),
     )
     assert await device_groups.get_group(group_key, db=db, device_services=ds_create_with_presenter) == {

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.locks import acquire_group_mutation_lock
+from app.core.locks import acquire_group_mutation_lock, group_mutation_lock
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -59,3 +61,29 @@ async def test_group_mutation_lock_released_on_rollback(
     async with db_session_maker() as second:
         await asyncio.wait_for(acquire_group_mutation_lock(second), timeout=5.0)
         await second.commit()
+
+
+async def test_rollback_failure_does_not_displace_the_body_exception() -> None:
+    """A cleanup failure must never replace what the body was raising.
+
+    ``update_group``/``delete_group`` signal rejection by raising typed errors
+    the routers map to 422 and 409. If the scope's ``finally`` rollback raises —
+    dropped connection, cancelled task — Python discards the in-flight exception
+    in favour of the cleanup one, and a correctly-rejected payload comes back as
+    an opaque 500.
+    """
+
+    class _BodyError(Exception):
+        pass
+
+    session = SimpleNamespace(
+        execute=AsyncMock(),
+        in_transaction=lambda: True,
+        rollback=AsyncMock(side_effect=RuntimeError("connection is closed")),
+    )
+
+    with pytest.raises(_BodyError):
+        async with group_mutation_lock(session):  # type: ignore[arg-type]
+            raise _BodyError
+
+    session.rollback.assert_awaited_once()

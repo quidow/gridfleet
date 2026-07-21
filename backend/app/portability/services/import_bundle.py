@@ -236,6 +236,17 @@ async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> No
         raise GroupKeyCollisionError(sorted(collided)) from exc
 
 
+def _staging_failure_reason(exc: IntegrityError) -> str:
+    """Name the constraint that killed the membership batch, in operator terms."""
+    match constraint_name(exc):
+        case "device_group_memberships_device_id_fkey":
+            return "membership staging rolled back: a device was deleted during import"
+        case "device_group_memberships_group_id_fkey":
+            return "membership staging rolled back: a static group was deleted during import"
+        case other:
+            return f"membership staging rolled back: {other or 'constraint violation'}"
+
+
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
     if not keys:
         return set()
@@ -527,27 +538,24 @@ class PortabilityImportService:
                 # guarding only the commit lets the violation escape untouched.
                 await self._write_static_memberships(session, values)
                 await session.commit()
-            except IntegrityError:
+            except IntegrityError as exc:
                 # Every device row already committed with its own savepoint, so
                 # only the membership rows are lost here. Letting this propagate
                 # would discard `created`/`skipped`/`failed` along with them and
                 # leave the operator no record of which devices the import made.
                 #
-                # One cause survives to here. The unique constraint is handled by
-                # ON CONFLICT DO NOTHING; the group_id FK cannot fire because
-                # delete_group takes the lock this block holds. That leaves a
-                # device deleted between the device loop and this write
-                # (device_group_memberships_device_id_fkey), which nothing
-                # serialises against the import — so name that cause rather than
-                # a vaguer one, and say the batch went, since it did.
+                # Name the cause from the constraint rather than assuming one.
+                # The device FK is the expected arm: nothing serialises a device
+                # delete against an import. The group FK is not supposed to be
+                # reachable — delete_group takes the lock this block holds — but
+                # "not supposed to" is not "cannot": a data migration, manual
+                # SQL, or a future writer can remove the row, and the AST writer
+                # contract documents `await db.delete(group)` as a blind spot it
+                # cannot catch. Guessing "a device was deleted" there sends the
+                # operator hunting for a device that is still present.
                 await session.rollback()
                 memberships_skipped.extend(
-                    MembershipSkip(
-                        index=idx,
-                        group_key=key,
-                        reason="membership staging rolled back: a device was deleted during import",
-                    )
-                    for idx, key in staged
+                    MembershipSkip(index=idx, group_key=key, reason=_staging_failure_reason(exc)) for idx, key in staged
                 )
         return memberships_skipped
 

@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
+from app.core.observability import get_logger
+
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -53,8 +57,18 @@ async def group_mutation_lock(db: AsyncSession, *, when: bool = True) -> AsyncIt
         # sit idle until the session closes — and callers are documented to get
         # the same transaction-ending guarantee either way, so the unlocked path
         # must not quietly opt out of it.
+        #
+        # Never let a cleanup failure displace what the body was raising. An
+        # exception from this rollback — a dropped connection, a cancelled task —
+        # would replace an in-flight UnknownMemberOfError or GroupReferencedError
+        # and turn a correctly-rejected payload's 422/409 into an opaque 500. The
+        # rollback failing is worth logging, never worth reporting *instead of*
+        # the reason the caller is unwinding.
         if db.in_transaction():
-            await db.rollback()
+            try:
+                await db.rollback()
+            except Exception:
+                logger.exception("group_mutation_lock_rollback_failed")
 
 
 async def acquire_group_mutation_lock(db: AsyncSession) -> None:

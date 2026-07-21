@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import text
 
 from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
@@ -182,3 +183,43 @@ async def test_delete_dynamic_group_rejects_dangling_reference(db_session: Async
     with pytest.raises(device_group_service.GroupReferencedError) as exc:
         await svc.delete_group(db_session, target["key"])
     assert exc.value.dependents == ["dangling-ref"]
+
+
+async def test_delete_group_survives_a_non_object_filters_row(db_session: AsyncSession) -> None:
+    """A JSONB array in `filters` must not 500 unrelated deletes.
+
+    `delete_group`'s referrer scan uses `filters ? 'member_of'`, and Postgres
+    matches that against a JSONB array containing the string and against the
+    bare string, not only against objects. Such a row can only come from a
+    migration or manual SQL, but reading `.get` off it would raise inside the
+    advisory lock and take down every group delete in the fleet.
+    """
+    victim = DeviceGroup(key="victim", name="victim", group_type=GroupType.static, filters=None)
+    db_session.add(victim)
+    db_session.add(DeviceGroup(key="malformed-arr", name="malformed-arr", group_type=GroupType.dynamic))
+    await db_session.commit()
+    # Bypass the ORM's dict typing the way manual SQL would.
+    await db_session.execute(
+        text("UPDATE device_groups SET filters = '[\"member_of\"]'::jsonb WHERE key = 'malformed-arr'")
+    )
+    await db_session.commit()
+
+    assert await _svc().delete_group(db_session, "victim") is True
+
+
+async def test_remove_members_with_no_device_ids_releases_the_row_lock(db_session: AsyncSession) -> None:
+    """An empty list must not hold the group row lock through a no-op DELETE.
+
+    ``add_members`` short-circuits the same degenerate input. That row lock is
+    what ``delete_group``'s DELETE blocks on, so holding it across a statement
+    that provably matches nothing only delays an unrelated writer.
+    """
+    svc = _svc()
+    group = await svc.create_group(
+        db_session,
+        DeviceGroupCreate(key="empty-remove", name="empty remove", group_type="static"),
+    )
+    await settle_after_commit_tasks()
+
+    assert await svc.remove_members(db_session, group["key"], []) == 0
+    assert not db_session.in_transaction(), "the row lock must be released, not carried to teardown"

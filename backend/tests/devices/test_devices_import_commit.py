@@ -484,11 +484,13 @@ async def test_commit_dedupes_a_repeated_static_group_key(
     db_session_maker: async_sessionmaker[AsyncSession],
     seeded_driver_packs: None,
 ) -> None:
-    """A key listed twice stages one membership row, not two.
+    """A key listed twice yields one membership row and no skip entries.
 
-    ``device_group_memberships`` is unique on ``(group_id, device_id)``, so the
-    second row would fail the staging commit's constraint after every device row
-    had already committed.
+    This pins the end state, not the dedup validator — ``ON CONFLICT DO NOTHING``
+    would collapse the duplicate on its own, so this passes with the validator
+    removed. The validator's actual job is keeping duplicate ``MembershipSkip``
+    entries out of the report; ``test_exported_device_dedupes_static_groups``
+    guards that directly.
     """
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle(

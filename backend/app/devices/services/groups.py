@@ -128,8 +128,13 @@ class DeviceGroupsService:
         has to answer a 404 for a create that succeeded, because it no longer
         depends on the row still being there when it builds the response.
 
-        ``device_count`` is 0 by construction: memberships reference this row by
-        id, and no one else has seen the id yet.
+        ``device_count`` is 0 by construction for a **static** group: membership
+        rows reference this row by id, and no one else has seen the id yet. A
+        dynamic group is the opposite case — its membership is derived from
+        ``filters`` over devices that already exist, so it can be non-empty the
+        instant it is created, and assuming 0 would make the create response
+        contradict the very next read. Run the same evaluator ``list_groups``
+        uses for that arm.
         """
         group = DeviceGroup(
             key=data.key,
@@ -152,9 +157,17 @@ class DeviceGroupsService:
             "device_group.updated",
             {"group_key": group.key, "action": "created"},
         )
-        payload = _serialize_group(group, device_count=0)
+        payload = _serialize_group(group, device_count=await self._initial_device_count(db, group))
         await db.commit()
         return payload
+
+    async def _initial_device_count(self, db: AsyncSession, group: DeviceGroup) -> int:
+        """The member count of a just-inserted, not-yet-committed group."""
+        if _is_static(group):
+            return 0
+        devices = await _load_devices_in_scope(db, [group])
+        index = await load_group_membership_index(db, groups=[group], devices=devices)
+        return len(index.device_ids(group.key))
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
         stmt = select(DeviceGroup).order_by(DeviceGroup.name)
@@ -323,6 +336,12 @@ class DeviceGroupsService:
             # transaction still has to end here rather than at teardown.
             await db.rollback()
             return None
+        if not device_ids:
+            # Same reasoning as add_members' empty-list path: a row *is* locked
+            # here, and `device_id IN ()` provably matches nothing, so holding
+            # that lock through a no-op DELETE only delays delete_group.
+            await db.rollback()
+            return 0
         stmt = delete(DeviceGroupMembership).where(
             DeviceGroupMembership.group_id == group.id, DeviceGroupMembership.device_id.in_(device_ids)
         )
@@ -495,7 +514,15 @@ def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dic
     """
     dependents: list[str] = []
     for key, filters in candidates:
-        raw_member_of = (filters or {}).get("member_of")
+        if not isinstance(filters, dict):
+            # ``filters ? 'member_of'`` is not an object-only predicate: Postgres
+            # matches a JSONB *array* containing that string and the bare string
+            # itself, so the scan hands us rows whose filters is not a dict at
+            # all. Reading ``.get`` off one raises AttributeError inside the
+            # advisory lock and 500s every delete in the fleet until that single
+            # row is repaired — the blast radius this scan exists to avoid.
+            continue
+        raw_member_of = filters.get("member_of")
         if isinstance(raw_member_of, list):
             if target_key in raw_member_of:
                 dependents.append(key)

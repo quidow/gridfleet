@@ -701,3 +701,35 @@ async def test_create_group_survives_a_peer_delete_landing_after_the_commit(clie
     # Populated inside the service transaction; reading them here proves the
     # response needs no post-commit fetch.
     assert body["created_at"] and body["updated_at"]
+
+
+async def test_create_dynamic_group_reports_the_same_device_count_as_a_read(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """The create response's device_count must agree with an immediate GET.
+
+    A dynamic group's membership is derived from its filters over devices that
+    already exist, so unlike a static group it is not empty at creation. The
+    create path cannot assume 0 the way it can for statics, where membership
+    rows reference an id nobody has seen yet.
+    """
+    await _create_device(db_session, "DYN-1", "dyn-device", default_host_id)
+
+    created = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dc-dyn",
+            "name": "DC dyn",
+            "group_type": "dynamic",
+            "filters": {"platform_id": "android_mobile"},
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    fetched = await client.get("/api/device-groups/dc-dyn")
+    assert fetched.status_code == 200, fetched.text
+
+    assert created.json()["device_count"] == fetched.json()["device_count"], (
+        f"create said {created.json()['device_count']}, read says {fetched.json()['device_count']}"
+    )
+    assert fetched.json()["device_count"] == 1

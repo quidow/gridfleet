@@ -71,13 +71,18 @@ class ExportedDevice(BaseModel):
     def _dedupe_static_groups(cls, value: list[GroupKey]) -> list[GroupKey]:
         """Collapse repeated keys, keeping first-seen order.
 
-        ``device_group_memberships`` is unique on ``(group_id, device_id)``, so a
-        bundle listing the same key twice would stage two identical rows and fail
-        the importer's membership commit on that constraint. Membership is
-        set-valued — a repeat carries no extra meaning — so collapse it at the
-        edge rather than making every consumer of ``static_groups`` defend
-        against it. ``_plan_static_memberships`` and the ``MembershipSkip``
-        generator both iterate this list raw and both rely on this.
+        Not a guard against the unique constraint: ``_write_static_memberships``
+        uses ``ON CONFLICT DO NOTHING``, and Postgres tolerates duplicate rows
+        *within* one such INSERT (verified — two identical VALUES insert one row,
+        no error). That was the reason when staging still used ``session.add``;
+        it no longer is.
+
+        What survives is reporting. ``_plan_static_memberships`` derives its
+        ``(index, group key)`` pairs from this list, and a repeat would emit two
+        identical ``MembershipSkip`` entries — colliding on the frontend's
+        ``${index}-${group_key}`` row key and telling the operator twice about
+        one dropped membership. Membership is set-valued, so a repeat carries no
+        meaning worth preserving; collapse it at the edge.
         """
         return list(dict.fromkeys(value))
 
