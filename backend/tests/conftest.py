@@ -74,7 +74,6 @@ from app.packs.services_container import PackServices
 from app.portability.dependencies import get_portability_services
 from app.portability.services.export import PortabilityExportService
 from app.portability.services.import_bundle import PortabilityImportService
-from app.portability.services.inventory import InventoryExportService
 from app.portability.services_container import PortabilityServices
 from app.runs.dependencies import get_run_services
 from app.runs.service_allocator import RunAllocatorService
@@ -451,7 +450,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return PortabilityServices(
             export=PortabilityExportService(),
             import_=PortabilityImportService(verification_enqueuer=VerificationService()),
-            inventory=InventoryExportService(),
         )
 
     def override_get_host_services() -> HostServices:

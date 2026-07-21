@@ -2254,9 +2254,8 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('button', { name: /export config/i })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /import devices/i })).toHaveCount(0);
 
-    // Positive assertion: the current subheader actions are present
+    // Positive assertion: the current subheader action is present
     const subheader = page.getByTestId('list-page-subheader');
-    await expect(subheader.getByRole('button', { name: 'Export Inventory' })).toBeVisible();
     await expect(subheader.getByRole('button', { name: 'Add Device' })).toBeVisible();
   });
 });

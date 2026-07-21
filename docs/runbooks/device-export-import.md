@@ -65,12 +65,6 @@ Each created device is queued for verification on commit. Devices transition `of
 - **Import rejected for a group key collision:** a group key in the bundle already exists on this install. Keys are immutable — edit the bundle to use a different key, or delete the existing group first.
 - **A row "failed: verification enqueue failed":** the device insert was rolled back. The row needs no cleanup; investigate the underlying job queue, then re-upload that subset.
 
-## Inventory snapshot (separate feature)
-
-The Devices page also has an **Export Inventory** button. That export is a *read-only snapshot* with runtime fields included (operational_state, verification status). It is **not** round-trippable through the import wizard. Use it for spreadsheets, audits, or external tooling.
-
-Choose between CSV or JSON via the modal's format toggle. The column picker remembers your last selection in `localStorage`. The active Devices-page filters (excluding sort and pagination) are applied to the export.
-
 ## Out of scope
 
 - Re-importing hosts. Hosts come back through the standard agent registration flow.

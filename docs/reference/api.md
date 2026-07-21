@@ -100,18 +100,6 @@ Groups are addressed by key throughout the bundle; no group UUID is exported, so
 
 `POST /api/portability/import` commits a previously-validated bundle. The server recomputes the canonical bundle hash; a mismatch returns `409`. `mappings` overrides the auto-suggested host assignment per row (identified by `index`). Per-row transaction: device insert and verification job enqueue happen atomically. Response arrays (`created`, `skipped`, `failed`) contain per-index entries with reasons for non-created rows.
 
-### Devices — Inventory
-
-| Method | Path | Purpose | Main input | Primary response |
-| --- | --- | --- | --- | --- |
-| `GET` | `/api/portability/inventory` | Streaming read-only export of the live fleet | `format`, `columns`, list filters | CSV or JSON array |
-
-`GET /api/portability/inventory` exports the live fleet including runtime fields (operational_state, telemetry, verification status). Query parameters:
-
-- `format` — `csv` or `json`. CSV serializes JSONB columns as JSON strings; `json` returns a JSON array of nested objects.
-- `columns` — comma-separated allowlist of dot-path column names (see `app/portability/schemas.py` for the enum). Omitting or leaving empty returns all columns.
-- List filters — `pack_id`, `platform_id`, `status`, `host_id`, repeated `group`, and others mirroring the devices list endpoint.
-
 ## Bulk Device Actions
 
 | Method | Path | Purpose | Main input | Primary response |
@@ -256,7 +244,7 @@ Each entry in `RunCreate.requirements` (`DeviceRequirement`) accepts an optional
 
 Omitting `groups` (or passing `[]`) places no group constraint on the requirement. Static and dynamic groups are both accepted, and dynamic membership is evaluated live at reservation time. A key naming no existing group fails run creation with `422`; a well-formed key that simply matches too few devices right now is a capacity problem and returns the usual `409`.
 
-Note the deliberate status split for an unknown group key: REST endpoints (`POST /api/runs`, `GET /api/devices`, `GET /api/portability/inventory`) return `422`, while the router's session-allocation path returns `400` and cancels the queue ticket. Both refuse to degrade an unknown key into "no constraint".
+Note the deliberate status split for an unknown group key: REST endpoints (`POST /api/runs`, `GET /api/devices`) return `422`, while the router's session-allocation path returns `400` and cancels the queue ticket. Both refuse to degrade an unknown key into "no constraint".
 
 `RunPreparationFailureReport` currently accepts:
 

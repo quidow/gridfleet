@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { FileDown, Plus, SearchX, Smartphone } from 'lucide-react';
+import { useCallback } from 'react';
+import { Plus, SearchX, Smartphone } from 'lucide-react';
 import {
   useDeleteDevice,
   useEnterDeviceMaintenance,
@@ -31,7 +31,6 @@ import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Button } from '../components/ui/Button';
 import { ListPageSubheader } from '../components/ui/ListPageSubheader';
-import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
 import { Pagination } from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
 import { qk } from '../lib/queryKeys';
@@ -76,18 +75,6 @@ export function Devices() {
   const restartNode = useRestartNode();
   const { data: catalog = [] } = useDriverPackCatalog();
   const enabledPackCount = catalog.filter((pack) => pack.state === 'enabled').length;
-  const [inventoryOpen, setInventoryOpen] = useState(false);
-
-  const inventoryFilters = useMemo(() => {
-    const out: Record<string, string> = {};
-    const skip = new Set(['sort_by', 'sort_dir', 'page', 'page_size']);
-    for (const [key, value] of controller.searchParams.entries()) {
-      if (skip.has(key)) continue;
-      if (value === '') continue;
-      out[key] = value;
-    }
-    return out;
-  }, [controller.searchParams]);
 
   const handleDeviceAction = useCallback((action: DeviceAction) => {
     switch (action.type) {
@@ -211,13 +198,6 @@ export function Devices() {
           meta={subheaderMeta}
           action={
             <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => setInventoryOpen(true)}
-                leadingIcon={<FileDown size={16} />}
-              >
-                Export Inventory
-              </Button>
               <Button onClick={() => controller.setShowAdd(true)} leadingIcon={<Plus size={16} />}>
                 Add Device
               </Button>
@@ -313,12 +293,6 @@ export function Devices() {
         message="Are you sure you want to delete this device? This action cannot be undone."
         confirmLabel="Delete"
         variant="danger"
-      />
-
-      <DeviceInventoryExportModal
-        isOpen={inventoryOpen}
-        onClose={() => setInventoryOpen(false)}
-        filters={inventoryFilters}
       />
     </div>
   );
