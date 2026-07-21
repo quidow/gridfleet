@@ -1,5 +1,8 @@
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from app.portability.schemas import ExportBundle, ExportedDevice
 from app.portability.services.hash import canonical_bundle_json, compute_bundle_hash
 
@@ -95,3 +98,14 @@ def test_exported_device_dedupes_static_groups() -> None:
         }
     )
     assert device.static_groups == ["lab-b", "lab-a"]
+
+
+def test_export_bundle_rejects_duplicate_group_keys() -> None:
+    payload = _bundle_dict()
+    payload["groups"] = [
+        {"key": "duplicate", "name": "Static", "group_type": "static"},
+        {"key": "duplicate", "name": "Dynamic", "group_type": "dynamic"},
+    ]
+
+    with pytest.raises(ValidationError, match="duplicate device group keys: duplicate"):
+        ExportBundle.model_validate(payload)

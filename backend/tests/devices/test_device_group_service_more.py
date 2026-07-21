@@ -63,8 +63,9 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
         DeviceGroupUpdate(name="static phones updated", description="renamed"),
     )
     assert updated is not None
-    assert updated.name == "static phones updated"
-    assert updated.description == "renamed"
+    assert updated["name"] == "static phones updated"
+    assert updated["description"] == "renamed"
+    assert updated["device_count"] == 1
 
     assert await svc.delete_group(db_session, group["key"]) is True
     assert await svc.delete_group(db_session, group["key"]) is False
@@ -106,7 +107,8 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
     )
     assert updated is not None
-    assert updated.filters == {"platform_id": "ios"}
+    assert updated["filters"] == {"platform_id": "ios"}
+    assert updated["device_count"] == 0
     # No iOS device is seeded, so membership is empty after the filter change.
     assert await svc.get_group_device_ids(db_session, group["key"]) == []
 

@@ -74,19 +74,9 @@ class DeviceGroupsService:
     than by raising. A caller needing several group writes in one transaction
     needs a different entry point, not these.
 
-    **The ``DeviceGroup`` that ``update_group`` returns is good for its identity
-    only** — read ``key`` or ``id``, nothing else. ``created_at`` and
-    ``updated_at`` are SQL-side (``server_default``/``onupdate``
-    ``func.now()``), so SQLAlchemy expires them after the flush; touching one
-    outside a transaction fires a lazy load and raises ``MissingGreenlet`` under
-    async. The obvious cure — ``await db.refresh(group)`` after the commit — is
-    what this method deliberately dropped: it runs after the advisory lock is
-    released, so a concurrent ``delete_group`` turns a write that already
-    succeeded into an ``InvalidRequestError`` 500. A caller wanting the full row
-    re-reads it, as the PATCH route does; that re-read is load-bearing there
-    because ``device_count`` cannot be derived from the instance. ``create_group``
-    has no such constraint and serializes inside its own transaction instead —
-    see ``_insert_group``.
+    Definition writes return their serialized response from the transaction
+    that performed the write, so a peer delete after commit cannot turn a
+    successful create or update into a misleading 404.
     """
 
     def __init__(
@@ -103,7 +93,7 @@ class DeviceGroupsService:
         # what FOR UPDATE cannot protect — it is blind to a row a peer has not
         # inserted yet — and it is the only thing here that can end up referencing
         # a deleted group. A create with no member_of (every static group, and a
-        # dynamic group filtered on platform/tags alone) reads nothing and can
+        # dynamic group filtered only on native device fields) reads nothing and can
         # dangle nothing; its only guard is ix_device_groups_key, which the
         # IntegrityError handler below already translates.
         is_dynamic = data.group_type == GroupType.dynamic
@@ -220,7 +210,7 @@ class DeviceGroupsService:
         group = await _get_group_row(db, group_key)
         return None if group is None else group.group_type
 
-    async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> DeviceGroup | None:
+    async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> dict[str, Any] | None:
         # Locks unconditionally, unlike create_group. The payload can carry
         # ``filters``, and that arm resolves peer rows exactly as a create with a
         # ``member_of`` does, so the lock is genuinely required for part of this
@@ -252,8 +242,10 @@ class DeviceGroupsService:
                 "device_group.updated",
                 {"group_key": group.key, "action": "updated"},
             )
+            payload = await self.get_group(db, group.key)
+            assert payload is not None
             await db.commit()
-        return group
+        return payload
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
         async with group_mutation_lock(db):

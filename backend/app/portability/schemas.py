@@ -96,6 +96,17 @@ class ExportBundle(BaseModel):
     groups: list[ExportedDeviceGroup] = Field(default_factory=list)
     devices: list[ExportedDevice]
 
+    @field_validator("groups")
+    @classmethod
+    def _unique_group_keys(cls, value: list[ExportedDeviceGroup]) -> list[ExportedDeviceGroup]:
+        counts: dict[str, int] = {}
+        for group in value:
+            counts[group.key] = counts.get(group.key, 0) + 1
+        duplicates = sorted(key for key, count in counts.items() if count > 1)
+        if duplicates:
+            raise ValueError(f"duplicate device group keys: {', '.join(duplicates)}")
+        return value
+
     @model_validator(mode="before")
     @classmethod
     def _gate_schema_version(cls, data: object) -> object:

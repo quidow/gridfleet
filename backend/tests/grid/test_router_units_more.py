@@ -268,7 +268,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
             device_services=ds_update_none,
         )
     assert exc.value.status_code == 404
-    updated_group = SimpleNamespace(key=group_key)
+    updated_group = {"key": group_key}
     ds_update_ok = SimpleNamespace(
         groups=SimpleNamespace(
             update_group=AsyncMock(return_value=updated_group),
@@ -281,6 +281,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         db=object(),
         device_services=ds_update_ok,
     ) == {"key": group_key}
+    ds_update_ok.groups.get_group.assert_not_awaited()
 
     ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:

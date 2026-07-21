@@ -135,12 +135,9 @@ async def update_group(
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
     try:
-        group = found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
+        return found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # See create_group: a peer delete between the service commit and this re-read
-    # must surface as 404, not as a validation failure on an empty body.
-    return found_or_404(await device_services.groups.get_group(db, group.key), "Group not found")
 
 
 @router.delete("/{group_key}", status_code=204)

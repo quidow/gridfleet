@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -91,7 +91,7 @@ async def test_delete_wins_first_member_of_reference_is_rejected(
             signal_after_group_lock(session, deleter_locked)
             return await service.delete_group(session, static_key)
 
-    async def add_first_reference() -> DeviceGroup | None:
+    async def add_first_reference() -> dict[str, Any] | None:
         await wait_for_group_lock(deleter_locked, label="updater")
         async with db_session_maker() as session:
             return await service.update_group(
@@ -124,7 +124,7 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     service = build_groups_service()
     updater_locked = asyncio.Event()
 
-    async def add_first_reference() -> DeviceGroup | None:
+    async def add_first_reference() -> dict[str, Any] | None:
         async with db_session_maker() as session:
             signal_after_group_lock(session, updater_locked)
             return await service.update_group(

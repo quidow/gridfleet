@@ -9,7 +9,9 @@ from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.devices.schemas.group import DeviceGroupUpdate
 
 HOST_PAYLOAD = {
     "hostname": "group-host",
@@ -701,6 +703,37 @@ async def test_create_group_survives_a_peer_delete_landing_after_the_commit(clie
     # Populated inside the service transaction; reading them here proves the
     # response needs no post-commit fetch.
     assert body["created_at"] and body["updated_at"]
+
+
+async def test_update_group_survives_a_peer_delete_landing_after_the_commit(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services.groups import DeviceGroupsService
+
+    created = await _create_group(client, key="updated-then-deleted")
+    original_update = DeviceGroupsService.update_group
+
+    async def update_then_delete(
+        self: DeviceGroupsService,
+        db: AsyncSession,
+        group_key: str,
+        data: DeviceGroupUpdate,
+    ) -> dict[str, Any] | None:
+        result = await original_update(self, db, group_key, data)
+        assert result is not None
+        async with db_session_maker() as peer:
+            assert await self.delete_group(peer, group_key) is True
+        return result
+
+    monkeypatch.setattr(DeviceGroupsService, "update_group", update_then_delete)
+
+    response = await client.patch(f"/api/device-groups/{created['key']}", json={"name": "Updated"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Updated"
+    assert (await client.get(f"/api/device-groups/{created['key']}")).status_code == 404
 
 
 async def test_create_dynamic_group_reports_the_same_device_count_as_a_read(

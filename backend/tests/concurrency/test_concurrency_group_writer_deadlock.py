@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -83,7 +83,7 @@ async def test_concurrent_group_writers_do_not_deadlock(
         async with db_session_maker() as session:
             return await service.delete_group(session, static_key)
 
-    async def rename_static() -> DeviceGroup | None:
+    async def rename_static() -> dict[str, Any] | None:
         async with db_session_maker() as session:
             return await service.update_group(
                 session,
@@ -113,14 +113,8 @@ async def test_concurrent_group_writers_do_not_deadlock(
     # delete is unopposed and therefore must succeed.
     assert delete_result is True, f"the delete must reach its flush and succeed, got {delete_result!r}"
     # Either ordering is legitimate: the update lands if it won the advisory
-    # lock, or returns None once the delete has removed the row. Dereference
-    # ``.key`` on the success branch — the router path (routers/groups.py:140)
-    # reads ``group.key`` to re-fetch the row, so an instance whose attributes
-    # cannot be accessed (an expired state handed back from a refresh that found
-    # no row) is a real 500 the test must catch, not just an isinstance pass.
+    # lock, or returns None once the delete has removed the row.
     if update_result is not None:
-        assert isinstance(update_result, DeviceGroup), (
-            f"the update must land or find the group gone, got {update_result!r}"
-        )
-        assert update_result.key == static_key, f"the updated group must carry its key, got {update_result!r}"
+        assert isinstance(update_result, dict), f"the update must land or find the group gone, got {update_result!r}"
+        assert update_result["key"] == static_key, f"the updated group must carry its key, got {update_result!r}"
     assert members_result in (1, None), f"add_members must succeed or find the group gone, got {members_result!r}"
