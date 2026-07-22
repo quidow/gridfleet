@@ -13,6 +13,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -231,6 +232,17 @@ async def test_reconcile_now_derives_state_inline(db_session: AsyncSession, db_h
     assert refreshed.operational_state_last_emitted == DeviceOperationalState.offline
 
 
+async def test_inline_reconcile_locks_device_once(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="one-inline-lock")
+    await db_session.commit()
+
+    async with capture_statements(db_session) as statements, db_session.begin():
+        await IntentService(db_session).reconcile_now(device.id, publisher=event_bus)
+
+    device_locks = [sql for sql in statements if "FROM devices" in sql and "FOR UPDATE" in sql]
+    assert len(device_locks) == 1, device_locks
+
+
 async def test_reconcile_locked_reuses_active_device_lock_without_commit(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -289,14 +301,17 @@ async def test_reconcile_now_flushes_before_lock(monkeypatch: pytest.MonkeyPatch
     fake_db = AsyncMock()
     fake_db.flush.side_effect = lambda: call_log.append("flush")
 
-    async def fake_lock_device(db: object, did: object) -> None:
+    locked = object()
+
+    async def fake_lock_device_handle(db: object, did: object) -> object:
         call_log.append("lock")
+        return locked
 
-    async def fake_reconcile(db: object, did: object, **kwargs: object) -> None:
-        pass
+    async def fake_reconcile_locked(db: object, handle: object, **kwargs: object) -> None:
+        assert handle is locked
 
-    monkeypatch.setattr("app.devices.services.intent.device_locking.lock_device", fake_lock_device)
-    monkeypatch.setattr("app.devices.services.intent.reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent.device_locking.lock_device_handle", fake_lock_device_handle)
+    monkeypatch.setattr("app.devices.services.intent.reconcile_locked_device", fake_reconcile_locked)
 
     service = IntentService(fake_db)
 
