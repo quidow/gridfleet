@@ -27,7 +27,6 @@ from app.devices.services.lifecycle_policy_state import (
     clear_recovery_generation,
     in_maintenance,
 )
-from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.state import evaluate_operational_state
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -394,7 +393,7 @@ class ConnectivityService:
                 run_reason="Device healthy after self-heal",
             )
             return
-        if not await is_ready_for_use_async(db, device):
+        if not snapshot.is_ready_for_use:
             logger.debug("Device %s is connected but still awaiting setup/verification", device.name)
             await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
             return

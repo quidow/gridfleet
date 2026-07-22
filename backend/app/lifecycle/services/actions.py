@@ -158,18 +158,16 @@ class LifecyclePolicyActionsService:
                 action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
                 reason=reason,
             )
+            next_ladder = remediation_log.advance_ladder(updated.ladder, action_entry)
             updated = replace(
                 updated,
-                ladder=remediation_log.advance_ladder(updated.ladder, action_entry),
-                decision_facts=replace(
-                    updated.decision_facts,
-                    remediation_directive=remediation_log.advance_ladder(updated.ladder, action_entry).node_directive,
-                ),
+                ladder=next_ladder,
+                decision_facts=replace(updated.decision_facts, remediation_directive=next_ladder.node_directive),
             )
             await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
         else:
             health = DeviceHealthService(publisher=self._publisher)
-            health_updated = await health._update_device_checks_locked(
+            health_updated = await health.update_device_checks_locked(
                 db, locked, updated, healthy=False, summary=reason
             )
             if health_updated is not None:
@@ -267,7 +265,7 @@ class LifecyclePolicyActionsService:
                 await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
                 snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
-                await health._update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
+                await health.update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
             return
 
         if node is not None:
@@ -288,7 +286,7 @@ class LifecyclePolicyActionsService:
                 await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
                 snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
-                await health._update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
+                await health.update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
 
     async def _reconcile(self, db: AsyncSession, device: Device, *, locked: LockedDevice | None) -> None:
         if locked is None:

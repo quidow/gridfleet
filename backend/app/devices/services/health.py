@@ -108,7 +108,7 @@ class DeviceHealthService:
         if locked is None:
             return False
         snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
-        updated = await self._update_device_checks_locked(
+        updated = await self.update_device_checks_locked(
             db,
             locked,
             snapshot,
@@ -130,7 +130,7 @@ class DeviceHealthService:
         revision: int | None = None,
         observed_at: datetime | None = None,
     ) -> DeviceDecisionSnapshot | None:
-        return await self._update_device_checks_locked(
+        return await self.update_device_checks_locked(
             db,
             locked.locked_device,
             snapshot,
@@ -140,7 +140,7 @@ class DeviceHealthService:
             observed_at=observed_at,
         )
 
-    async def _update_device_checks_locked(
+    async def update_device_checks_locked(
         self,
         db: AsyncSession,
         locked: LockedDevice,
