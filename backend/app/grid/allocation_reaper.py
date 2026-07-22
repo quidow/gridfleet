@@ -38,10 +38,14 @@ class GridAllocationReaperLoop(BackgroundLoop):
         return float(INTERVAL_SEC)
 
     async def _run_cycle(self, db: AsyncSession) -> None:
-        await self.run_cycle(db)
+        # The framework session is ignored: each phase owns its own transaction so
+        # no Appium/agent call (none today) and no retry backoff pins a session.
+        _ = db
+        await self.run_cycle()
 
-    async def run_cycle(self, db: AsyncSession) -> None:
-        reaped = await self._services.allocation.reap_expired(db)
+    async def run_cycle(self) -> None:
+        async with self._session_factory.begin() as db:
+            reaped = await self._services.allocation.reap_expired(db)
         if reaped["pending_failed"] or reaped["tickets_expired"]:
             logger.info(
                 "grid_allocation_reaped",
@@ -54,10 +58,11 @@ class GridAllocationReaperLoop(BackgroundLoop):
             # poll interval later — closing the window where the freed device is
             # re-allocatable while a router-crash orphan may still hold it.
             request_session_sync_wake()
-        depth = await db.scalar(
-            select(func.count())
-            .select_from(GridSessionQueueTicket)
-            .where(GridSessionQueueTicket.status == GridQueueStatus.waiting)
-        )
+        # Short read-only session for the gauge, separate from the reap transaction.
+        async with self._session_factory() as db:
+            depth = await db.scalar(
+                select(func.count())
+                .select_from(GridSessionQueueTicket)
+                .where(GridSessionQueueTicket.status == GridQueueStatus.waiting)
+            )
         GRID_QUEUE_DEPTH.set(float(depth or 0))
-        await db.commit()

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy import func, null, or_, select, update
-from sqlalchemy.exc import IntegrityError, NoResultFound
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
 
@@ -46,7 +46,6 @@ from app.devices.services.group_membership import (
 from app.devices.services.intent import IntentService
 from app.devices.services.readiness import assess_device_with_pack, assess_devices_async
 from app.devices.services.state import is_available_sql
-from app.grid import appium_direct
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -198,6 +197,21 @@ class AllocationResult:
     allocation_id: uuid.UUID
     target: str
     device_id: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class InterruptedSessionEffect:
+    """Immutable values describing a live session from an interrupted create.
+
+    Produced by ``prepare_interrupted_session`` inside its own transaction and
+    consumed after that transaction closes: the Appium terminate and the
+    ``mark_ended`` finalize run with no ORM object or open transaction carried
+    across the boundary.
+    """
+
+    session_pk: uuid.UUID
+    appium_session_id: str
+    target: str
 
 
 class RunNotActiveError(Exception):
@@ -378,8 +392,12 @@ class AllocationService:
 
         The status transition is a conditional UPDATE guarded on ``status='pending'``
         so the reaper failing the row mid-create loses the race deterministically.
-        A retry of an interrupted create is handled by ``resume_interrupted`` before
-        a fresh claim; a non-pending row therefore raises ``AllocationNotPendingError``.
+        A retry of an interrupted create is handled by ``prepare_interrupted_session``
+        before a fresh claim; a non-pending row therefore raises
+        ``AllocationNotPendingError``. A unique-violation ``IntegrityError`` (a
+        concurrent register API inserted the same Appium session id) is left to
+        propagate: the owning ``begin()`` context rolls back and the caller
+        translates it to ``AllocationNotPendingError`` outside the transaction.
 
         ``last_activity_at`` is intentionally NOT stamped at promotion: a ``running``
         row with NULL activity means "the client never issued a command". The
@@ -392,21 +410,20 @@ class AllocationService:
             size = len(json.dumps(appium_capabilities, sort_keys=True, separators=(",", ":")).encode("utf-8"))
             if size > 32 * 1024:
                 appium_capabilities = None
-        try:
-            result = await db.execute(
-                update(Session)
-                .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
-                .values(
-                    session_id=appium_session_id,
-                    status=SessionStatus.running,
-                    actual_capabilities=appium_capabilities,
-                )
+        pending = await db.get(Session, allocation_id)
+        locked: device_locking.LockedDevice | None = None
+        if pending is not None and pending.device_id is not None:
+            locked = await device_locking.lock_device_handle(db, pending.device_id)
+        result = await db.execute(
+            update(Session)
+            .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
+            .values(
+                session_id=appium_session_id,
+                status=SessionStatus.running,
+                actual_capabilities=appium_capabilities,
             )
-            await db.flush()
-        except IntegrityError:
-            # Roll back the poisoned transaction and surface the allocation conflict.
-            await db.rollback()
-            raise AllocationNotPendingError(allocation_id) from None
+        )
+        await db.flush()
         if int(getattr(result, "rowcount", 0) or 0) == 0:
             raise AllocationNotPendingError(allocation_id)
         # This is the authoritative creation point for router-issued sessions (spec
@@ -425,6 +442,11 @@ class AllocationService:
             run_id=str(session.run_id) if session.run_id is not None else None,
             publisher=self._publisher,
         )
+        # Reuse the device lock so the inline ledger/desired-state convergence runs
+        # under the same row lock as the promotion (no extra lock read).
+        if locked is not None:
+            intent = self._intent_factory(db)
+            await intent.reconcile_locked(locked, publisher=self._publisher)
 
     async def fail(self, db: DbSession, *, allocation_id: uuid.UUID, message: str) -> None:
         # Lock first (as before), then attempt the conditional transition. The device
@@ -708,27 +730,43 @@ class AllocationService:
                     return result
         return None
 
-    async def resume_interrupted(self, db: DbSession, *, ticket_id: uuid.UUID) -> None:
-        """Resolve a live row from an interrupted create before a fresh claim."""
-        stmt = (
-            select(Session)
-            .options(selectinload(Session.device).selectinload(Device.appium_node))
-            .options(selectinload(Session.device).selectinload(Device.host))
-            .where(
-                Session.ticket_id == ticket_id,
-                live_session_predicate(),
+    async def prepare_interrupted_session(
+        self, db: DbSession, *, ticket_id: uuid.UUID
+    ) -> InterruptedSessionEffect | None:
+        """Resolve a live row from an interrupted create before a fresh claim.
+
+        Returns immutable values (session pk, Appium session id, router target)
+        so the caller can terminate the remote Appium session and finalize
+        ``mark_ended`` OUTSIDE this transaction. A pending row is an interrupted
+        in-flight create; it is failed here so the fresh claim below replaces it.
+        """
+        candidate = (
+            await db.execute(
+                select(Session.id, Session.device_id)
+                .where(Session.ticket_id == ticket_id, live_session_predicate())
+                .limit(1)
             )
+        ).one_or_none()
+        if candidate is None:
+            return None
+        session_pk, device_id = candidate
+        if device_id is not None:
+            await device_locking.lock_device_handle(db, device_id)
+        row = await db.scalar(
+            select(Session)
+            .options(
+                selectinload(Session.device).selectinload(Device.appium_node),
+                selectinload(Session.device).selectinload(Device.host),
+            )
+            .where(Session.id == session_pk, live_session_predicate())
         )
-        row = (await db.execute(stmt)).scalars().first()
         if row is None:
-            return
+            return None
         if row.status == SessionStatus.pending:
             await self.fail(db, allocation_id=row.id, message="create interrupted; retried by router")
-            return
+            return None
         target = resolve_router_target(row)
-        if target is not None:
-            await appium_direct.terminate_session(target, row.session_id)
-        await self.mark_ended(db, appium_session_id=row.session_id)
+        return None if target is None else InterruptedSessionEffect(row.id, row.session_id, target)
 
     async def _load_groups_by_key(self, db: DbSession, group_keys: Collection[str]) -> list[DeviceGroup]:
         """One read: the requested groups plus the static groups their JSON
