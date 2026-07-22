@@ -1,8 +1,8 @@
 """Device intent reconciler: derives each device's desired state from intents and facts.
 
-Ticks as the ``device_intent_reconciler`` background loop: GCs expired deny
-intents, clears elapsed reservation-row cooldowns, then runs the full
-reconcile scan. Despite the name, unrelated to the observe-only
+Ticks as the ``device_intent_reconciler`` background loop: inventories every
+device, then clears its expired deny intents and elapsed cooldown under that
+device's lock before reconciling it. Despite the name, unrelated to the observe-only
 ``appium_nodes.services.reconciler*`` family, which converges agent-reported
 Appium process facts and never decides desired state.
 """
@@ -12,11 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import selectinload
 
-from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh, poke_node_refresh_target
+from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh_target
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import (
     DesiredStateWrite,
@@ -48,7 +47,7 @@ from app.devices.services.intent_types import release_rollout_intent_source
 from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
 from app.lifecycle.services import remediation_log
-from app.runs.models import RunState
+from app.runs.models import RunState, TestRun
 from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
@@ -59,7 +58,6 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
     from app.devices.services_container import DeviceServices
@@ -77,6 +75,9 @@ INTENT_RECONCILE_INTERVAL_SEC = 5.0
 @dataclass(frozen=True, slots=True)
 class ReconcileCandidate:
     device_id: uuid.UUID
+    delete_expired_intents: bool = False
+    clear_elapsed_cooldown: bool = False
+    pack_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +103,7 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
     async def _run_cycle(self, db: AsyncSession) -> None:
         await run_device_intent_reconciler_once(
             db,
-            settings=self._services.settings,
+            session_factory=self._services.session_factory,
             circuit_breaker=self._services.circuit_breaker,
             publisher=self._services.publisher,
             pool=self._services.pool,
@@ -121,6 +122,7 @@ async def reconcile_device_command(
             locked = await device_locking.lock_device_handle(db, candidate.device_id)
         except NoResultFound:
             return ReconcileCommandResult(changed=False, target=None)
+        await _apply_candidate_hygiene(db, locked, candidate=candidate, now=now_utc())
         changed = await reconcile_locked_device(db, locked, publisher=publisher, packs=packs)
         host = locked.device.host
         target = NodeRefreshTarget(host.ip, host.agent_port) if changed and host is not None else None
@@ -141,123 +143,137 @@ async def _reconcile_and_deliver(
         await poke_node_refresh_target(result.target, circuit_breaker=circuit_breaker, pool=pool)
 
 
-async def _reconcile_commit_deliver(
-    db: AsyncSession,
-    device_id: uuid.UUID,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-    pool: AgentHttpPool | None = None,
-    packs: dict[str, DriverPack] | None = None,
-) -> None:
-    if packs is not None:
-        changed = await reconcile_device(db, device_id, publisher=publisher, packs=packs)
-    else:
-        changed = await reconcile_device(db, device_id, publisher=publisher)
-    await db.commit()
-    if changed:
-        await poke_node_refresh(
-            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
-        )
-
-
 async def run_device_intent_reconciler_once(
     db: AsyncSession,
     *,
-    settings: SettingsReader,
+    session_factory: SessionFactory,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
-    await _gc_expired_intents(db)
-    try:
-        await _clear_elapsed_cooldowns(db, publisher=publisher)
-    except Exception:
-        # Same containment the host_sweep venue gave this pass: a failing
-        # cooldown clear must not block this tick's full reconcile scan.
-        logger.exception("intent_reconciler_cooldown_clear_failed")
-        await db.rollback()
-    await _reconcile_all_devices(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool)
+    async with db.begin():
+        candidates = await _load_reconcile_candidates(db, now=now_utc())
+        packs = await load_packs_by_ids(db, {candidate.pack_id for candidate in candidates if candidate.pack_id})
+        for pack in packs.values():
+            db.expunge(pack)
 
-
-async def _gc_expired_intents(db: AsyncSession) -> None:
-    """Bulk-delete expired intent rows. Pure hygiene: the evaluator already
-    ignores rows past ``expires_at``, and this same tick's full scan
-    re-derives every device — no per-device reconcile is needed here."""
-    now = now_utc()
-    await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
-    await db.commit()
-
-
-async def _clear_elapsed_cooldowns(db: AsyncSession, *, publisher: EventPublisher) -> None:
-    """Clear elapsed reservation-row cooldowns (moved from host_sweep, WS-13.3).
-
-    cooldown_device writes the cooldown window to the active reservation row as
-    the source of truth (deny intents are derived from it); this pass is the
-    only path that resets the exclusion fields once excluded_until elapses.
-    Indefinite health exclusions (exclusion_kind = 'exclusion') are deliberately
-    not matched. Decisions do NOT depend on this reset — cooldown_active
-    re-derives from excluded_until > now at read time; this is row hygiene plus
-    the immediate warm-reentry reconcile for the affected devices.
-    """
-    now = now_utc()
-    expired_cooldowns = (
-        (
-            await db.execute(
-                select(DeviceReservation)
-                .where(DeviceReservation.exclusion_kind == ExclusionKind.cooldown)
-                .where(DeviceReservation.excluded_until < now)
-                .where(reservation_active())
-                .options(selectinload(DeviceReservation.run))
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for entry in expired_cooldowns:
-        if entry.run is not None and entry.run.state in (RunState.completed, RunState.cancelled, RunState.failed):
-            continue
-        entry.excluded = False
-        entry.exclusion_kind = None
-        entry.exclusion_reason = None
-        entry.excluded_at = None
-        entry.excluded_until = None
-        # ``cooldown_count`` is sticky across TTL clears. Zeroing here
-        # makes the escalation threshold unreachable for slow-burn flakes
-        # where each cooldown TTL expires before the next failure lands.
-        # Only ``restore_device_to_run`` (operator-driven) resets the counter.
-        await reconcile_device(db, entry.device_id, publisher=publisher)
-    await db.commit()
-
-
-async def _reconcile_all_devices(
-    db: AsyncSession,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-    pool: AgentHttpPool | None = None,
-) -> None:
-    # ponytail: full scan every tick — no dirty queue, no work-avoidance. At lab
-    # scale (hundreds of devices, ~8 short indexed queries each) a scan is cheap,
-    # and it structurally removes the missed-mark_dirty staleness class. If a
-    # very large lab ever needs relief, raise general.intent_reconcile_interval_sec.
-    device_ids = (await db.execute(select(Device.id).order_by(Device.id))).scalars().all()
-    packs: dict[str, DriverPack] = {}
-    if device_ids:
-        pack_ids = (await db.execute(select(Device.pack_id).distinct())).scalars().all()
-        packs = await load_packs_by_ids(db, {pid for pid in pack_ids if pid})
-    for device_id in device_ids:
-        await _reconcile_commit_deliver(
-            db,
-            device_id,
-            settings=settings,
+    for candidate in candidates:
+        await _reconcile_and_deliver(
+            session_factory,
+            candidate,
             circuit_breaker=circuit_breaker,
             publisher=publisher,
-            pool=pool,
             packs=packs,
+            pool=pool,
         )
+
+
+async def _load_reconcile_candidates(db: AsyncSession, *, now: datetime) -> list[ReconcileCandidate]:
+    expired_intent = exists(
+        select(DeviceIntent.id)
+        .where(
+            DeviceIntent.device_id == Device.id,
+            DeviceIntent.expires_at.is_not(None),
+            DeviceIntent.expires_at <= now,
+        )
+        .correlate(Device)
+    )
+    elapsed_cooldown = exists(
+        select(DeviceReservation.id)
+        .join(TestRun, TestRun.id == DeviceReservation.run_id)
+        .where(
+            DeviceReservation.device_id == Device.id,
+            DeviceReservation.exclusion_kind == ExclusionKind.cooldown,
+            DeviceReservation.excluded_until < now,
+            reservation_active(),
+            TestRun.state.notin_((RunState.completed, RunState.cancelled, RunState.failed)),
+        )
+        .correlate(Device)
+    )
+    rows = (
+        await db.execute(
+            select(
+                Device.id,
+                Device.pack_id,
+                expired_intent.label("delete_expired_intents"),
+                elapsed_cooldown.label("clear_elapsed_cooldown"),
+            ).order_by(Device.id)
+        )
+    ).all()
+    return [
+        ReconcileCandidate(
+            device_id=row.id,
+            delete_expired_intents=bool(row.delete_expired_intents),
+            clear_elapsed_cooldown=bool(row.clear_elapsed_cooldown),
+            pack_id=row.pack_id,
+        )
+        for row in rows
+    ]
+
+
+async def _delete_expired_intents_for_locked_device(
+    db: AsyncSession,
+    locked: LockedDevice,
+    *,
+    now: datetime,
+) -> None:
+    locked.assert_active(db)
+    await db.execute(
+        delete(DeviceIntent).where(
+            DeviceIntent.device_id == locked.device.id,
+            DeviceIntent.expires_at.is_not(None),
+            DeviceIntent.expires_at <= now,
+        )
+    )
+
+
+async def _clear_elapsed_cooldown_for_locked_device(
+    db: AsyncSession,
+    locked: LockedDevice,
+    *,
+    now: datetime,
+) -> None:
+    locked.assert_active(db)
+    nonterminal_run = exists(
+        select(TestRun.id).where(
+            TestRun.id == DeviceReservation.run_id,
+            TestRun.state.notin_((RunState.completed, RunState.cancelled, RunState.failed)),
+        )
+    )
+    await db.execute(
+        update(DeviceReservation)
+        .where(
+            DeviceReservation.device_id == locked.device.id,
+            DeviceReservation.exclusion_kind == ExclusionKind.cooldown,
+            DeviceReservation.excluded_until < now,
+            reservation_active(),
+            nonterminal_run,
+        )
+        .values(
+            excluded=False,
+            exclusion_kind=None,
+            exclusion_reason=None,
+            excluded_at=None,
+            excluded_until=None,
+        )
+    )
+
+
+async def _apply_candidate_hygiene(
+    db: AsyncSession,
+    locked: LockedDevice,
+    *,
+    candidate: ReconcileCandidate,
+    now: datetime,
+) -> None:
+    if candidate.delete_expired_intents:
+        await _delete_expired_intents_for_locked_device(db, locked, now=now)
+    if candidate.clear_elapsed_cooldown:
+        try:
+            async with db.begin_nested():
+                await _clear_elapsed_cooldown_for_locked_device(db, locked, now=now)
+        except Exception:
+            logger.exception("intent_reconciler_cooldown_clear_failed", device_id=str(locked.device.id))
 
 
 async def gather_decision_facts(
