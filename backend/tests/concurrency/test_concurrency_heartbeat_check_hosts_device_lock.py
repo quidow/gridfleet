@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 from datetime import timedelta
@@ -16,9 +18,15 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, run_one_heartbeat_cycle
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.hosts.models import Host
+    from app.packs.models import DriverPack
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
@@ -49,20 +57,21 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
     race_committed = asyncio.Event()
 
     # The host-offline write now derives through update_device_checks -> reconcile ->
-    # the edge detector in intent_reconciler. The row lock is still acquired by
-    # evaluate_host's lock_devices before that derivation, so gate on the
-    # state-module call to prove the lock window covers the offline write.
-    original_emit_transition = intent_reconciler.emit_operational_state_transition
+    # the edge detector in intent_reconciler. Reconcile loads the decision snapshot
+    # (async, right after lock_device_handle) before applying the synchronous
+    # operational-state edge, all inside evaluate_host's lock_devices window. Gate on
+    # that async loader to prove the lock window covers the offline write (the sync
+    # apply_operational_state_transition cannot be patched with an async gate).
+    original_loader = intent_reconciler.load_device_decision_snapshot
 
-    async def gated_emit_transition(
+    async def gated_loader(
         db: AsyncSession,
-        device: Device,
+        locked: LockedDevice,
         *,
-        now: object,
-        publisher: object,
-        packs: object = None,
-    ) -> bool:
-        if device.id == device_id:
+        packs: Mapping[str, DriverPack],
+        now: datetime,
+    ) -> DeviceDecisionSnapshot:
+        if locked.device.id == device_id:
             inside_offline_branch.set()
             await asyncio.wait_for(race_attempted_lock.wait(), timeout=2.0)
             # Pre-fix, the racing writer can acquire and commit during this
@@ -71,16 +80,10 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
             # the timeout lets the fixed path continue without deadlocking.
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(race_committed.wait(), timeout=0.5)
-        return await original_emit_transition(
-            db,
-            device,
-            now=now,
-            publisher=publisher,  # type: ignore[arg-type]
-            packs=packs,  # type: ignore[arg-type]
-        )
+        return await original_loader(db, locked, packs=packs, now=now)
 
     async def heartbeat_caller() -> None:
-        with patch.object(intent_reconciler, "emit_operational_state_transition", new=gated_emit_transition):
+        with patch.object(intent_reconciler, "load_device_decision_snapshot", new=gated_loader):
             async with db_session_maker() as db:
                 svc = HeartbeatService(
                     publisher=Mock(),

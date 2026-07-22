@@ -32,8 +32,12 @@ from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from collections.abc import Sequence
 
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.sql.elements import ColumnElement
+
+    from app.devices.locking import LockedDevice
     from app.devices.services.device_health_fold_context import LockedDeviceFold
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -334,7 +338,7 @@ async def test_unhealthy_fold_and_background_intent_reconciler_do_not_deadlock_o
     reconcile_lock_started = asyncio.Event()
     reconcile_device_locked = asyncio.Event()
     original_node_lock = appium_node_locking.lock_appium_node_for_device
-    original_device_lock = device_locking.lock_device
+    original_device_lock = device_locking.lock_device_handle
     pause_once = True
 
     async def gated_node_lock(db: AsyncSession, target_id: uuid.UUID) -> AppiumNode | None:
@@ -351,14 +355,22 @@ async def test_unhealthy_fold_and_background_intent_reconciler_do_not_deadlock_o
         target_id: uuid.UUID,
         *,
         load_sessions: bool = False,
-    ) -> Device:
-        reconcile_lock_started.set()
-        locked = await original_device_lock(db, target_id, load_sessions=load_sessions)
-        reconcile_device_locked.set()
+        predicates: Sequence[ColumnElement[bool]] = (),
+    ) -> LockedDevice:
+        # The fold and the reconciler now share ``lock_device_handle``; the fold
+        # takes its device lock (line 485) before pausing at the node lock, so
+        # only observe the call that arrives after the fold is parked — that one
+        # is the background reconciler's.
+        is_reconcile = node_locked.is_set() and target_id == device_id
+        if is_reconcile:
+            reconcile_lock_started.set()
+        locked = await original_device_lock(db, target_id, load_sessions=load_sessions, predicates=predicates)
+        if is_reconcile:
+            reconcile_device_locked.set()
         return locked
 
     monkeypatch.setattr(appium_node_locking, "lock_appium_node_for_device", gated_node_lock)
-    monkeypatch.setattr(device_locking, "lock_device", observed_device_lock)
+    monkeypatch.setattr(device_locking, "lock_device_handle", observed_device_lock)
 
     async def fold() -> bool:
         async with db_session_maker() as session:

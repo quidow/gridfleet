@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceIntent
-from app.devices.services import intent_reconciler
-from app.devices.services.decision import DecisionFacts
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, release_rollout_intent_source
 from app.packs.services.release_rollout import RELEASE_ROLLOUT_INTENT_TTL_SEC
@@ -20,7 +16,8 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    import pytest
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
@@ -88,72 +85,40 @@ async def test_rollout_stamps_watermark_once_when_idle(db_session: AsyncSession,
     assert row.payload["restart_requested_at"] == first.isoformat()
 
 
-async def test_rollout_stamp_sequence_uses_live_session_state_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    device_id = uuid.uuid4()
-    node = AppiumNode(
-        device_id=device_id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        desired_grid_run_id=None,
-        accepting_new_sessions=False,
-        stop_pending=False,
-        restart_requested_at=None,
-        observed_pack_release="old",
-    )
-    device = Device(id=device_id)
-    device.appium_node = node
-    row = DeviceIntent(
-        device_id=device_id,
-        source=release_rollout_intent_source(device_id),
-        kind=CommandKind.release_rollout.value,
-        payload={"target_release": "B"},
-        expires_at=datetime(2026, 7, 18, tzinfo=UTC),
-    )
-    result = Mock()
-    result.scalars.return_value.all.return_value = [row]
-    db = AsyncMock()
-    db.execute.return_value = result
-    times = iter(
-        (
-            datetime(2026, 7, 17, 12, 0, tzinfo=UTC),
-            datetime(2026, 7, 17, 12, 1, tzinfo=UTC),
-            datetime(2026, 7, 17, 12, 2, tzinfo=UTC),
-        )
-    )
-    # Live on the first reconcile (stamp deferred), idle thereafter so the
-    # stamp mints on call 2 and the watermark re-validation passes on calls 2-3.
-    session_check = AsyncMock(side_effect=(True, False, False, False))
-    facts = DecisionFacts(
-        in_maintenance=False,
-        device_checks_unhealthy=False,
-        in_service=True,
-        reservation_run_id=None,
-        cooldown_active=False,
-        cooldown_reason=None,
-    )
-    monkeypatch.setattr(intent_reconciler, "now_utc", lambda: next(times))
-    monkeypatch.setattr(intent_reconciler, "device_has_live_session", session_check)
-    monkeypatch.setattr(intent_reconciler, "gather_decision_facts", AsyncMock(return_value=facts))
-    monkeypatch.setattr(intent_reconciler, "emit_operational_state_transition", AsyncMock())
-    monkeypatch.setattr("app.appium_nodes.services.desired_state_writer.record_event", AsyncMock())
+async def test_rollout_stamp_sequence_uses_live_session_state_once(db_session: AsyncSession, db_host: Host) -> None:
+    """The stamp deferral is not sticky: a rollout that could not stamp while a
+    session was live mints the watermark once the session ends, then holds it
+    steady on subsequent reconciles (Findings 1, 5, 7 in sequence)."""
+    device, node = await _running_device(db_session, db_host, name="rollout-sequence")
+    session = Session(session_id="rollout-sequence", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
 
-    await intent_reconciler._reconcile_loaded_device(db, device, publisher=AsyncMock())
+    # Reconcile 1: session live -> stamp deferred, node drains without a watermark.
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=[_rollout_intent(device.id, target_release="B")],
+        publisher=event_bus,
+    )
+    row = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalar_one()
     assert row.payload.get("restart_requested_at") is None
     assert node.restart_requested_at is None
+    assert node.accepting_new_sessions is False
 
-    await intent_reconciler._reconcile_loaded_device(db, device, publisher=AsyncMock())
-    stamp = datetime(2026, 7, 17, 12, 1, tzinfo=UTC)
+    # Session ends -> the next reconcile mints the watermark exactly once.
+    await db_session.delete(session)
+    await db_session.commit()
+    await IntentService(db_session).reconcile_now(device.id, publisher=event_bus)
+    await db_session.refresh(row)
+    stamp = node.restart_requested_at
+    assert stamp is not None
     assert row.payload["restart_requested_at"] == stamp.isoformat()
-    assert node.restart_requested_at == stamp
 
-    await intent_reconciler._reconcile_loaded_device(db, device, publisher=AsyncMock())
-    assert row.payload["restart_requested_at"] == stamp.isoformat()
+    # A further reconcile holds the same watermark steady (stamped once).
+    await IntentService(db_session).reconcile_now(device.id, publisher=event_bus)
+    await db_session.refresh(row)
     assert node.restart_requested_at == stamp
-    # Call 1: stamp gate (live). Call 2: stamp gate (idle) + watermark
-    # re-validation (idle). Call 3: watermark re-validation (idle, stamp
-    # already minted so the stamp gate is skipped).
-    assert session_check.await_count == 4
+    assert row.payload["restart_requested_at"] == stamp.isoformat()
 
 
 async def test_rollout_does_not_stamp_when_node_already_converged(db_session: AsyncSession, db_host: Host) -> None:
@@ -202,112 +167,64 @@ async def test_rollout_does_not_stamp_while_reservation_active(db_session: Async
 
 
 async def test_rollout_suppresses_dormant_stamp_when_session_live_at_write_time(
-    monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession, db_host: Host
 ) -> None:
-    """Finding 1: a stamp minted while idle sits dormant behind a coexisting
-    start intent. When the start expires and the rollout wins carrying the
-    stamp, the watermark-write re-validation re-checks the live session and
-    suppresses the watermark so an in-flight session is not killed."""
-    device_id = uuid.uuid4()
-    node = AppiumNode(
-        device_id=device_id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        desired_grid_run_id=None,
-        accepting_new_sessions=False,
-        stop_pending=False,
-        restart_requested_at=None,
-        observed_pack_release="old",
-    )
-    device = Device(id=device_id)
-    device.appium_node = node
-    dormant_stamp = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
-    row = DeviceIntent(
-        device_id=device_id,
-        source=release_rollout_intent_source(device_id),
-        kind=CommandKind.release_rollout.value,
-        payload={"target_release": "B", "restart_requested_at": dormant_stamp.isoformat()},
-        expires_at=datetime(2026, 7, 18, tzinfo=UTC),
-    )
-    result = Mock()
-    result.scalars.return_value.all.return_value = [row]
-    db = AsyncMock()
-    db.execute.return_value = result
-    facts = DecisionFacts(
-        in_maintenance=False,
-        device_checks_unhealthy=False,
-        in_service=True,
-        reservation_run_id=None,
-        cooldown_active=False,
-        cooldown_reason=None,
-    )
-    monkeypatch.setattr(intent_reconciler, "now_utc", lambda: datetime(2026, 7, 17, 12, 5, tzinfo=UTC))
-    # Live session at watermark-write time → suppress the dormant stamp.
-    monkeypatch.setattr(intent_reconciler, "device_has_live_session", AsyncMock(return_value=True))
-    monkeypatch.setattr(intent_reconciler, "gather_decision_facts", AsyncMock(return_value=facts))
-    monkeypatch.setattr(intent_reconciler, "emit_operational_state_transition", AsyncMock())
-    monkeypatch.setattr("app.appium_nodes.services.desired_state_writer.record_event", AsyncMock())
+    """Finding 1: once a stamp is carried in the payload, the watermark-write
+    re-validation re-checks the live session before the watermark reaches the
+    node. A session that starts after the stamp was minted suppresses the node
+    watermark so an in-flight session is not force-restarted, while the payload
+    stamp stays intact."""
+    device, node = await _running_device(db_session, db_host, name="rollout-suppress-live")
 
-    await intent_reconciler._reconcile_loaded_device(db, device, publisher=AsyncMock())
+    # Idle reconcile mints the stamp onto both the payload and the node.
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=[_rollout_intent(device.id, target_release="B")],
+        publisher=event_bus,
+    )
+    row = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalar_one()
+    stamp = node.restart_requested_at
+    assert stamp is not None
+    assert row.payload["restart_requested_at"] == stamp.isoformat()
 
-    # The stamp remains in the payload (not cleared), but the node watermark is
-    # suppressed so the agent does not force-restart into a live session.
-    assert row.payload.get("restart_requested_at") == dormant_stamp.isoformat()
+    # A session starts after the stamp was minted; the next reconcile suppresses
+    # the node watermark at write time but leaves the payload stamp untouched.
+    db_session.add(Session(session_id="rollout-suppress-live", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    await IntentService(db_session).reconcile_now(device.id, publisher=event_bus)
+    await db_session.refresh(row)
+
+    assert row.payload.get("restart_requested_at") == stamp.isoformat()
     assert node.restart_requested_at is None
     assert node.accepting_new_sessions is False
 
 
 async def test_rollout_suppresses_dormant_stamp_when_converged_at_write_time(
-    monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession, db_host: Host
 ) -> None:
-    """Finding 5 at watermark-write time: a dormant stamp must not promote to a
-    restart once the node has converged onto the target release (e.g. after a
-    crash-restart that re-launched on the selected release)."""
-    device_id = uuid.uuid4()
-    node = AppiumNode(
-        device_id=device_id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        desired_grid_run_id=None,
-        accepting_new_sessions=False,
-        stop_pending=False,
-        restart_requested_at=None,
-        observed_pack_release="B",  # converged onto the target
-    )
-    device = Device(id=device_id)
-    device.appium_node = node
-    dormant_stamp = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
-    row = DeviceIntent(
-        device_id=device_id,
-        source=release_rollout_intent_source(device_id),
-        kind=CommandKind.release_rollout.value,
-        payload={"target_release": "B", "restart_requested_at": dormant_stamp.isoformat()},
-        expires_at=datetime(2026, 7, 18, tzinfo=UTC),
-    )
-    result = Mock()
-    result.scalars.return_value.all.return_value = [row]
-    db = AsyncMock()
-    db.execute.return_value = result
-    facts = DecisionFacts(
-        in_maintenance=False,
-        device_checks_unhealthy=False,
-        in_service=True,
-        reservation_run_id=None,
-        cooldown_active=False,
-        cooldown_reason=None,
-    )
-    monkeypatch.setattr(intent_reconciler, "now_utc", lambda: datetime(2026, 7, 17, 12, 5, tzinfo=UTC))
-    monkeypatch.setattr(intent_reconciler, "device_has_live_session", AsyncMock(return_value=False))
-    monkeypatch.setattr(intent_reconciler, "gather_decision_facts", AsyncMock(return_value=facts))
-    monkeypatch.setattr(intent_reconciler, "emit_operational_state_transition", AsyncMock())
-    monkeypatch.setattr(intent_reconciler, "record_event", AsyncMock())
-    monkeypatch.setattr("app.appium_nodes.services.desired_state_writer.record_event", AsyncMock())
+    """Finding 5 at watermark-write time: a stamped rollout must not promote to
+    a restart once the node has converged onto the target release (e.g. after a
+    crash-restart that re-launched on the selected release). The intent is
+    revoked inline (Finding 6) and the node returns to baseline accepting."""
+    device, node = await _running_device(db_session, db_host, name="rollout-suppress-converged")
 
-    await intent_reconciler._reconcile_loaded_device(db, device, publisher=AsyncMock())
+    # Idle reconcile mints the stamp onto both the payload and the node.
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=[_rollout_intent(device.id, target_release="B")],
+        publisher=event_bus,
+    )
+    assert node.restart_requested_at is not None
 
-    # Finding 6: converged rollout intent is revoked inline; the device returns
-    # to the baseline accepting state, and no watermark is published.
+    # The node converges onto the target release before the watermark applied;
+    # the next reconcile revokes the rollout inline and clears the watermark.
+    node.observed_pack_release = "B"
+    await db_session.commit()
+    await IntentService(db_session).reconcile_now(device.id, publisher=event_bus)
+
+    row = (
+        await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))
+    ).scalar_one_or_none()
+    assert row is None
     assert node.restart_requested_at is None
     assert node.accepting_new_sessions is True

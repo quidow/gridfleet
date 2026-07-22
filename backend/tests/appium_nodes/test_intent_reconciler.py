@@ -62,6 +62,21 @@ async def test_baseline_eligible_device_derives_running(db_session: AsyncSession
     assert node.accepting_new_sessions is True
 
 
+async def test_reconcile_uses_one_locked_snapshot(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="snapshot-reconcile")
+    await _seed_node(db_session, device.id)
+
+    async def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("legacy per-fact reader called")
+
+    monkeypatch.setattr(intent_reconciler, "gather_decision_facts", forbidden)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+
+
 async def test_reconcile_uses_facts_directly_for_maintenance(db_session: AsyncSession, db_host: Host) -> None:
     """Maintenance must stop the node with NO intent row present — the fact is
     read directly, not synthesized into a transient intent."""
