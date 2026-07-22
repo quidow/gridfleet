@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
     from app.devices.services.decision import Command
-    from app.devices.services.decision_snapshot import IntentSnapshot
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, IntentSnapshot
     from app.devices.services.state import DeviceStateFacts
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
@@ -355,10 +355,11 @@ async def reconcile_locked_device(
     *,
     publisher: EventPublisher,
     packs: dict[str, DriverPack] | None = None,
+    snapshot: DeviceDecisionSnapshot | None = None,
 ) -> bool:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     locked.assert_active(db)
-    return await _reconcile_locked_device(db, locked, publisher=publisher, packs=packs or {})
+    return await _reconcile_locked_device(db, locked, publisher=publisher, packs=packs or {}, snapshot=snapshot)
 
 
 async def _apply_rollout_stamp(
@@ -431,9 +432,11 @@ async def _reconcile_locked_device(
     *,
     publisher: EventPublisher,
     packs: dict[str, DriverPack],
+    snapshot: DeviceDecisionSnapshot | None = None,
 ) -> bool:
     now = now_utc()
-    snapshot = await load_device_decision_snapshot(db, locked, packs=packs, now=now)
+    if snapshot is None:
+        snapshot = await load_device_decision_snapshot(db, locked, packs=packs, now=now)
     device = locked.device
     node = device.appium_node
     if node is None:

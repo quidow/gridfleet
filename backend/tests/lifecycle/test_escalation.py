@@ -104,3 +104,36 @@ def test_backoff_active_treats_a_past_deadline_as_expired() -> None:
     ladder = remediation_log.LadderState(1, now, None, None, None, None)
 
     assert ladder.backoff_active(now=now) is None
+
+
+async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    from app.lifecycle.services.remediation_log import EMPTY_LADDER
+    from tests.concurrency.group_lock_helpers import capture_statements
+    from tests.fakes.review import build_review_service
+
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="escalation-prior",
+        name="escalation-prior",
+    )
+    await db_session.commit()
+
+    review = build_review_service()
+
+    async with capture_statements(db_session) as statements:
+        outcome = await escalate_remediation_failure(
+            db_session,
+            device,
+            settings=SETTINGS,
+            review=review,
+            source="test",
+            reason="failed",
+            prior=EMPTY_LADDER,
+        )
+
+    reads = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert len(reads) == 0, f"Expected no SELECT statements, got {reads}"
+    assert outcome.ladder.attempts == 1
