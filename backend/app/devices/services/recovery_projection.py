@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
 
 
 class RecoveryBlockKind(StrEnum):
@@ -125,3 +126,36 @@ def _deny_kind(source: str | None) -> RecoveryBlockKind:
     if source == "cooldown":
         return RecoveryBlockKind.cooldown
     return RecoveryBlockKind.operator
+
+
+def recovery_availability_from_snapshot(  # noqa: PLR0911 - the guard ladder is one return per rung
+    snapshot: DeviceDecisionSnapshot,
+    *,
+    now: datetime,
+) -> RecoveryAvailability:
+    if snapshot.review_required:
+        return RecoveryAvailability(
+            False,
+            snapshot.review_reason or "Device shelved — operator review required",
+            RecoveryBlockKind.review,
+        )
+    commands = [command for row in snapshot.intents if (command := parse_command(row, now)) is not None]
+    decision = decide_recovery(commands, snapshot.decision_facts)
+    if not decision.allowed:
+        return RecoveryAvailability(
+            False,
+            decision.reason or "Recovery is blocked by orchestration intent",
+            _deny_kind(decision.source),
+        )
+    if not snapshot.is_ready_for_use:
+        return RecoveryAvailability(False, "Device setup or verification is incomplete", RecoveryBlockKind.not_ready)
+    if snapshot.ladder.deferred_stop_pending and snapshot.has_live_session:
+        return RecoveryAvailability(
+            False, "Waiting for active client session to finish", RecoveryBlockKind.deferred_stop
+        )
+    if snapshot.has_live_session:
+        return RecoveryAvailability(False, CLIENT_SESSION_RUNNING_SUPPRESSION_REASON, RecoveryBlockKind.session)
+    deadline = snapshot.ladder.backoff_active(now=now)
+    if deadline is not None:
+        return RecoveryAvailability(False, f"Backing off until {deadline.isoformat()}", RecoveryBlockKind.backoff)
+    return _ALLOWED

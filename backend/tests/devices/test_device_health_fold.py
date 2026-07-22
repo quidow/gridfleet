@@ -23,8 +23,10 @@ from app.devices.services.connectivity import (
     ConnectivityService,
 )
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.lifecycle_policy_state import recovery_generation
 from app.devices.services.review import ReviewService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
+from app.jobs import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -595,15 +597,15 @@ async def test_fold_healthy_device_reuses_lock_for_self_heal(
 
 async def test_fold_healthy_offline_device_attempts_auto_recovery(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     host, device = await seed_host_and_device(
         db_session,
         identity="fold-offline-recovery",
         operational_state=DeviceOperationalState.offline,
     )
-    lifecycle_policy = MagicMock()
-    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=True)
-    service = _loop_service(lifecycle_policy=lifecycle_policy)
+    service = build_connectivity_service(db_session_maker)
+    service = _connectivity_with_real_lifecycle(db_session_maker)
 
     await _fold_health_once(
         db_session,
@@ -614,10 +616,8 @@ async def test_fold_healthy_offline_device_attempts_auto_recovery(
         health={"healthy": True, "checks": []},
     )
 
-    lifecycle_policy.attempt_auto_recovery.assert_awaited_once()
-    assert lifecycle_policy.attempt_auto_recovery.await_args.kwargs["reason"] == (
-        "Startup recovery after healthy reconnect"
-    )
+    await db_session.refresh(device)
+    assert recovery_generation(device) is not None
 
 
 async def test_fold_does_not_enqueue_remediation_for_draining_pack(
@@ -1067,3 +1067,117 @@ async def test_stale_failing_fold_enqueues_remediation_that_self_cancels(
     # if a newer healthy fact commits before it runs.
     enqueue.assert_awaited_once()
     assert enqueue.await_args.kwargs["action_id"] == "reconnect"
+
+
+def _connectivity_with_real_lifecycle(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> ConnectivityService:
+    review = ReviewService()
+    incidents = LifecycleIncidentService(publisher=event_bus)
+    reservation = RunReservationService(review=review)
+    actions = LifecyclePolicyActionsService(
+        publisher=event_bus,
+        reservation=reservation,
+        incidents=incidents,
+    )
+    lifecycle = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=actions,
+        incidents=incidents,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+        review=review,
+    )
+    return ConnectivityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle,
+        health=DeviceHealthService(publisher=event_bus),
+    )
+
+
+async def test_fold_healthy_offline_device_prepares_one_recovery_job(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    host, device = await seed_host_and_device(
+        db_session,
+        identity="fold-offline-recovery-job",
+        operational_state=DeviceOperationalState.offline,
+    )
+    connectivity = _connectivity_with_real_lifecycle(db_session_maker)
+    section = _health_section(
+        device.id,
+        revision=71,
+        reported_at=now_utc().isoformat(),
+        health={"healthy": True, "checks": []},
+    )
+
+    assert await connectivity.fold_host_devices(db_session, host.id, section) is True
+    await db_session.refresh(device)
+    generation = recovery_generation(device)
+    assert generation is not None
+    jobs = (await db_session.scalars(select(Job).where(Job.id == generation))).all()
+    assert len(jobs) == 1
+    assert jobs[0].kind == JOB_KIND_DEVICE_RECOVERY
+    assert device.device_checks_fold_applied_revision == 71
+
+    second = _health_section(
+        device.id,
+        revision=72,
+        reported_at=now_utc().isoformat(),
+        health={"healthy": True, "checks": []},
+    )
+    assert await connectivity.fold_host_devices(db_session, host.id, second) is True
+    assert (
+        await db_session.scalar(select(func.count()).select_from(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY)) == 1
+    )
+
+
+async def test_fold_rollback_after_recovery_prepare_leaves_no_state(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services.device_health_fold_context import LockedDeviceFold
+
+    host, device = await seed_host_and_device(
+        db_session,
+        identity="fold-offline-recovery-rollback",
+        operational_state=DeviceOperationalState.offline,
+    )
+    await db_session.commit()
+    device_id = device.id
+    connectivity = _connectivity_with_real_lifecycle(db_session_maker)
+    real_mark_applied = LockedDeviceFold.mark_applied
+
+    def raise_after_prepare(self: LockedDeviceFold, receipt: object) -> None:
+        real_mark_applied(self, receipt)  # type: ignore[arg-type]
+        raise RuntimeError("fold rolled back after recovery prepare")
+
+    monkeypatch.setattr(LockedDeviceFold, "mark_applied", raise_after_prepare)
+
+    section = _health_section(
+        device.id,
+        revision=73,
+        reported_at=now_utc().isoformat(),
+        health={"healthy": True, "checks": []},
+    )
+    assert await connectivity.fold_host_devices(db_session, host.id, section) is False
+
+    await db_session.refresh(device)
+    assert recovery_generation(device) is None
+    assert (
+        await db_session.scalar(select(func.count()).select_from(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY)) == 0
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(DeviceRemediationLogEntry)
+            .where(DeviceRemediationLogEntry.device_id == device_id)
+        )
+        == 0
+    )
+    assert device.device_checks_fold_applied_revision != 73

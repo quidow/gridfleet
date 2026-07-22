@@ -185,6 +185,17 @@ class HealthFailureHandler(Protocol):
         reason: str,
     ) -> DeviceDecisionSnapshot: ...
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool: ...
+    async def prepare_auto_recovery_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        generation: uuid.UUID,
+        source: str,
+        reason: str,
+        enqueue_job: bool,
+    ) -> bool: ...
     async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None: ...
 
     async def reconcile_self_heal_locked(

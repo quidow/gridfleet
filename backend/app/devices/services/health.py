@@ -20,6 +20,7 @@ from app.devices.services.health_view import (
     merged_liveness,
 )
 from app.devices.services.intent import IntentService
+from app.devices.services.lifecycle_policy_state import clear_recovery_generation
 from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
@@ -164,6 +165,8 @@ class DeviceHealthService:
             return None
         previous, policy_view, updated = result
         if not healthy:
+            if snapshot.recovery_generation is not None:
+                clear_recovery_generation(locked.device, expected=snapshot.recovery_generation)
             await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
         _maybe_emit_health_changed(db, locked.device, previous, policy_view=policy_view, publisher=self._publisher)
         return updated

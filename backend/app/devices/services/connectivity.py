@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -22,7 +23,10 @@ from app.devices.services.device_health_fold_context import (
     DeviceHealthFoldScope,
     LockedDeviceFold,
 )
-from app.devices.services.lifecycle_policy_state import in_maintenance
+from app.devices.services.lifecycle_policy_state import (
+    clear_recovery_generation,
+    in_maintenance,
+)
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.state import evaluate_operational_state
@@ -30,7 +34,6 @@ from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 
 if TYPE_CHECKING:
-    import uuid
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -371,6 +374,8 @@ class ConnectivityService:
             # startup-recovery reason (restores the old endpoint-health
             # branch's cleanup, now unified for every device).
             await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
+            if snapshot.recovery_generation is not None:
+                clear_recovery_generation(device, expected=snapshot.recovery_generation)
             # Self-heal: a device that reconverged naturally (e.g. agent restart →
             # node running, device available, health green) never runs a recovery
             # path, so a stale backoff window / attempt counter lingers and keeps the
@@ -398,17 +403,20 @@ class ConnectivityService:
             CONNECTIVITY_NAMESPACE,
             device.identity_value,
         )
-        restored = await self._lifecycle_policy.attempt_auto_recovery(
+        prepared = await self._lifecycle_policy.prepare_auto_recovery_locked(
             db,
-            device,
+            locked.locked_device,
+            snapshot,
+            generation=uuid.uuid4(),
             source="device_checks",
             reason=(
                 "Device reconnected and passed health checks"
                 if previously_offline
                 else "Startup recovery after healthy reconnect"
             ),
+            enqueue_job=True,
         )
-        if restored:
+        if prepared:
             await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
         else:
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)

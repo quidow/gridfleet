@@ -8,6 +8,7 @@ window. See app/services/lifecycle_policy.py for canonical usage.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect as sa_inspect
@@ -28,12 +29,15 @@ def now() -> datetime:
 
 
 def default_state() -> dict[str, Any]:
-    return {"maintenance_reason": None}
+    return {"maintenance_reason": None, "recovery_generation": None}
 
 
 def state(device: Device) -> dict[str, Any]:
     raw = device.lifecycle_policy_state if isinstance(device.lifecycle_policy_state, dict) else {}
-    return {"maintenance_reason": raw.get("maintenance_reason")}
+    return {
+        "maintenance_reason": raw.get("maintenance_reason"),
+        "recovery_generation": raw.get("recovery_generation"),
+    }
 
 
 def in_maintenance(device: Device) -> bool:
@@ -76,3 +80,29 @@ def clear_maintenance_reason(device: Device) -> None:
     next_state = state(device)
     next_state["maintenance_reason"] = None
     write_state(device, next_state)
+
+
+def recovery_generation(device: Device) -> uuid.UUID | None:
+    raw = state(device).get("recovery_generation")
+    if raw is None:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError, TypeError, AttributeError:
+        return None
+
+
+def set_recovery_generation(device: Device, generation: uuid.UUID) -> None:
+    next_state = state(device)
+    next_state["recovery_generation"] = str(generation)
+    write_state(device, next_state)
+
+
+def clear_recovery_generation(device: Device, *, expected: uuid.UUID | None = None) -> bool:
+    current = recovery_generation(device)
+    if current is None or (expected is not None and current != expected):
+        return False
+    next_state = state(device)
+    next_state["recovery_generation"] = None
+    write_state(device, next_state)
+    return True

@@ -19,10 +19,22 @@ from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.lifecycle_policy_state import loaded_node, now
+from app.devices.services.lifecycle_policy_state import (
+    clear_recovery_generation,
+    loaded_node,
+    now,
+    recovery_generation,
+    set_recovery_generation,
+)
 from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.recovery_projection import recovery_availability
-from app.devices.services.state import derive_operational_state
+from app.devices.services.recovery_projection import (
+    recovery_availability,
+    recovery_availability_from_snapshot,
+)
+from app.devices.services.state import derive_operational_state, evaluate_operational_state
+from app.jobs import queue as job_queue
+from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
+from app.jobs.statuses import JOB_STATUS_PENDING
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
@@ -36,13 +48,15 @@ from app.sessions.service_viability import (
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
     from app.devices.locking import LockedDevice
     from app.devices.models import DeviceReservation
     from app.devices.protocols import RemoteNodeManager, ReviewProtocol, SessionViabilityProbe
-    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, ReservationDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -138,6 +152,107 @@ class LifecyclePolicyService:
 
         return await self._finalize_recovery_success(db, device, source=source, reason=reason)
 
+    async def prepare_auto_recovery_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        generation: uuid.UUID,
+        source: str,
+        reason: str,
+        enqueue_job: bool,
+    ) -> bool:
+        locked.assert_active(db)
+        device = locked.device
+        current = recovery_generation(device)
+        if current is not None:
+            return current == generation
+        availability = recovery_availability_from_snapshot(snapshot, now=now_utc())
+        if not availability.allowed:
+            return False
+        if evaluate_operational_state(snapshot.state_facts) == DeviceOperationalState.available:
+            if snapshot.ladder.episode_active:
+                reset = await remediation_log.append_reset(
+                    db, device.id, source=source, action="already_healthy", reason=reason
+                )
+                updated_ladder = remediation_log.advance_ladder(snapshot.ladder, reset)
+                updated = replace(
+                    snapshot,
+                    ladder=updated_ladder,
+                    decision_facts=replace(snapshot.decision_facts, remediation_directive=None),
+                )
+                await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+            return False
+        set_recovery_generation(device, generation)
+        entry = await remediation_log.append_action(
+            db,
+            device.id,
+            source=source,
+            action=remediation_log.ACTION_RECOVERY_STARTED,
+            reason=reason,
+        )
+        node = device.appium_node
+        if node is None:
+            try:
+                if device.host_id is None:
+                    raise NodeManagerError(f"Device {device.id} has no host assigned")
+                ports = await candidate_ports(db, host_id=device.host_id, settings=self._settings)
+                if not ports:
+                    raise NodeManagerError(f"No Appium port available for device {device.id}")
+                desired_port = ports[0]
+            except NodeManagerError as exc:
+                outcome = await escalate_remediation_failure(
+                    db,
+                    device,
+                    settings=self._settings,
+                    review=self._review,
+                    source=source,
+                    reason=str(exc),
+                    prior=snapshot.ladder,
+                )
+                await self._record_backoff_incident_pair(
+                    db,
+                    device,
+                    reason=str(exc),
+                    failure_detail="Automatic restart failed",
+                    source=source,
+                    reservation=snapshot.reservation,
+                    backoff_until_iso=outcome.backoff_until_iso,
+                )
+                clear_recovery_generation(device, expected=generation)
+                return False
+            node = AppiumNode(device_id=device.id, port=desired_port)
+            db.add(node)
+            await db.flush()
+            device.appium_node = node
+        ladder = remediation_log.advance_ladder(snapshot.ladder, entry)
+        updated = replace(
+            snapshot,
+            ladder=ladder,
+            decision_facts=replace(snapshot.decision_facts, remediation_directive=ladder.node_directive),
+            node_port=node.port,
+            node_observed_running=node.observed_running,
+            recovery_generation=generation,
+        )
+        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        if not enqueue_job:
+            return True
+        await job_queue.create_job(
+            db,
+            kind=JOB_KIND_DEVICE_RECOVERY,
+            payload={
+                "device_id": str(device.id),
+                "source": source,
+                "reason": reason,
+            },
+            snapshot={"status": JOB_STATUS_PENDING},
+            max_attempts=1,
+            job_id=generation,
+            commit=False,
+        )
+        return True
+
     async def _reset_if_already_healthy(
         self,
         db: AsyncSession,
@@ -208,11 +323,11 @@ class LifecyclePolicyService:
         reason: str,
         failure_detail: str,
         source: str,
-        run: TestRun | None,
+        reservation: ReservationDecisionSnapshot | None,
         backoff_until_iso: str | None,
     ) -> None:
-        run_id = run.id if run is not None else None
-        run_name = run.name if run is not None else None
+        run_id = reservation.run_id if reservation is not None else None
+        run_name = reservation.run_name if reservation is not None else None
         await self._incidents.record_lifecycle_incident(
             db,
             device,
@@ -265,7 +380,7 @@ class LifecyclePolicyService:
             reason=str(exc),
             failure_detail="Automatic restart failed",
             source=source,
-            run=run,
+            reservation=None,
             backoff_until_iso=outcome.backoff_until_iso,
         )
         await db.commit()
@@ -286,7 +401,6 @@ class LifecyclePolicyService:
         # (attempt count, backoff, review promotion) runs on the fresh row so it
         # can never clobber a concurrent writer on the same device.
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        run, _entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         outcome = await escalate_remediation_failure(
             db,
             device,
@@ -301,7 +415,7 @@ class LifecyclePolicyService:
             reason=failure_reason,
             failure_detail="Recovery probe failed",
             source="session_viability",
-            run=run,
+            reservation=None,
             backoff_until_iso=outcome.backoff_until_iso,
         )
         await db.commit()
