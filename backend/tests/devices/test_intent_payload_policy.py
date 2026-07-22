@@ -9,9 +9,10 @@ update the doc (or revert the payload change).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -19,7 +20,6 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceRemediationLogEntry, DeviceReservation
-from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
@@ -28,8 +28,6 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    import uuid
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
@@ -261,10 +259,14 @@ async def test_operator_start_intent_payload_shape(
 
 
 @pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
@@ -276,42 +278,50 @@ async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
         operational_state=DeviceOperationalState.offline,
         verified=True,
     )
+    db_session.add(AppiumNode(device_id=device.id, port=4723, desired_state=AppiumDesiredState.stopped))
     await db_session.commit()
 
-    # Speed up the node-wait timeout and mock the viability probe so the test
-    # does not need a real Appium process.  Mirrors the autouse fixture in
-    # test_lifecycle_policy.py.
-    probe_mock = AsyncMock(
-        return_value={
-            "status": "passed",
-            "last_attempted_at": datetime.now(UTC).isoformat(),
-            "last_succeeded_at": datetime.now(UTC).isoformat(),
-            "error": None,
-            "checked_by": "recovery",
-        }
-    )
-    viability = AsyncMock()
-    viability.run_session_viability_probe = probe_mock
-    with patch.object(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0):
-        recovered = await LifecyclePolicyService(
-            review=build_review_service(),
+    svc = LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            settings=FakeSettingsReader({}),
-            actions=LifecyclePolicyActionsService(
-                publisher=event_bus,
-                reservation=RunReservationService(review=build_review_service()),
-                incidents=LifecycleIncidentService(),
-            ),
+            reservation=RunReservationService(review=build_review_service()),
             incidents=LifecycleIncidentService(),
-            viability=viability,
-            node_manager=AsyncMock(),
-        ).attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_connectivity",
-            reason="Node went offline",
-        )
-    assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+    )
+    generation = uuid.uuid4()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    prepared = await svc.prepare_auto_recovery_locked(
+        db_session,
+        locked,
+        snapshot,
+        generation=generation,
+        source="device_connectivity",
+        reason="Node went offline",
+        enqueue_job=False,
+    )
+    await db_session.commit()
+    assert prepared is True
+
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    outcome = await svc.finalize_auto_recovery_locked(
+        db_session,
+        locked,
+        snapshot,
+        generation=generation,
+        result={"status": "passed"},
+        source="device_connectivity",
+        reason="Node went offline",
+    )
+    await db_session.commit()
+    assert outcome == "recovered"
 
     entries = (
         (

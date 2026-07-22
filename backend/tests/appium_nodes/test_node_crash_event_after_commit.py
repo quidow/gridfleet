@@ -123,8 +123,13 @@ async def test_probe_failure_threshold_writes_restart_intent(
     event_bus_capture.clear()
 
     from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
+    from app.core.timeutil import now_utc
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
     from app.devices.services.health import DeviceHealthService
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
     await NodeHealthService(
         publisher=Mock(),
         settings=FakeSettingsReader(
@@ -140,7 +145,8 @@ async def test_probe_failure_threshold_writes_restart_intent(
     )._process_node_health(
         db_session,
         node,
-        device,
+        locked,
+        snapshot,
         observation=_NodeObservation(
             ProbeResult(status="refused"),
             port=node.port,

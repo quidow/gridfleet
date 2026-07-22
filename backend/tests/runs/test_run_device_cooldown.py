@@ -634,7 +634,10 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     db_session.add(reservation)
     await db_session.commit()
 
-    recovered = await LifecyclePolicyService(
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
+
+    svc = LifecyclePolicyService(
         review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
@@ -646,12 +649,19 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
         incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
-    ).attempt_auto_recovery(
+    )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    recovered = await svc.prepare_auto_recovery_locked(
         db_session,
-        device,
+        locked,
+        snapshot,
+        generation=uuid.uuid4(),
         source="device_checks",
         reason="Healthy again",
+        enqueue_job=False,
     )
+    await db_session.commit()
     # An active cooldown blocks automated recovery. The block is projected at read
     # time from the reservation's cooldown fact — no lifecycle-state write happens.
     assert recovered is False

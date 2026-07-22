@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -39,12 +41,12 @@ async def test_attempt_auto_recovery_records_recovery_start_action(
     db_session.add(node)
     await db_session.commit()
 
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
-    viability = AsyncMock()
-    viability.run_session_viability_probe = AsyncMock(return_value={"status": "passed"})
     svc = LifecyclePolicyService(
         review=build_review_service(),
         publisher=Mock(),
@@ -55,16 +57,23 @@ async def test_attempt_auto_recovery_records_recovery_start_action(
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
-        viability=viability,
+        viability=AsyncMock(),
         node_manager=AsyncMock(),
     )
+    generation = uuid.uuid4()
     with patch("app.devices.services.intent.IntentService.reconcile_now", new=AsyncMock()):
-        await svc.attempt_auto_recovery(
+        locked = await device_locking.lock_device_handle(db_session, device.id)
+        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+        await svc.prepare_auto_recovery_locked(
             db_session,
-            device,
+            locked,
+            snapshot,
+            generation=generation,
             source="health_recovery",
             reason="test",
+            enqueue_job=False,
         )
+        await db_session.commit()
 
     entries = (
         (

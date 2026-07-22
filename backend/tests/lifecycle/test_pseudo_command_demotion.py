@@ -9,6 +9,8 @@ facts. Each test drives public services and pins one acceptance line from the sp
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
@@ -191,13 +193,29 @@ async def test_failed_recovery_restops_and_backs_off(
     await _seed_node(db_session, device.id)
     await db_session.commit()
 
-    viability = AsyncMock()
-    viability.run_session_viability_probe = AsyncMock(return_value={"status": "failed", "error": "probe failed"})
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
+    from app.devices.services.lifecycle_policy_state import set_recovery_generation
 
-    recovered = await _policy_service(viability=viability).attempt_auto_recovery(
-        db_session, device, source="device_connectivity", reason="Node went offline"
+    generation = uuid.uuid4()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    set_recovery_generation(locked.device, generation)
+    await db_session.commit()
+
+    svc = _policy_service(viability=AsyncMock())
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    outcome = await svc.finalize_auto_recovery_locked(
+        db_session,
+        locked,
+        snapshot,
+        generation=generation,
+        result={"status": "failed", "error": "probe failed"},
+        source="device_connectivity",
+        reason="Node went offline",
     )
-    assert recovered is False
+    await db_session.commit()
+    assert outcome == "failed"
 
     ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.node_directive is not None

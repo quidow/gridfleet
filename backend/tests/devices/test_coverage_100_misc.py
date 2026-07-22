@@ -607,12 +607,13 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())),
     )
     mock_lifecycle_policy = AsyncMock()
-    mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(side_effect=RuntimeError("boom"))
+    mock_lifecycle_policy.prepare_auto_recovery_locked = AsyncMock(side_effect=RuntimeError("boom"))
     await device_recovery_job.RecoveryJobService(
         session_factory=RecoveryCtx,
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         lifecycle_policy=mock_lifecycle_policy,
+        viability=AsyncMock(),
     ).run_device_recovery_job(
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
@@ -661,6 +662,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             lifecycle_policy=AsyncMock(),
+            viability=AsyncMock(),
         ),
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))

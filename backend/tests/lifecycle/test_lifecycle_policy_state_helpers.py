@@ -30,7 +30,7 @@ def test_in_maintenance_reads_reason_with_defaults_merged() -> None:
 
 
 def test_default_state_contains_only_maintenance_reason() -> None:
-    assert default_state() == {"maintenance_reason": None}
+    assert default_state() == {"maintenance_reason": None, "recovery_generation": None}
 
 
 def test_state_discards_retired_policy_keys() -> None:
@@ -42,7 +42,7 @@ def test_state_discards_retired_policy_keys() -> None:
         }
     )
 
-    assert state(cast("Device", device)) == {"maintenance_reason": "operator"}
+    assert state(cast("Device", device)) == {"maintenance_reason": "operator", "recovery_generation": None}
 
 
 @pytest.mark.db
@@ -60,4 +60,4 @@ async def test_write_state_filters_retired_ladder_keys(db_session: AsyncSession,
         },
     )
 
-    assert device.lifecycle_policy_state == {"maintenance_reason": "operator"}
+    assert device.lifecycle_policy_state == {"maintenance_reason": "operator", "recovery_generation": None}
