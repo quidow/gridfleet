@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -7,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
-from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.state import derive_operational_state
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
@@ -17,9 +19,14 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.hosts.models import Host
+    from app.packs.models import DriverPack
 
 _settings = FakeSettingsReader({})
 _release_svc = RunReleaseService(
@@ -163,21 +170,30 @@ async def test_release_devices_serializes_with_concurrent_writer(
     device_id = device.id
     run_id = run.id
 
-    # Set by the patched readiness helper after _release_devices has locked
-    # and read the device row.
+    # Set by the patched snapshot loader after _release_devices' reconcile pass
+    # has locked and read the device row.
     stomper_can_go = asyncio.Event()
 
-    original_is_ready = is_ready_for_use_async
+    original_loader = load_device_decision_snapshot
 
-    async def racing_is_ready(db: AsyncSession, device_arg: Device, **kwargs: object) -> bool:
-        # Signal: _release_devices has read the device row. ``**kwargs`` absorbs
-        # the ``packs=`` keyword the state-derivation path now passes through
-        # gather_device_state_facts -> is_ready_for_use_async.
-        stomper_can_go.set()
-        # Give the stomper enough time to commit its offline change before
-        # _release_devices continues to the commit.
-        await asyncio.sleep(0.15)
-        return await original_is_ready(db, device_arg, **kwargs)
+    async def racing_snapshot(
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        packs: Mapping[str, DriverPack],
+        now: datetime,
+    ) -> DeviceDecisionSnapshot:
+        # Signal: the reconcile pass driven by _release_devices -> reconcile_now
+        # has locked and read the device row via the decision snapshot loader.
+        # This loader replaced is_ready_for_use_async as the post-lock readiness
+        # site, so it is the current injection point (guard so repeated reconcile
+        # passes do not re-sleep).
+        if not stomper_can_go.is_set():
+            stomper_can_go.set()
+            # Give the stomper enough time to commit its offline change before
+            # _release_devices continues to the commit.
+            await asyncio.sleep(0.15)
+        return await original_loader(db, locked, packs=packs, now=now)
 
     async def releaser() -> None:
         async with db_session_maker() as session:
@@ -185,7 +201,10 @@ async def test_release_devices_serializes_with_concurrent_writer(
             assert run_obj is not None
             run_obj.state = RunState.cancelled
             run_obj.completed_at = datetime.now(UTC)
-            with patch("app.devices.services.state.is_ready_for_use_async", racing_is_ready):
+            with patch(
+                "app.devices.services.intent_reconciler.load_device_decision_snapshot",
+                racing_snapshot,
+            ):
                 await _release_svc.release_devices(session, run_obj)
 
     async def stomper() -> None:
@@ -198,8 +217,8 @@ async def test_release_devices_serializes_with_concurrent_writer(
     await asyncio.gather(releaser(), stomper())
 
     assert stomper_can_go.is_set(), (
-        "racing_is_ready was never called — _release_devices was refactored to skip "
-        "is_ready_for_use_async; the mock injection point is no longer valid"
+        "racing_snapshot was never called — _release_devices' reconcile pass no longer "
+        "loads the device decision snapshot; the mock injection point is no longer valid"
     )
 
     # Without FOR UPDATE in _release_devices: the releaser reads "reserved",

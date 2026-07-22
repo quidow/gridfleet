@@ -7,6 +7,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/devices/services/intent.py",
     "app/devices/services/intent_reconciler.py",
+    "app/devices/services/decision_snapshot.py",
+    "app/devices/services/state.py",
 )
 
 

@@ -51,6 +51,7 @@ EXPIRES_AT_PATTERN = re.compile(r"DeviceIntent\.expires_at")
 EXPIRES_AT_ALLOWED = {
     "devices/services/claims.py",  # the axis home
     "devices/services/intent_reconciler.py",  # expired-intent GC (lease lifecycle, not claim gating)
+    "devices/services/decision_snapshot.py",  # loads the raw intent column; lease composition delegates to claims
     "lifecycle/services/operator_node.py",  # sticky operator-stop intent, a separate axis
 }
 

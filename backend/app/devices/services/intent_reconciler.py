@@ -9,7 +9,7 @@ Appium process facts and never decides desired state.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, exists, select, update
@@ -42,13 +42,17 @@ from app.devices.services.decision import (
     map_node_process_decision,
     parse_command,
 )
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import record_event
 from app.devices.services.intent_types import release_rollout_intent_source
 from app.devices.services.readiness import load_packs_by_ids
-from app.devices.services.state import WithdrawalFacts, emit_operational_state_transition
+from app.devices.services.state import (
+    WithdrawalFacts,
+    apply_operational_state_transition,
+    evaluate_operational_state,
+)
 from app.lifecycle.services import remediation_log
 from app.runs.models import RunState, TestRun
-from app.sessions.live_session_predicate import device_has_live_session
 
 if TYPE_CHECKING:
     import uuid
@@ -60,6 +64,9 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
+    from app.devices.services.decision import Command
+    from app.devices.services.decision_snapshot import IntentSnapshot
+    from app.devices.services.state import DeviceStateFacts
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.remediation_log import LadderState
@@ -333,13 +340,13 @@ async def reconcile_device(
     """
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     try:
-        device = await device_locking.lock_device(db, device_id)
+        locked = await device_locking.lock_device_handle(db, device_id)
     except NoResultFound:
         # The device row was deleted concurrently (e.g. an operator delete
         # between the scan select and this lock). Nothing to reconcile —
         # skip without failing the whole reconcile cycle.
         return False
-    return await _reconcile_loaded_device(db, device, publisher=publisher, packs=packs)
+    return await _reconcile_locked_device(db, locked, publisher=publisher, packs=packs or {})
 
 
 async def reconcile_locked_device(
@@ -351,23 +358,19 @@ async def reconcile_locked_device(
 ) -> bool:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     locked.assert_active(db)
-    return await _reconcile_loaded_device(
-        db,
-        locked.device,
-        publisher=publisher,
-        packs=packs,
-    )
+    return await _reconcile_locked_device(db, locked, publisher=publisher, packs=packs or {})
 
 
 async def _apply_rollout_stamp(
     db: AsyncSession,
     *,
     device_id: uuid.UUID,
-    node: AppiumNode,
-    stored: list[DeviceIntent],
+    observed_pack_release: str | None,
+    stored: tuple[IntentSnapshot, ...],
     facts: DecisionFacts,
+    has_live_session: bool,
     now: datetime,
-) -> list[DeviceIntent]:
+) -> tuple[IntentSnapshot, ...]:
     """Revoke a converged rollout intent inline (Finding 6) and mint the
     restart stamp once the rollout can safely apply (Findings 2, 5, 7).
 
@@ -382,9 +385,9 @@ async def _apply_rollout_stamp(
     # drop the rollout intent here so the device re-enters the allocatable pool
     # without waiting for the 60 s janitor stage. The stage's revoke branch
     # remains the backstop for the no-longer-candidate cases.
-    if rollout_row is not None and target_release is not None and node.observed_pack_release == target_release:
-        await db.delete(rollout_row)
-        return [row for row in stored if row is not rollout_row]
+    if rollout_row is not None and target_release is not None and observed_pack_release == target_release:
+        await db.execute(delete(DeviceIntent).where(DeviceIntent.id == rollout_row.id))
+        return tuple(row for row in stored if row.id != rollout_row.id)
     # Stamp gate: mint restart_requested_at once the rollout can safely apply.
     # Finding 7: parse_command is the single liveness authority (expiry,
     # tombstone, unknown-kind) — do not re-derive its rules here. Finding 5:
@@ -401,16 +404,18 @@ async def _apply_rollout_stamp(
         and rollout_command is not None
         and rollout_command.restart_requested_at is None
         and target_release is not None
-        and node.observed_pack_release is not None
-        and node.observed_pack_release != target_release
+        and observed_pack_release is not None
+        and observed_pack_release != target_release
         and facts.reservation_run_id is None
-        and not await device_has_live_session(db, device_id)
+        and not has_live_session
     ):
-        rollout_row.payload = {**rollout_row.payload, "restart_requested_at": now.isoformat()}
+        payload = {**rollout_row.payload, "restart_requested_at": now.isoformat()}
+        await db.execute(update(DeviceIntent).where(DeviceIntent.id == rollout_row.id).values(payload=payload))
+        return tuple(replace(row, payload=payload) if row.id == rollout_row.id else row for row in stored)
     return stored
 
 
-def _rollout_target_release(stored: list[DeviceIntent], device_id: uuid.UUID) -> str | None:
+def _rollout_target_release(stored: tuple[IntentSnapshot, ...], device_id: uuid.UUID) -> str | None:
     """The target release of the live rollout intent for this device, or None."""
     rollout_source = release_rollout_intent_source(device_id)
     row = next((row for row in stored if row.source == rollout_source), None)
@@ -420,81 +425,88 @@ def _rollout_target_release(stored: list[DeviceIntent], device_id: uuid.UUID) ->
     return target if isinstance(target, str) else None
 
 
-async def _reconcile_loaded_device(
+async def _reconcile_locked_device(
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
     *,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack] | None = None,
+    packs: dict[str, DriverPack],
 ) -> bool:
-    device_id = device.id
+    now = now_utc()
+    snapshot = await load_device_decision_snapshot(db, locked, packs=packs, now=now)
+    device = locked.device
     node = device.appium_node
     if node is None:
-        # No Appium node — skip intent evaluation but still derive device state
-        # so operational_state / hold stay consistent with durable facts.
-        try:
-            now = now_utc()
-            await emit_operational_state_transition(db, device, now=now, publisher=publisher, packs=packs)
-        except Exception:  # noqa: BLE001 - event emission is best-effort; a skipped edge retries next tick
-            logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
-        return False
-
-    now = now_utc()
-    stored: list[DeviceIntent] = list(
-        (
-            await db.execute(
-                select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
-            )
+        apply_operational_state_transition(
+            device,
+            evaluate_operational_state(snapshot.state_facts),
+            publisher=publisher,
         )
-        .scalars()
-        .all()
+        return False
+    stored = await _apply_rollout_stamp(
+        db,
+        device_id=device.id,
+        observed_pack_release=snapshot.node_observed_pack_release,
+        stored=snapshot.intents,
+        facts=snapshot.decision_facts,
+        has_live_session=snapshot.has_live_session,
+        now=now,
     )
-    facts = await gather_decision_facts(db, device, now)
-    stored = await _apply_rollout_stamp(db, device_id=device_id, node=node, stored=stored, facts=facts, now=now)
-    target_release = _rollout_target_release(stored, device_id)
-    commands = [c for c in (parse_command(row, now) for row in stored) if c is not None]
+    target_release = _rollout_target_release(stored, device.id)
+    commands = [command for row in stored if (command := parse_command(row, now)) is not None]
+    return await _apply_reconcile_decisions(
+        db,
+        device=device,
+        node=node,
+        commands=commands,
+        facts=snapshot.decision_facts,
+        has_live_session=snapshot.has_live_session,
+        target_release=target_release,
+        observed_pack_release=snapshot.node_observed_pack_release,
+        observed_port=snapshot.node_port,
+        state_facts=snapshot.state_facts,
+        publisher=publisher,
+    )
 
+
+async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot facts folded into one write pass
+    db: AsyncSession,
+    *,
+    device: Device,
+    node: AppiumNode,
+    commands: list[Command],
+    facts: DecisionFacts,
+    has_live_session: bool,
+    target_release: str | None,
+    observed_pack_release: str | None,
+    observed_port: int | None,
+    state_facts: DeviceStateFacts,
+    publisher: EventPublisher,
+) -> bool:
     node_decision = decide_node_process(commands, facts)
     grid_decision = decide_grid_routing(facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
-    # Findings 1, 5: re-validate at watermark-write time. A stamp minted when
-    # the node was idle may sit dormant while a higher-ranked start wins the
-    # ladder; by the time the rollout wins and carries the stamp, a session
-    # may have started, the node may have converged, or a reservation may
-    # have bound the device. Suppress the watermark in any of those cases —
-    # the node is already draining (accepting_new_sessions=False), so the
-    # stamp stays dormant and the next reconcile re-validates. Only the
-    # rollout rung (running_draining) routes a stamp to the watermark; the
-    # start rung carries its own watermark and is unaffected.
     restart_watermark = node_decision.restart_requested_at
     if (
         node_decision.desired_state == "running_draining"
         and restart_watermark is not None
         and (
-            await device_has_live_session(db, device_id)
+            has_live_session
             or facts.reservation_run_id is not None
             or target_release is None
-            or node.observed_pack_release == target_release
+            or observed_pack_release == target_release
         )
     ):
         restart_watermark = None
-    # Universal session-safety invariant: only an explicit hard stop
-    # (``stop_mode == "hard"`` — operator force-release, bulk operator stop,
-    # same-priority conflict) may flip ``desired_state=stopped`` while a
-    # client session is active. Graceful stops AND the no-intent stop (a
-    # withdrawn device whose baseline was suppressed, F-G1) defer: the node
-    # keeps running with ``accepting_new_sessions=False`` until the session
-    # ends, then the next reconcile executes the stop.
     if (
         target_state == AppiumDesiredState.stopped
         and node_decision.stop_mode in (None, "graceful")
-        and await device_has_live_session(db, device_id)
+        and has_live_session
     ):
         target_state = AppiumDesiredState.running
         node_accepting_new_sessions = False
         stop_pending = True
     accepting_new_sessions = node_accepting_new_sessions and grid_decision.accepting_new_sessions
-
     old = {
         "desired_state": node.desired_state,
         "desired_port": node.desired_port,
@@ -503,14 +515,7 @@ async def _reconcile_loaded_device(
         "stop_pending": node.stop_pending,
         "restart_requested_at": node.restart_requested_at,
     }
-
-    # The node row is the single source of port truth: payload `desired_port` values are
-    # registration-time snapshots of node.port and go stale when a fallback start moves the
-    # node (observation updates node.port and clears AppiumNode.desired_port). Re-applying
-    # a stale snapshot flips desired_port against the live port on every reconcile, and the
-    # appium reconciler then force-restarts the node onto the stale port — the 4724<->4725
-    # churn storm behind the N11 S13/S14 failures (2026-06-07). Pin the live port instead.
-    desired_port = node.port if target_state == AppiumDesiredState.running else None
+    desired_port = observed_port if target_state == AppiumDesiredState.running else None
     await write_desired_state(
         db,
         node=node,
@@ -529,11 +534,10 @@ async def _reconcile_loaded_device(
         caller="intent_reconciler",
         reason=grid_decision.reason,
     )
-
     if node.accepting_new_sessions != accepting_new_sessions:
         await _record_field_change(
             db,
-            device_id,
+            device.id,
             "accepting_new_sessions",
             node.accepting_new_sessions,
             accepting_new_sessions,
@@ -541,9 +545,8 @@ async def _reconcile_loaded_device(
         )
         node.accepting_new_sessions = accepting_new_sessions
     if node.stop_pending != stop_pending:
-        await _record_field_change(db, device_id, "stop_pending", node.stop_pending, stop_pending, node_decision.reason)
+        await _record_field_change(db, device.id, "stop_pending", node.stop_pending, stop_pending, node_decision.reason)
         node.stop_pending = stop_pending
-
     metadata_changed = (
         old["accepting_new_sessions"] != node.accepting_new_sessions
         or old["stop_pending"] != node.stop_pending
@@ -553,12 +556,15 @@ async def _reconcile_loaded_device(
         old[key] != getattr(node, key) for key in ("desired_state", "desired_port", "restart_requested_at")
     )
     await db.flush()
-
-    try:
-        await emit_operational_state_transition(db, device, now=now, publisher=publisher, packs=packs)
-    except Exception:  # noqa: BLE001 - event emission is best-effort; a skipped edge retries next tick
-        logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
-
+    post_write_state_facts = replace(
+        state_facts,
+        stop_in_flight=node.desired_state == AppiumDesiredState.stopped or bool(node.stop_pending),
+    )
+    apply_operational_state_transition(
+        device,
+        evaluate_operational_state(post_write_state_facts),
+        publisher=publisher,
+    )
     return changed
 
 

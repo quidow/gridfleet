@@ -22,7 +22,7 @@ intent GC deletes on ``expires_at``); this module owns read-side gating only.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import exists, or_, select
 
@@ -39,6 +39,7 @@ from app.sessions.live_session_predicate import (
 from app.sessions.models import Session
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
     from uuid import UUID
 
@@ -51,6 +52,7 @@ __all__ = [
     "device_has_masking_live_session",
     "device_has_verification_lease",
     "device_is_reserved",
+    "is_verification_lease_active",
     "live_session_exists",
     "live_session_predicate",
     "masking_live_session_exists",
@@ -131,3 +133,21 @@ async def device_has_verification_lease(db: AsyncSession, device_id: UUID, *, no
     return (
         await db.execute(select(DeviceIntent.id).where(verification_lease_predicate(device_id, now=now)).limit(1))
     ).first() is not None
+
+
+def is_verification_lease_active(
+    *,
+    source: str,
+    payload: Mapping[str, Any],
+    expires_at: datetime | None,
+    device_id: UUID,
+    now: datetime,
+) -> bool:
+    """In-memory twin of ``verification_lease_predicate`` for callers that have
+    already loaded the intent row (e.g. the device decision snapshot) and must
+    not re-issue the SQL predicate. Keeps the lease definition single-homed."""
+    return (
+        source == verification_intent_source(device_id)
+        and payload.get(VERIFICATION_OUTCOME_KEY) is None
+        and (expires_at is None or expires_at > now)
+    )
