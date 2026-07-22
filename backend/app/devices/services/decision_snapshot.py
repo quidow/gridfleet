@@ -10,10 +10,9 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import aliased
 
 from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceReservation, ExclusionKind
-from app.devices.services.claims import reservation_active
+from app.devices.services.claims import is_verification_lease_active, reservation_active
 from app.devices.services.decision import DecisionFacts
 from app.devices.services.health_view import device_allows_allocation
-from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, verification_intent_source
 from app.devices.services.readiness import assess_device_with_pack, load_packs_by_ids
 from app.devices.services.state import DeviceStateFacts, WithdrawalFacts, appium_node_stop_in_flight
 from app.lifecycle.services import remediation_log
@@ -263,9 +262,13 @@ async def load_device_decision_snapshot(
         state_facts=DeviceStateFacts(
             has_running_session=has_masking,
             has_verification_lease=any(
-                intent.source == verification_intent_source(device.id)
-                and intent.payload.get(VERIFICATION_OUTCOME_KEY) is None
-                and (intent.expires_at is None or intent.expires_at > now)
+                is_verification_lease_active(
+                    source=intent.source,
+                    payload=intent.payload,
+                    expires_at=intent.expires_at,
+                    device_id=device.id,
+                    now=now,
+                )
                 for intent in intents
             ),
             in_maintenance=withdrawal.in_maintenance,
