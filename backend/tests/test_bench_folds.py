@@ -1164,6 +1164,13 @@ async def test_bench_healthy_fold_statement_budget(
         event.remove(engine, "before_cursor_execute", tap)
         event.remove(engine, "commit", commits)
 
+    # A statement the profiler cannot attribute to a known callsite surfaces as
+    # "unattributed". Guard against a new per-device N+1 against an untracked table
+    # (appium_nodes / hosts / sessions / packs) slipping past the named categories,
+    # whose strict counts would not move for a query outside those six buckets.
+    attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
+    assert "unattributed" not in attributed_callsites, f"untracked statement callsite: {sorted(tap.callsite_counter)}"
+
     device_lock = tap.callsite_counter[("app.devices.locking.lock_device_handle", "SELECT devices")]
     snapshot_claims = tap.callsite_counter[
         ("app.devices.services.decision_snapshot._load_claims_intents_and_reservation", "SELECT device_intents")

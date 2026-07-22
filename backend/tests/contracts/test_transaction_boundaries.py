@@ -43,6 +43,11 @@ def test_migrated_transaction_local_modules_do_not_commit_or_rollback() -> None:
     assert findings == {}, f"transaction-local modules must leave boundaries to commands: {findings}"
 
 
+# NOTE: the enclosing function is the *innermost* one containing the call. A commit
+# inside a nested closure defined within a sanctioned boundary would be attributed to
+# the closure's name and flagged as a violation (a false positive, erring safe). All
+# sanctioned commits today live directly in their function body; if a boundary is ever
+# refactored to commit from a nested helper, add that helper to the allowlist.
 def _scoped_transaction_calls(path: Path) -> list[tuple[int, str, str]]:
     tree = ast.parse(path.read_text(), filename=str(path))
     functions = [
