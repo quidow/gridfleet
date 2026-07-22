@@ -11,7 +11,11 @@ from sqlalchemy import select
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.node_health import _NodeObservation
+from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
+from app.devices.services.health import DeviceHealthService
 from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -49,13 +53,16 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
         publisher=event_bus,
         settings=FakeSettingsReader({"general.node_fail_window_sec": 0}),
         recovery_control=AsyncMock(),
-        health=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
     await svc._process_node_health(
         db_session,
         node,
-        device,
+        locked,
+        snapshot,
         observation=_NodeObservation(ProbeResult(status="refused", detail="test")),
     )
     await db_session.commit()
@@ -112,13 +119,16 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         recovery_control=AsyncMock(),
-        health=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
     await svc._process_node_health(
         db_session,
         node,
-        device,
+        locked,
+        snapshot,
         observation=_NodeObservation(ProbeResult(status="refused", detail="teardown")),
     )
     await db_session.commit()
