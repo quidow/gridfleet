@@ -7,15 +7,17 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import pytest
 from sqlalchemy import select
 
-from app.agent_comm.node_poke import poke_node_refresh
+from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation, ExclusionKind
+from app.devices.services import intent_reconciler
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
+    ReconcileCandidate,
     _gc_expired_intents,
-    _reconcile_commit_deliver,
+    _reconcile_and_deliver,
     reconcile_device,
     run_device_intent_reconciler_once,
 )
@@ -30,7 +32,7 @@ from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -678,31 +680,63 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     assert device.operational_state_last_emitted != DeviceOperationalState.offline  # drift corrected
 
 
-async def test_steady_state_reconcile_does_not_poke(db_session: AsyncSession, db_host: Host) -> None:
+async def test_steady_state_reconcile_does_not_poke(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     """A reconcile that changes nothing must not wake the agent."""
     device = await create_device(db_session, host_id=db_host.id, name="steady-state")
     await _seed_node(db_session, device.id)
-    settings = FakeSettingsReader()
     # First reconcile settles initial derivation; the second is steady-state.
-    await _reconcile_commit_deliver(
-        db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+    await _reconcile_and_deliver(
+        db_session_maker, ReconcileCandidate(device.id), circuit_breaker=Mock(), publisher=event_bus, packs={}
     )
     poke = AsyncMock()
-    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
-        await _reconcile_commit_deliver(
-            db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh_target", poke):
+        await _reconcile_and_deliver(
+            db_session_maker, ReconcileCandidate(device.id), circuit_breaker=Mock(), publisher=event_bus, packs={}
         )
     poke.assert_not_awaited()
 
 
-async def test_desired_state_change_pokes_agent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_desired_state_change_pokes_agent(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     """A reconcile that flips desired node state must wake the agent."""
     device = await create_device(db_session, host_id=db_host.id, name="pokes-agent")
     await _seed_node(db_session, device.id)
 
     poke = AsyncMock()
-    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
-        await _reconcile_commit_deliver(
-            db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh_target", poke):
+        await _reconcile_and_deliver(
+            db_session_maker, ReconcileCandidate(device.id), circuit_breaker=Mock(), publisher=event_bus, packs={}
         )
     poke.assert_awaited_once()
+
+
+async def test_desired_state_poke_runs_after_command_transaction(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="post-commit-poke")
+    await _seed_node(db_session, device.id)
+    observed: list[NodeRefreshTarget] = []
+
+    async def record(target: NodeRefreshTarget, **kwargs: object) -> None:
+        observed.append(target)
+
+    monkeypatch.setattr(intent_reconciler, "poke_node_refresh_target", record)
+    await _reconcile_and_deliver(
+        db_session_maker,
+        ReconcileCandidate(device.id),
+        circuit_breaker=Mock(),
+        publisher=event_bus,
+        packs={},
+    )
+
+    assert observed == [NodeRefreshTarget(ip=db_host.ip, agent_port=db_host.agent_port)]

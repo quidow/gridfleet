@@ -9,13 +9,14 @@ Appium process facts and never decides desired state.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.node_poke import poke_node_refresh
+from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh, poke_node_refresh_target
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import (
     DesiredStateWrite,
@@ -73,6 +74,17 @@ LOOP_NAME = "device_intent_reconciler"
 INTENT_RECONCILE_INTERVAL_SEC = 5.0
 
 
+@dataclass(frozen=True, slots=True)
+class ReconcileCandidate:
+    device_id: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileCommandResult:
+    changed: bool
+    target: NodeRefreshTarget | None
+
+
 class DeviceIntentReconcilerLoop(BackgroundLoop):
     loop_name = LOOP_NAME
     cycle_failed_message = "device_intent_reconciler_cycle_failed"
@@ -95,6 +107,38 @@ class DeviceIntentReconcilerLoop(BackgroundLoop):
             publisher=self._services.publisher,
             pool=self._services.pool,
         )
+
+
+async def reconcile_device_command(
+    session_factory: SessionFactory,
+    candidate: ReconcileCandidate,
+    *,
+    publisher: EventPublisher,
+    packs: dict[str, DriverPack],
+) -> ReconcileCommandResult:
+    async with session_factory() as db, db.begin():
+        try:
+            locked = await device_locking.lock_device_handle(db, candidate.device_id)
+        except NoResultFound:
+            return ReconcileCommandResult(changed=False, target=None)
+        changed = await reconcile_locked_device(db, locked, publisher=publisher, packs=packs)
+        host = locked.device.host
+        target = NodeRefreshTarget(host.ip, host.agent_port) if changed and host is not None else None
+        return ReconcileCommandResult(changed=changed, target=target)
+
+
+async def _reconcile_and_deliver(
+    session_factory: SessionFactory,
+    candidate: ReconcileCandidate,
+    *,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
+    packs: dict[str, DriverPack],
+    pool: AgentHttpPool | None = None,
+) -> None:
+    result = await reconcile_device_command(session_factory, candidate, publisher=publisher, packs=packs)
+    if result.target is not None:
+        await poke_node_refresh_target(result.target, circuit_breaker=circuit_breaker, pool=pool)
 
 
 async def _reconcile_commit_deliver(
