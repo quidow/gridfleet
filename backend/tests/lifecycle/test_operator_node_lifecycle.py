@@ -13,14 +13,14 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
 from app.appium_nodes.services import resource_service
 from app.devices.models import DeviceIntent
-from app.devices.services.intent_reconciler import _gc_expired_intents, reconcile_device
+from app.devices.services.intent_reconciler import ReconcileCandidate, reconcile_device, reconcile_device_command
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_active
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.devices.models import Device
     from app.hosts.models import Host
@@ -153,12 +153,10 @@ def test_operator_restart_intent_sets_expires_at(
 
 async def test_gc_expired_intents_deletes_expired_restart_intent(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
-    """_gc_expired_intents must delete DeviceIntent rows whose expires_at
-    has passed, even when expires_at is explicitly set (as opposed to the Task 1
-    regression where expires_at was NULL).
-    """
+    """The reconcile command deletes expired intents under the device lock."""
     device = await create_device(db_session, host_id=db_host.id, name="gc-expired-restart", verified=True)
 
     expired_intent = DeviceIntent(
@@ -178,7 +176,12 @@ async def test_gc_expired_intents_deletes_expired_restart_intent(
     db_session.add(expired_intent)
     await db_session.commit()
 
-    await _gc_expired_intents(db_session)
+    await reconcile_device_command(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=True),
+        publisher=event_bus,
+        packs={},
+    )
 
     remaining = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
