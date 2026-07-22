@@ -184,7 +184,6 @@ class HealthFailureHandler(Protocol):
         source: str,
         reason: str,
     ) -> DeviceDecisionSnapshot: ...
-    async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool: ...
     async def prepare_auto_recovery_locked(
         self,
         db: AsyncSession,

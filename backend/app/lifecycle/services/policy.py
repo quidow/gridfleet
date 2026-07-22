@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import random
 from dataclasses import replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -27,10 +25,7 @@ from app.devices.services.lifecycle_policy_state import (
     set_recovery_generation,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.recovery_projection import (
-    recovery_availability,
-    recovery_availability_from_snapshot,
-)
+from app.devices.services.recovery_projection import recovery_availability_from_snapshot
 from app.devices.services.state import derive_operational_state, evaluate_operational_state
 from app.jobs import queue as job_queue
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
@@ -41,11 +36,6 @@ from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.lifecycle.services.operator_node import operator_stop_active
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
-from app.sessions.service_viability import (
-    SessionViabilityProbeInProgressError,
-    SessionViabilityProbeNotPermittedError,
-)
-from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
     import uuid
@@ -54,13 +44,11 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.locking import LockedDevice
-    from app.devices.models import DeviceReservation
     from app.devices.protocols import RemoteNodeManager, ReviewProtocol, SessionViabilityProbe
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, ReservationDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.incidents import LifecycleIncidentService
-    from app.runs.models import TestRun
 
 logger = logging.getLogger(__name__)
 
@@ -84,73 +72,6 @@ class LifecyclePolicyService:
         self._viability = viability
         self._node_manager = node_manager
         self._review = review
-
-    async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
-        device, run, _entry, early = await self._evaluate_recovery_guards(db, device, source=source, reason=reason)
-        if early is not None:
-            return early
-
-        await remediation_log.append_action(
-            db, device.id, source=source, action=remediation_log.ACTION_RECOVERY_STARTED
-        )
-
-        node = loaded_node(device)
-        operational_state = await derive_operational_state(db, device, now=now_utc())
-        # An offline device has no usable running node, so a positive
-        # ``observed_running`` reading here is necessarily stale: the appium
-        # process is gone but the ``appium_reconciler`` has not yet cleared the
-        # dead ``pid``/``active_connection_target`` (observed state is eventually
-        # consistent, lagging up to one reconciler interval). Trusting it would
-        # short-circuit the start path below — skipping the reconcile that applies
-        # the START directive over the stop directive — and strand the device in
-        # backoff until the stale observation happens to clear. Treat it as not
-        # running and (re)assert the node start.
-        stale_offline_observation = (
-            node is not None and node.observed_running and operational_state == DeviceOperationalState.offline
-        )
-        started_node = False
-        if node is None or not node.observed_running or stale_offline_observation:
-            started_node = True
-            try:
-                await self._ensure_recovery_node_row(db, device)
-            except NodeManagerError as exc:
-                return await self._record_recovery_node_start_failure(db, device, exc=exc, source=source, run=run)
-
-        # Wait for the reconciler to observe the node running before probing.
-        # The reconciler runs asynchronously; probing immediately after
-        # registering the start intent races the agent start-up.
-        if started_node and device.appium_node is not None:
-            observed = await self._node_manager.wait_for_node_running(
-                db,
-                device.appium_node.id,
-                timeout_sec=RECOVERY_NODE_START_WAIT_TIMEOUT_SEC,
-                poll_interval_sec=RECOVERY_NODE_START_WAIT_POLL_SEC,
-            )
-            if observed is None:
-                logger.warning(
-                    "Recovery: node %s for device %s did not become observed_running within timeout; "
-                    "proceeding with probe anyway",
-                    device.appium_node.id,
-                    device.id,
-                )
-
-        result = await self._run_recovery_probe(db, device)
-
-        if result.get("status") == "skipped":
-            # The probe could not run because another viability probe holds the device's
-            # lock, or the device left a probeable state mid-attempt (see _run_recovery_probe).
-            # A skip is not a failure: no auto-stop, no backoff, no review_required, and no
-            # state write at all — the badge is projected from live facts, so a benign,
-            # self-resolving lock collision leaves nothing to clear. The flow that won the
-            # lock (the exit-maintenance verification lease, or the next device_connectivity
-            # tick) does the real recovery.
-            logger.info("auto-recovery skipped for device %s — probe could not run (transient)", device.id)
-            return False
-
-        if result.get("status") != "passed":
-            return await self._handle_recovery_probe_failure(db, device, result)
-
-        return await self._finalize_recovery_success(db, device, source=source, reason=reason)
 
     async def prepare_auto_recovery_locked(
         self,
@@ -253,68 +174,6 @@ class LifecyclePolicyService:
         )
         return True
 
-    async def _reset_if_already_healthy(
-        self,
-        db: AsyncSession,
-        device: Device,
-        entry: DeviceReservation | None,
-        *,
-        source: str,
-        reason: str,
-    ) -> bool:
-        node = loaded_node(device)
-        operational_state = await derive_operational_state(db, device, now=now_utc())
-        if (
-            node is not None
-            and node.observed_running
-            and operational_state not in (DeviceOperationalState.offline, DeviceOperationalState.verifying)
-            and not run_reservation_service.reservation_entry_is_excluded(entry)
-        ):
-            # Recovery has nothing to start. Supersede any leftover episode so a
-            # derived stop directive cannot re-apply after this healthy observation.
-            ladder = await remediation_log.load_ladder(db, device.id)
-            if ladder.episode_active:
-                await remediation_log.append_reset(
-                    db, device.id, source=source, action="already_healthy", reason=reason
-                )
-                await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
-            return True
-        return False
-
-    async def _evaluate_recovery_guards(
-        self, db: AsyncSession, device: Device, *, source: str, reason: str
-    ) -> tuple[Device, TestRun | None, DeviceReservation | None, bool | None]:
-        device = await _reload_device(db, device)
-        run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
-        if await self._reset_if_already_healthy(db, device, entry, source=source, reason=reason):
-            return device, run, entry, False
-        availability = await recovery_availability(db, device)
-        if not availability.allowed:
-            logger.info(
-                "auto-recovery blocked for device %s: %s (%s)", device.id, availability.reason, availability.kind
-            )
-            return device, run, entry, False
-        return device, run, entry, None
-
-    async def _ensure_recovery_node_row(self, db: AsyncSession, device: Device) -> None:
-        if device.host_id is None:
-            raise NodeManagerError(f"Device {device.id} has no host assigned")
-        if device.appium_node is None:
-            # Port allocation is only needed when creating the node row.
-            # For the stale-offline case the node row already exists, so
-            # skip the allocation query entirely.
-            desired_port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
-            new_node = AppiumNode(
-                device_id=device.id,
-                port=desired_port,
-            )
-            db.add(new_node)
-            await db.flush()
-            device.appium_node = new_node
-        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
-        await db.commit()
-        await db.refresh(device.appium_node)
-
     async def _record_backoff_incident_pair(
         self,
         db: AsyncSession,
@@ -357,160 +216,96 @@ class LifecyclePolicyService:
             ),
         )
 
-    async def _record_recovery_node_start_failure(
+    async def finalize_auto_recovery_locked(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
-        exc: NodeManagerError,
+        generation: uuid.UUID,
+        result: dict[str, Any],
         source: str,
-        run: TestRun | None,
-    ) -> bool:
-        outcome = await escalate_remediation_failure(
-            db,
-            device,
-            settings=self._settings,
-            review=self._review,
-            source=source,
-            reason=str(exc),
-        )
-        await self._record_backoff_incident_pair(
-            db,
-            device,
-            reason=str(exc),
-            failure_detail="Automatic restart failed",
-            source=source,
-            reservation=None,
-            backoff_until_iso=outcome.backoff_until_iso,
-        )
-        await db.commit()
-        return False
-
-    async def _handle_recovery_probe_failure(self, db: AsyncSession, device: Device, result: dict[str, Any]) -> bool:
-        failure_reason = result.get("error") or "Recovery viability probe failed"
-        await self._actions.complete_auto_stop(
-            db,
-            device,
-            reason=failure_reason,
-            source="session_viability",
-            detail="Manager stopped the device after a failed recovery viability probe",
-        )
-
-        # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases
-        # the row lock via intermediate commits in handle_node_crash. Escalation
-        # (attempt count, backoff, review promotion) runs on the fresh row so it
-        # can never clobber a concurrent writer on the same device.
-        device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        outcome = await escalate_remediation_failure(
-            db,
-            device,
-            settings=self._settings,
-            review=self._review,
-            source="session_viability",
-            reason=failure_reason,
-        )
-        await self._record_backoff_incident_pair(
-            db,
-            device,
-            reason=failure_reason,
-            failure_detail="Recovery probe failed",
-            source="session_viability",
-            reservation=None,
-            backoff_until_iso=outcome.backoff_until_iso,
-        )
-        await db.commit()
-        return False
-
-    async def _finalize_recovery_success(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
-        device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        # Re-resolve the reservation under lock as well:
-        run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
-
-        if run is not None and run.state not in TERMINAL_STATES:
-            if run_reservation_service.reservation_entry_is_excluded(entry):
-                run, entry = await self._actions.restore_run_if_needed(
-                    db,
-                    device,
-                    run,
-                    entry,
-                    reason=reason,
-                    source=source,
-                )
-                await record_event(
-                    db,
-                    device.id,
-                    DeviceEventType.node_restart,
-                    {"recovered_from": source, "reason": reason},
-                )
-                await db.commit()
-            else:
-                await db.commit()
-        else:
-            await record_event(
+        reason: str,
+    ) -> str:
+        locked.assert_active(db)
+        if snapshot.recovery_generation != generation:
+            return "stale"
+        if result.get("status") == "skipped":
+            clear_recovery_generation(locked.device, expected=generation)
+            return "skipped"
+        if result.get("status") != "passed":
+            failure_reason = str(result.get("error") or "Recovery viability probe failed")
+            updated = await self._actions.complete_auto_stop_locked(
                 db,
-                device.id,
-                DeviceEventType.node_restart,
-                {"recovered_from": source, "reason": reason},
+                locked,
+                snapshot,
+                source="session_viability",
+                reason=failure_reason,
+                detail="Manager stopped the device after a failed recovery viability probe",
             )
-            await db.commit()
-
-        await db.commit()
-
-        device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        await remediation_log.append_reset(db, device.id, source=source, action="auto_recovered", reason=reason)
+            outcome = await escalate_remediation_failure(
+                db,
+                locked.device,
+                settings=self._settings,
+                review=self._review,
+                source="session_viability",
+                reason=failure_reason,
+                prior=updated.ladder,
+            )
+            await self._record_backoff_incident_pair(
+                db,
+                locked.device,
+                reason=failure_reason,
+                failure_detail="Recovery probe failed",
+                source="session_viability",
+                reservation=updated.reservation,
+                backoff_until_iso=outcome.backoff_until_iso,
+            )
+            clear_recovery_generation(locked.device, expected=generation)
+            return "failed"
+        _restored, updated = await self._actions.restore_run_after_self_heal_locked(
+            db,
+            locked,
+            snapshot,
+            operational_state=DeviceOperationalState.available,
+            operator_stopped=False,
+            reason=reason,
+        )
+        await record_event(
+            db,
+            locked.device.id,
+            DeviceEventType.node_restart,
+            {"recovered_from": source, "reason": reason},
+        )
+        reset = await remediation_log.append_reset(
+            db,
+            locked.device.id,
+            source=source,
+            action="auto_recovered",
+            reason=reason,
+        )
+        ladder = remediation_log.advance_ladder(updated.ladder, reset)
+        updated = replace(
+            updated,
+            ladder=ladder,
+            decision_facts=replace(updated.decision_facts, remediation_directive=None),
+        )
         await self._incidents.record_lifecycle_incident(
             db,
-            device,
+            locked.device,
             DeviceEventType.lifecycle_recovered,
             LifecycleIncidentDetails(
                 summary_state=DeviceLifecyclePolicySummaryState.idle,
                 reason=reason,
                 detail="Device recovered successfully",
                 source=source,
-                run_id=run.id if run is not None else None,
-                run_name=run.name if run is not None else None,
+                run_id=updated.reservation.run_id if updated.reservation is not None else None,
+                run_name=updated.reservation.run_name if updated.reservation is not None else None,
             ),
         )
-        await db.commit()
-        return True
-
-    async def _run_recovery_probe(self, db: AsyncSession, device: Device) -> dict[str, Any]:
-        last_result: dict[str, Any] = {}
-        attempts = max(1, RECOVERY_PROBE_ATTEMPTS)
-        for attempt in range(attempts):
-            reloaded = await _reload_device(db, device)
-            try:
-                last_result = await self._viability.run_session_viability_probe(
-                    db,
-                    reloaded,
-                    checked_by=SessionViabilityCheckedBy.recovery,
-                )
-            except SessionViabilityProbeInProgressError:
-                logger.info(
-                    "Recovery viability probe for device %s skipped — another viability probe is in progress",
-                    device.id,
-                )
-                return {"status": "skipped"}
-            except SessionViabilityProbeNotPermittedError:
-                logger.info(
-                    "Recovery viability probe for device %s skipped — device state no longer permits a probe",
-                    device.id,
-                )
-                return {"status": "skipped"}
-            except Exception as exc:  # noqa: BLE001 — a probe error must not crash the recovery job
-                logger.warning(
-                    "Recovery viability probe for device %s raised %s; treating as a failed attempt",
-                    device.id,
-                    type(exc).__name__,
-                    exc_info=True,
-                )
-                last_result = {"status": "failed", "error": str(exc)}
-            if last_result.get("status") == "passed":
-                return last_result
-            if attempt < attempts - 1:
-                # ponytail: stdlib retry; fixed delay + jitter, no third-party retry lib
-                await asyncio.sleep(RECOVERY_PROBE_RETRY_DELAY_SEC + random.uniform(0, RECOVERY_PROBE_JITTER_MAX_SEC))
-        return last_result
+        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        clear_recovery_generation(locked.device, expected=generation)
+        return "recovered"
 
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
         locked = await device_locking.lock_device_handle(db, device.id, load_sessions=True)
@@ -1009,13 +804,6 @@ class LifecyclePolicyService:
         )
         await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
         return updated
-
-
-RECOVERY_PROBE_ATTEMPTS = 3
-RECOVERY_PROBE_RETRY_DELAY_SEC = 10
-RECOVERY_PROBE_JITTER_MAX_SEC = 2
-RECOVERY_NODE_START_WAIT_TIMEOUT_SEC = 60
-RECOVERY_NODE_START_WAIT_POLL_SEC = 0.5
 
 
 class DeferredStopOutcome(StrEnum):
