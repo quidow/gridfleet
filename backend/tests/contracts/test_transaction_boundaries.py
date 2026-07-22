@@ -9,6 +9,13 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/devices/services/intent_reconciler.py",
     "app/devices/services/decision_snapshot.py",
     "app/devices/services/state.py",
+    "app/grid/allocation.py",
+    "app/sessions/service.py",
+    "app/sessions/service_probes.py",
+    "app/runs/service_reservation.py",
+    "app/runs/service_lifecycle_release.py",
+    "app/verification/services/preparation.py",
+    "app/verification/services/execution.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary

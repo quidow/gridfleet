@@ -25,3 +25,6 @@ class AsyncSessionContextManager(Protocol):
 class SessionFactory(Protocol):
     def __call__(self) -> AsyncSessionContextManager:
         raise NotImplementedError
+
+    def begin(self) -> AsyncSessionContextManager:
+        raise NotImplementedError
